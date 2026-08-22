@@ -252,6 +252,8 @@ trait HandlesInventory
             $expiresAt,
             $saleId,
         ): StockReservation {
+            $cartLineId = $this->resolveExistingCartLineId($cartLineId);
+
             // Serialize reserves for the same SKU/branch so concurrent POS line adds
             // do not deadlock on stock_reservations index gap locks (MySQL 1213).
             $this->lockCurrentStockForUpdate($productCode, $branchId);
@@ -286,6 +288,18 @@ trait HandlesInventory
         }
 
         return DB::transaction($run, 5);
+    }
+
+    /** Ignore stale line ids (deleted cart line) — keep cart-level reservation instead of FK 500. */
+    protected function resolveExistingCartLineId(?int $cartLineId): ?int
+    {
+        if ($cartLineId === null || $cartLineId <= 0) {
+            return null;
+        }
+
+        return \App\Models\CartLine::query()->whereKey($cartLineId)->exists()
+            ? $cartLineId
+            : null;
     }
 
     /**

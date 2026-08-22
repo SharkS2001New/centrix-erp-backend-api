@@ -46,10 +46,10 @@ return [
             'label' => 'Customers',
             'features' => [
                 'customers' => ['label' => 'Customers', 'actions' => ['view', 'create', 'edit', 'delete']],
-                'shop_debtors' => ['label' => 'Shop debtors', 'actions' => ['view']],
                 'statements' => ['label' => 'Customer statements', 'actions' => ['view']],
             ],
         ],
+        'shop_debtors' => \App\Support\ShopDebtorsPermissions::registryGroup(),
         'sales' => [
             'label' => 'Sales & orders',
             'features' => [

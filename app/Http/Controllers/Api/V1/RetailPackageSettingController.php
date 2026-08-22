@@ -120,29 +120,39 @@ class RetailPackageSettingController extends BaseResourceController
             return $response;
         }
 
-        $this->broadcastMarkupChanged($model);
+        $this->broadcastMarkupChanged($model, 0, (float) ($model->markup_price ?? 0));
 
         return response()->json($this->presentSetting($model), 201);
     }
 
     public function update(Request $request, string $id, ?string $nestedId = null)
     {
+        $settingId = $this->resolveResourceId($id, $nestedId);
+        $existing = $this->settingsQuery($request)->find($settingId);
+        $prevMarkup = $existing ? (float) ($existing->markup_price ?? 0) : 0;
+
         $response = parent::update($request, $id, $nestedId);
         $payload = $response->getData(true);
-        $settingId = $payload['id'] ?? $this->resolveResourceId($id, $nestedId);
+        $resolvedId = $payload['id'] ?? $settingId;
 
-        $model = $this->settingsQuery($request)->find($settingId);
+        $model = $this->settingsQuery($request)->find($resolvedId);
         if (! $model) {
             return $response;
         }
 
-        $this->broadcastMarkupChanged($model);
+        $nextMarkup = (float) ($model->markup_price ?? 0);
+        if ($nextMarkup !== $prevMarkup) {
+            $this->broadcastMarkupChanged($model, $prevMarkup, $nextMarkup);
+        }
 
         return response()->json($this->presentSetting($model));
     }
 
-    protected function broadcastMarkupChanged(RetailPackageSetting $model): void
-    {
+    protected function broadcastMarkupChanged(
+        RetailPackageSetting $model,
+        float $previousMarkupPrice,
+        float $newMarkupPrice,
+    ): void {
         $product = $model->relationLoaded('product')
             ? $model->product
             : $model->product()->first();
@@ -156,6 +166,8 @@ class RetailPackageSettingController extends BaseResourceController
             (string) $model->product_code,
             $product?->product_name,
             request()->user()?->id,
+            $previousMarkupPrice,
+            $newMarkupPrice,
         );
     }
 }

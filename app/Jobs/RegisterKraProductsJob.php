@@ -66,11 +66,43 @@ class RegisterKraProductsJob implements ShouldQueue
             $result = $service->registerProducts($products->all(), $path, $finance);
 
             if (empty($result['success'])) {
+                if ($service->isAlreadyRegisteredPluResult($result)) {
+                    $skipped = (int) ($result['product_count'] ?? $products->count());
+                    $tasks->markCompleted($task, [
+                        'success' => true,
+                        'message' => $skipped === 1
+                            ? '1 product was already on the KRA device (skipped).'
+                            : "{$skipped} products were already on the KRA device (skipped).",
+                        'registered_count' => (int) ($result['registered_count'] ?? 0),
+                        'skipped_count' => max($skipped, (int) ($result['skipped_count'] ?? 0)),
+                        'product_count' => $skipped,
+                        'response' => $result['response'] ?? null,
+                    ]);
+
+                    return;
+                }
+
                 throw new \RuntimeException((string) ($result['message'] ?? 'KRA registration failed.'));
             }
 
             $tasks->markCompleted($task, $result);
         } catch (\Throwable $e) {
+            $alreadyRegistered = app(KraDeviceService::class)->isAlreadyRegisteredPluResult([
+                'message' => $e->getMessage(),
+            ]);
+            if ($alreadyRegistered) {
+                $tasks->markCompleted($task, [
+                    'success' => true,
+                    'message' => 'Products were already on the KRA device (skipped).',
+                    'registered_count' => 0,
+                    'skipped_count' => (int) ($task->payload['product_codes'] ?? []) !== []
+                        ? count((array) $task->payload['product_codes'])
+                        : 1,
+                ]);
+
+                return;
+            }
+
             Log::warning('RegisterKraProductsJob failed', [
                 'task_id' => $this->taskId,
                 'error' => $e->getMessage(),

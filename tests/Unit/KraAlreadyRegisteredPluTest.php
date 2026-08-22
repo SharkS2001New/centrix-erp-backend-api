@@ -25,6 +25,11 @@ class KraAlreadyRegisteredPluTest extends TestCase
             'message' => 'A product with this name is already registered on the KRA device.',
         ]));
 
+        $this->assertTrue($service->isAlreadyRegisteredPluResult([
+            'success' => false,
+            'message' => '1 product was already on the KRA device (skipped).',
+        ]));
+
         $this->assertFalse($service->isAlreadyRegisteredPluResult([
             'success' => false,
             'message' => 'E337: NO FIND PLU DATA',

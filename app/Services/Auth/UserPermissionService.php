@@ -116,6 +116,13 @@ class UserPermissionService
         }
 
         if (
+            preg_match('/^shop_debtors\.(unpaid|partial|paid)\.view$/', $permissionCode, $matches) === 1
+            && $this->hasLegacyShopDebtorsGrant($user, (string) $matches[1])
+        ) {
+            return $this->permissionAllowedByGate($permissionCode, $gate);
+        }
+
+        if (
             preg_match('/^sales\.order_queue_.+\.view$/', $permissionCode) === 1
             && $this->hasDirectPermission($user, 'sales.orders.view')
         ) {
@@ -382,6 +389,26 @@ class UserPermissionService
         }
 
         return in_array((int) $permissionId, $this->effectivePermissionIds($user), true);
+    }
+
+    protected function hasLegacyShopDebtorsGrant(User $user, string $bucket): bool
+    {
+        $bucket = \App\Support\ShopDebtorsPermissions::normalizeBucket($bucket);
+        $legacyCodes = [
+            'customers.shop_debtors.view',
+            'customers.shop_debtors_unpaid.view',
+            'customers.shop_debtors_partial.view',
+            'customers.shop_debtors_paid.view',
+            "customers.shop_debtors_{$bucket}.view",
+        ];
+
+        foreach (array_unique($legacyCodes) as $code) {
+            if ($this->hasDirectPermission($user, $code)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** @return array<string, bool> Feature permission codes assigned to the user (no capability alias expansion). */

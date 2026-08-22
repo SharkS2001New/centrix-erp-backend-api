@@ -8,6 +8,7 @@ use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
 use App\Support\SalePaymentStatus;
 use App\Support\SalesOrderQueuePermissions;
+use App\Support\ShopDebtorsPermissions;
 use App\Support\SqlLikeSearch;
 use App\Services\Sales\BackofficeOrderLineEditService;
 use App\Services\Sales\CentrixSalesScope;
@@ -50,6 +51,18 @@ class SaleController extends BaseResourceController
 
     public function index(Request $request)
     {
+        if ($request->boolean('shop_debtors')) {
+            $user = $request->user();
+            $gate = $this->erp->gateForUser($user);
+            $bucket = data_get($request->input('filter', []), 'payment_status');
+            $permission = ShopDebtorsPermissions::permissionCodeForBucket(
+                is_string($bucket) && trim($bucket) !== '' ? $bucket : ShopDebtorsPermissions::UNPAID,
+            );
+            if (! app(UserPermissionService::class)->hasPermission($user, $permission, $gate)) {
+                abort(403, 'You do not have permission to view this shop debtors queue.');
+            }
+        }
+
         $query = $this->baseQuery($request);
         $dispatchOrders = $request->boolean('dispatch_orders');
         $distributionSettings = null;
@@ -114,7 +127,7 @@ class SaleController extends BaseResourceController
         // which sales queue permissions the user has for list browsing.
         // POS previous-order browse and held parks also skip queue gates — cashiers rarely
         // have backoffice queue view rights.
-        // Shop Debtors is its own page (customers.shop_debtors.view). Queue-status
+        // Shop Debtors queues use shop_debtors.{unpaid|partial|paid}.view.
         // scope would hide POS credit sales whose workflow status is completed/paid.
         if (! $isExactOrderLookup && ! $forPosOrderEdit && ! $isHeldList && ! $shopDebtors) {
             SalesOrderQueuePermissions::applyIndexScope(

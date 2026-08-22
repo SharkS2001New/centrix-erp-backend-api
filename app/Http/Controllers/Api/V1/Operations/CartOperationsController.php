@@ -1602,10 +1602,12 @@ class CartOperationsController extends Controller
             $amount,
         );
 
-        // Mobile never runs the POS client merge — combine identical SKUs server-side
-        // so edit/same-day carts don't stack Sugar 10 + Sugar 5 as two lines.
+        // Mobile never runs the POS client merge; POS normally PATCHes merges client-side.
+        // Combine identical SKUs server-side for mobile and POS so duplicate POST races
+        // (e.g. pending-fresh bootstrap) don't stack the same SKU as two lines.
         $combineIdentical = ($salesSettings['pos_combine_identical_lines'] ?? true) !== false;
-        if ($combineIdentical && strtolower(trim((string) ($cart->channel ?? ''))) === 'mobile') {
+        $channel = strtolower(trim((string) ($cart->channel ?? '')));
+        if ($combineIdentical && in_array($channel, ['mobile', 'pos'], true)) {
             $existing = CartLine::query()
                 ->where('cart_id', $cart->id)
                 ->where('product_code', $product->product_code)

@@ -58,7 +58,8 @@ class PermissionMatrixService
             self::ensureLpoApproveForAdminRoles();
             self::ensureStockTakeResetForAdminRoles();
             self::ensureNotificationsForBackofficeRoles();
-            self::ensureShopDebtorsForCustomerViewRoles();
+            self::ensureShopDebtorsForAdminRoles();
+            self::migrateLegacyShopDebtorsPermissions();
             self::ensureCollectPaymentForPosCashierRoles();
             self::ensureHrTimeAttendancePagesForExistingRoles();
             // Shared Administrator must keep every industry shell (commerce + hospitality).
@@ -718,36 +719,64 @@ class PermissionMatrixService
         }
     }
 
-    /**
-     * Shop Debtors is a new Customers feature — grant view to roles that already
-     * manage the main Customers list so upgrades keep parity without re-editing roles.
-     */
-    public static function ensureShopDebtorsForCustomerViewRoles(): void
+    /** Grant shop-debtor queue permissions to Administrator / Admin roles. */
+    public static function ensureShopDebtorsForAdminRoles(): void
     {
-        $shopDebtorsId = Permission::query()
-            ->where('permission_code', 'customers.shop_debtors.view')
-            ->value('id');
-        $customersViewId = Permission::query()
-            ->where('permission_code', 'customers.customers.view')
-            ->value('id');
+        $shopDebtorsIds = Permission::query()
+            ->whereIn('permission_code', \App\Support\ShopDebtorsPermissions::allViewPermissionCodes())
+            ->pluck('id');
 
-        if (! $shopDebtorsId || ! $customersViewId) {
+        if ($shopDebtorsIds->isEmpty()) {
             return;
         }
-
-        $roleIds = \Illuminate\Support\Facades\DB::table('role_permissions')
-            ->where('permission_id', $customersViewId)
-            ->pluck('role_id');
 
         $adminRoleIds = \App\Models\Role::query()
             ->whereIn('role_name', ['Administrator', 'Admin'])
             ->pluck('id');
 
-        foreach ($roleIds->merge($adminRoleIds)->unique() as $roleId) {
-            \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
-                'role_id' => $roleId,
-                'permission_id' => $shopDebtorsId,
-            ]);
+        foreach ($adminRoleIds as $roleId) {
+            foreach ($shopDebtorsIds as $permissionId) {
+                \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
+                    'role_id' => $roleId,
+                    'permission_id' => $permissionId,
+                ]);
+            }
+        }
+    }
+
+    /** Copy legacy customers.* shop-debtors grants onto shop_debtors.* queue permissions. */
+    public static function migrateLegacyShopDebtorsPermissions(): void
+    {
+        $legacyToNew = [
+            'customers.shop_debtors.view' => \App\Support\ShopDebtorsPermissions::allViewPermissionCodes(),
+            'customers.shop_debtors_unpaid.view' => [\App\Support\ShopDebtorsPermissions::permissionCodeForBucket('unpaid')],
+            'customers.shop_debtors_partial.view' => [\App\Support\ShopDebtorsPermissions::permissionCodeForBucket('partial')],
+            'customers.shop_debtors_paid.view' => [\App\Support\ShopDebtorsPermissions::permissionCodeForBucket('paid')],
+        ];
+
+        foreach ($legacyToNew as $legacyCode => $newCodes) {
+            $legacyId = Permission::query()->where('permission_code', $legacyCode)->value('id');
+            if (! $legacyId) {
+                continue;
+            }
+
+            $newIds = Permission::query()->whereIn('permission_code', $newCodes)->pluck('id');
+            if ($newIds->isEmpty()) {
+                continue;
+            }
+
+            $roleIds = \Illuminate\Support\Facades\DB::table('role_permissions')
+                ->where('permission_id', $legacyId)
+                ->pluck('role_id');
+
+            foreach ($roleIds as $roleId) {
+                foreach ($newIds as $permissionId) {
+                    \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
+                        'role_id' => $roleId,
+                        'permission_id' => $permissionId,
+                    ]);
+                }
+            }
         }
     }
 

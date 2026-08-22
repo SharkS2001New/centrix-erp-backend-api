@@ -73,6 +73,8 @@ class CatalogPricingBroadcastTest extends TestCase
             (string) $product->product_code,
             $product->product_name,
             (int) $admin->id,
+            100.0,
+            120.0,
         );
 
         $afterCashier = InAppNotification::query()
@@ -87,7 +89,7 @@ class CatalogPricingBroadcastTest extends TestCase
             ->orderByDesc('id')
             ->first();
         $this->assertNotNull($latest);
-        $this->assertStringContainsString('Price updated', (string) $latest->message);
+        $this->assertStringContainsString('has been updated from KES 100.00 to KES 120.00', (string) $latest->message);
         $this->assertSame('/pos', $latest->action_url);
 
         // Updater also receives the alert so they can confirm it fired.
@@ -121,5 +123,72 @@ class CatalogPricingBroadcastTest extends TestCase
         $response->assertOk();
 
         Broadcast::assertNotBroadcasted(OrgCatalogPricingUpdated::class);
+    }
+
+    public function test_pos_catalog_pricing_revision_endpoint_tracks_price_updates(): void
+    {
+        $cashier = User::where('username', 'cashier')->firstOrFail();
+        Sanctum::actingAs($cashier);
+
+        $before = $this->getJson('/api/v1/pos/catalog-pricing-revision?since=0');
+        $before->assertOk();
+        $startRevision = (int) $before->json('revision');
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $product = Product::query()
+            ->where('organization_id', $admin->organization_id)
+            ->whereNull('deleted_at')
+            ->orderBy('product_code')
+            ->first();
+        $this->assertNotNull($product);
+
+        Sanctum::actingAs($admin);
+        $nextPrice = round(((float) $product->unit_price) + 2.25, 2);
+        $this->putJson('/api/v1/products/'.$product->product_code, [
+            'unit_price' => $nextPrice,
+        ])->assertOk();
+
+        Sanctum::actingAs($cashier);
+        $after = $this->getJson('/api/v1/pos/catalog-pricing-revision?since='.$startRevision);
+        $after->assertOk();
+        $after->assertJsonPath('changed', true);
+        $this->assertGreaterThan($startRevision, (int) $after->json('revision'));
+        $this->assertStringContainsString('has been updated from', (string) $after->json('message'));
+        $this->assertSame($product->product_code, $after->json('product_code'));
+    }
+
+    public function test_mobile_catalog_pricing_revision_endpoint_for_field_sales(): void
+    {
+        $fieldSales = User::where('username', 'field_sales_create_only')->first();
+        if (! $fieldSales) {
+            $this->markTestSkipped('field_sales_create_only user not seeded');
+        }
+
+        Sanctum::actingAs($fieldSales);
+
+        $before = $this->getJson('/api/v1/catalog/pricing-revision?since=0');
+        $before->assertOk();
+        $startRevision = (int) $before->json('revision');
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $product = Product::query()
+            ->where('organization_id', $admin->organization_id)
+            ->whereNull('deleted_at')
+            ->orderBy('product_code')
+            ->first();
+        $this->assertNotNull($product);
+
+        Sanctum::actingAs($admin);
+        $nextPrice = round(((float) $product->unit_price) + 1.5, 2);
+        $this->putJson('/api/v1/products/'.$product->product_code, [
+            'unit_price' => $nextPrice,
+        ])->assertOk();
+
+        Sanctum::actingAs($fieldSales);
+        $after = $this->getJson('/api/v1/catalog/pricing-revision?since='.$startRevision);
+        $after->assertOk();
+        $after->assertJsonPath('changed', true);
+        $this->assertGreaterThan($startRevision, (int) $after->json('revision'));
+        $this->assertStringContainsString('has been updated from', (string) $after->json('message'));
     }
 }

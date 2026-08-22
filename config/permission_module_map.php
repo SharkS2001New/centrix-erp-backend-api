@@ -24,6 +24,7 @@ return [
     'catalogue' => ['inventory', 'sales.backend', 'sales.pos', 'hospitality.bar_pos', 'hospitality.backend'],
     'pricing_tax' => ['inventory', 'sales.backend', 'sales.pos', 'accounting', 'hospitality.bar_pos', 'hospitality.backend'],
     'customers' => ['customers_suppliers', 'sales.backend', 'sales.mobile'],
+    'shop_debtors' => ['sales.backend', 'sales.pos', 'customers_suppliers'],
     'sales' => ['sales.backend', 'sales.dashboard', 'sales.pos'],
     'mobile_sales' => ['sales.mobile'],
     'mobile_driver' => ['distribution', 'sales.mobile'],

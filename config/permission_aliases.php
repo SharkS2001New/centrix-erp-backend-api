@@ -216,7 +216,6 @@ return [
     ],
     'customers.view' => [
         'customers.customers.view',
-        'customers.shop_debtors.view',
         'customers.statements.view',
         'mobile_sales.customers.view',
     ],

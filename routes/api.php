@@ -94,6 +94,7 @@ use App\Http\Controllers\Api\V1\SystemIssueReportController;
 use App\Http\Controllers\Api\V1\PlatformInvoiceController;
 use App\Http\Controllers\Api\V1\PlatformOrganizationCacheController;
 use App\Http\Controllers\Api\V1\PodRecordController;
+use App\Http\Controllers\Api\V1\PosCatalogPricingController;
 use App\Http\Controllers\Api\V1\PositionController;
 use App\Http\Controllers\Api\V1\PriceHistoryController;
 use App\Http\Controllers\Api\V1\ProductController;
@@ -251,6 +252,9 @@ Route::prefix('v1')->group(function () {
         Route::post('action-requests/{id}/approve', [InAppNotificationController::class, 'approveActionRequest']);
         Route::post('action-requests/{id}/reject', [InAppNotificationController::class, 'rejectActionRequest']);
         Route::post('action-requests/{id}/remind', [InAppNotificationController::class, 'remindActionRequest']);
+
+        Route::get('catalog/pricing-revision', PosCatalogPricingController::class)
+            ->middleware('erp.permission:sales.orders.create|pos.checkout.create|pos.terminal.view|mobile_sales.orders.create');
 
         Route::get('erp/capabilities', [ErpCapabilitiesController::class, 'show']);
         Route::get('erp/capabilities/version', [ErpCapabilitiesController::class, 'version']);
@@ -757,6 +761,8 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
 
         Route::middleware('erp.module:sales.pos')->group(function () {
+            Route::get('pos/catalog-pricing-revision', PosCatalogPricingController::class)
+                ->middleware('erp.permission:pos.till|pos.checkout.create|pos.terminal.view|mobile_sales.orders.create|sales.orders.create');
             Route::post('tills/{till}/close', [TillController::class, 'close'])
                 ->middleware('erp.permission:pos.till|pos.checkout.create|pos.terminal.view');
             Route::post('tills/{till}/reopen', [TillController::class, 'reopen'])

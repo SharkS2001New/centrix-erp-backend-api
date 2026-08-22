@@ -146,6 +146,8 @@ class HospitalityPosCatalogService
                 (string) $product->product_code,
                 (string) $product->product_name,
                 $user->id,
+                $prevUnit,
+                $nextPrice,
             );
         }
 

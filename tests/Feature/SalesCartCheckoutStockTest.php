@@ -860,6 +860,29 @@ class SalesCartCheckoutStockTest extends TestCase
         $this->assertEqualsWithDelta(2.0, (float) $retail['quantity'], 0.0001);
     }
 
+    public function test_pos_cart_combines_identical_sku_into_one_line(): void
+    {
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->assertCreated()->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 2,
+            'on_wholesale_retail' => 0,
+        ])->assertCreated()->assertJsonCount(1, 'lines');
+
+        $cart = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 2,
+            'on_wholesale_retail' => 0,
+        ])->assertCreated()->json();
+
+        $this->assertCount(1, $cart['lines'] ?? []);
+        $this->assertEqualsWithDelta(4.0, (float) ($cart['lines'][0]['quantity'] ?? 0), 0.0001);
+    }
+
     public function test_fresh_owned_cart_after_delete_returns_friendly_404_not_type_error(): void
     {
         $cartId = $this->postJson('/api/v1/sales/carts', [

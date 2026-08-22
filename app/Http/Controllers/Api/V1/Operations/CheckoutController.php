@@ -1447,12 +1447,14 @@ class CheckoutController extends Controller
         }
 
         $supersededId = $cart->superseded_sale_id ? (int) $cart->superseded_sale_id : null;
+        $heldOrderNum = $cart->held_order_num ? (int) $cart->held_order_num : null;
 
         return $allocator->withOrganizationLock($orgId, function () use (
             $allocator,
             $orgId,
             $requested,
             $supersededId,
+            $heldOrderNum,
             $user,
         ): int {
             $existing = Sale::query()
@@ -1487,8 +1489,7 @@ class CheckoutController extends Controller
                 // order_num — that left the original receipt live and a duplicate ticket.
                 $existingStatus = (string) ($existing->status ?? '');
                 $isParkedHold = in_array($existingStatus, ['held', 'draft'], true);
-                $cartClaimsHeld = $cart->held_order_num
-                    && (int) $cart->held_order_num === $requested;
+                $cartClaimsHeld = $heldOrderNum !== null && $heldOrderNum === $requested;
                 if (! $isParkedHold && $cartClaimsHeld && $supersededId === null) {
                     abort(
                         422,

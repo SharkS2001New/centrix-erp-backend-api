@@ -731,6 +731,8 @@ class ProductController extends BaseResourceController
                 (string) $model->product_code,
                 $model->product_name,
                 $request->user()?->id,
+                $prevUnit,
+                (float) $model->unit_price,
             );
         }
 

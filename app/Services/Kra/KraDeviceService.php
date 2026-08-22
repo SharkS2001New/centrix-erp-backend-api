@@ -320,7 +320,8 @@ class KraDeviceService
 
         return str_contains($haystack, 'THE SAME NAME')
             || str_contains($haystack, 'SAME NAME')
-            || str_contains($haystack, 'ALREADY REGISTERED');
+            || str_contains($haystack, 'ALREADY REGISTERED')
+            || str_contains($haystack, 'ALREADY ON THE KRA DEVICE');
     }
 
     protected function registrationSummaryMessage(int $registered, int $skipped): string
