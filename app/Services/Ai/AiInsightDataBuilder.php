@@ -113,6 +113,50 @@ class AiInsightDataBuilder
         ];
     }
 
+    /**
+     * Sales totals grouped by cashier for a date range (org-scoped).
+     *
+     * @return array{from_date: string, to_date: string, cashiers: list<array<string, mixed>>, currency: string}
+     */
+    public function salesByCashierForPeriod(Organization $organization, User $user, string $from, string $to): array
+    {
+        $orgId = (int) $organization->id;
+        $cashiers = [];
+
+        if (Schema::hasTable('sales')) {
+            $cashiers = DB::table('sales as s')
+                ->leftJoin('users as u', 'u.id', '=', 's.cashier_id')
+                ->where('s.organization_id', $orgId)
+                ->whereNotIn('s.status', ['cancelled', 'draft', 'held', 'expired'])
+                ->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) BETWEEN ? AND ?', [$from, $to])
+                ->selectRaw(
+                    's.cashier_id, '
+                    ."COALESCE(u.full_name, u.username, CONCAT('User #', s.cashier_id), 'Unassigned') as cashier_name, "
+                    .'ROUND(COALESCE(SUM(s.order_total), 0), 2) as gross_sales, '
+                    .'COUNT(*) as transactions'
+                )
+                ->groupBy('s.cashier_id', 'u.full_name', 'u.username')
+                ->orderByDesc('gross_sales')
+                ->limit(50)
+                ->get()
+                ->map(fn ($row) => [
+                    'cashier_id' => $row->cashier_id !== null ? (int) $row->cashier_id : null,
+                    'cashier_name' => (string) $row->cashier_name,
+                    'gross_sales' => round((float) $row->gross_sales, 2),
+                    'transactions' => (int) $row->transactions,
+                ])
+                ->all();
+        }
+
+        return [
+            'from_date' => $from,
+            'to_date' => $to,
+            'cashiers' => $cashiers,
+            'currency' => 'KES',
+            'note' => 'Actual recorded sales by cashier. This is not a sales target / expected quota unless your org defines targets separately.',
+        ];
+    }
+
     /** @return array<string, mixed> */
     public function salesBriefSlice(Organization $organization, User $user, int $lookbackDays = 7): array
     {

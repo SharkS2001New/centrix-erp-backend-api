@@ -48,8 +48,9 @@ class AiGeminiChatTest extends TestCase
             'enable_ai' => true,
             'enabled' => true,
             'provider' => 'gemini',
-            'api_key' => '',
+            'api_key' => 'test-gemini-key',
             'model' => 'gemini-3.7-flash',
+            'use_platform_gemini' => false,
         ]);
         $this->org->update(['module_settings' => $settings]);
         $this->org->refresh();

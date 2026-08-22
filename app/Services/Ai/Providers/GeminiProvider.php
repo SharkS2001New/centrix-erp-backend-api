@@ -12,7 +12,11 @@ use Illuminate\Support\Str;
 /**
  * Official Google Gemini generateContent API with function calling.
  *
+ * Gemini 2.5 / 3.x thinking models attach thoughtSignature on functionCall parts.
+ * Those signatures MUST be returned unchanged on the next turn or the API returns 400.
+ *
  * @see https://ai.google.dev/gemini-api/docs/function-calling
+ * @see https://ai.google.dev/gemini-api/docs/thought-signatures
  */
 class GeminiProvider implements AiProviderInterface
 {
@@ -38,28 +42,32 @@ class GeminiProvider implements AiProviderInterface
     public function continueWithToolResults(array $request): array
     {
         $contents = $this->buildContentsFromHistory($request['messages'] ?? []);
-        $modelParts = [];
-        foreach ($request['prior_tool_calls'] ?? [] as $call) {
-            $modelParts[] = [
-                'functionCall' => [
-                    'name' => $call['name'],
-                    'args' => (object) ($call['arguments'] ?? []),
-                ],
+
+        // Prefer the exact model content from the prior turn (preserves thoughtSignature).
+        $priorContent = $request['prior_model_content'] ?? null;
+        if (is_array($priorContent) && ! empty($priorContent['parts'])) {
+            $contents[] = [
+                'role' => 'model',
+                'parts' => $priorContent['parts'],
             ];
-        }
-        if ($modelParts !== []) {
-            $contents[] = ['role' => 'model', 'parts' => $modelParts];
+        } else {
+            $modelParts = $this->rebuildModelPartsFromToolCalls($request['prior_tool_calls'] ?? []);
+            if ($modelParts !== []) {
+                $contents[] = ['role' => 'model', 'parts' => $modelParts];
+            }
         }
 
         $fnParts = [];
         foreach ($request['tool_results'] ?? [] as $result) {
+            $payload = $result['result'] ?? new \stdClass;
+            if (is_array($payload) && $payload === []) {
+                $payload = new \stdClass;
+            }
+            // Gemini expects functionResponse.response to be the tool result object itself.
             $fnParts[] = [
                 'functionResponse' => [
-                    'name' => $result['name'],
-                    'response' => [
-                        'name' => $result['name'],
-                        'content' => $result['result'] ?? new \stdClass,
-                    ],
+                    'name' => (string) ($result['name'] ?? ''),
+                    'response' => is_array($payload) ? $this->jsonSafeObject($payload) : $payload,
                 ],
             ];
         }
@@ -91,7 +99,15 @@ class GeminiProvider implements AiProviderInterface
 
     /**
      * @param  array<string, mixed>  $payload
-     * @return array{text: ?string, tool_calls: list<array{id: string, name: string, arguments: array<string, mixed>}>, usage: array{input_tokens: int, output_tokens: int, total_tokens: int}, model: string}
+     * @return array{
+     *   text: ?string,
+     *   tool_calls: list<array{id: string, name: string, arguments: array<string, mixed>, thought_signature?: string}>,
+     *   usage: array{input_tokens: int, output_tokens: int, total_tokens: int},
+     *   model: string,
+     *   model_content?: array{role?: string, parts: list<array<string, mixed>>},
+     *   finish_reason?: ?string,
+     *   raw?: mixed
+     * }
      */
     protected function generate(array $payload, string $model): array
     {
@@ -134,12 +150,22 @@ class GeminiProvider implements AiProviderInterface
                 'model' => $model,
             ]);
 
-            if ($response->status() === 404 || str_contains(strtolower($providerMessage), 'not found')) {
+            $lower = strtolower($providerMessage);
+            if ($response->status() === 404 || str_contains($lower, 'not found')) {
                 throw new AiProviderException(
-                    'Gemini model "'.$model.'" was not found. Set a valid model (e.g. gemini-2.0-flash) under AI settings or GEMINI_MODEL.',
+                    'Gemini model "'.$model.'" was not found. Set a valid model under AI settings or GEMINI_MODEL.',
                     'model_not_found',
                     404,
                     false,
+                );
+            }
+
+            if (str_contains($lower, 'thought') && str_contains($lower, 'signature')) {
+                throw new AiProviderException(
+                    'The AI request could not continue after loading Centrix data. Please try again.',
+                    'thought_signature',
+                    400,
+                    true,
                 );
             }
 
@@ -149,7 +175,7 @@ class GeminiProvider implements AiProviderInterface
                     'Gemini request failed: '.$detail,
                     'provider_error',
                     $response->status(),
-                    false,
+                    $response->status() >= 500 || $response->status() === 429,
                 );
             }
 
@@ -166,13 +192,50 @@ class GeminiProvider implements AiProviderInterface
 
     /**
      * @param  array<string, mixed>  $json
-     * @return array{text: ?string, tool_calls: list<array{id: string, name: string, arguments: array<string, mixed>}>, usage: array{input_tokens: int, output_tokens: int, total_tokens: int}, model: string}
+     * @return array{
+     *   text: ?string,
+     *   tool_calls: list<array{id: string, name: string, arguments: array<string, mixed>, thought_signature?: string}>,
+     *   usage: array{input_tokens: int, output_tokens: int, total_tokens: int},
+     *   model: string,
+     *   model_content?: array{role?: string, parts: list<array<string, mixed>>},
+     *   finish_reason?: ?string,
+     *   raw?: mixed
+     * }
      */
     protected function parseGenerateResponse(array $json, string $model): array
     {
-        $parts = $json['candidates'][0]['content']['parts'] ?? [];
-        if (! is_array($parts)) {
-            $parts = [];
+        $candidate = is_array($json['candidates'][0] ?? null) ? $json['candidates'][0] : [];
+        $finishReason = isset($candidate['finishReason']) ? (string) $candidate['finishReason'] : null;
+        $content = is_array($candidate['content'] ?? null) ? $candidate['content'] : [];
+        $parts = is_array($content['parts'] ?? null) ? $content['parts'] : [];
+
+        if ($finishReason === 'MALFORMED_FUNCTION_CALL') {
+            Log::warning('Gemini malformed function call', ['model' => $model, 'raw' => $json]);
+            throw new AiProviderException(
+                'The AI could not format a data request correctly. Please try asking again more simply.',
+                'malformed_function_call',
+                502,
+                true,
+            );
+        }
+
+        if ($finishReason === 'MAX_TOKENS') {
+            Log::warning('Gemini hit max tokens', ['model' => $model]);
+            throw new AiProviderException(
+                'The AI response was cut off. Please try a shorter question.',
+                'max_tokens',
+                502,
+                true,
+            );
+        }
+
+        if (in_array($finishReason, ['SAFETY', 'RECITATION', 'BLOCKLIST', 'PROHIBITED_CONTENT'], true)) {
+            throw new AiProviderException(
+                'The AI could not answer that request. Please rephrase your question.',
+                'blocked',
+                422,
+                false,
+            );
         }
 
         $textChunks = [];
@@ -181,7 +244,11 @@ class GeminiProvider implements AiProviderInterface
             if (! is_array($part)) {
                 continue;
             }
-            if (isset($part['text']) && is_string($part['text'])) {
+            // Skip thought-summary text parts; keep signatures on functionCall parts.
+            if (! empty($part['thought']) && isset($part['text'])) {
+                continue;
+            }
+            if (isset($part['text']) && is_string($part['text']) && $part['text'] !== '') {
                 $textChunks[] = $part['text'];
             }
             if (isset($part['functionCall']) && is_array($part['functionCall'])) {
@@ -191,11 +258,16 @@ class GeminiProvider implements AiProviderInterface
                     $args = [];
                 }
                 if ($name !== '') {
-                    $toolCalls[] = [
+                    $call = [
                         'id' => 'call_'.Str::lower(Str::random(12)),
                         'name' => $name,
                         'arguments' => $args,
                     ];
+                    $signature = $part['thoughtSignature'] ?? $part['thought_signature'] ?? null;
+                    if (is_string($signature) && $signature !== '') {
+                        $call['thought_signature'] = $signature;
+                    }
+                    $toolCalls[] = $call;
                 }
             }
         }
@@ -207,6 +279,14 @@ class GeminiProvider implements AiProviderInterface
 
         $text = trim(implode('', $textChunks));
 
+        $modelContent = null;
+        if ($parts !== []) {
+            $modelContent = [
+                'role' => (string) ($content['role'] ?? 'model'),
+                'parts' => $parts,
+            ];
+        }
+
         return [
             'text' => $text !== '' ? $text : null,
             'tool_calls' => $toolCalls,
@@ -216,6 +296,8 @@ class GeminiProvider implements AiProviderInterface
                 'total_tokens' => $total,
             ],
             'model' => $model,
+            'model_content' => $modelContent,
+            'finish_reason' => $finishReason,
             'raw' => $json,
         ];
     }
@@ -262,10 +344,8 @@ class GeminiProvider implements AiProviderInterface
             if ($content === '') {
                 continue;
             }
-            // Gemini uses "user" and "model" (not assistant).
             $geminiRole = $role === 'assistant' || $role === 'model' ? 'model' : 'user';
             if ($role === 'system') {
-                // System messages already go in system_instruction; skip if duplicated.
                 continue;
             }
             $contents[] = [
@@ -285,6 +365,33 @@ class GeminiProvider implements AiProviderInterface
     }
 
     /**
+     * Fallback when prior_model_content is missing (should rarely happen).
+     *
+     * @param  list<array{id?: string, name: string, arguments?: array<string, mixed>, thought_signature?: string}>  $toolCalls
+     * @return list<array<string, mixed>>
+     */
+    protected function rebuildModelPartsFromToolCalls(array $toolCalls): array
+    {
+        $modelParts = [];
+        foreach ($toolCalls as $index => $call) {
+            $part = [
+                'functionCall' => [
+                    'name' => $call['name'],
+                    'args' => (object) ($call['arguments'] ?? []),
+                ],
+            ];
+            $signature = $call['thought_signature'] ?? null;
+            if (is_string($signature) && $signature !== '') {
+                // Gemini REST uses camelCase thoughtSignature.
+                $part['thoughtSignature'] = $signature;
+            }
+            $modelParts[] = $part;
+        }
+
+        return $modelParts;
+    }
+
+    /**
      * @param  list<array<string, mixed>>  $tools
      * @return list<array<string, mixed>>
      */
@@ -296,16 +403,35 @@ class GeminiProvider implements AiProviderInterface
             if ($name === '') {
                 continue;
             }
+            $parameters = $tool['parameters'] ?? [
+                'type' => 'object',
+                'properties' => new \stdClass,
+            ];
+            if (is_array($parameters) && ($parameters['properties'] ?? null) === []) {
+                $parameters['properties'] = new \stdClass;
+            }
             $out[] = [
                 'name' => $name,
                 'description' => (string) ($tool['description'] ?? ''),
-                'parameters' => $tool['parameters'] ?? [
-                    'type' => 'object',
-                    'properties' => new \stdClass,
-                ],
+                'parameters' => $parameters,
             ];
         }
 
         return $out;
+    }
+
+    /**
+     * Ensure associative arrays encode as JSON objects for Gemini.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>|\stdClass
+     */
+    protected function jsonSafeObject(array $data): array|\stdClass
+    {
+        if ($data === []) {
+            return new \stdClass;
+        }
+
+        return $data;
     }
 }

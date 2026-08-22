@@ -883,11 +883,9 @@ class OrganizationPlatformConfigService
             unset($data['enabled'], $data['api_key'], $data['model'], $data['base_url'], $data['provider']);
         }
 
-        $ai = $gate->moduleSettings('ai');
-        if (! empty($ai['use_platform_gemini'])) {
-            // Platform Gemini key is authoritative — org managers cannot override provider/credentials.
-            unset($data['api_key'], $data['provider'], $data['base_url'], $data['model']);
-        }
+        // Platform selects free Gemini for the org; tenants may still save their own
+        // API key/provider which takes precedence at runtime.
+        unset($data['use_platform_gemini'], $data['enable_ai']);
 
         return $data;
     }

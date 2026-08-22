@@ -25,9 +25,10 @@ interface AiProviderInterface
      * }  $request
      * @return array{
      *   text: ?string,
-     *   tool_calls: list<array{id: string, name: string, arguments: array<string, mixed>}>,
+     *   tool_calls: list<array{id: string, name: string, arguments: array<string, mixed>, thought_signature?: string}>,
      *   usage: array{input_tokens: int, output_tokens: int, total_tokens: int},
      *   model: string,
+     *   model_content?: array{role?: string, parts: list<array<string, mixed>>},
      *   raw?: mixed,
      * }
      */
@@ -40,7 +41,8 @@ interface AiProviderInterface
      *   system: string,
      *   messages: list<array{role: string, content: string}>,
      *   tools?: list<array<string, mixed>>,
-     *   prior_tool_calls: list<array{id: string, name: string, arguments: array<string, mixed>}>,
+     *   prior_tool_calls: list<array{id: string, name: string, arguments: array<string, mixed>, thought_signature?: string}>,
+     *   prior_model_content?: array{role?: string, parts: list<array<string, mixed>>}|null,
      *   tool_results: list<array{id: string, name: string, result: array<string, mixed>}>,
      *   model?: string,
      *   max_output_tokens?: int,
@@ -48,9 +50,10 @@ interface AiProviderInterface
      * }  $request
      * @return array{
      *   text: ?string,
-     *   tool_calls: list<array{id: string, name: string, arguments: array<string, mixed>}>,
+     *   tool_calls: list<array{id: string, name: string, arguments: array<string, mixed>, thought_signature?: string}>,
      *   usage: array{input_tokens: int, output_tokens: int, total_tokens: int},
      *   model: string,
+     *   model_content?: array{role?: string, parts: list<array<string, mixed>>},
      *   raw?: mixed,
      * }
      */

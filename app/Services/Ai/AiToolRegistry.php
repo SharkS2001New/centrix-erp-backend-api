@@ -4,6 +4,7 @@ namespace App\Services\Ai;
 
 use App\Models\User;
 use App\Services\Ai\Tools\AiToolInterface;
+use App\Services\Ai\Tools\GetSalesByCashierTool;
 use App\Services\Ai\Tools\GetSalesSummaryTool;
 use InvalidArgumentException;
 
@@ -14,6 +15,7 @@ class AiToolRegistry
 
     public function __construct(
         protected GetSalesSummaryTool $getSalesSummary,
+        protected GetSalesByCashierTool $getSalesByCashier,
     ) {}
 
     /**
@@ -89,6 +91,7 @@ class AiToolRegistry
 
         $registered = [
             $this->getSalesSummary,
+            $this->getSalesByCashier,
             // Incremental tools: get_stock_summary, get_customer_balance, …
         ];
 
