@@ -384,4 +384,61 @@ class ShopDebtorsSalesIndexTest extends TestCase
         )->pluck('id')->map(fn ($id) => (int) $id)->all();
         $this->assertNotContains($sale->id, $narrowIds);
     }
+
+    public function test_shop_debtors_includes_pos_paid_order_after_convert_to_unpaid_for_debtor(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $org = \App\Models\Organization::query()->findOrFail($admin->organization_id);
+        $settings = $org->module_settings ?? [];
+        $sales = is_array($settings['sales'] ?? null) ? $settings['sales'] : [];
+        $sales['convert_to_unpaid_statuses'] = ['paid', 'pending_payment', 'completed', 'mobile', 'whatsapp'];
+        $settings['sales'] = $sales;
+        $org->module_settings = $settings;
+        $org->save();
+
+        $suffix = random_int(500000000, 599999999);
+        Customer::query()->create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'customer_num' => $suffix,
+            'customer_name' => 'Debtor Convert '.$suffix,
+            'customer_type' => 'debtor',
+            'created_by' => $admin->id,
+        ]);
+
+        $placedAt = now()->subDays(2);
+        $sale = Sale::query()->create([
+            'order_num' => $suffix,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'cashier_id' => $admin->id,
+            'channel' => 'pos',
+            'order_source' => 'pos',
+            'customer_num' => $suffix,
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'payment_method_code' => 'CASH',
+            'is_credit_sale' => 0,
+            'order_total' => 618100,
+            'amount_paid' => 618100,
+            'total_vat' => 0,
+            'archived' => 0,
+            'created_at' => $placedAt,
+            'completed_at' => $placedAt,
+        ]);
+
+        $this->postJson("/api/v1/sales/{$sale->id}/convert-to-unpaid")->assertOk();
+
+        $from = now()->subDays(6)->toDateString();
+        $to = now()->toDateString();
+        $unpaidIds = collect(
+            $this->getJson(
+                "/api/v1/sales?shop_debtors=1&filter[payment_status]=unpaid&from_date={$from}&to_date={$to}&date_field=placed&per_page=200",
+            )->assertOk()->json('data')
+        )->pluck('id')->map(fn ($id) => (int) $id)->all();
+
+        $this->assertContains($sale->id, $unpaidIds);
+    }
 }

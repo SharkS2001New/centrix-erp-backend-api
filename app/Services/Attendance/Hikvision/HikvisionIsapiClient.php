@@ -26,6 +26,7 @@ class HikvisionIsapiClient
     public function __construct(
         protected AttendanceClockDevice $device,
         protected ?HikvisionAgentBridge $agentBridge = null,
+        protected ?int $agentWaitSecondsOverride = null,
     ) {
     }
 
@@ -971,7 +972,15 @@ class HikvisionIsapiClient
         if ($bridge !== null && $bridge->shouldUseAgent($this->device)) {
             $this->lastRequestViaAgent = true;
 
-            return $bridge->executeViaAgent($this->device, $method, $path, $body);
+            return $bridge->executeViaAgent(
+                $this->device,
+                $method,
+                $path,
+                $body,
+                'json',
+                false,
+                $this->agentWaitSecondsOverride,
+            );
         }
 
         try {
@@ -987,7 +996,15 @@ class HikvisionIsapiClient
             ) {
                 $this->lastRequestViaAgent = true;
 
-                return $bridge->executeViaAgent($this->device, $method, $path, $body, 'json', true);
+                return $bridge->executeViaAgent(
+                    $this->device,
+                    $method,
+                    $path,
+                    $body,
+                    'json',
+                    true,
+                    $this->agentWaitSecondsOverride,
+                );
             }
 
             throw $e;

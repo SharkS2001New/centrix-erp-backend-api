@@ -30,6 +30,12 @@ class HikvisionAgentBridge
 
     public const COMMAND_WAIT_SECONDS = 120;
 
+    /** Lightweight round-trip for Test connection — stay under typical HTTP gateway timeouts. */
+    public const PING_WAIT_SECONDS = 20;
+
+    /** Browser refresh / live counts — one ISAPI call must finish before the client gives up. */
+    public const INTERACTIVE_WAIT_SECONDS = 45;
+
     /** If the agent checked in within this window, Test connection skips a blocking PING. */
     public const RECENT_CHECKIN_GRACE_SECONDS = 7200;
 
@@ -148,7 +154,15 @@ class HikvisionAgentBridge
         }
 
         try {
-            $response = $this->executeViaAgent($device, 'PING', self::PING_PATH, null, 'json', true);
+            $response = $this->executeViaAgent(
+                $device,
+                'PING',
+                self::PING_PATH,
+                null,
+                'json',
+                true,
+                self::PING_WAIT_SECONDS,
+            );
             $fresh = $this->agentStatus($device->fresh() ?? $device);
 
             if (! $response->successful()) {
@@ -229,6 +243,7 @@ class HikvisionAgentBridge
         ?array $body = null,
         string $accept = 'json',
         bool $allowStale = false,
+        ?int $waitSecondsOverride = null,
     ): HikvisionIsapiResponse {
         $canProxy = $this->isAgentOnline($device)
             || $this->hasRecentCheckIn($device)
@@ -246,7 +261,7 @@ class HikvisionAgentBridge
 
         $this->assertAllowedPath($path);
 
-        $waitSeconds = $this->commandWaitSeconds($device);
+        $waitSeconds = $waitSecondsOverride ?? $this->commandWaitSeconds($device);
         $commandId = (string) Str::uuid();
         $now = AppTimezone::now();
         if (function_exists('set_time_limit')) {

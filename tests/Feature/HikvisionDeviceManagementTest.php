@@ -1248,7 +1248,10 @@ class HikvisionDeviceManagementTest extends TestCase
             ->andReturn(['fingerprints' => [['employeeNo' => '0003']], 'total' => 1]);
 
         $service = \Mockery::mock(HikvisionService::class)->makePartial();
-        $service->shouldReceive('client')->once()->with($device)->andReturn($client);
+        $service->shouldReceive('client')
+            ->once()
+            ->withArgs(fn ($dev, $interactive = false) => $dev === $device && $interactive === true)
+            ->andReturn($client);
 
         $result = $service->searchFingerprints($device, ['maxResults' => 10]);
 

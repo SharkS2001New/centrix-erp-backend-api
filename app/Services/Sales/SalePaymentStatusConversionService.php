@@ -2,6 +2,7 @@
 
 namespace App\Services\Sales;
 
+use App\Models\Customer;
 use App\Models\PaymentMethod;
 use App\Models\Sale;
 use App\Models\SalePayment;
@@ -153,12 +154,17 @@ class SalePaymentStatusConversionService
                 'payment_status' => 'unpaid',
             ];
 
-            // Converting a customer sale to unpaid creates a shop receivable — mark it
-            // as credit so Shop Debtors / A/R treat it like a credit checkout, not a
-            // cash sale that merely had tenders cleared.
+            // Shop receivable: mark credit when the sale is tied to a regular/debtor customer.
             if ($sale->customer_num) {
-                $updates['is_credit_sale'] = 1;
-                $updates['payment_method_code'] = 'CREDIT';
+                $customer = Customer::query()
+                    ->where('organization_id', $sale->organization_id)
+                    ->where('customer_num', $sale->customer_num)
+                    ->first();
+                $customerType = strtolower(trim((string) ($customer?->customer_type ?? '')));
+                if ($customerType === '' || in_array($customerType, ['regular', 'debtor'], true)) {
+                    $updates['is_credit_sale'] = 1;
+                    $updates['payment_method_code'] = 'CREDIT';
+                }
             }
 
             if (

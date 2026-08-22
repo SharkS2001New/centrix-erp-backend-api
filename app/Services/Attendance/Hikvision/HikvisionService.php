@@ -23,7 +23,7 @@ class HikvisionService
     ) {
     }
 
-    public function client(AttendanceClockDevice $device): HikvisionIsapiClient
+    public function client(AttendanceClockDevice $device, bool $interactive = false): HikvisionIsapiClient
     {
         if ($device->provider !== 'hikvision' || ! filled($device->host)) {
             throw new RuntimeException('This device is not configured as a Hikvision terminal.');
@@ -32,7 +32,9 @@ class HikvisionService
             throw new RuntimeException('Hikvision device password is not configured.');
         }
 
-        return new HikvisionIsapiClient($device, $this->agentBridge);
+        $waitOverride = $interactive ? HikvisionAgentBridge::INTERACTIVE_WAIT_SECONDS : null;
+
+        return new HikvisionIsapiClient($device, $this->agentBridge, $waitOverride);
     }
 
     /**
@@ -368,7 +370,7 @@ class HikvisionService
 
         if ($refreshCounts) {
             try {
-                $client = $this->client($device);
+                $client = $this->client($device, interactive: true);
                 if ($caps['features']['users'] ?? false) {
                     $counts['users'] = $client->getUserCount();
                 }
@@ -430,7 +432,7 @@ class HikvisionService
     {
         $this->assertFeature($device, 'users');
 
-        return $this->client($device)->searchUsers($cond);
+        return $this->client($device, interactive: true)->searchUsers($cond);
     }
 
     /**
@@ -510,7 +512,7 @@ class HikvisionService
     {
         // Cached capabilities often mark fingerprints false because FingerPrint/capabilities
         // 404s on DS-K1T terminals that still support FingerPrintInfo Search.
-        return $this->client($device)->searchFingerprints($cond);
+        return $this->client($device, interactive: true)->searchFingerprints($cond);
     }
 
     /**
@@ -636,7 +638,7 @@ class HikvisionService
     public function syncEmployeesFromDevice(AttendanceClockDevice $device): array
     {
         $this->assertFeature($device, 'users');
-        $search = $this->client($device)->searchUsers(['maxResults' => 200]);
+        $search = $this->client($device, interactive: true)->searchUsers(['maxResults' => 200]);
         $orgId = (int) $device->organization_id;
 
         $mappedNos = HikvisionEmployeeMapping::query()
