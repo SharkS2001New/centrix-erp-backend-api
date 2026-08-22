@@ -762,6 +762,9 @@ return [
             'model' => '',
             'api_key' => '',
             'base_url' => '',
+            'gemini_api_key' => '',
+            'gemini_model' => '',
+            'gemini_base_url' => '',
             'insights' => [
                 'enabled' => true,
                 'channels' => [

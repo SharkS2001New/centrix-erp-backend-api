@@ -159,9 +159,7 @@ class AiSettingsResolver
         $allowed = ['openai', 'gemini'];
         $out['provider'] = in_array($provider, $allowed, true) ? $provider : 'openai';
         foreach (['model', 'api_key', 'base_url', 'gemini_api_key', 'gemini_model', 'gemini_base_url'] as $key) {
-            if (array_key_exists($key, $out)) {
-                $out[$key] = trim((string) ($out[$key] ?? ''));
-            }
+            $out[$key] = trim((string) ($out[$key] ?? ''));
         }
         unset($out['use_platform_key']);
         $out['insights'] = self::normalizeInsights(
@@ -389,9 +387,11 @@ class AiSettingsResolver
             'settings' => $settings,
             'available' => $runtime !== null,
             'gemini_available' => $gemini !== null,
-            'model' => $runtime['model'] ?? ($settings['model'] ?: config('ai.defaults.model')),
+            'model' => $runtime['model']
+                ?? (($settings['model'] ?? '') !== '' ? $settings['model'] : config('ai.defaults.model')),
             'provider' => $settings['provider'] ?? 'openai',
-            'gemini_model' => $gemini['model'] ?? ($settings['gemini_model'] ?: config('ai.gemini.model')),
+            'gemini_model' => (is_array($gemini) ? ($gemini['model'] ?? '') : '')
+                ?: (($settings['gemini_model'] ?? '') !== '' ? $settings['gemini_model'] : config('ai.gemini.model')),
         ];
     }
 
@@ -491,11 +491,15 @@ class AiSettingsResolver
             'available' => $runtime !== null,
             'use_platform_gemini' => (bool) ($settings['use_platform_gemini'] ?? false),
             'platform_gemini_configured' => self::platformGeminiConfigured(),
-            'model' => $runtime['model'] ?? ($settings['model'] ?: (
-                ($settings['provider'] ?? '') === 'gemini' || ! empty($settings['use_platform_gemini'])
-                    ? config('ai.gemini.model')
-                    : config('ai.defaults.model')
-            )),
+            'model' => $runtime['model'] ?? (
+                ($settings['model'] ?? '') !== ''
+                    ? $settings['model']
+                    : (
+                        ($settings['provider'] ?? '') === 'gemini' || ! empty($settings['use_platform_gemini'])
+                            ? config('ai.gemini.model')
+                            : config('ai.defaults.model')
+                    )
+            ),
             'provider' => $runtime['provider'] ?? ($settings['provider'] ?? config('ai.provider', 'openai')),
         ];
     }
