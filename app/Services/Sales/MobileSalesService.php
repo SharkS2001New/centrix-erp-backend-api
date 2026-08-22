@@ -186,8 +186,10 @@ class MobileSalesService
             // Print / collect still follow configured workflow stages (non-mutating).
             $gate = $this->erp->gateForUser($user);
             $workflow = OrderWorkflowService::forGate($gate);
+            $checkout = app(MobileCheckoutSettings::class);
+            $salesSettings = $gate->moduleSettings('sales');
             $cachedList['data'] = collect($cachedList['data'] ?? [])
-                ->map(function (array $row) use ($workflow) {
+                ->map(function (array $row) use ($workflow, $checkout, $salesSettings) {
                     $status = (string) ($row['status'] ?? '');
                     $channel = (string) ($row['channel'] ?? 'mobile');
 
@@ -202,7 +204,7 @@ class MobileSalesService
                             $status,
                             $channel,
                             (string) ($row['payment_status'] ?? ''),
-                        ),
+                        ) && $checkout->allowsMobilePostOrderPaymentCollection($salesSettings, $channel),
                         'can_convert_to_paid' => $workflow->canConvertToPaidForOrder(
                             $status,
                             $channel,
@@ -624,6 +626,9 @@ class MobileSalesService
         $workflow = OrderWorkflowService::forGate($gate);
         $status = (string) $sale->status;
         $channel = $sale->channel ?: 'mobile';
+        $balanceDue = round((float) $sale->order_total - (float) ($sale->amount_paid ?? 0), 2);
+        $checkout = app(MobileCheckoutSettings::class);
+        $salesSettings = $gate->moduleSettings('sales');
 
         return array_merge(
             [
@@ -636,7 +641,9 @@ class MobileSalesService
                     $status,
                     $channel,
                     (string) ($sale->payment_status ?? ''),
-                ) && round((float) $sale->order_total - (float) ($sale->amount_paid ?? 0), 2) > 0.01,
+                )
+                    && $balanceDue > 0.01
+                    && $checkout->allowsMobilePostOrderPaymentCollection($salesSettings, $channel),
                 'can_convert_to_paid' => $workflow->canConvertToPaidForOrder(
                     $status,
                     $channel,
@@ -1307,8 +1314,17 @@ class MobileSalesService
             ]);
         }
 
-        $amount = round((float) ($data['amount'] ?? 0), 2);
         $salesSettings = $gate->moduleSettings('sales');
+        if (! app(MobileCheckoutSettings::class)->allowsMobilePostOrderPaymentCollection(
+            $salesSettings,
+            (string) ($sale->channel ?: 'mobile'),
+        )) {
+            throw ValidationException::withMessages([
+                'sale_id' => 'Collect payment is disabled for this organization on the mobile app.',
+            ]);
+        }
+
+        $amount = round((float) ($data['amount'] ?? 0), 2);
         $allowPartial = ! empty($salesSettings['allow_credit_pay_now']);
         $balanceDue = max(0, round((float) $sale->order_total - (float) $sale->amount_paid, 2));
 

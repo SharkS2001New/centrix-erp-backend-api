@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\PlatformSubscription;
 use App\Models\Sale;
 use App\Models\User;
+use App\Services\Sales\MobileCheckoutSettings;
 use Illuminate\Support\Facades\Hash;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
@@ -1569,6 +1570,7 @@ class MobileSalesApiTest extends TestCase
     public function test_mobile_order_partial_payment_reduces_balance_due(): void
     {
         $rep = $this->makeMobileUser(['username' => 'mobile_pay_'.uniqid()]);
+        $this->setMobileCheckoutMode($rep, MobileCheckoutSettings::MODE_PAYMENT);
         $template = Sale::query()->where('channel', 'mobile')->firstOrFail();
         $method = \App\Models\PaymentMethod::query()
             ->where('organization_id', $rep->organization_id)
@@ -1616,6 +1618,49 @@ class MobileSalesApiTest extends TestCase
             ->assertJsonPath('amount_paid', 400)
             ->assertJsonPath('balance_due', 600)
             ->assertJsonPath('payment_status', 'partial');
+    }
+
+    public function test_mobile_collect_payment_hidden_when_checkout_is_save_only(): void
+    {
+        $rep = $this->makeMobileUser(['username' => 'mobile_save_only_'.uniqid()]);
+        $this->setMobileCheckoutMode($rep, MobileCheckoutSettings::MODE_SAVE_ONLY);
+        $template = Sale::query()->where('channel', 'mobile')->firstOrFail();
+        $method = \App\Models\PaymentMethod::query()
+            ->where('organization_id', $rep->organization_id)
+            ->where('is_active', 1)
+            ->firstOrFail();
+
+        $sale = Sale::create([
+            'order_num' => 97003,
+            'branch_id' => $template->branch_id,
+            'organization_id' => $template->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $rep->id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $template->route_id,
+            'status' => 'unpaid',
+            'total_vat' => 0,
+            'order_total' => 1000,
+            'payment_status' => 'unpaid',
+            'amount_paid' => 0,
+            'is_credit_sale' => 1,
+            'stock_balanced' => 1,
+        ]);
+
+        $token = $this->loginMobile($rep);
+
+        $this->withToken($token)
+            ->getJson("/api/v1/mobile/orders/{$sale->id}")
+            ->assertOk()
+            ->assertJsonPath('can_collect_payment', false);
+
+        $this->withToken($token)
+            ->postJson("/api/v1/mobile/orders/{$sale->id}/payments", [
+                'payment_method_id' => $method->id,
+                'amount' => 400,
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['sale_id']);
     }
 
     protected function loginMobile(User $user): string

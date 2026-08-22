@@ -46,4 +46,29 @@ class MobileCheckoutSettingsTest extends TestCase
         $this->assertSame('CASH', $input['payment_method_code']);
         $this->assertArrayNotHasKey('save_only', $input);
     }
+
+    public function test_post_order_payment_collection_only_in_payment_mode(): void
+    {
+        $service = new MobileCheckoutSettings;
+        $settings = ['mobile_checkout_mode' => MobileCheckoutSettings::MODE_PAYMENT];
+
+        $this->assertTrue(
+            $service->allowsMobilePostOrderPaymentCollection($settings, 'mobile'),
+        );
+        $this->assertFalse(
+            $service->allowsMobilePostOrderPaymentCollection(
+                ['mobile_checkout_mode' => MobileCheckoutSettings::MODE_SAVE_ONLY],
+                'mobile',
+            ),
+        );
+        $this->assertFalse(
+            $service->allowsMobilePostOrderPaymentCollection(
+                ['mobile_checkout_mode' => MobileCheckoutSettings::MODE_ASK],
+                'mobile',
+            ),
+        );
+        $this->assertFalse(
+            $service->allowsMobilePostOrderPaymentCollection($settings, 'pos'),
+        );
+    }
 }

@@ -99,4 +99,17 @@ class MobileCheckoutSettings
         return $channel === 'mobile'
             && $this->mode($salesSettings) === self::MODE_PAYMENT;
     }
+
+    /**
+     * Mobile reps may record payment against an existing order only when checkout
+     * is configured for payment at checkout (not save-order-only or ask-each-time).
+     *
+     * @param  array<string, mixed>  $salesSettings
+     */
+    public function allowsMobilePostOrderPaymentCollection(
+        array $salesSettings,
+        string $channel,
+    ): bool {
+        return $this->requiresPaymentAtCheckout($salesSettings, $channel);
+    }
 }
