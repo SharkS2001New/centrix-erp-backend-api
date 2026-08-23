@@ -81,6 +81,36 @@ class GeminiProviderTest extends TestCase
         }
     }
 
+    public function test_invalid_api_key_on_400_maps_to_unauthorized(): void
+    {
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::response([
+                'error' => [
+                    'code' => 400,
+                    'message' => 'API key not valid. Please pass a valid API key.',
+                    'status' => 'INVALID_ARGUMENT',
+                    'details' => [[
+                        '@type' => 'type.googleapis.com/google.rpc.ErrorInfo',
+                        'reason' => 'API_KEY_INVALID',
+                    ]],
+                ],
+            ], 400),
+        ]);
+
+        $provider = new GeminiProvider('bad-key', 'gemini-3.6-flash');
+
+        try {
+            $provider->chat([
+                'system' => 'x',
+                'messages' => [['role' => 'user', 'content' => 'y']],
+            ]);
+            $this->fail('Expected AiProviderException');
+        } catch (AiProviderException $e) {
+            $this->assertSame('invalid_api_key', $e->codeKey);
+            $this->assertStringNotContainsString('bad-key', $e->getMessage());
+        }
+    }
+
     public function test_timeout_maps_to_friendly_error(): void
     {
         Http::fake(function () {

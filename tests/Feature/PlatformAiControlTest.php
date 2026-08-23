@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Organization;
 use App\Models\User;
+use Illuminate\Support\Facades\Http;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
@@ -242,5 +243,71 @@ class PlatformAiControlTest extends TestCase
             ->assertJsonPath('credential_source', 'platform_openai')
             ->assertJsonPath('free_ai_provider', 'openai')
             ->assertJsonPath('provider', 'openai');
+    }
+
+    public function test_platform_tools_use_gemini_when_enabled_without_openai(): void
+    {
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $platformOrg = Organization::query()
+            ->where('company_code', config('erp.platform_company_code', 'PLATFORM'))
+            ->firstOrFail();
+
+        $moduleSettings = $platformOrg->module_settings ?? [];
+        $moduleSettings['platform_ai_training'] = [
+            'enabled' => true,
+            'free_ai_provider' => 'gemini',
+            'gemini_api_key' => 'AIza-platform-tools-gemini',
+            'gemini_model' => 'gemini-3.6-flash',
+            'api_key' => '',
+        ];
+        $platformOrg->update(['module_settings' => $moduleSettings]);
+        \App\Services\Ai\AiSettingsResolver::platformOrganization(refresh: true);
+
+        $runtime = \App\Services\Ai\AiSettingsResolver::resolveRuntimeForPlatformTraining();
+        $this->assertNotNull($runtime);
+        $this->assertSame('gemini', $runtime['provider']);
+        $this->assertSame('AIza-platform-tools-gemini', $runtime['api_key']);
+        $this->assertSame('gemini-3.6-flash', $runtime['model']);
+
+        $this->getJson('/api/v1/admin/ai-training/settings')
+            ->assertOk()
+            ->assertJsonPath('available', true)
+            ->assertJsonPath('tools_available', true)
+            ->assertJsonPath('provider', 'gemini')
+            ->assertJsonPath('free_ai_provider', 'gemini');
+    }
+
+    public function test_platform_can_test_gemini_credentials(): void
+    {
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::response([
+                'candidates' => [[
+                    'content' => [
+                        'parts' => [['text' => 'Hello, Centrix ERP!']],
+                    ],
+                    'finishReason' => 'STOP',
+                ]],
+                'usageMetadata' => [
+                    'promptTokenCount' => 8,
+                    'candidatesTokenCount' => 6,
+                    'totalTokenCount' => 14,
+                ],
+            ], 200),
+        ]);
+
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $this->postJson('/api/v1/admin/ai-training/test-credentials', [
+            'provider' => 'gemini',
+            'gemini_api_key' => 'AIza-test-live-key',
+            'gemini_model' => 'gemini-3.6-flash',
+        ])->assertOk()
+            ->assertJsonPath('ok', true)
+            ->assertJsonPath('provider', 'gemini')
+            ->assertJsonPath('model', 'gemini-3.6-flash')
+            ->assertJsonPath('reply', 'Hello, Centrix ERP!');
     }
 }

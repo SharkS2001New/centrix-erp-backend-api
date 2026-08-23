@@ -77,6 +77,36 @@ class PlatformAiTrainingTest extends TestCase
         $this->assertSame('sk-test-platform-key-updated', $fresh['api_key']);
     }
 
+    public function test_super_admin_can_save_platform_gemini_api_key(): void
+    {
+        $this->actingAs($this->superAdmin, 'sanctum')
+            ->patchJson('/api/v1/admin/ai-training/settings', [
+                'gemini_api_key' => 'AIza-platform-gemini-test-key',
+                'gemini_model' => 'gemini-3.6-flash',
+                'free_ai_provider' => 'gemini',
+            ])
+            ->assertOk()
+            ->assertJsonPath('settings.gemini_api_key_set', true)
+            ->assertJsonPath('settings.gemini_api_key_hint', '••••-key')
+            ->assertJsonPath('gemini_model', 'gemini-3.6-flash');
+
+        $fresh = AiSettingsResolver::forPlatformTraining();
+        $this->assertSame('AIza-platform-gemini-test-key', $fresh['gemini_api_key']);
+        $this->assertSame('gemini-3.6-flash', $fresh['gemini_model']);
+
+        $this->actingAs($this->superAdmin, 'sanctum')
+            ->patchJson('/api/v1/admin/ai-training/settings', [
+                'gemini_model' => 'gemini-3.7-flash',
+            ])
+            ->assertOk()
+            ->assertJsonPath('settings.gemini_api_key_set', true)
+            ->assertJsonPath('settings.gemini_api_key_hint', '••••-key');
+
+        $fresh = AiSettingsResolver::forPlatformTraining();
+        $this->assertSame('AIza-platform-gemini-test-key', $fresh['gemini_api_key']);
+        $this->assertSame('gemini-3.7-flash', $fresh['gemini_model']);
+    }
+
     public function test_super_admin_can_manage_platform_knowledge(): void
     {
         $this->actingAs($this->superAdmin, 'sanctum')

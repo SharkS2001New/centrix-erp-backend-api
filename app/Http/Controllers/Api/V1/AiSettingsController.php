@@ -37,7 +37,7 @@ class AiSettingsController extends Controller
             'enabled' => 'sometimes|boolean',
             'provider' => 'sometimes|in:openai,gemini',
             'model' => 'sometimes|nullable|string|max:80',
-            'api_key' => 'sometimes|nullable|string|max:250',
+            'api_key' => 'sometimes|nullable|string|max:512',
             'base_url' => 'sometimes|nullable|string|max:500',
             'insights' => 'sometimes|array',
             'insights.enabled' => 'sometimes|boolean',

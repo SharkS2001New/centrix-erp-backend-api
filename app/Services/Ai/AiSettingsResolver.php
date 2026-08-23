@@ -147,10 +147,7 @@ class AiSettingsResolver
             return null;
         }
 
-        $model = trim((string) ($training['gemini_model'] ?? ''));
-        if ($model === '') {
-            $model = (string) config('ai.gemini.model', 'gemini-3.6-flash');
-        }
+        $model = self::normalizeGeminiModel(trim((string) ($training['gemini_model'] ?? '')));
 
         $baseUrl = trim((string) ($training['gemini_base_url'] ?? ''));
         if ($baseUrl === '') {
@@ -203,6 +200,60 @@ class AiSettingsResolver
     }
 
     /**
+     * Infer provider from common API key prefixes (AQ./AIza → Gemini, sk- → OpenAI).
+     */
+    public static function inferProviderFromApiKey(string $apiKey): ?string
+    {
+        $key = trim($apiKey);
+        if ($key === '') {
+            return null;
+        }
+        if (str_starts_with($key, 'AQ.') || str_starts_with($key, 'AIza')) {
+            return 'gemini';
+        }
+        if (str_starts_with($key, 'sk-')) {
+            return 'openai';
+        }
+
+        return null;
+    }
+
+    /**
+     * Map retired Gemini model ids to the current default (Generative Language API).
+     */
+    public static function normalizeGeminiModel(string $model): string
+    {
+        $model = trim($model);
+        $default = (string) config('ai.gemini.model', 'gemini-3.6-flash');
+        if ($model === '') {
+            return $default;
+        }
+
+        static $retired = [
+            'gemini-2.0-flash',
+            'gemini-2.0-flash-lite',
+            'gemini-2.0-flash-thinking-exp',
+            'gemini-2.5-flash',
+            'gemini-2.5-flash-lite',
+            'gemini-1.5-flash',
+            'gemini-1.5-flash-latest',
+            'gemini-1.5-pro',
+            'gemini-1.5-pro-latest',
+            'gemini-3.7-flash',
+        ];
+
+        if (in_array($model, $retired, true)) {
+            return $default;
+        }
+
+        if (preg_match('/^gemini-2\.0-(flash|pro)/', $model)) {
+            return $default;
+        }
+
+        return $model;
+    }
+
+    /**
      * @param  array<string, mixed>  $orgSettings
      * @return array{enabled: bool, api_key: string, model: string, base_url: string, provider: string}|null
      */
@@ -216,6 +267,9 @@ class AiSettingsResolver
         $model = trim((string) ($orgSettings['model'] ?? ''));
         if ($model === '') {
             $model = $credentials['model'];
+        }
+        if (($credentials['provider'] ?? '') === 'gemini') {
+            $model = self::normalizeGeminiModel($model);
         }
 
         return [
@@ -399,28 +453,49 @@ class AiSettingsResolver
     }
 
     /**
-     * Runtime credentials for the platform AI training console (independent of tenant AI settings).
+     * Runtime credentials for platform-admin tools (email assist, training console).
+     * Uses the free AI provider selection: Gemini alone when Gemini is selected; OpenAI when OpenAI is selected.
      *
-     * @return array{enabled: bool, api_key: string, model: string, base_url: string}|null
+     * @return array{enabled: bool, api_key: string, model: string, base_url: string, provider: string}|null
      */
     public static function resolveRuntimeForPlatformTraining(): ?array
     {
         $settings = self::forPlatformTraining();
-        if ($settings['enabled'] ?? false) {
-            return self::buildRuntimeFromSettings($settings);
+        if (! ($settings['enabled'] ?? false)) {
+            $envKey = trim((string) config('ai.platform_training.api_key', ''));
+            if ($envKey === '') {
+                return null;
+            }
+
+            return self::buildRuntimeFromOrgCredentials([
+                'enabled' => true,
+                'provider' => 'openai',
+                'api_key' => $envKey,
+                'model' => config('ai.platform_training.model'),
+                'base_url' => config('ai.platform_training.base_url'),
+            ]);
         }
 
-        $envKey = trim((string) config('ai.platform_training.api_key', ''));
-        if ($envKey === '') {
-            return null;
+        $provider = self::platformFreeAiProvider();
+        if ($provider === 'gemini') {
+            $credentials = self::resolvePlatformGeminiCredentials();
+            if (! $credentials) {
+                return null;
+            }
+
+            return [
+                'enabled' => true,
+                'provider' => 'gemini',
+                'api_key' => $credentials['api_key'],
+                'model' => $credentials['model'],
+                'base_url' => $credentials['base_url'],
+            ];
         }
 
-        return self::buildRuntimeFromSettings([
+        return self::buildRuntimeFromOrgCredentials(array_merge($settings, [
             'enabled' => true,
-            'api_key' => $envKey,
-            'model' => config('ai.platform_training.model'),
-            'base_url' => config('ai.platform_training.base_url'),
-        ]);
+            'provider' => 'openai',
+        ]));
     }
 
     /**
@@ -441,11 +516,19 @@ class AiSettingsResolver
             $provider = 'openai';
         }
 
+        $inferred = self::inferProviderFromApiKey($apiKey);
+        if ($inferred !== null) {
+            $provider = $inferred;
+        }
+
         $model = trim((string) ($settings['model'] ?? ''));
         if ($model === '') {
             $model = $provider === 'gemini'
                 ? (string) config('ai.gemini.model', 'gemini-3.6-flash')
                 : (string) config('ai.defaults.model', 'gpt-4o-mini');
+        }
+        if ($provider === 'gemini') {
+            $model = self::normalizeGeminiModel($model);
         }
 
         $baseUrl = trim((string) ($settings['base_url'] ?? ''));
@@ -499,7 +582,10 @@ class AiSettingsResolver
             'free_ai_configured' => $freeConfigured,
             'model' => $runtime['model']
                 ?? (($settings['model'] ?? '') !== '' ? $settings['model'] : config('ai.defaults.model')),
-            'provider' => $settings['provider'] ?? 'openai',
+            'provider' => $runtime['provider']
+                ?? ($freeProvider === 'gemini' ? 'gemini' : ($settings['provider'] ?? 'openai')),
+            'tools_provider' => $runtime['provider'] ?? $freeProvider,
+            'tools_available' => $runtime !== null,
             'gemini_model' => (is_array($gemini) ? ($gemini['model'] ?? '') : '')
                 ?: (($settings['gemini_model'] ?? '') !== '' ? $settings['gemini_model'] : config('ai.gemini.model')),
         ];

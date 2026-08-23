@@ -2,11 +2,10 @@
 
 namespace App\Services\Ai;
 
+use App\Exceptions\Ai\AiProviderException;
 use App\Models\Organization;
 use App\Models\User;
-use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
@@ -15,6 +14,7 @@ class AiInsightService
 {
     public function __construct(
         protected AiInsightDataBuilder $dataBuilder,
+        protected AiProviderFactory $providers,
     ) {}
 
     /**
@@ -207,68 +207,27 @@ Keep findings concrete and actionable. Prefer hrefs from actions_hint in the dat
 PROMPT;
 
         try {
-            $response = Http::withToken($runtime['api_key'])
-                ->timeout(60)
-                ->acceptJson()
-                ->post($runtime['base_url'].'/chat/completions', [
-                    'model' => $runtime['model'],
-                    'temperature' => 0.2,
-                    'max_tokens' => (int) config('ai.defaults.max_tokens', 1200),
-                    'response_format' => ['type' => 'json_object'],
-                    'messages' => [
-                        ['role' => 'system', 'content' => $system],
-                        [
-                            'role' => 'user',
-                            'content' => $userPrompt."\n\nDATA:\n".json_encode($slice, JSON_UNESCAPED_UNICODE),
-                        ],
-                    ],
-                ]);
-        } catch (ConnectionException $e) {
+            $turn = $this->providers->make($runtime)->chat([
+                'system' => $system,
+                'messages' => [[
+                    'role' => 'user',
+                    'content' => $userPrompt."\n\nDATA:\n".json_encode($slice, JSON_UNESCAPED_UNICODE),
+                ]],
+                'temperature' => 0.2,
+                'max_output_tokens' => (int) config('ai.defaults.max_tokens', 1200),
+            ]);
+        } catch (AiProviderException $e) {
+            throw new InvalidArgumentException($e->getMessage());
+        } catch (\Throwable $e) {
             Log::error('AI insight connection failed', ['message' => $e->getMessage()]);
             throw new InvalidArgumentException('Could not connect to the AI provider.');
         }
 
-        if (! $response->successful()) {
-            Log::warning('AI insight API failure', [
-                'status' => $response->status(),
-                'body' => $response->body(),
-            ]);
-
-            // One short retry on rate limit (burst / Strict Mode double-open).
-            if ($response->status() === 429) {
-                usleep(800_000);
-                try {
-                    $response = Http::withToken($runtime['api_key'])
-                        ->timeout(60)
-                        ->acceptJson()
-                        ->post($runtime['base_url'].'/chat/completions', [
-                            'model' => $runtime['model'],
-                            'temperature' => 0.2,
-                            'max_tokens' => (int) config('ai.defaults.max_tokens', 1200),
-                            'response_format' => ['type' => 'json_object'],
-                            'messages' => [
-                                ['role' => 'system', 'content' => $system],
-                                [
-                                    'role' => 'user',
-                                    'content' => $userPrompt."\n\nDATA:\n".json_encode($slice, JSON_UNESCAPED_UNICODE),
-                                ],
-                            ],
-                        ]);
-                } catch (ConnectionException $e) {
-                    Log::error('AI insight retry connection failed', ['message' => $e->getMessage()]);
-                    throw new InvalidArgumentException('Could not connect to the AI provider.');
-                }
-            }
-
-            if (! $response->successful()) {
-                throw new InvalidArgumentException(
-                    $this->formatProviderFailure($response->status(), $response->json('error.message'))
-                );
-            }
-        }
-
-        $content = (string) data_get($response->json(), 'choices.0.message.content', '');
+        $content = trim((string) ($turn['text'] ?? ''));
         $parsed = json_decode($content, true);
+        if (! is_array($parsed) && preg_match('/\{[\s\S]*\}/', $content, $matches)) {
+            $parsed = json_decode($matches[0], true);
+        }
         if (! is_array($parsed)) {
             $parsed = [
                 'summary' => trim($content) !== '' ? trim($content) : 'No insight returned.',
@@ -293,22 +252,6 @@ PROMPT;
         $this->storeRun($organization, $user, $result);
 
         return $result;
-    }
-
-    protected function formatProviderFailure(int $status, mixed $providerMessage): string
-    {
-        $detail = trim((string) $providerMessage);
-        if (strlen($detail) > 240) {
-            $detail = substr($detail, 0, 237).'…';
-        }
-
-        return match ($status) {
-            401 => 'OpenAI rejected the API key (401). Verify the key under Settings → AI.'
-                .($detail ? " Provider: {$detail}" : ''),
-            429 => 'OpenAI rate limit or quota exceeded (429). Wait a minute and try again, or check billing on your OpenAI account.'
-                .($detail ? " — {$detail}" : ''),
-            default => 'AI insight request failed (HTTP '.$status.').'.($detail ? " {$detail}" : ''),
-        };
     }
 
     /** @param  mixed  $actions

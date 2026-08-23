@@ -131,6 +131,11 @@ class GeminiProvider implements AiProviderInterface
             throw AiProviderException::rateLimited();
         }
 
+        if ($this->isInvalidApiKeyResponse($response)) {
+            Log::warning('Gemini auth failed', ['status' => $response->status()]);
+            throw AiProviderException::unauthorized();
+        }
+
         if (in_array($response->status(), [401, 403], true)) {
             Log::warning('Gemini auth failed', ['status' => $response->status()]);
             throw AiProviderException::unauthorized();
@@ -433,5 +438,31 @@ class GeminiProvider implements AiProviderInterface
         }
 
         return $data;
+    }
+
+    protected function isInvalidApiKeyResponse(\Illuminate\Http\Client\Response $response): bool
+    {
+        if (! in_array($response->status(), [400, 401, 403], true)) {
+            return false;
+        }
+
+        $providerMessage = strtolower((string) ($response->json('error.message') ?? ''));
+        if (str_contains($providerMessage, 'api key not valid')
+            || str_contains($providerMessage, 'api_key_invalid')
+            || str_contains($providerMessage, 'api key expired')) {
+            return true;
+        }
+
+        foreach ($response->json('error.details') ?? [] as $detail) {
+            if (! is_array($detail)) {
+                continue;
+            }
+            $reason = strtoupper((string) ($detail['reason'] ?? ''));
+            if ($reason === 'API_KEY_INVALID') {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

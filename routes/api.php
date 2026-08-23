@@ -583,6 +583,7 @@ Route::prefix('v1')->group(function () {
                 Route::get('status', [PlatformAiTrainingController::class, 'status']);
                 Route::get('settings', [PlatformAiTrainingController::class, 'settings']);
                 Route::patch('settings', [PlatformAiTrainingController::class, 'updateSettings']);
+                Route::post('test-credentials', [PlatformAiTrainingController::class, 'testCredentials']);
                 Route::get('knowledge', [PlatformAiTrainingController::class, 'listKnowledge']);
                 Route::post('knowledge', [PlatformAiTrainingController::class, 'teach']);
                 Route::patch('knowledge/{entry}', [PlatformAiTrainingController::class, 'updateKnowledge']);

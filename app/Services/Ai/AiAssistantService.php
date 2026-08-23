@@ -290,7 +290,7 @@ class AiAssistantService
                 return [
                     'reply' => ! ($settings['enabled'] ?? false)
                         ? 'Platform AI training is disabled. Enable it under Platform → AI training → Platform AI credentials.'
-                        : 'Platform AI training is not configured — add an OpenAI API key under Platform → AI training.',
+                        : 'Platform AI training is not configured — add a Gemini (or OpenAI) API key under Platform → Settings → AI credentials.',
                     'tools_used' => [],
                     'training_mode' => true,
                 ];
