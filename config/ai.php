@@ -24,6 +24,12 @@ return [
         'base_url' => rtrim(env('GEMINI_BASE_URL', 'https://generativelanguage.googleapis.com/v1beta'), '/'),
     ],
 
+    /**
+     * Which provider platform offers free to selected orgs (overridable in Platform → AI credentials).
+     * gemini | openai
+     */
+    'free_provider' => env('AI_FREE_PROVIDER', 'gemini'),
+
     /** When true, OpenAI provider also uses tool-calling chat (Gemini always does). */
     'use_tool_chat' => filter_var(env('AI_USE_TOOL_CHAT', false), FILTER_VALIDATE_BOOLEAN),
 

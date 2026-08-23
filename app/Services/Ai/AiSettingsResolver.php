@@ -66,8 +66,8 @@ class AiSettingsResolver
         }
 
         $settings = self::forOrganization($organization);
-        $usePlatformGemini = ! empty($settings['use_platform_gemini']);
-        $enabled = (bool) ($settings['enabled'] ?? false) || $usePlatformGemini;
+        $usePlatformAi = ! empty($settings['use_platform_gemini']); // flag name kept for BC
+        $enabled = (bool) ($settings['enabled'] ?? false) || $usePlatformAi;
         if (! $enabled) {
             return null;
         }
@@ -78,12 +78,57 @@ class AiSettingsResolver
             return self::buildRuntimeFromOrgCredentials($settings);
         }
 
-        // Selected orgs without their own key use free platform Gemini.
-        if ($usePlatformGemini) {
-            return self::buildRuntimeFromPlatformGemini($settings);
+        // Selected orgs without their own key use free platform AI (Gemini or OpenAI).
+        if ($usePlatformAi) {
+            return self::buildRuntimeFromPlatformFreeAi($settings);
         }
 
         return null;
+    }
+
+    /**
+     * Provider the platform offers free to selected orgs. Default: gemini.
+     */
+    public static function platformFreeAiProvider(): string
+    {
+        $training = self::forPlatformTraining();
+        $provider = strtolower(trim((string) ($training['free_ai_provider'] ?? '')));
+        if (! in_array($provider, ['gemini', 'openai'], true)) {
+            $provider = strtolower(trim((string) config('ai.free_provider', 'gemini')));
+        }
+
+        return in_array($provider, ['gemini', 'openai'], true) ? $provider : 'gemini';
+    }
+
+    /**
+     * Whether the currently selected free provider has credentials configured.
+     */
+    public static function platformFreeAiConfigured(): bool
+    {
+        return self::resolvePlatformFreeAiCredentials(self::platformFreeAiProvider()) !== null;
+    }
+
+    /**
+     * @return array{api_key: string, model: string, base_url: string, provider: string}|null
+     */
+    public static function resolvePlatformFreeAiCredentials(?string $provider = null): ?array
+    {
+        $provider = $provider ?? self::platformFreeAiProvider();
+        if ($provider === 'openai') {
+            $openai = self::resolvePlatformOpenAiCredentials();
+            if (! $openai) {
+                return null;
+            }
+
+            return array_merge($openai, ['provider' => 'openai']);
+        }
+
+        $gemini = self::resolvePlatformGeminiCredentials();
+        if (! $gemini) {
+            return null;
+        }
+
+        return array_merge($gemini, ['provider' => 'gemini']);
     }
 
     /**
@@ -119,6 +164,39 @@ class AiSettingsResolver
         ];
     }
 
+    /**
+     * OpenAI credentials owned by platform admin, with env fallback.
+     *
+     * @return array{api_key: string, model: string, base_url: string}|null
+     */
+    public static function resolvePlatformOpenAiCredentials(): ?array
+    {
+        $training = self::forPlatformTraining();
+        $apiKey = trim((string) ($training['api_key'] ?? ''));
+        if ($apiKey === '') {
+            $apiKey = trim((string) config('ai.platform_training.api_key', ''));
+        }
+        if ($apiKey === '') {
+            return null;
+        }
+
+        $model = trim((string) ($training['model'] ?? ''));
+        if ($model === '') {
+            $model = (string) config('ai.platform_training.model', config('ai.defaults.model', 'gpt-4o-mini'));
+        }
+
+        $baseUrl = trim((string) ($training['base_url'] ?? ''));
+        if ($baseUrl === '') {
+            $baseUrl = (string) config('ai.platform_training.base_url', config('ai.defaults.base_url'));
+        }
+
+        return [
+            'api_key' => $apiKey,
+            'model' => $model,
+            'base_url' => rtrim($baseUrl, '/'),
+        ];
+    }
+
     public static function platformGeminiConfigured(): bool
     {
         return self::resolvePlatformGeminiCredentials() !== null;
@@ -128,10 +206,9 @@ class AiSettingsResolver
      * @param  array<string, mixed>  $orgSettings
      * @return array{enabled: bool, api_key: string, model: string, base_url: string, provider: string}|null
      */
-    protected static function buildRuntimeFromPlatformGemini(array $orgSettings): ?array
+    protected static function buildRuntimeFromPlatformFreeAi(array $orgSettings): ?array
     {
-        // Platform Gemini for selected orgs — credentials come from platform admin, not the tenant.
-        $credentials = self::resolvePlatformGeminiCredentials();
+        $credentials = self::resolvePlatformFreeAiCredentials();
         if (! $credentials) {
             return null;
         }
@@ -143,11 +220,21 @@ class AiSettingsResolver
 
         return [
             'enabled' => true,
-            'provider' => 'gemini',
+            'provider' => $credentials['provider'],
             'api_key' => $credentials['api_key'],
             'model' => $model,
             'base_url' => $credentials['base_url'],
         ];
+    }
+
+    /**
+     * @deprecated Use buildRuntimeFromPlatformFreeAi()
+     * @param  array<string, mixed>  $orgSettings
+     * @return array{enabled: bool, api_key: string, model: string, base_url: string, provider: string}|null
+     */
+    protected static function buildRuntimeFromPlatformGemini(array $orgSettings): ?array
+    {
+        return self::buildRuntimeFromPlatformFreeAi($orgSettings);
     }
 
     public static function isAvailableForUser(User $user): bool
@@ -167,6 +254,8 @@ class AiSettingsResolver
         $out = array_merge($defaults, $settings);
         $out['enabled'] = (bool) ($out['enabled'] ?? false);
         $out['use_platform_gemini'] = (bool) ($out['use_platform_gemini'] ?? false);
+        $freeProvider = strtolower(trim((string) ($out['free_ai_provider'] ?? config('ai.free_provider', 'gemini'))));
+        $out['free_ai_provider'] = in_array($freeProvider, ['gemini', 'openai'], true) ? $freeProvider : 'gemini';
         $provider = strtolower(trim((string) ($out['provider'] ?? config('ai.provider', 'openai'))));
         $allowed = ['openai', 'gemini'];
         $out['provider'] = in_array($provider, $allowed, true) ? $provider : 'openai';
@@ -398,12 +487,16 @@ class AiSettingsResolver
         $settings = self::maskForClient(self::forPlatformTraining());
         $runtime = self::resolveRuntimeForPlatformTraining();
         $gemini = self::resolvePlatformGeminiCredentials();
+        $freeProvider = self::platformFreeAiProvider();
+        $freeConfigured = self::platformFreeAiConfigured();
 
         return [
             'scope' => 'platform_training',
             'settings' => $settings,
             'available' => $runtime !== null,
             'gemini_available' => $gemini !== null,
+            'free_ai_provider' => $freeProvider,
+            'free_ai_configured' => $freeConfigured,
             'model' => $runtime['model']
                 ?? (($settings['model'] ?? '') !== '' ? $settings['model'] : config('ai.defaults.model')),
             'provider' => $settings['provider'] ?? 'openai',
@@ -503,25 +596,35 @@ class AiSettingsResolver
         $settings = self::maskForClient($raw);
         $runtime = $gate->aiPlatformEnabled() ? self::resolveRuntimeForOrganization($organization) : null;
         $hasOrgKey = trim((string) ($raw['api_key'] ?? '')) !== '';
-        $usePlatformGemini = (bool) ($raw['use_platform_gemini'] ?? false);
+        $usePlatformAi = (bool) ($raw['use_platform_gemini'] ?? false);
+        $freeProvider = self::platformFreeAiProvider();
         $credentialSource = null;
         if ($runtime) {
-            $credentialSource = $hasOrgKey ? 'org' : ($usePlatformGemini ? 'platform_gemini' : 'org');
+            if ($hasOrgKey) {
+                $credentialSource = 'org';
+            } elseif ($usePlatformAi) {
+                $credentialSource = $freeProvider === 'openai' ? 'platform_openai' : 'platform_gemini';
+            } else {
+                $credentialSource = 'org';
+            }
         }
 
         return [
             'settings' => $settings,
             'platform_enabled' => $gate->aiPlatformEnabled(),
             'available' => $runtime !== null,
-            'use_platform_gemini' => $usePlatformGemini,
+            'use_platform_gemini' => $usePlatformAi,
+            'use_platform_ai' => $usePlatformAi,
+            'free_ai_provider' => $freeProvider,
             'platform_gemini_configured' => self::platformGeminiConfigured(),
+            'platform_free_ai_configured' => self::platformFreeAiConfigured(),
             'has_org_api_key' => $hasOrgKey,
             'credential_source' => $credentialSource,
             'model' => $runtime['model'] ?? (
                 ($settings['model'] ?? '') !== ''
                     ? $settings['model']
                     : (
-                        ($settings['provider'] ?? '') === 'gemini' || $usePlatformGemini
+                        ($runtime['provider'] ?? $settings['provider'] ?? '') === 'gemini' || ($usePlatformAi && $freeProvider === 'gemini')
                             ? config('ai.gemini.model')
                             : config('ai.defaults.model')
                     )
@@ -539,21 +642,30 @@ class AiSettingsResolver
         }
 
         $settings = self::forOrganization($org);
-        $usePlatformGemini = (bool) ($settings['use_platform_gemini'] ?? false);
+        $usePlatformAi = (bool) ($settings['use_platform_gemini'] ?? false);
         $available = $gate->aiPlatformEnabled() && self::isAvailableForOrganization($org);
         $hasOrgKey = trim((string) ($settings['api_key'] ?? '')) !== '';
+        $freeProvider = self::platformFreeAiProvider();
         $credentialSource = null;
         if ($available) {
-            $credentialSource = $hasOrgKey ? 'org' : ($usePlatformGemini ? 'platform_gemini' : 'org');
+            if ($hasOrgKey) {
+                $credentialSource = 'org';
+            } elseif ($usePlatformAi) {
+                $credentialSource = $freeProvider === 'openai' ? 'platform_openai' : 'platform_gemini';
+            } else {
+                $credentialSource = 'org';
+            }
         }
 
         return [
             'platform_enabled' => $gate->aiPlatformEnabled(),
             'enabled' => $gate->aiPlatformEnabled() && (
-                (bool) ($settings['enabled'] ?? false) || $usePlatformGemini
+                (bool) ($settings['enabled'] ?? false) || $usePlatformAi
             ),
             'available' => $available,
-            'use_platform_gemini' => $usePlatformGemini,
+            'use_platform_gemini' => $usePlatformAi,
+            'use_platform_ai' => $usePlatformAi,
+            'free_ai_provider' => $freeProvider,
             'credential_source' => $credentialSource,
             'insights' => $settings['insights'] ?? self::normalizeInsights([]),
         ];

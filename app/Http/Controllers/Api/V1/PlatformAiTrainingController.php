@@ -56,6 +56,7 @@ class PlatformAiTrainingController extends Controller
             'gemini_api_key' => 'sometimes|nullable|string|max:250',
             'gemini_model' => 'sometimes|nullable|string|max:80',
             'gemini_base_url' => 'sometimes|nullable|string|max:500',
+            'free_ai_provider' => 'sometimes|in:gemini,openai',
         ]);
 
         return response()->json(AiSettingsResolver::savePlatformTraining($data));

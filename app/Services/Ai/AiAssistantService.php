@@ -653,9 +653,11 @@ class AiAssistantService
         }
 
         if (! empty($settings['use_platform_gemini'])) {
-            return AiSettingsResolver::platformGeminiConfigured()
+            $providerLabel = AiSettingsResolver::platformFreeAiProvider() === 'openai' ? 'OpenAI' : 'Gemini';
+
+            return AiSettingsResolver::platformFreeAiConfigured()
                 ? 'AI assistant is not available right now. Try again shortly.'
-                : 'Platform Gemini is enabled for this organization, but no Gemini API key is configured. A platform admin must add it under Platform → Settings → AI credentials.';
+                : "Platform {$providerLabel} is enabled for this organization, but no {$providerLabel} API key is configured. A platform admin must add it under Platform → Settings → AI credentials.";
         }
 
         if (! ($settings['enabled'] ?? false)) {

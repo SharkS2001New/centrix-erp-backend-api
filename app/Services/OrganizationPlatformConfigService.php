@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Organization;
+use App\Services\Ai\AiSettingsResolver;
 use App\Services\Erp\AdvancedDataImportPageRegistry;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\OrderWorkflowService;
@@ -382,9 +383,10 @@ class OrganizationPlatformConfigService
             }
         }
         if (array_key_exists('use_platform_gemini', $salesPlatform) && $salesPlatform['use_platform_gemini']) {
+            $freeProvider = AiSettingsResolver::platformFreeAiProvider();
             $currentAi['enable_ai'] = true;
             $currentAi['enabled'] = true;
-            $currentAi['provider'] = 'gemini';
+            $currentAi['provider'] = $freeProvider;
             $currentAi['use_platform_gemini'] = true;
         }
         if (array_key_exists('enable_ai', $salesPlatform) && ! $salesPlatform['enable_ai']) {

@@ -183,4 +183,64 @@ class PlatformAiControlTest extends TestCase
         $this->assertSame('openai', $resolved['provider']);
         $this->assertSame('sk-org-override-key', $resolved['api_key']);
     }
+
+    public function test_platform_can_offer_free_openai_instead_of_gemini(): void
+    {
+        config(['erp.allow_org_provisioning' => true]);
+
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $platformOrg = Organization::query()
+            ->where('company_code', config('erp.platform_company_code', 'PLATFORM'))
+            ->firstOrFail();
+
+        $moduleSettings = $platformOrg->module_settings ?? [];
+        $moduleSettings['platform_ai_training'] = array_merge(
+            is_array($moduleSettings['platform_ai_training'] ?? null) ? $moduleSettings['platform_ai_training'] : [],
+            [
+                'enabled' => true,
+                'free_ai_provider' => 'openai',
+                'api_key' => 'sk-platform-openai-free-key',
+                'model' => 'gpt-4o-mini',
+                'gemini_api_key' => 'AIza-should-not-be-used',
+            ],
+        );
+        $platformOrg->update(['module_settings' => $moduleSettings]);
+        \App\Services\Ai\AiSettingsResolver::platformOrganization(refresh: true);
+
+        $this->assertSame('openai', \App\Services\Ai\AiSettingsResolver::platformFreeAiProvider());
+
+        $create = $this->postJson('/api/v1/admin/organizations/provision', [
+            'company_code' => 'AIOAI',
+            'org_name' => 'AI OpenAI Free Org',
+            'org_email' => 'aioai@org.com',
+            'primary_tel' => '0711000066',
+            'org_address' => 'Nairobi',
+            'deployment_profile' => 'small_shop',
+            'sales_platform' => [
+                'enable_ai' => true,
+                'use_platform_gemini' => true,
+            ],
+            'admin_username' => 'aioai_admin',
+            'admin_email' => 'aioai@org.com',
+            'admin_password' => 'password123',
+            'admin_full_name' => 'AI OpenAI Admin',
+        ])->assertCreated();
+
+        $orgId = $create->json('organization.id');
+        $org = Organization::findOrFail($orgId);
+        $this->assertSame('openai', $org->module_settings['ai']['provider'] ?? null);
+
+        $runtime = \App\Services\Ai\AiSettingsResolver::resolveRuntimeForOrganization($org);
+        $this->assertNotNull($runtime);
+        $this->assertSame('openai', $runtime['provider']);
+        $this->assertSame('sk-platform-openai-free-key', $runtime['api_key']);
+
+        $this->getJson("/api/v1/admin/organizations/{$orgId}/settings/ai")
+            ->assertOk()
+            ->assertJsonPath('credential_source', 'platform_openai')
+            ->assertJsonPath('free_ai_provider', 'openai')
+            ->assertJsonPath('provider', 'openai');
+    }
 }
