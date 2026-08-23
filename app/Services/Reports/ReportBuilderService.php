@@ -1403,6 +1403,24 @@ class ReportBuilderService
                 $query->whereDate($dateColumn, '<=', $to);
             }
         }
+
+        $productCodes = $filters['product_codes'] ?? $filters['product_code'] ?? null;
+        if (is_string($productCodes) && $productCodes !== '') {
+            $productCodes = [$productCodes];
+        }
+        if (is_array($productCodes) && $productCodes !== []) {
+            $codes = array_values(array_unique(array_filter(array_map(
+                static fn ($code) => trim((string) $code),
+                $productCodes,
+            ), static fn ($code) => $code !== '')));
+            if ($codes !== []) {
+                $productExpr = $source['fields']['product_code']['expr'] ?? null;
+                if (is_string($productExpr) && $productExpr !== '') {
+                    $placeholders = implode(', ', array_fill(0, count($codes), '?'));
+                    $query->whereRaw("{$productExpr} IN ({$placeholders})", $codes);
+                }
+            }
+        }
     }
 
     /**

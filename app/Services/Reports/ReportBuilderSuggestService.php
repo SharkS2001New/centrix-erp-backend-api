@@ -6,7 +6,11 @@ use App\Exceptions\Ai\AiProviderException;
 use App\Models\User;
 use App\Services\Ai\AiProviderFactory;
 use App\Services\Ai\AiSettingsResolver;
+use App\Support\AppTimezone;
+use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class ReportBuilderSuggestService
@@ -32,9 +36,10 @@ class ReportBuilderSuggestService
     ) {}
 
     /**
-     * @return array{name: string, description: string|null, spec: array<string, mixed>, mode: string}
+     * @param  list<string>|null  $selectedProductCodes
+     * @return array<string, mixed>
      */
-    public function suggest(User $user, string $instruction, ?string $workspaceId = null): array
+    public function suggest(User $user, string $instruction, ?string $workspaceId = null, ?array $selectedProductCodes = null): array
     {
         $instruction = trim(preg_replace('/\s+/u', ' ', $instruction) ?? '');
         if ($instruction === '') {
@@ -63,7 +68,7 @@ class ReportBuilderSuggestService
                 $normalized['mode'] = 'ai';
                 $normalized['provider'] = (string) ($runtime['provider'] ?? 'openai');
 
-                return $normalized;
+                return $this->attachFiltersAndProducts($normalized, $instruction, $user, $draft, $selectedProductCodes);
             } catch (ValidationException $e) {
                 Log::info('Report builder AI suggest fell back to local matching', [
                     'message' => $e->getMessage(),
@@ -77,7 +82,7 @@ class ReportBuilderSuggestService
         $normalized['mode'] = 'local';
         $normalized['provider'] = null;
 
-        return $normalized;
+        return $this->attachFiltersAndProducts($normalized, $instruction, $user, $draft, $selectedProductCodes);
     }
 
     /**
@@ -471,14 +476,19 @@ Respond with a single JSON object only (no markdown):
   "sources": ["source_key"],
   "columns": [{"source": "source_key", "field": "field_key", "aggregate": null}],
   "group_by": [],
-  "blend_by": null
+  "blend_by": null,
+  "relative_date": null,
+  "product_queries": []
 }
 Rules:
 - Prefer 1 source unless the request clearly needs related tables.
+- For product sales / items sold, prefer sale_items (+ products if needed) with product_name, quantity/qty, and line revenue totals.
 - Prefer label fields (names, dates, status) plus the key numeric totals the user asked for.
 - Use aggregate only when summarizing (sum/avg/count/max/min) and only if that field lists it in aggregates.
 - group_by: string field keys for a single source, or {source, field} objects for multi-source; omit when not needed.
 - blend_by: only a blend dimension key when comparing unrelated sources side-by-side; otherwise null.
+- relative_date: "yesterday", "today", or "last_7_days" when the user mentions those; otherwise null.
+- product_queries: short product name fragments the user wants filtered (e.g. ["Al Eman","Sugar","Polished"]); empty array if none.
 - Keep columns focused (typically 4–10). Never exceed max_sources / max_columns from the schema.
 PROMPT;
 
@@ -799,5 +809,278 @@ PROMPT;
         }
 
         return array_values($out);
+    }
+
+    /**
+     * @param  array<string, mixed>  $normalized
+     * @param  array<string, mixed>  $draft
+     * @param  list<string>|null  $selectedProductCodes
+     * @return array<string, mixed>
+     */
+    protected function attachFiltersAndProducts(
+        array $normalized,
+        string $instruction,
+        User $user,
+        array $draft,
+        ?array $selectedProductCodes = null,
+    ): array {
+        $filters = $this->resolveDateFilters($instruction, $draft);
+        $productQueries = $this->resolveProductQueries($instruction, $draft);
+        $selected = array_values(array_unique(array_filter(array_map(
+            static fn ($code) => trim((string) $code),
+            is_array($selectedProductCodes) ? $selectedProductCodes : [],
+        ), static fn ($code) => $code !== '')));
+
+        $resolution = [
+            'status' => 'none',
+            'queries' => [],
+            'unmatched' => [],
+            'matched_codes' => [],
+        ];
+
+        if ($productQueries !== [] || $selected !== []) {
+            $resolution = $this->resolveProductsForOrganization(
+                (int) $user->organization_id,
+                $productQueries,
+                $selected,
+            );
+        }
+
+        if (($resolution['status'] ?? '') === 'ready' && ($resolution['matched_codes'] ?? []) !== []) {
+            $filters['product_codes'] = $resolution['matched_codes'];
+        }
+
+        $normalized['filters'] = $filters;
+        $normalized['product_resolution'] = $resolution;
+        $normalized['needs_product_selection'] = ($resolution['status'] ?? '') === 'needs_selection';
+
+        if ($normalized['needs_product_selection']) {
+            $normalized['message'] = 'Several products matched your description. Pick the ones to include, then apply.';
+        } elseif (($resolution['unmatched'] ?? []) !== []) {
+            $normalized['message'] = 'Could not find catalog matches for: '.implode(', ', $resolution['unmatched']).'.';
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * @param  array<string, mixed>  $draft
+     * @return array<string, string>
+     */
+    protected function resolveDateFilters(string $instruction, array $draft): array
+    {
+        $relative = strtolower(trim((string) ($draft['relative_date'] ?? '')));
+        $text = mb_strtolower($instruction);
+        if ($relative === '' || ! in_array($relative, ['today', 'yesterday', 'last_7_days'], true)) {
+            if (preg_match('/\byesterday\'?s?\b/u', $text)) {
+                $relative = 'yesterday';
+            } elseif (preg_match('/\btoday\'?s?\b/u', $text)) {
+                $relative = 'today';
+            } elseif (preg_match('/\blast\s*7\s*days?\b/u', $text)) {
+                $relative = 'last_7_days';
+            }
+        }
+
+        $now = Carbon::now(AppTimezone::name());
+        return match ($relative) {
+            'yesterday' => [
+                'from_date' => $now->copy()->subDay()->toDateString(),
+                'to_date' => $now->copy()->subDay()->toDateString(),
+            ],
+            'today' => [
+                'from_date' => $now->toDateString(),
+                'to_date' => $now->toDateString(),
+            ],
+            'last_7_days' => [
+                'from_date' => $now->copy()->subDays(6)->toDateString(),
+                'to_date' => $now->toDateString(),
+            ],
+            default => [],
+        };
+    }
+
+    /**
+     * @param  array<string, mixed>  $draft
+     * @return list<string>
+     */
+    protected function resolveProductQueries(string $instruction, array $draft): array
+    {
+        $fromDraft = [];
+        foreach ((array) ($draft['product_queries'] ?? []) as $query) {
+            $query = trim((string) $query);
+            if ($query !== '') {
+                $fromDraft[] = $query;
+            }
+        }
+        if ($fromDraft !== []) {
+            return array_values(array_unique($fromDraft));
+        }
+
+        return $this->extractProductQueriesFromText($instruction);
+    }
+
+    /** @return list<string> */
+    protected function extractProductQueriesFromText(string $instruction): array
+    {
+        $text = trim($instruction);
+        $text = preg_replace(
+            '/\b(according to |for |from )?(yesterday\'?s?|today\'?s?|last\s+\d+\s+days?)(\s+sales)?\b/iu',
+            ' ',
+            $text,
+        ) ?? $text;
+        $text = preg_replace(
+            '/^(i need |please |show me |create |build |make )?(a |an )?(report )?(only )?(for )?(several |some |these |the )?(products?|items?|skus?)[,:\s]*/iu',
+            '',
+            $text,
+        ) ?? $text;
+        $text = preg_replace('/\b(products?|items?|skus?|sales|report|only|several|named|called)\b/iu', ' ', $text) ?? $text;
+        $text = trim(preg_replace('/\s+/u', ' ', $text) ?? '');
+        if ($text === '') {
+            return [];
+        }
+
+        $parts = preg_split('/\s*(?:,|;|\band\b|\+|\/)\s*/iu', $text) ?: [];
+        $out = [];
+        foreach ($parts as $part) {
+            $part = trim((string) $part, " \t\n\r\0\x0B\"'");
+            $part = preg_replace('/^(the|a|an)\s+/iu', '', $part) ?? $part;
+            if ($part === '' || mb_strlen($part) < 2) {
+                continue;
+            }
+            if (preg_match('/^(yesterday|today|sales|report|product|products)$/iu', $part)) {
+                continue;
+            }
+            $out[] = $part;
+        }
+
+        return array_values(array_unique($out));
+    }
+
+    /**
+     * @param  list<string>  $queries
+     * @param  list<string>  $selectedCodes
+     * @return array{status: string, queries: list<array<string, mixed>>, unmatched: list<string>, matched_codes: list<string>}
+     */
+    protected function resolveProductsForOrganization(int $organizationId, array $queries, array $selectedCodes): array
+    {
+        if ($selectedCodes !== []) {
+            return [
+                'status' => 'ready',
+                'queries' => [],
+                'unmatched' => [],
+                'matched_codes' => $selectedCodes,
+            ];
+        }
+
+        if ($queries === [] || ! Schema::hasTable('products')) {
+            return [
+                'status' => 'none',
+                'queries' => [],
+                'unmatched' => [],
+                'matched_codes' => [],
+            ];
+        }
+
+        $groups = [];
+        $matchedCodes = [];
+        $unmatched = [];
+        $needsSelection = false;
+
+        foreach ($queries as $query) {
+            $matches = $this->searchProducts($organizationId, $query);
+            if ($matches === []) {
+                $unmatched[] = $query;
+                $groups[] = [
+                    'query' => $query,
+                    'matches' => [],
+                ];
+                continue;
+            }
+
+            if (count($matches) === 1) {
+                $matchedCodes[] = $matches[0]['product_code'];
+                $groups[] = [
+                    'query' => $query,
+                    'matches' => $matches,
+                    'auto_selected' => true,
+                ];
+                continue;
+            }
+
+            $needsSelection = true;
+            $groups[] = [
+                'query' => $query,
+                'matches' => $matches,
+            ];
+        }
+
+        if ($needsSelection) {
+            return [
+                'status' => 'needs_selection',
+                'queries' => $groups,
+                'unmatched' => $unmatched,
+                'matched_codes' => array_values(array_unique($matchedCodes)),
+            ];
+        }
+
+        if ($matchedCodes === [] && $unmatched !== []) {
+            return [
+                'status' => 'unmatched',
+                'queries' => $groups,
+                'unmatched' => $unmatched,
+                'matched_codes' => [],
+            ];
+        }
+
+        return [
+            'status' => $matchedCodes !== [] ? 'ready' : 'none',
+            'queries' => $groups,
+            'unmatched' => $unmatched,
+            'matched_codes' => array_values(array_unique($matchedCodes)),
+        ];
+    }
+
+    /**
+     * @return list<array{product_code: string, product_name: string, score: int}>
+     */
+    protected function searchProducts(int $organizationId, string $query): array
+    {
+        $needle = mb_strtolower(trim($query));
+        if ($needle === '') {
+            return [];
+        }
+
+        $rows = DB::table('products')
+            ->where('organization_id', $organizationId)
+            ->where(function ($q) use ($needle) {
+                $q->whereRaw('LOWER(product_name) LIKE ?', ['%'.$needle.'%'])
+                    ->orWhereRaw('LOWER(product_code) LIKE ?', ['%'.$needle.'%']);
+            })
+            ->orderBy('product_name')
+            ->limit(12)
+            ->get(['product_code', 'product_name']);
+
+        $scored = [];
+        foreach ($rows as $row) {
+            $name = mb_strtolower((string) $row->product_name);
+            $code = mb_strtolower((string) $row->product_code);
+            $score = 1;
+            if ($name === $needle || $code === $needle) {
+                $score = 100;
+            } elseif (str_starts_with($name, $needle) || str_starts_with($code, $needle)) {
+                $score = 50;
+            } elseif (str_contains($name, $needle) || str_contains($code, $needle)) {
+                $score = 20;
+            }
+            $scored[] = [
+                'product_code' => (string) $row->product_code,
+                'product_name' => (string) $row->product_name,
+                'score' => $score,
+            ];
+        }
+
+        usort($scored, fn ($a, $b) => $b['score'] <=> $a['score']);
+
+        return array_slice($scored, 0, 8);
     }
 }

@@ -8,6 +8,7 @@ use App\Services\Ai\AiEntitySchemaCatalog;
 use App\Services\Ai\AiKnowledgeService;
 use App\Services\Ai\AiPageExplorer;
 use App\Services\Ai\AiSettingsResolver;
+use App\Services\Ai\AiRuntimeGuard;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
@@ -18,6 +19,7 @@ class AiAssistantController extends Controller
         protected AiEntitySchemaCatalog $schemas,
         protected AiKnowledgeService $knowledge,
         protected AiPageExplorer $explorer,
+        protected AiRuntimeGuard $runtimeGuard,
     ) {}
 
     /**Test API endpoint */
@@ -26,6 +28,7 @@ class AiAssistantController extends Controller
         $user = $request->user();
         $gate = app(\App\Services\Erp\ErpContext::class)->gateForUser($user);
         $desc = AiSettingsResolver::describeForClient($user);
+        $health = $this->runtimeGuard->health();
 
         return response()->json([
             'enabled' => $desc['available'],
@@ -39,7 +42,24 @@ class AiAssistantController extends Controller
             'allows_images' => false,
             'supports_teaching' => true,
             'supports_page_explore' => true,
+            'runtime' => [
+                'status' => $health['status'],
+                'available' => $health['available'],
+                'inflight' => $this->runtimeGuard->inflight(),
+            ],
         ]);
+    }
+
+    /**
+     * Safe AI runtime health (no secrets / internal paths).
+     */
+    public function health()
+    {
+        $payload = $this->runtimeGuard->health();
+        $payload['inflight'] = $this->runtimeGuard->inflight();
+        $payload['max_concurrent'] = (int) config('ai.max_concurrent_requests', 32);
+
+        return response()->json($payload);
     }
 
     public function schemas(Request $request)

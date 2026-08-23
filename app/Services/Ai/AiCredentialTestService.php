@@ -21,7 +21,7 @@ class AiCredentialTestService
             : AiSettingsResolver::orgPrefersPlatformAi($settings);
 
         $provider = strtolower(trim((string) ($data['provider'] ?? ($settings['provider'] ?? 'openai'))));
-        if (! in_array($provider, ['gemini', 'openai'], true)) {
+        if (! in_array($provider, ['gemini', 'openai', 'ollama'], true)) {
             $provider = 'openai';
         }
 
@@ -52,9 +52,11 @@ class AiCredentialTestService
                 'body' => [
                     'ok' => false,
                     'provider' => $provider,
-                    'message' => $provider === 'gemini'
-                        ? 'No Gemini API key configured. Paste a key and save, or include it in this test.'
-                        : 'No OpenAI API key configured. Paste a key and save, or include it in this test.',
+                    'message' => match ($provider) {
+                        'gemini' => 'No Gemini API key configured. Paste a key and save, or include it in this test.',
+                        'ollama' => 'Ollama is not configured. Set OLLAMA_BASE_URL (or Platform → AI credentials) and pull a model.',
+                        default => 'No OpenAI API key configured. Paste a key and save, or include it in this test.',
+                    },
                 ],
                 'status' => 422,
             ];
@@ -116,6 +118,59 @@ class AiCredentialTestService
      */
     protected function runtimeForOrgTest(Organization $org, string $provider, array $data, bool $usePlatform): ?array
     {
+        if ($provider === 'ollama') {
+            $baseUrl = trim((string) ($data['ollama_base_url'] ?? $data['base_url'] ?? ''));
+            $model = trim((string) ($data['ollama_model'] ?? $data['model'] ?? ''));
+
+            if ($usePlatform) {
+                $credentials = AiSettingsResolver::resolvePlatformOllamaCredentials();
+                if (! $credentials && $baseUrl === '') {
+                    return null;
+                }
+                $credentials = $credentials ?? [
+                    'api_key' => 'ollama',
+                    'model' => (string) config('ai.ollama.model', 'llama3.2'),
+                    'base_url' => (string) config('ai.ollama.base_url', 'http://127.0.0.1:11434'),
+                ];
+                if ($baseUrl !== '') {
+                    $credentials['base_url'] = \App\Services\Ai\Providers\OllamaProvider::normalizeBaseUrl($baseUrl);
+                }
+                if ($model !== '') {
+                    $credentials['model'] = $model;
+                }
+
+                return array_merge($credentials, [
+                    'enabled' => true,
+                    'provider' => 'ollama',
+                ]);
+            }
+
+            $settings = AiSettingsResolver::forOrganization($org);
+            if ($baseUrl === '') {
+                $baseUrl = trim((string) ($settings['base_url'] ?? $settings['ollama_base_url'] ?? ''));
+            }
+            if ($baseUrl === '') {
+                $baseUrl = (string) config('ai.ollama.base_url', '');
+            }
+            if ($baseUrl === '') {
+                return null;
+            }
+            if ($model === '') {
+                $model = trim((string) ($settings['model'] ?? $settings['ollama_model'] ?? ''));
+            }
+            if ($model === '') {
+                $model = (string) config('ai.ollama.model', 'llama3.2');
+            }
+
+            return [
+                'enabled' => true,
+                'provider' => 'ollama',
+                'api_key' => 'ollama',
+                'model' => $model,
+                'base_url' => \App\Services\Ai\Providers\OllamaProvider::normalizeBaseUrl($baseUrl),
+            ];
+        }
+
         if ($usePlatform) {
             $credentials = AiSettingsResolver::resolvePlatformFreeAiCredentials($provider);
             if (! $credentials) {
@@ -180,6 +235,39 @@ class AiCredentialTestService
      */
     protected function runtimeForPlatformTest(string $provider, array $data): ?array
     {
+        if ($provider === 'ollama') {
+            $baseUrl = trim((string) ($data['ollama_base_url'] ?? $data['base_url'] ?? ''));
+            $model = trim((string) ($data['ollama_model'] ?? $data['model'] ?? ''));
+            if ($baseUrl !== '' || $model !== '') {
+                $credentials = AiSettingsResolver::resolvePlatformOllamaCredentials() ?? [
+                    'api_key' => 'ollama',
+                    'model' => (string) config('ai.ollama.model', 'llama3.2'),
+                    'base_url' => (string) config('ai.ollama.base_url', 'http://127.0.0.1:11434'),
+                ];
+                if ($baseUrl !== '') {
+                    $credentials['base_url'] = \App\Services\Ai\Providers\OllamaProvider::normalizeBaseUrl($baseUrl);
+                }
+                if ($model !== '') {
+                    $credentials['model'] = $model;
+                }
+
+                return array_merge($credentials, [
+                    'enabled' => true,
+                    'provider' => 'ollama',
+                ]);
+            }
+
+            $credentials = AiSettingsResolver::resolvePlatformOllamaCredentials();
+            if (! $credentials) {
+                return null;
+            }
+
+            return array_merge($credentials, [
+                'enabled' => true,
+                'provider' => 'ollama',
+            ]);
+        }
+
         if ($provider === 'gemini') {
             $draftKey = trim((string) ($data['gemini_api_key'] ?? ''));
             if ($draftKey !== '' && ! str_starts_with($draftKey, '••••')) {

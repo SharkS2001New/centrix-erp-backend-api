@@ -37,7 +37,7 @@ class AiSettingsController extends Controller
 
         $data = $request->validate([
             'use_platform_ai' => 'sometimes|boolean',
-            'provider' => 'sometimes|in:openai,gemini',
+            'provider' => 'sometimes|in:openai,gemini,ollama',
             'model' => 'sometimes|nullable|string|max:80',
             'api_key' => 'sometimes|nullable|string|max:512',
             'base_url' => 'sometimes|nullable|string|max:500',
@@ -138,11 +138,15 @@ class AiSettingsController extends Controller
         }
 
         $data = $request->validate([
-            'provider' => 'sometimes|in:gemini,openai',
+            'provider' => 'sometimes|in:gemini,openai,ollama',
             'use_platform_ai' => 'sometimes|boolean',
             'api_key' => 'sometimes|nullable|string|max:512',
             'model' => 'sometimes|nullable|string|max:80',
             'base_url' => 'sometimes|nullable|string|max:500',
+            'ollama_base_url' => 'sometimes|nullable|string|max:500',
+            'ollama_model' => 'sometimes|nullable|string|max:80',
+            'gemini_api_key' => 'sometimes|nullable|string|max:512',
+            'gemini_model' => 'sometimes|nullable|string|max:80',
         ]);
 
         $result = $this->credentialTest->testForOrganization($org, $data);

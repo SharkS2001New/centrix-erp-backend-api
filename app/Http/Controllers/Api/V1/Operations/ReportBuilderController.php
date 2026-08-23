@@ -54,6 +54,8 @@ class ReportBuilderController extends Controller
         $data = $request->validate([
             'instruction' => 'required|string|max:800',
             'workspace_id' => 'nullable|string|max:50',
+            'selected_product_codes' => 'sometimes|array|max:50',
+            'selected_product_codes.*' => 'string|max:64',
         ]);
 
         $workspaceId = $this->workspaceIdFromRequest($request);
@@ -61,6 +63,7 @@ class ReportBuilderController extends Controller
             $request->user(),
             $data['instruction'],
             $workspaceId,
+            $data['selected_product_codes'] ?? null,
         );
 
         return response()->json($result);

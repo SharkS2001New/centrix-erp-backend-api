@@ -3,9 +3,9 @@
 namespace App\Services\Ai;
 
 use App\Exceptions\Ai\AiProviderException;
+use App\Jobs\LogAiUsageJob;
 use App\Models\AiConversation;
 use App\Models\AiConversationMessage;
-use App\Models\AiUsageLog;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\Ai\AiSalesDateResolver;
@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 /**
- * Tool-calling AI chat (Gemini-first). Uses registered Centrix tools — never arbitrary SQL.
+ * Tool-calling AI chat. Uses registered Centrix tools — never arbitrary SQL.
  */
 class AiToolChatService
 {
@@ -25,6 +25,7 @@ class AiToolChatService
         protected ErpContext $erp,
         protected AiTopicGuard $topicGuard,
         protected AiSystemContextBuilder $contextBuilder,
+        protected AiRuntimeGuard $runtimeGuard,
     ) {}
 
     /**
@@ -49,6 +50,46 @@ class AiToolChatService
                 'no_organization',
             );
         }
+
+        if (! $this->runtimeGuard->acquire()) {
+            return $this->failureResult(
+                'Centrix AI model is busy right now, please try again later',
+                'ai_busy',
+            );
+        }
+
+        try {
+            return $this->runChat(
+                $user,
+                $organization,
+                $message,
+                $conversationId,
+                $clientHistory,
+                $workspaceId,
+                $pathname,
+                $pageContext,
+                $started,
+            );
+        } finally {
+            $this->runtimeGuard->release();
+        }
+    }
+
+    /**
+     * @param  list<array{role: string, content: string}>  $clientHistory
+     * @return array<string, mixed>
+     */
+    protected function runChat(
+        User $user,
+        Organization $organization,
+        string $message,
+        ?string $conversationId,
+        array $clientHistory,
+        ?string $workspaceId,
+        ?string $pathname,
+        ?array $pageContext,
+        float $started,
+    ): array {
 
         $runtime = AiSettingsResolver::resolveRuntimeForOrganization($organization);
         if (! $runtime) {
@@ -151,7 +192,21 @@ class AiToolChatService
                 'title' => $conversation->title ?: Str::limit($message, 80),
             ])->save();
 
-            $this->logUsage($organization, $user, $conversation, $providerName, $modelUsed, $usageTotal, 'ok', null, null, array_values(array_unique($toolsUsed)), $started);
+            $this->logUsage(
+                $organization,
+                $user,
+                $conversation,
+                $providerName,
+                $modelUsed,
+                $usageTotal,
+                'ok',
+                null,
+                null,
+                array_values(array_unique($toolsUsed)),
+                $started,
+                $message,
+                $reply,
+            );
 
             return [
                 'success' => true,
@@ -166,7 +221,21 @@ class AiToolChatService
                 'form_spec' => null,
             ];
         } catch (AiProviderException $e) {
-            $this->logUsage($organization, $user, $conversation, $providerName, $modelUsed, $usageTotal, 'error', $e->codeKey, $e->getMessage(), $toolsUsed, $started);
+            $this->logUsage(
+                $organization,
+                $user,
+                $conversation,
+                $providerName,
+                $modelUsed,
+                $usageTotal,
+                'error',
+                $e->codeKey,
+                $e->getMessage(),
+                $toolsUsed,
+                $started,
+                $message,
+                null,
+            );
 
             return [
                 'success' => false,
@@ -182,7 +251,21 @@ class AiToolChatService
                 'message' => $e->getMessage(),
                 'exception' => $e::class,
             ]);
-            $this->logUsage($organization, $user, $conversation, $providerName, $modelUsed, $usageTotal, 'error', 'internal_error', 'internal', $toolsUsed, $started);
+            $this->logUsage(
+                $organization,
+                $user,
+                $conversation,
+                $providerName,
+                $modelUsed,
+                $usageTotal,
+                'error',
+                'internal_error',
+                'internal',
+                $toolsUsed,
+                $started,
+                $message,
+                null,
+            );
 
             return $this->failureResult(
                 'Something went wrong while contacting the AI assistant. Please try again.',
@@ -390,29 +473,50 @@ PROMPT;
         ?string $errorMessage,
         array $toolsUsed,
         float $started,
+        ?string $prompt = null,
+        ?string $reply = null,
     ): void {
         if (! Schema::hasTable('ai_usage_logs')) {
             return;
         }
 
+        $payload = [
+            'organization_id' => $organization->id,
+            'user_id' => $user->id,
+            'branch_id' => $user->branch_id ? (int) $user->branch_id : null,
+            'conversation_id' => $conversation->id,
+            'provider' => $provider,
+            'model' => $model !== '' ? $model : null,
+            'input_tokens' => (int) ($usage['input_tokens'] ?? 0),
+            'output_tokens' => (int) ($usage['output_tokens'] ?? 0),
+            'total_tokens' => (int) ($usage['total_tokens'] ?? 0),
+            // Self-hosted Ollama: KES 0; cloud providers can set later.
+            'estimated_cost' => $provider === 'ollama' ? 0 : 0,
+            'status' => $status,
+            'error_code' => $errorCode,
+            'error_message' => $errorMessage ? Str::limit($errorMessage, 500) : null,
+            'tools_used' => $toolsUsed !== [] ? array_values(array_unique($toolsUsed)) : null,
+            'latency_ms' => (int) min(65535, round((microtime(true) - $started) * 1000)),
+            'worker' => gethostname() ?: null,
+        ];
+
+        if (filter_var(config('ai.logging.prompts', true), FILTER_VALIDATE_BOOLEAN) && $prompt !== null) {
+            $payload['prompt_preview'] = Str::limit($prompt, 2000, '');
+        }
+        if (filter_var(config('ai.logging.responses', true), FILTER_VALIDATE_BOOLEAN) && $reply !== null) {
+            $payload['response_preview'] = Str::limit($reply, 2000, '');
+        }
+
         try {
-            AiUsageLog::query()->create([
-                'organization_id' => $organization->id,
-                'user_id' => $user->id,
-                'conversation_id' => $conversation->id,
-                'provider' => $provider,
-                'model' => $model !== '' ? $model : null,
-                'input_tokens' => (int) ($usage['input_tokens'] ?? 0),
-                'output_tokens' => (int) ($usage['output_tokens'] ?? 0),
-                'total_tokens' => (int) ($usage['total_tokens'] ?? 0),
-                'status' => $status,
-                'error_code' => $errorCode,
-                'error_message' => $errorMessage ? Str::limit($errorMessage, 500) : null,
-                'tools_used' => $toolsUsed !== [] ? array_values(array_unique($toolsUsed)) : null,
-                'latency_ms' => (int) min(65535, round((microtime(true) - $started) * 1000)),
-            ]);
+            if (filter_var(config('ai.logging.async', true), FILTER_VALIDATE_BOOLEAN)) {
+                LogAiUsageJob::dispatch($payload);
+
+                return;
+            }
+
+            LogAiUsageJob::dispatchSync($payload);
         } catch (\Throwable $e) {
-            Log::warning('Failed to write AI usage log', ['message' => $e->getMessage()]);
+            Log::warning('Failed to queue AI usage log', ['message' => $e->getMessage()]);
         }
     }
 

@@ -34,6 +34,7 @@ class PlatformHealthProbe
             $this->checkQueue(),
             $this->checkScheduler(),
             $this->checkReverb(),
+            $this->checkAi(),
             ...$this->checkPeerPods(),
         ];
 
@@ -320,6 +321,33 @@ class PlatformHealthProbe
         }
 
         return $results;
+    }
+
+    /** @return array{id: string, label: string, ok: bool|null, detail: string} */
+    protected function checkAi(): array
+    {
+        try {
+            $health = app(\App\Services\Ai\AiRuntimeGuard::class)->health();
+            $status = (string) ($health['status'] ?? 'OFFLINE');
+            $provider = (string) ($health['provider'] ?? 'unknown');
+            $model = (string) ($health['model'] ?? '');
+            $detail = (string) ($health['detail'] ?? '');
+            $ok = $status === 'ONLINE' ? true : ($status === 'DEGRADED' ? null : false);
+
+            return [
+                'id' => 'ai',
+                'label' => 'AI ('.strtoupper($provider).')',
+                'ok' => $ok,
+                'detail' => trim($status.($model !== '' ? " · {$model}" : '').($detail !== '' ? " — {$detail}" : '')),
+            ];
+        } catch (\Throwable $e) {
+            return [
+                'id' => 'ai',
+                'label' => 'AI',
+                'ok' => false,
+                'detail' => $this->shortError($e),
+            ];
+        }
     }
 
     protected function tcpReachable(string $host, int $port, float $timeoutSec): bool

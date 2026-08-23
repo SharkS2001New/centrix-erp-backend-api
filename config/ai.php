@@ -3,7 +3,7 @@
 return [
     /**
      * Active provider for tool-calling chat (AiToolChatService).
-     * openai | gemini  (groq / openrouter / ollama reserved)
+     * openai | gemini | ollama
      */
     'provider' => env('AI_PROVIDER', 'openai'),
 
@@ -25,19 +25,43 @@ return [
     ],
 
     /**
+     * Self-hosted Ollama (completely free). Run as a k8s/docker pod and point base_url at it.
+     * Example: http://centrix-erp-ollama:11434
+     */
+    'ollama' => [
+        'api_key' => env('OLLAMA_API_KEY', 'ollama'),
+        'model' => env('OLLAMA_MODEL', 'llama3.2'),
+        'base_url' => rtrim(env('OLLAMA_BASE_URL', 'http://ollama:11434'), '/'),
+        'request_timeout' => (int) env('OLLAMA_TIMEOUT', env('OLLAMA_REQUEST_TIMEOUT', 120)),
+    ],
+
+    /**
      * Which provider platform offers free to selected orgs (overridable in Platform → AI credentials).
-     * gemini | openai
+     * gemini | openai | ollama
      */
     'free_provider' => env('AI_FREE_PROVIDER', 'gemini'),
 
-    /** When true, OpenAI provider also uses tool-calling chat (Gemini always does). */
+    /** When true, OpenAI provider also uses tool-calling chat (Gemini/Ollama always do). */
     'use_tool_chat' => filter_var(env('AI_USE_TOOL_CHAT', false), FILTER_VALIDATE_BOOLEAN),
 
     'request_timeout' => (int) env('AI_REQUEST_TIMEOUT', 60),
     'max_tool_rounds' => (int) env('AI_MAX_TOOL_ROUNDS', 2),
 
+    /** Cap simultaneous in-flight inferences (0 = unlimited). Only rejects under extreme concurrent load. */
+    'max_concurrent_requests' => (int) env('AI_MAX_CONCURRENT_REQUESTS', 32),
+
     'tool_chat' => [
-        'max_output_tokens' => (int) env('AI_TOOL_CHAT_MAX_OUTPUT_TOKENS', 1024),
+        'max_output_tokens' => (int) env('AI_TOOL_CHAT_MAX_OUTPUT_TOKENS', env('AI_MAX_OUTPUT_TOKENS', 1024)),
+    ],
+
+    /**
+     * Privacy-aware usage logging (Platform Admin). Never logs secrets/credentials.
+     */
+    'logging' => [
+        'async' => filter_var(env('AI_LOG_ASYNC', true), FILTER_VALIDATE_BOOLEAN),
+        'prompts' => filter_var(env('AI_LOG_PROMPTS', true), FILTER_VALIDATE_BOOLEAN),
+        'responses' => filter_var(env('AI_LOG_RESPONSES', true), FILTER_VALIDATE_BOOLEAN),
+        'database_queries' => filter_var(env('AI_LOG_DATABASE_QUERIES', false), FILTER_VALIDATE_BOOLEAN),
     ],
 
     /**
@@ -57,7 +81,7 @@ return [
     ],
     'conversation_history_limit' => (int) env('AI_CONVERSATION_HISTORY_LIMIT', 12),
 
-    /** Application-level rate limit for POST /ai/chat (per user). */
+    /** Application-level rate limit for POST /ai/chat (per user). Skipped entirely when provider is Ollama. */
     'rate_limit' => [
         'max_attempts' => (int) env('AI_RATE_LIMIT', 90),
         'platform_max_attempts' => (int) env('AI_PLATFORM_RATE_LIMIT', 180),

@@ -755,6 +755,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // ---- AI assistant ----
     Route::middleware('erp.permission:ai.assist')->prefix('ai')->group(function () {
         Route::get('status', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'status']);
+        Route::get('health', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'health']);
         Route::get('schemas', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'schemas']);
         Route::post('chat', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'chat'])
             ->middleware('throttle:ai-chat');
