@@ -553,7 +553,7 @@ class ReportBuilderTest extends TestCase
             'enabled' => true,
             'provider' => 'gemini',
             'api_key' => 'test-gemini-key',
-            'model' => 'gemini-3.7-flash',
+            'model' => 'gemini-3.6-flash',
             'base_url' => '',
         ]);
         $org->update(['module_settings' => $settings]);

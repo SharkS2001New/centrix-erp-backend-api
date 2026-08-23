@@ -117,7 +117,7 @@ class PlatformAiControlTest extends TestCase
             [
                 'enabled' => true,
                 'gemini_api_key' => 'AIza-platform-gemini-test-key',
-                'gemini_model' => 'gemini-3.7-flash',
+                'gemini_model' => 'gemini-3.6-flash',
             ],
         );
         $platformOrg->update(['module_settings' => $moduleSettings]);
@@ -156,7 +156,7 @@ class PlatformAiControlTest extends TestCase
         $this->assertNotNull($runtime);
         $this->assertSame('gemini', $runtime['provider']);
         $this->assertSame('AIza-platform-gemini-test-key', $runtime['api_key']);
-        $this->assertSame('gemini-3.7-flash', $runtime['model']);
+        $this->assertSame('gemini-3.6-flash', $runtime['model']);
 
         Sanctum::actingAs($superAdmin);
 

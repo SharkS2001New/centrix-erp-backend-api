@@ -38,7 +38,7 @@ class AiGeminiChatTest extends TestCase
             'ai.enabled' => true,
             'ai.provider' => 'gemini',
             'ai.gemini.api_key' => 'test-gemini-key',
-            'ai.gemini.model' => 'gemini-3.7-flash',
+            'ai.gemini.model' => 'gemini-3.6-flash',
             'ai.rate_limit.max_attempts' => 30,
             'ai.rate_limit.decay_minutes' => 1,
         ]);
@@ -49,7 +49,7 @@ class AiGeminiChatTest extends TestCase
             'enabled' => true,
             'provider' => 'gemini',
             'api_key' => 'test-gemini-key',
-            'model' => 'gemini-3.7-flash',
+            'model' => 'gemini-3.6-flash',
             'use_platform_gemini' => false,
         ]);
         $this->org->update(['module_settings' => $settings]);

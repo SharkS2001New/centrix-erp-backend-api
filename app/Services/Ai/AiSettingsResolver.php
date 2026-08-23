@@ -149,7 +149,7 @@ class AiSettingsResolver
 
         $model = trim((string) ($training['gemini_model'] ?? ''));
         if ($model === '') {
-            $model = (string) config('ai.gemini.model', 'gemini-3.7-flash');
+            $model = (string) config('ai.gemini.model', 'gemini-3.6-flash');
         }
 
         $baseUrl = trim((string) ($training['gemini_base_url'] ?? ''));
@@ -444,7 +444,7 @@ class AiSettingsResolver
         $model = trim((string) ($settings['model'] ?? ''));
         if ($model === '') {
             $model = $provider === 'gemini'
-                ? (string) config('ai.gemini.model', 'gemini-2.0-flash')
+                ? (string) config('ai.gemini.model', 'gemini-3.6-flash')
                 : (string) config('ai.defaults.model', 'gpt-4o-mini');
         }
 

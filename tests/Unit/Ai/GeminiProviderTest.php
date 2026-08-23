@@ -24,7 +24,7 @@ class GeminiProviderTest extends TestCase
             ], 200),
         ]);
 
-        $provider = new GeminiProvider('key', 'gemini-3.7-flash');
+        $provider = new GeminiProvider('key', 'gemini-3.6-flash');
         $result = $provider->chat([
             'system' => 'You are Centrix.',
             'messages' => [['role' => 'user', 'content' => 'Hi']],
@@ -44,7 +44,7 @@ class GeminiProviderTest extends TestCase
             'generativelanguage.googleapis.com/*' => Http::response(['error' => 'quota'], 429),
         ]);
 
-        $provider = new GeminiProvider('key', 'gemini-3.7-flash');
+        $provider = new GeminiProvider('key', 'gemini-3.6-flash');
 
         try {
             $provider->chat([
@@ -66,7 +66,7 @@ class GeminiProviderTest extends TestCase
             ], 403),
         ]);
 
-        $provider = new GeminiProvider('super-secret-key', 'gemini-3.7-flash');
+        $provider = new GeminiProvider('super-secret-key', 'gemini-3.6-flash');
 
         try {
             $provider->chat([
@@ -87,7 +87,7 @@ class GeminiProviderTest extends TestCase
             throw new \Illuminate\Http\Client\ConnectionException('cURL error 28: timed out');
         });
 
-        $provider = new GeminiProvider('key', 'gemini-3.7-flash', timeoutSeconds: 1);
+        $provider = new GeminiProvider('key', 'gemini-3.6-flash', timeoutSeconds: 1);
 
         $this->expectException(AiProviderException::class);
         try {
@@ -133,7 +133,7 @@ class GeminiProviderTest extends TestCase
                 ], 200),
         ]);
 
-        $provider = new GeminiProvider('key', 'gemini-3.7-flash');
+        $provider = new GeminiProvider('key', 'gemini-3.6-flash');
         $first = $provider->chat([
             'system' => 'You are Centrix.',
             'messages' => [['role' => 'user', 'content' => 'Sales today?']],
@@ -195,7 +195,7 @@ class GeminiProviderTest extends TestCase
             ], 200),
         ]);
 
-        $provider = new GeminiProvider('key', 'gemini-3.7-flash');
+        $provider = new GeminiProvider('key', 'gemini-3.6-flash');
 
         try {
             $provider->chat([

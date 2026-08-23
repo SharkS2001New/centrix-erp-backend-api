@@ -26,7 +26,7 @@ class AiProviderFactory
         return match ($provider) {
             'gemini' => new GeminiProvider(
                 apiKey: $apiKey,
-                model: $model !== '' ? $model : (string) config('ai.gemini.model', 'gemini-3.7-flash'),
+                model: $model !== '' ? $model : (string) config('ai.gemini.model', 'gemini-3.6-flash'),
                 baseUrl: (string) ($runtime['base_url'] ?: config('ai.gemini.base_url')),
                 timeoutSeconds: $timeout,
             ),
