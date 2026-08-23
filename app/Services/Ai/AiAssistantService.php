@@ -71,6 +71,10 @@ class AiAssistantService
             return $this->executeConfirmedAction($user, $pendingAction, $workspaceId, $pathname);
         }
 
+        if ($pendingAction && ($this->intentResolver->isCancelIntent($message) || $this->intentResolver->isDataQuestion($message))) {
+            $pendingAction = null;
+        }
+
         // Create / write intents stay on the classic assistant (forms + confirm).
         // Tool chat is used for Gemini data Q&A (and OpenAI when AI_USE_TOOL_CHAT=true),
         // with automatic fallback to classic Gemini/OpenAI if the tool path fails.
@@ -188,7 +192,7 @@ class AiAssistantService
                     'summary' => $parsedAction['summary'] ?? ($parsedAction['label'] ?? 'Proposed action'),
                     'params' => $parsedAction['params'] ?? [],
                 ];
-            } elseif ($pendingAction) {
+            } elseif ($pendingAction && $this->shouldContinuePendingAction($message, $history, $pathname)) {
                 $pending = $pendingAction;
             } else {
                 $inferred = $inferredCreate ?? $this->intentResolver->inferCreateAction($message, $history, $pathname);
@@ -395,7 +399,7 @@ class AiAssistantService
                     'summary' => $parsedAction['summary'] ?? ($parsedAction['label'] ?? 'Proposed action'),
                     'params' => $parsedAction['params'] ?? [],
                 ];
-            } elseif ($pendingAction) {
+            } elseif ($pendingAction && $this->shouldContinuePendingAction($message, $history, $pathname)) {
                 $pending = $pendingAction;
             } else {
                 $inferred = $this->intentResolver->inferCreateAction($message, $history, $pathname);
@@ -641,6 +645,7 @@ class AiAssistantService
             'messages' => $history,
             'temperature' => 0.25,
             'max_output_tokens' => (int) config('ai.defaults.max_output_tokens', config('ai.defaults.max_tokens', 2048)),
+            'thinking_level' => strtolower((string) ($runtime['provider'] ?? '')) === 'gemini' ? 'MINIMAL' : null,
         ]);
 
         return trim((string) ($turn['text'] ?? ''));
@@ -713,5 +718,22 @@ RULES:
 
 Tell users to fill the form and confirm, or reply "confirm" when params are complete.
 PROMPT;
+    }
+
+    /** @param  array<int, array{role: string, content: string}>  $history */
+    protected function shouldContinuePendingAction(string $message, array $history, ?string $pathname): bool
+    {
+        if ($this->intentResolver->isCancelIntent($message) || $this->intentResolver->isDataQuestion($message)) {
+            return false;
+        }
+
+        if ($this->intentResolver->inferCreateAction($message, $history, $pathname) !== null) {
+            return true;
+        }
+
+        return (bool) preg_match(
+            '/\b(subcategory|supplier|unit|price|sku|barcode|vat|reorder|product\s+name|named|called)\b/i',
+            $message,
+        );
     }
 }

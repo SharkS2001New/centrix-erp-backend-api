@@ -142,14 +142,16 @@ class AiEntitySchemaCatalog
         $labelExpr = $relation['label_expr'] ?? null;
         $selectLabel = $labelExpr ? DB::raw("({$labelExpr}) as option_label") : "{$table}.{$labelCol} as option_label";
 
-        return $query
+        return collect($query
             ->orderBy($labelCol)
             ->limit(200)
-            ->get(["{$table}.{$valueCol} as option_value", $selectLabel])
+            ->get(["{$table}.{$valueCol} as option_value", $selectLabel]))
+            ->unique(fn ($row) => (string) $row->option_value)
             ->map(fn ($row) => [
                 'value' => $row->option_value,
                 'label' => (string) $row->option_label,
             ])
+            ->values()
             ->all();
         } catch (\Throwable) {
             return [];

@@ -5,7 +5,9 @@ namespace App\Services\Ai;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\Ai\Concerns\BuildsExtendedInsightSlices;
+use App\Services\Auth\UserAccessService;
 use App\Services\Inventory\LowStockReportService;
+use App\Services\Sales\CentrixSalesScope;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -94,14 +96,41 @@ class AiInsightDataBuilder
     public function salesSummaryForPeriod(Organization $organization, User $user, string $from, string $to): array
     {
         $orgId = (int) $organization->id;
-        $gross = $this->salesTotal($orgId, $from, $to);
+        $branchId = app(UserAccessService::class)->branchId($user);
+        $gross = 0.0;
         $transactions = 0;
-        if (Schema::hasTable('sales')) {
-            $transactions = (int) DB::table('sales')
+
+        if ($this->viewExists('v_sales_by_channel')) {
+            $query = DB::table('v_sales_by_channel')
                 ->where('organization_id', $orgId)
-                ->whereNotIn('status', ['cancelled', 'draft', 'held', 'expired'])
-                ->whereRaw('DATE(COALESCE(completed_at, created_at)) BETWEEN ? AND ?', [$from, $to])
-                ->count();
+                ->whereBetween('sale_date', [$from, $to]);
+            if ($branchId !== null) {
+                $query->where('branch_id', $branchId);
+            }
+            $gross = round((float) $query->sum('gross_sales'), 2);
+            $transactions = (int) (clone $query)->sum('order_count');
+        } elseif ($this->viewExists('v_daily_sales')) {
+            $query = DB::table('v_daily_sales')
+                ->where('organization_id', $orgId)
+                ->whereBetween('sale_day', [$from, $to]);
+            if ($branchId !== null) {
+                $query->where('branch_id', $branchId);
+            }
+            $gross = round((float) $query->sum('gross'), 2);
+            $transactions = (int) (clone $query)->sum('orders');
+        } elseif (Schema::hasTable('sales')) {
+            $saleDateSql = CentrixSalesScope::reportSaleDateSql('s');
+            $query = DB::table('sales as s')
+                ->where('s.organization_id', $orgId)
+                ->whereRaw(CentrixSalesScope::reportPipelineStatusSql('s.status'))
+                ->where('s.archived', 0)
+                ->whereRaw("{$saleDateSql} BETWEEN ? AND ?", [$from, $to])
+                ->whereRaw(CentrixSalesScope::legacyExcludeSql('s'));
+            if ($branchId !== null) {
+                $query->where('s.branch_id', $branchId);
+            }
+            $gross = round((float) (clone $query)->sum('s.order_total'), 2);
+            $transactions = (int) (clone $query)->count();
         }
 
         return [
@@ -110,30 +139,90 @@ class AiInsightDataBuilder
             'gross_sales' => $gross,
             'net_sales' => $gross,
             'transactions' => $transactions,
+            'date_basis' => 'placed_date',
         ];
     }
 
     /**
      * Sales totals grouped by cashier for a date range (org-scoped).
      *
-     * @return array{from_date: string, to_date: string, cashiers: list<array<string, mixed>>, currency: string}
+     * @return array<string, mixed>
      */
-    public function salesByCashierForPeriod(Organization $organization, User $user, string $from, string $to): array
-    {
+    public function salesByCashierForPeriod(
+        Organization $organization,
+        User $user,
+        string $from,
+        string $to,
+        ?int $cashierId = null,
+        ?string $cashierName = null,
+    ): array {
         $orgId = (int) $organization->id;
+        $branchId = app(UserAccessService::class)->branchId($user);
+        $cashierFilter = $this->resolveCashierFilter($orgId, $cashierId, $cashierName);
+        if (($cashierFilter['error'] ?? false) === true) {
+            return array_merge([
+                'from_date' => $from,
+                'to_date' => $to,
+                'cashiers' => [],
+                'currency' => 'KES',
+                'date_basis' => 'placed_date',
+            ], $cashierFilter);
+        }
+
+        $resolvedCashierId = $cashierFilter['cashier_id'] ?? null;
         $cashiers = [];
 
-        if (Schema::hasTable('sales')) {
-            $cashiers = DB::table('sales as s')
+        if ($this->viewExists('v_sales_by_user')) {
+            $query = DB::table('v_sales_by_user')
+                ->where('organization_id', $orgId)
+                ->whereBetween('sale_date', [$from, $to]);
+            if ($branchId !== null) {
+                $query->where('branch_id', $branchId);
+            }
+            if ($resolvedCashierId !== null) {
+                $query->where('cashier_id', $resolvedCashierId);
+            }
+
+            $cashiers = $query
+                ->selectRaw(
+                    'cashier_id, salesperson as cashier_name, '
+                    .'ROUND(COALESCE(SUM(gross_sales), 0), 2) as gross_sales, '
+                    .'COALESCE(SUM(order_count), 0) as transactions'
+                )
+                ->groupBy('cashier_id', 'salesperson')
+                ->orderByDesc('gross_sales')
+                ->limit(50)
+                ->get()
+                ->map(fn ($row) => [
+                    'cashier_id' => $row->cashier_id !== null ? (int) $row->cashier_id : null,
+                    'cashier_name' => (string) $row->cashier_name,
+                    'gross_sales' => round((float) $row->gross_sales, 2),
+                    'transactions' => (int) $row->transactions,
+                ])
+                ->all();
+        } elseif (Schema::hasTable('sales')) {
+            $saleDateSql = CentrixSalesScope::reportSaleDateSql('s');
+            $query = DB::table('sales as s')
                 ->leftJoin('users as u', 'u.id', '=', 's.cashier_id')
                 ->where('s.organization_id', $orgId)
-                ->whereNotIn('s.status', ['cancelled', 'draft', 'held', 'expired'])
-                ->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) BETWEEN ? AND ?', [$from, $to])
+                ->whereRaw(CentrixSalesScope::reportPipelineStatusSql('s.status'))
+                ->where('s.archived', 0)
+                ->whereNotNull('s.cashier_id')
+                ->whereRaw("{$saleDateSql} BETWEEN ? AND ?", [$from, $to])
+                ->whereRaw(CentrixSalesScope::legacyExcludeSql('s'));
+            if ($branchId !== null) {
+                $query->where('s.branch_id', $branchId);
+            }
+            if ($resolvedCashierId !== null) {
+                $query->where('s.cashier_id', $resolvedCashierId);
+            }
+
+            $cashiers = $query
                 ->selectRaw(
                     's.cashier_id, '
-                    ."COALESCE(u.full_name, u.username, CONCAT('User #', s.cashier_id), 'Unassigned') as cashier_name, "
+                    ."COALESCE(u.full_name, u.username, CONCAT('User #', s.cashier_id)) as cashier_name, "
                     .'ROUND(COALESCE(SUM(s.order_total), 0), 2) as gross_sales, '
-                    .'COUNT(*) as transactions'
+                    .'COUNT(DISTINCT s.id) as transactions'
                 )
                 ->groupBy('s.cashier_id', 'u.full_name', 'u.username')
                 ->orderByDesc('gross_sales')
@@ -153,7 +242,76 @@ class AiInsightDataBuilder
             'to_date' => $to,
             'cashiers' => $cashiers,
             'currency' => 'KES',
-            'note' => 'Actual recorded sales by cashier. This is not a sales target / expected quota unless your org defines targets separately.',
+            'date_basis' => 'placed_date',
+            'cashier_filter' => $cashierFilter['label'] ?? null,
+            'note' => 'Actual recorded sales by cashier (placed date, same as Sales by User report). '
+                .'This is not a sales target / expected quota unless your org defines targets separately.',
+        ];
+    }
+
+    /**
+     * @return array{cashier_id?: int|null, label?: string, error?: bool, message?: string, candidates?: list<array<string, mixed>>}
+     */
+    protected function resolveCashierFilter(int $organizationId, ?int $cashierId, ?string $cashierName): array
+    {
+        if ($cashierId !== null && $cashierId > 0) {
+            $user = User::query()
+                ->where('organization_id', $organizationId)
+                ->where('id', $cashierId)
+                ->first();
+            if (! $user) {
+                return [
+                    'error' => true,
+                    'message' => "No cashier found with id {$cashierId} in this organization.",
+                ];
+            }
+
+            return [
+                'cashier_id' => $cashierId,
+                'label' => trim((string) ($user->full_name ?: $user->username)),
+            ];
+        }
+
+        $name = trim((string) $cashierName);
+        if ($name === '') {
+            return [];
+        }
+
+        $needle = mb_strtolower($name);
+        $matches = User::query()
+            ->where('organization_id', $organizationId)
+            ->where(function ($query) use ($needle) {
+                $query->whereRaw('LOWER(full_name) LIKE ?', ['%'.$needle.'%'])
+                    ->orWhereRaw('LOWER(username) LIKE ?', ['%'.$needle.'%']);
+            })
+            ->orderBy('full_name')
+            ->limit(10)
+            ->get(['id', 'full_name', 'username']);
+
+        if ($matches->isEmpty()) {
+            return [
+                'error' => true,
+                'message' => "No cashier matched the name \"{$name}\" in this organization.",
+            ];
+        }
+
+        if ($matches->count() === 1) {
+            $match = $matches->first();
+
+            return [
+                'cashier_id' => (int) $match->id,
+                'label' => trim((string) ($match->full_name ?: $match->username)),
+            ];
+        }
+
+        return [
+            'error' => true,
+            'message' => "Multiple cashiers matched \"{$name}\". Ask the user to pick one or pass cashier_id.",
+            'candidates' => $matches->map(fn (User $row) => [
+                'cashier_id' => (int) $row->id,
+                'cashier_name' => trim((string) ($row->full_name ?: $row->username)),
+                'username' => (string) $row->username,
+            ])->all(),
         ];
     }
 

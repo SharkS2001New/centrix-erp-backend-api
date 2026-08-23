@@ -5,9 +5,9 @@ namespace App\Services\Ai\Tools;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\Ai\AiInsightDataBuilder;
+use App\Services\Ai\AiSalesDateResolver;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\ErpContext;
-use Carbon\Carbon;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -29,8 +29,8 @@ class GetSalesByCashierTool implements AiToolInterface
     public function description(): string
     {
         return 'Get Centrix sales totals grouped by cashier for a date or date range '
-            .'(actual recorded sales, not sales targets/quotas). Use for questions like '
-            .'"sales by cashier today" or "how much did each cashier sell".';
+            .'(placed date — same as Sales by User report). Use relative_date=yesterday or today '
+            .'for calendar questions. Pass cashier_name or cashier_id when asking about one person.';
     }
 
     public function parametersSchema(): array
@@ -38,9 +38,14 @@ class GetSalesByCashierTool implements AiToolInterface
         return [
             'type' => 'object',
             'properties' => [
+                'relative_date' => [
+                    'type' => 'string',
+                    'enum' => ['today', 'yesterday', 'last_7_days'],
+                    'description' => 'Prefer this for natural language like "yesterday" or "today" — resolved server-side in org timezone.',
+                ],
                 'date' => [
                     'type' => 'string',
-                    'description' => 'Single calendar day as YYYY-MM-DD. Prefer this for "today" / "yesterday".',
+                    'description' => 'Single calendar day as YYYY-MM-DD when relative_date is not used.',
                 ],
                 'from_date' => [
                     'type' => 'string',
@@ -49,6 +54,14 @@ class GetSalesByCashierTool implements AiToolInterface
                 'to_date' => [
                     'type' => 'string',
                     'description' => 'Range end YYYY-MM-DD (inclusive). Use with from_date.',
+                ],
+                'cashier_id' => [
+                    'type' => 'integer',
+                    'description' => 'Filter to one cashier/user id when known.',
+                ],
+                'cashier_name' => [
+                    'type' => 'string',
+                    'description' => 'Filter to one cashier by full name or username (server-side match).',
                 ],
             ],
         ];
@@ -83,8 +96,18 @@ class GetSalesByCashierTool implements AiToolInterface
 
         unset($arguments['organization_id'], $arguments['company_id'], $arguments['tenant_id']);
 
-        [$from, $to] = $this->resolveDates($arguments);
-        $summary = $this->insightData->salesByCashierForPeriod($organization, $user, $from, $to);
+        [$from, $to] = AiSalesDateResolver::resolve($arguments, $organization);
+        $cashierId = isset($arguments['cashier_id']) ? (int) $arguments['cashier_id'] : null;
+        $cashierName = trim((string) ($arguments['cashier_name'] ?? ''));
+
+        $summary = $this->insightData->salesByCashierForPeriod(
+            $organization,
+            $user,
+            $from,
+            $to,
+            $cashierId > 0 ? $cashierId : null,
+            $cashierName !== '' ? $cashierName : null,
+        );
 
         return array_merge($summary, [
             'organization_id' => $orgId,
@@ -103,39 +126,5 @@ class GetSalesByCashierTool implements AiToolInterface
         }
 
         return Organization::query()->find((int) $user->organization_id);
-    }
-
-    /**
-     * @param  array<string, mixed>  $arguments
-     * @return array{0: string, 1: string}
-     */
-    protected function resolveDates(array $arguments): array
-    {
-        $date = trim((string) ($arguments['date'] ?? ''));
-        $from = trim((string) ($arguments['from_date'] ?? ''));
-        $to = trim((string) ($arguments['to_date'] ?? ''));
-
-        if ($date !== '') {
-            $day = Carbon::parse($date)->toDateString();
-
-            return [$day, $day];
-        }
-
-        if ($from !== '' && $to !== '') {
-            $fromDay = Carbon::parse($from)->toDateString();
-            $toDay = Carbon::parse($to)->toDateString();
-            if ($fromDay > $toDay) {
-                [$fromDay, $toDay] = [$toDay, $fromDay];
-            }
-            if (Carbon::parse($fromDay)->diffInDays(Carbon::parse($toDay)) > 90) {
-                $fromDay = Carbon::parse($toDay)->subDays(90)->toDateString();
-            }
-
-            return [$fromDay, $toDay];
-        }
-
-        $today = now()->toDateString();
-
-        return [$today, $today];
     }
 }

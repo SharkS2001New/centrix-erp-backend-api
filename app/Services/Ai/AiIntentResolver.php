@@ -11,14 +11,32 @@ class AiIntentResolver
      * @param  array<int, array{role?: string, content?: string}>  $history
      * @return array<string, mixed>|null
      */
+    public function isDataQuestion(string $message): bool
+    {
+        $text = strtolower(trim($message));
+
+        return (bool) preg_match(
+            '/\b(sales|sold|revenue|turnover|daily|weekly|monthly|yesterday|today|last\s+week|cashier|till|stock|inventory|debtor|receivable|report|summary|how\s+much|how\s+many|total|analytics|performance|margin|forecast|best\s+seller|top\s+seller)\b/i',
+            $text,
+        );
+    }
+
+    public function isCancelIntent(string $message): bool
+    {
+        return (bool) preg_match(
+            '/^(cancel|never\s*mind|forget\s+(?:that|it)|stop|discard|ignore)\b/i',
+            trim($message),
+        );
+    }
+
     public function inferCreateAction(string $message, array $history = [], ?string $pathname = null): ?array
     {
-        $text = strtolower($message);
-        foreach (array_slice($history, -6) as $turn) {
-            if (($turn['role'] ?? '') === 'user') {
-                $text .= ' '.strtolower((string) ($turn['content'] ?? ''));
-            }
+        if ($this->isDataQuestion($message) || $this->isCancelIntent($message)) {
+            return null;
         }
+
+        // Match create intent from the current message only — not stale history.
+        $text = strtolower($message);
 
         $pathEntity = $this->entityFromPath($pathname);
 

@@ -34,7 +34,11 @@ return [
     'use_tool_chat' => filter_var(env('AI_USE_TOOL_CHAT', false), FILTER_VALIDATE_BOOLEAN),
 
     'request_timeout' => (int) env('AI_REQUEST_TIMEOUT', 60),
-    'max_tool_rounds' => (int) env('AI_MAX_TOOL_ROUNDS', 3),
+    'max_tool_rounds' => (int) env('AI_MAX_TOOL_ROUNDS', 2),
+
+    'tool_chat' => [
+        'max_output_tokens' => (int) env('AI_TOOL_CHAT_MAX_OUTPUT_TOKENS', 1024),
+    ],
     'conversation_history_limit' => (int) env('AI_CONVERSATION_HISTORY_LIMIT', 12),
 
     /** Application-level rate limit for POST /ai/chat (per user). */

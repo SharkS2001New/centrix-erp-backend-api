@@ -8,6 +8,7 @@ use App\Models\AiConversationMessage;
 use App\Models\AiUsageLog;
 use App\Models\Organization;
 use App\Models\User;
+use App\Services\Ai\AiSalesDateResolver;
 use App\Services\Erp\ErpContext;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
@@ -95,8 +96,9 @@ class AiToolChatService
                 'messages' => $history,
                 'tools' => $this->tools->declarations(),
                 'model' => $runtime['model'],
-                'max_output_tokens' => (int) config('ai.defaults.max_output_tokens', 2048),
+                'max_output_tokens' => (int) config('ai.tool_chat.max_output_tokens', 1024),
                 'temperature' => 0.2,
+                'thinking_level' => $providerName === 'gemini' ? 'MINIMAL' : null,
             ]);
             $this->accumulateUsage($usageTotal, $turn['usage'] ?? []);
             $modelUsed = (string) ($turn['model'] ?? $modelUsed);
@@ -125,11 +127,9 @@ class AiToolChatService
                     'prior_model_content' => $turn['model_content'] ?? null,
                     'tool_results' => $toolResults,
                     'model' => $runtime['model'],
-                    'max_output_tokens' => max(
-                        2048,
-                        (int) config('ai.defaults.max_output_tokens', 2048),
-                    ),
+                    'max_output_tokens' => (int) config('ai.tool_chat.max_output_tokens', 1024),
                     'temperature' => 0.2,
+                    'thinking_level' => $providerName === 'gemini' ? 'MINIMAL' : null,
                 ]);
                 $this->accumulateUsage($usageTotal, $turn['usage'] ?? []);
                 $modelUsed = (string) ($turn['model'] ?? $modelUsed);
@@ -159,6 +159,8 @@ class AiToolChatService
                 'usage' => $usageTotal,
                 'provider' => $providerName,
                 'model' => $modelUsed,
+                'pending_action' => null,
+                'form_spec' => null,
             ];
         } catch (AiProviderException $e) {
             $this->logUsage($organization, $user, $conversation, $providerName, $modelUsed, $usageTotal, 'error', $e->codeKey, $e->getMessage(), $toolsUsed, $started);
