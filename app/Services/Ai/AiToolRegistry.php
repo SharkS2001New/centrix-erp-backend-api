@@ -2,10 +2,18 @@
 
 namespace App\Services\Ai;
 
+use App\Models\Organization;
 use App\Models\User;
 use App\Services\Ai\Tools\AiToolInterface;
+use App\Services\Ai\Tools\FindScreenTool;
+use App\Services\Ai\Tools\GetDebtorsSummaryTool;
+use App\Services\Ai\Tools\GetPurchasingOverviewTool;
+use App\Services\Ai\Tools\GetRouteOrdersTool;
+use App\Services\Ai\Tools\GetSalesBriefTool;
 use App\Services\Ai\Tools\GetSalesByCashierTool;
 use App\Services\Ai\Tools\GetSalesSummaryTool;
+use App\Services\Ai\Tools\GetStockSummaryTool;
+use App\Services\Ai\Tools\GetTillHealthTool;
 use InvalidArgumentException;
 
 class AiToolRegistry
@@ -16,6 +24,13 @@ class AiToolRegistry
     public function __construct(
         protected GetSalesSummaryTool $getSalesSummary,
         protected GetSalesByCashierTool $getSalesByCashier,
+        protected GetSalesBriefTool $getSalesBrief,
+        protected FindScreenTool $findScreen,
+        protected GetStockSummaryTool $getStockSummary,
+        protected GetPurchasingOverviewTool $getPurchasingOverview,
+        protected GetDebtorsSummaryTool $getDebtorsSummary,
+        protected GetTillHealthTool $getTillHealth,
+        protected GetRouteOrdersTool $getRouteOrders,
     ) {}
 
     /**
@@ -46,13 +61,35 @@ class AiToolRegistry
      *
      * @return list<array{name: string, description: string, parameters: array<string, mixed>}>
      */
-    public function declarations(): array
+    public function declarations(?Organization $organization = null): array
     {
+        $tools = $organization
+            ? $this->enabledForOrganization($organization)
+            : $this->all();
+
         return array_map(fn (AiToolInterface $tool) => [
             'name' => $tool->name(),
             'description' => $tool->description(),
             'parameters' => $tool->parametersSchema(),
-        ], $this->all());
+        ], $tools);
+    }
+
+    /**
+     * @return list<AiToolInterface>
+     */
+    public function enabledForOrganization(Organization $organization): array
+    {
+        $flags = AiSettingsResolver::forOrganization($organization)['tools'] ?? [];
+        $defaults = config('ai.tools', []);
+
+        return array_values(array_filter($this->all(), function (AiToolInterface $tool) use ($flags, $defaults) {
+            $name = $tool->name();
+            if (array_key_exists($name, $flags)) {
+                return (bool) $flags[$name];
+            }
+
+            return (bool) ($defaults[$name] ?? true);
+        }));
     }
 
     /**
@@ -66,6 +103,17 @@ class AiToolRegistry
                 'error' => true,
                 'message' => 'That tool is not available.',
             ];
+        }
+
+        $organization = Organization::query()->find((int) $user->organization_id);
+        if ($organization) {
+            $enabledNames = array_map(fn (AiToolInterface $t) => $t->name(), $this->enabledForOrganization($organization));
+            if (! in_array($name, $enabledNames, true)) {
+                return [
+                    'error' => true,
+                    'message' => 'That tool is disabled for this organization.',
+                ];
+            }
         }
 
         try {
@@ -90,9 +138,15 @@ class AiToolRegistry
         }
 
         $registered = [
+            $this->findScreen,
             $this->getSalesSummary,
             $this->getSalesByCashier,
-            // Incremental tools: get_stock_summary, get_customer_balance, …
+            $this->getSalesBrief,
+            $this->getStockSummary,
+            $this->getPurchasingOverview,
+            $this->getDebtorsSummary,
+            $this->getTillHealth,
+            $this->getRouteOrders,
         ];
 
         $this->tools = [];

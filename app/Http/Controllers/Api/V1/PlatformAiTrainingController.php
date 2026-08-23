@@ -50,6 +50,21 @@ class PlatformAiTrainingController extends Controller
         return response()->json(AiSettingsResolver::describePlatformTraining());
     }
 
+    public function usage(Request $request, \App\Services\Ai\AiUsageAnalyticsService $analytics)
+    {
+        $data = $request->validate([
+            'from' => 'nullable|date',
+            'to' => 'nullable|date',
+            'organization_id' => 'nullable|integer|exists:organizations,id',
+        ]);
+
+        return response()->json($analytics->platformSummary(
+            $data['from'] ?? null,
+            $data['to'] ?? null,
+            isset($data['organization_id']) ? (int) $data['organization_id'] : null,
+        ));
+    }
+
     public function updateSettings(Request $request)
     {
         $data = $request->validate([

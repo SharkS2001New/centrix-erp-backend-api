@@ -343,6 +343,34 @@ class AiSettingsResolver
             is_array($settings['insights'] ?? null) ? $settings['insights'] : [],
             is_array($defaults['insights'] ?? null) ? $defaults['insights'] : [],
         );
+        $out['tools'] = self::normalizeTools(
+            is_array($settings['tools'] ?? null) ? $settings['tools'] : (is_array($out['tools'] ?? null) ? $out['tools'] : []),
+            is_array($defaults['tools'] ?? null) ? $defaults['tools'] : config('ai.tools', []),
+        );
+
+        return $out;
+    }
+
+    /**
+     * @param  array<string, mixed>  $incoming
+     * @param  array<string, mixed>  $defaults
+     * @return array<string, bool>
+     */
+    public static function normalizeTools(array $incoming, array $defaults = []): array
+    {
+        $base = $defaults !== [] ? $defaults : config('ai.tools', []);
+        $out = [];
+        foreach ($base as $name => $enabled) {
+            $out[(string) $name] = array_key_exists($name, $incoming)
+                ? (bool) $incoming[$name]
+                : (bool) $enabled;
+        }
+        foreach ($incoming as $name => $enabled) {
+            $key = (string) $name;
+            if ($key !== '' && ! array_key_exists($key, $out)) {
+                $out[$key] = (bool) $enabled;
+            }
+        }
 
         return $out;
     }
@@ -775,6 +803,7 @@ class AiSettingsResolver
             'free_ai_provider' => $freeProvider,
             'credential_source' => $credentialSource,
             'insights' => $settings['insights'] ?? self::normalizeInsights([]),
+            'tools' => $settings['tools'] ?? self::normalizeTools([]),
         ];
     }
 }

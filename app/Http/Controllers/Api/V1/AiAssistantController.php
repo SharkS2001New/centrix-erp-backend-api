@@ -71,6 +71,16 @@ class AiAssistantController extends Controller
             'context' => 'nullable|string|in:products,reports,report_builder,general,erp',
             'workspace_id' => 'nullable|string|max:32|in:pos,backoffice,admin,accounting,hr,distribution',
             'pathname' => 'nullable|string|max:300',
+            'page_context' => 'nullable|array',
+            'page_context.screen_key' => 'nullable|string|max:80',
+            'page_context.title' => 'nullable|string|max:200',
+            'page_context.pathname' => 'nullable|string|max:300',
+            'page_context.entity' => 'nullable|string|max:64',
+            'page_context.entity_id' => 'nullable|string|max:64',
+            'page_context.branch_id' => 'nullable',
+            'page_context.filters' => 'nullable|array',
+            'page_context.summary' => 'nullable|array',
+            'page_context.rows' => 'nullable|array|max:80',
             'message' => ['required', 'string', 'max:4000', 'not_regex:/data:image\//i'],
             'conversation_id' => 'nullable|uuid',
             'history' => 'nullable|array|max:16',
@@ -110,6 +120,7 @@ class AiAssistantController extends Controller
             $data['workspace_id'] ?? null,
             $data['pathname'] ?? null,
             $data['conversation_id'] ?? null,
+            $data['page_context'] ?? null,
         );
 
         if (! empty($data['confirm_learn_id'])) {

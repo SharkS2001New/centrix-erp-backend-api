@@ -39,6 +39,22 @@ return [
     'tool_chat' => [
         'max_output_tokens' => (int) env('AI_TOOL_CHAT_MAX_OUTPUT_TOKENS', 1024),
     ],
+
+    /**
+     * Default enablement for assistant tools (overridable per org in module_settings.ai.tools).
+     * Platform can roll out modules by flipping these for selected tenants.
+     */
+    'tools' => [
+        'find_screen' => true,
+        'get_sales_summary' => true,
+        'get_sales_by_cashier' => true,
+        'get_sales_brief' => true,
+        'get_stock_summary' => true,
+        'get_purchasing_overview' => true,
+        'get_debtors_summary' => true,
+        'get_till_health' => true,
+        'get_route_orders' => true,
+    ],
     'conversation_history_limit' => (int) env('AI_CONVERSATION_HISTORY_LIMIT', 12),
 
     /** Application-level rate limit for POST /ai/chat (per user). */

@@ -887,7 +887,7 @@ class OrganizationPlatformConfigService
         }
 
         // Platform selects free AI for the org; tenants choose platform vs own key via use_platform_ai.
-        unset($data['use_platform_gemini'], $data['enable_ai'], $data['enabled']);
+        unset($data['use_platform_gemini'], $data['enable_ai'], $data['enabled'], $data['tools']);
 
         return $data;
     }

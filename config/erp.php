@@ -265,6 +265,7 @@ return [
         'ai' => [
             'enable_ai',
             'use_platform_gemini',
+            'tools',
         ],
         'whatsapp' => [
             'enable_whatsapp_orders',
@@ -766,6 +767,17 @@ return [
             'gemini_api_key' => '',
             'gemini_model' => '',
             'gemini_base_url' => '',
+            'tools' => [
+                'find_screen' => true,
+                'get_sales_summary' => true,
+                'get_sales_by_cashier' => true,
+                'get_sales_brief' => true,
+                'get_stock_summary' => true,
+                'get_purchasing_overview' => true,
+                'get_debtors_summary' => true,
+                'get_till_health' => true,
+                'get_route_orders' => true,
+            ],
             'insights' => [
                 'enabled' => true,
                 'channels' => [

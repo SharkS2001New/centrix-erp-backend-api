@@ -44,6 +44,7 @@ class AiAssistantService
         ?string $workspaceId = null,
         ?string $pathname = null,
         ?string $conversationId = null,
+        ?array $pageContext = null,
     ): array {
         $teachResult = $this->tryCaptureUserTeaching($user, $message);
         if ($teachResult) {
@@ -92,6 +93,7 @@ class AiAssistantService
                 $history,
                 $workspaceId,
                 $pathname,
+                $pageContext,
             );
             if (! empty($toolResult['success']) || ! empty($toolResult['declined_off_topic'])) {
                 return $toolResult;
@@ -124,6 +126,9 @@ class AiAssistantService
         }
 
         $systemContext = $this->contextBuilder->build($user, $message, $scope);
+        if (is_array($pageContext) && $pageContext !== []) {
+            $systemContext['page_context'] = $this->compactPageContext($pageContext);
+        }
         $messages = [
             ['role' => 'system', 'content' => $this->systemPrompt($scope)],
             [
@@ -690,12 +695,13 @@ class AiAssistantService
 You are the in-app assistant for Centrix ERP — a Kenya-focused business management system (currency KES).
 
 ACTIVE WORKSPACE: {$label}. {$description}
-The user currently has ONLY this workspace open. Answer ONLY questions related to {$label}.
-If they ask about another module (HR, Accounting, Admin, POS, etc.), tell them to switch workspace from the top bar — do not answer cross-module questions.
+Prefer answering in the context of {$label}, but you MAY answer navigation / "where do I…?" / "how do I…?" questions for ANY Centrix module.
+When guiding to another module, give the path (e.g. /suppliers) and mention they may need to switch workspace from the top bar.
+Do not invent numbers for other modules — for live sales/stock/purchasing data, tell them to ask again after switching workspace if create-actions are scoped here.
 
 Use entity_schemas in context — it lists every field, which are required, auto-generated, important, and FK relations (e.g. unit_id → uoms).
 Use platform_knowledge for ERP-wide facts trained by platform administrators — they apply to every organization.
-Use navigation and available_actions — they are already filtered to {$label} only.
+Use navigation, module_catalog, and available_actions to act as Centrix documentation.
 
 INTERACTIVE FORMS: Select options are ALREADY in entity_detail / entity_schemas — never say you are fetching or ask the user to wait.
 
@@ -703,7 +709,7 @@ Image uploads are NOT supported — never ask for photos or images.
 
 RULES:
 1. Off-topic only for weather, recipes, trivia, unrelated coding → reply with DECLINE_OFF_TOPIC on its own line.
-2. Cross-module questions → politely decline and mention switching workspace; do not answer using other module knowledge.
+2. Navigation/help across modules is allowed. Decline only WRITE/create actions outside {$label} available_actions — suggest switching workspace.
 3. Use entity_schemas.field metadata: skip auto-generated fields unless user provides a value; use select options for FK fields.
 4. Normal orders = create_sales_order; held/save-only = create_held_order only when explicitly requested.
 5. Platform administrators train ERP-wide notes under Platform → AI training; they apply to all tenants.
@@ -711,6 +717,7 @@ RULES:
    - user.is_admin=true or user_access.has_full_permissions=true → user has ALL permissions; never say they lack access.
    - Answer read-only questions using *_summary data in context when present.
    - Only decline WRITE actions not listed in available_actions.
+7. Always include clickable Centrix paths like /inventory/stock when telling users where to go.
 
 ```action
 {"type":"create_product","summary":"New product Widget","params":{"product_name":"Widget","unit_price":150}}
@@ -735,5 +742,29 @@ PROMPT;
             '/\b(subcategory|supplier|unit|price|sku|barcode|vat|reorder|product\s+name|named|called)\b/i',
             $message,
         );
+    }
+
+    /**
+     * @param  array<string, mixed>  $pageContext
+     * @return array<string, mixed>
+     */
+    protected function compactPageContext(array $pageContext): array
+    {
+        $rows = is_array($pageContext['rows'] ?? null) ? $pageContext['rows'] : [];
+        if (count($rows) > 40) {
+            $rows = array_slice($rows, 0, 40);
+        }
+
+        return array_filter([
+            'screen_key' => $pageContext['screen_key'] ?? null,
+            'title' => $pageContext['title'] ?? null,
+            'pathname' => $pageContext['pathname'] ?? null,
+            'entity' => $pageContext['entity'] ?? null,
+            'entity_id' => $pageContext['entity_id'] ?? null,
+            'branch_id' => $pageContext['branch_id'] ?? null,
+            'filters' => is_array($pageContext['filters'] ?? null) ? $pageContext['filters'] : null,
+            'summary' => is_array($pageContext['summary'] ?? null) ? $pageContext['summary'] : null,
+            'rows' => $rows !== [] ? $rows : null,
+        ], fn ($v) => $v !== null && $v !== '' && $v !== []);
     }
 }

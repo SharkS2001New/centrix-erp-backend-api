@@ -104,6 +104,8 @@ class AiSettingsController extends Controller
             'insights.exception_alerts.unpaid_spike' => 'sometimes|boolean',
             'insights.exception_alerts.unusual_discounts' => 'sometimes|boolean',
             'insights.exception_alerts.void_cancel_bursts' => 'sometimes|boolean',
+            'tools' => 'sometimes|array',
+            'tools.*' => 'sometimes|boolean',
         ]);
 
         $data = $this->platformConfig->filterOrgManagerAiPayload($data, $gate);

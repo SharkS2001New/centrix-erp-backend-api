@@ -259,6 +259,75 @@ class AiSystemContextBuilder
     }
 
     /** @return list<array<string, mixed>> */
+    public function visibleNavigationForUser(User $user, ?Organization $organization = null): array
+    {
+        $org = $organization ?? Organization::find($user->organization_id);
+        $orgId = (int) ($org?->id ?? $user->organization_id);
+        $gate = $organization
+            ? $this->erp->gateForOrganization($organization)
+            : $this->erp->gateForUser($user);
+        $contextUser = $this->contextUser($user, $organization, $orgId, false);
+
+        return $this->visibleNavigation($gate, $contextUser);
+    }
+
+    /**
+     * Compact ERP documentation context for Gemini tool-chat (navigation + modules + knowledge).
+     *
+     * @return array<string, mixed>
+     */
+    public function documentationContext(User $user, ?Organization $organization = null): array
+    {
+        $org = $organization ?? Organization::find($user->organization_id);
+        $orgId = (int) ($org?->id ?? $user->organization_id);
+        $gate = $organization
+            ? $this->erp->gateForOrganization($organization)
+            : $this->erp->gateForUser($user);
+        $contextUser = $this->contextUser($user, $organization, $orgId, false);
+        $caps = $gate->toArray();
+
+        $modules = [];
+        foreach (config('ai_knowledge.modules', []) as $module) {
+            $modules[] = [
+                'key' => $module['key'] ?? null,
+                'label' => $module['label'] ?? null,
+                'paths' => array_slice($module['paths'] ?? [], 0, 6),
+                'tasks' => array_slice($module['tasks'] ?? [], 0, 5),
+            ];
+        }
+
+        $navigationFlat = [];
+        foreach ($this->visibleNavigation($gate, $contextUser) as $section) {
+            foreach ($section['items'] ?? [] as $item) {
+                $navigationFlat[] = [
+                    'label' => $item['label'],
+                    'path' => $item['path'],
+                    'section' => $section['section'] ?? $item['section'] ?? null,
+                ];
+            }
+        }
+
+        $workflows = [];
+        foreach (config('ai_knowledge.workflows', []) as $key => $workflow) {
+            $workflows[] = [
+                'key' => $key,
+                'summary' => $workflow['summary'] ?? $key,
+                'path' => $workflow['path'] ?? null,
+            ];
+        }
+
+        return [
+            'organization' => $org?->org_name ?? $org?->company_code,
+            'enabled_modules' => array_keys(array_filter($caps['modules'] ?? [])),
+            'module_catalog' => $modules,
+            'navigation' => array_slice($navigationFlat, 0, 80),
+            'workflows' => array_slice($workflows, 0, 20),
+            'platform_knowledge' => $this->knowledge->confirmedForContext(20, null),
+            'how_to_use_centrix' => config('ai_knowledge.how_to_guide', []),
+        ];
+    }
+
+    /** @return list<array<string, mixed>> */
     protected function visibleNavigation(CapabilityGate $gate, User $user): array
     {
         $out = [];

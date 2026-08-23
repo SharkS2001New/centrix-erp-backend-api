@@ -5,6 +5,18 @@
  * Derived from routes, permission registry, and feature tests.
  */
 return [
+    'how_to_guide' => [
+        'Centrix is organized by workspaces (top bar): Backoffice, POS, Accounting, HR, Distribution/Admin depending on your org.',
+        'If you do not know where a feature lives, ask "Where is …?" — the assistant should reply with a path like /suppliers.',
+        'Purchasing: Suppliers at /suppliers, purchase orders (LPO) at /lpo, receive goods (GRN) at /inventory/receipts, pay suppliers at /suppliers/payments.',
+        'Inventory: Current stock at /inventory/stock, adjustments at /inventory/adjustments, stock take at /inventory/stock-take, products at /products.',
+        'Sales: Orders at /sales/orders, POS at /sales/pos or /pos, debtors under /sales/shop-debtors/*, Sales by User report at /reports (Sales by user).',
+        'Accounting: Chart of accounts, journals, bank reconciliation, expenses, and AR under /accounting/*.',
+        'HR: Employees, attendance, leave, and payroll under /hr/*.',
+        'Admin: Users and roles/permissions under /admin/users and /admin/roles. Organization AI settings under Organization settings → AI.',
+        'Reports hub: /reports — sales, stock, payroll, and custom report builder.',
+        'Cashier sales targets/quotas are not stored as a Centrix AI metric — report actual sales with get_sales_by_cashier instead.',
+    ],
     'modules' => [
         [
             'key' => 'catalogue',
@@ -19,18 +31,19 @@ return [
         [
             'key' => 'sales',
             'label' => 'Sales & POS',
-            'paths' => ['/sales/pos', '/sales/orders', '/customers'],
+            'paths' => ['/sales/pos', '/sales/orders', '/customers', '/sales/shop-debtors/unpaid'],
             'tasks' => [
                 'POS checkout — create cart, add lines, pay with cash/M-Pesa/voucher',
                 'Backoffice sales orders — customer + line items + checkout',
                 'Held orders — save_only checkout with status held (resume or cancel later)',
                 'Credit sales, vouchers, loyalty points, order discounts',
+                'Shop debtors queues — unpaid / partial / paid',
             ],
         ],
         [
             'key' => 'inventory',
             'label' => 'Inventory',
-            'paths' => ['/inventory/stock', '/inventory/receipts', '/inventory/stock-take'],
+            'paths' => ['/inventory/stock', '/inventory/receipts', '/inventory/stock-take', '/inventory/adjustments'],
             'tasks' => [
                 'View stock on hand, low-stock alerts',
                 'Receive stock from LPO (GRN), transfer between branches',
@@ -40,25 +53,26 @@ return [
         [
             'key' => 'purchasing',
             'label' => 'Purchasing',
-            'paths' => ['/suppliers', '/lpo', '/suppliers/payments'],
+            'paths' => ['/suppliers', '/lpo', '/suppliers/payments', '/inventory/receipts'],
             'tasks' => [
                 'Manage suppliers and local purchase orders (LPO)',
-                'Receive goods, supplier payments, supplier returns',
+                'Receive goods (GRN), supplier payments, supplier returns',
             ],
         ],
         [
             'key' => 'accounting',
             'label' => 'Accounting',
-            'paths' => ['/accounting/chart-of-accounts', '/accounting/journal-entries', '/expenses'],
+            'paths' => ['/accounting', '/accounting/chart-of-accounts', '/accounting/journal-entries', '/expenses'],
             'tasks' => [
                 'Chart of accounts, journal entries (post/reverse via operations API)',
                 'Expenses, accounts receivable/payable, fiscal period close',
+                'Bank reconciliation',
             ],
         ],
         [
             'key' => 'hr_payroll',
             'label' => 'HR & payroll',
-            'paths' => ['/hr/employees', '/hr/departments', '/hr/payroll', '/hr/kpis'],
+            'paths' => ['/hr/employees', '/hr/departments', '/hr/payroll', '/hr/attendance', '/hr/leave'],
             'tasks' => [
                 'Employees, departments, shifts, attendance, leave',
                 'Payroll runs, deductions, organization KPIs',
@@ -67,18 +81,37 @@ return [
         [
             'key' => 'fulfillment',
             'label' => 'Logistics & dispatch',
-            'paths' => ['/fulfillment/dispatch', '/fulfillment/trips', '/fulfillment/routes'],
+            'paths' => ['/fulfillment/dispatch', '/fulfillment/trips', '/fulfillment/routes', '/fulfillment/drivers'],
             'tasks' => [
                 'Dispatch trips, route schedules, drivers, POD capture',
             ],
         ],
         [
+            'key' => 'distribution',
+            'label' => 'Distribution (fulfillment)',
+            'paths' => ['/fulfillment/dispatch', '/fulfillment/trips', '/fulfillment/routes'],
+            'tasks' => [
+                'Same as logistics & dispatch when distribution ops are enabled for the org',
+            ],
+        ],
+        [
             'key' => 'reports',
             'label' => 'Reports',
-            'paths' => ['/reports', '/reports/builder'],
+            'paths' => ['/reports', '/reports/builder', '/reports/sales-summary'],
             'tasks' => [
                 'Built-in reports (sales, stock, payroll, KRA receipts)',
+                'Sales by user / cashier performance',
                 'Custom report builder — any module/source, unlimited columns',
+            ],
+        ],
+        [
+            'key' => 'admin',
+            'label' => 'Administration',
+            'paths' => ['/admin', '/admin/users', '/admin/roles', '/admin/attendance-clock'],
+            'tasks' => [
+                'Users, roles and permissions',
+                'Organization settings (including AI credentials for org admins)',
+                'Attendance clock administration',
             ],
         ],
     ],
