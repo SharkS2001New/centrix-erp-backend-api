@@ -6,6 +6,7 @@ use App\Exceptions\Ai\AiProviderException;
 use App\Http\Controllers\Controller;
 use App\Models\Organization;
 use App\Services\Ai\AiAssistantService;
+use App\Services\Ai\AiCredentialTestService;
 use App\Services\Ai\AiKnowledgeService;
 use App\Services\Ai\AiProviderFactory;
 use App\Services\Ai\AiSettingsResolver;
@@ -18,6 +19,7 @@ class PlatformAiTrainingController extends Controller
         protected AiKnowledgeService $knowledge,
         protected AiAssistantService $ai,
         protected AiProviderFactory $providers,
+        protected AiCredentialTestService $credentialTest,
     ) {}
 
     public function status(Request $request)
@@ -84,124 +86,9 @@ class PlatformAiTrainingController extends Controller
             $provider = 'gemini';
         }
 
-        $runtime = $this->runtimeForCredentialTest($provider, $data);
-        if (! $runtime) {
-            return response()->json([
-                'ok' => false,
-                'provider' => $provider,
-                'message' => $provider === 'gemini'
-                    ? 'No Gemini API key configured. Paste a key and save, or include it in this test.'
-                    : 'No OpenAI API key configured. Paste a key and save, or include it in this test.',
-            ], 422);
-        }
+        $result = $this->credentialTest->testForPlatform($provider, $data);
 
-        try {
-            $turn = $this->providers->make($runtime)->chat([
-                'system' => 'You are a connectivity check for Centrix ERP. Reply in one short sentence.',
-                'messages' => [
-                    ['role' => 'user', 'content' => 'Say hello to Centrix ERP'],
-                ],
-                'temperature' => 0.2,
-                // Gemini 3.x thinking tokens count toward maxOutputTokens — keep headroom.
-                'max_output_tokens' => 1024,
-                'thinking_level' => 'MINIMAL',
-            ]);
-        } catch (AiProviderException $e) {
-            return response()->json([
-                'ok' => false,
-                'provider' => $runtime['provider'],
-                'model' => $runtime['model'],
-                'error_code' => $e->codeKey,
-                'message' => $e->getMessage(),
-            ], 422);
-        } catch (\Throwable $e) {
-            return response()->json([
-                'ok' => false,
-                'provider' => $runtime['provider'],
-                'model' => $runtime['model'],
-                'message' => 'Could not reach the AI provider.',
-            ], 422);
-        }
-
-        $reply = trim((string) ($turn['text'] ?? ''));
-        if (strlen($reply) > 240) {
-            $reply = substr($reply, 0, 237).'…';
-        }
-
-        return response()->json([
-            'ok' => true,
-            'provider' => $runtime['provider'],
-            'model' => $runtime['model'],
-            'reply' => $reply !== '' ? $reply : 'Connected successfully.',
-            'message' => 'Connection successful.',
-        ]);
-    }
-
-    /**
-     * @param  array<string, mixed>  $data
-     * @return array{enabled: bool, api_key: string, model: string, base_url: string, provider: string}|null
-     */
-    protected function runtimeForCredentialTest(string $provider, array $data): ?array
-    {
-        if ($provider === 'gemini') {
-            $draftKey = trim((string) ($data['gemini_api_key'] ?? ''));
-            if ($draftKey !== '' && ! str_starts_with($draftKey, '••••')) {
-                $model = AiSettingsResolver::normalizeGeminiModel(trim((string) ($data['gemini_model'] ?? '')));
-
-                return [
-                    'enabled' => true,
-                    'provider' => 'gemini',
-                    'api_key' => $draftKey,
-                    'model' => $model,
-                    'base_url' => (string) config('ai.gemini.base_url'),
-                ];
-            }
-
-            $credentials = AiSettingsResolver::resolvePlatformGeminiCredentials();
-            if (! $credentials) {
-                return null;
-            }
-
-            $modelOverride = trim((string) ($data['gemini_model'] ?? ''));
-            if ($modelOverride !== '') {
-                $credentials['model'] = AiSettingsResolver::normalizeGeminiModel($modelOverride);
-            }
-
-            return array_merge($credentials, [
-                'enabled' => true,
-                'provider' => 'gemini',
-            ]);
-        }
-
-        $draftKey = trim((string) ($data['api_key'] ?? ''));
-        if ($draftKey !== '' && ! str_starts_with($draftKey, '••••')) {
-            $model = trim((string) ($data['model'] ?? ''));
-            if ($model === '') {
-                $model = (string) config('ai.defaults.model', 'gpt-4o-mini');
-            }
-            $baseUrl = trim((string) ($data['base_url'] ?? ''));
-            if ($baseUrl === '') {
-                $baseUrl = (string) config('ai.defaults.base_url', 'https://api.openai.com/v1');
-            }
-
-            return [
-                'enabled' => true,
-                'provider' => 'openai',
-                'api_key' => $draftKey,
-                'model' => $model,
-                'base_url' => rtrim($baseUrl, '/'),
-            ];
-        }
-
-        $credentials = AiSettingsResolver::resolvePlatformOpenAiCredentials();
-        if (! $credentials) {
-            return null;
-        }
-
-        return array_merge($credentials, [
-            'enabled' => true,
-            'provider' => 'openai',
-        ]);
+        return response()->json($result['body'], $result['status']);
     }
 
     public function listKnowledge(Request $request)

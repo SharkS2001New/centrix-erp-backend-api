@@ -94,11 +94,12 @@ class PlatformAiControlTest extends TestCase
         Sanctum::actingAs($superAdmin);
 
         $this->patchJson("/api/v1/admin/organizations/{$orgId}/settings/ai", [
-            'enabled' => true,
+            'use_platform_ai' => false,
             'api_key' => 'sk-test-org-key-123456',
         ])->assertOk()
             ->assertJsonPath('platform_enabled', true)
-            ->assertJsonPath('settings.enabled', true);
+            ->assertJsonPath('available', true)
+            ->assertJsonPath('credential_source', 'org');
     }
 
     public function test_super_admin_can_enable_platform_gemini_for_selected_org(): void
@@ -168,14 +169,27 @@ class PlatformAiControlTest extends TestCase
             ->assertJsonPath('credential_source', 'platform_gemini')
             ->assertJsonPath('provider', 'gemini');
 
-        // Org (or platform managing the org) may add its own key; that overrides free Gemini.
+        // Stored org key does not override platform AI while use_platform_ai remains true.
         $this->patchJson("/api/v1/admin/organizations/{$orgId}/settings/ai", [
             'provider' => 'openai',
             'api_key' => 'sk-org-override-key',
-            'enabled' => true,
         ])->assertOk()
-            ->assertJsonPath('credential_source', 'org')
+            ->assertJsonPath('use_platform_ai', true)
+            ->assertJsonPath('credential_source', 'platform_gemini')
             ->assertJsonPath('has_org_api_key', true);
+
+        $stillPlatform = Organization::findOrFail($orgId);
+        $resolvedPlatform = \App\Services\Ai\AiSettingsResolver::resolveRuntimeForOrganization($stillPlatform);
+        $this->assertNotNull($resolvedPlatform);
+        $this->assertSame('gemini', $resolvedPlatform['provider']);
+        $this->assertSame('AIza-platform-gemini-test-key', $resolvedPlatform['api_key']);
+
+        // Opt out of platform AI to use the organization key instead.
+        $this->patchJson("/api/v1/admin/organizations/{$orgId}/settings/ai", [
+            'use_platform_ai' => false,
+        ])->assertOk()
+            ->assertJsonPath('use_platform_ai', false)
+            ->assertJsonPath('credential_source', 'org');
 
         $fresh = Organization::findOrFail($orgId);
         $this->assertTrue((bool) ($fresh->module_settings['ai']['use_platform_gemini'] ?? false));
@@ -309,5 +323,53 @@ class PlatformAiControlTest extends TestCase
             ->assertJsonPath('provider', 'gemini')
             ->assertJsonPath('model', 'gemini-3.6-flash')
             ->assertJsonPath('reply', 'Hello, Centrix ERP!');
+    }
+
+    public function test_org_admin_can_test_own_ai_credentials(): void
+    {
+        Http::fake([
+            'api.openai.com/*' => Http::response([
+                'choices' => [[
+                    'message' => ['content' => 'Hello from org OpenAI'],
+                ]],
+                'usage' => [
+                    'prompt_tokens' => 8,
+                    'completion_tokens' => 6,
+                    'total_tokens' => 14,
+                ],
+            ], 200),
+        ]);
+
+        config(['erp.allow_org_provisioning' => true]);
+
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $create = $this->postJson('/api/v1/admin/organizations/provision', [
+            'company_code' => 'AITST',
+            'org_name' => 'AI Test Org',
+            'org_email' => 'aitst@org.com',
+            'primary_tel' => '0711000055',
+            'org_address' => 'Nairobi',
+            'deployment_profile' => 'small_shop',
+            'sales_platform' => ['enable_ai' => true],
+            'admin_username' => 'aitst_admin',
+            'admin_email' => 'aitst@org.com',
+            'admin_password' => 'password123',
+            'admin_full_name' => 'AI Test Admin',
+        ])->assertCreated();
+
+        $orgId = $create->json('organization.id');
+
+        Sanctum::actingAs($superAdmin);
+
+        $this->postJson("/api/v1/admin/organizations/{$orgId}/settings/ai/test-credentials", [
+            'provider' => 'openai',
+            'use_platform_ai' => false,
+            'api_key' => 'sk-org-test-key',
+        ])->assertOk()
+            ->assertJsonPath('ok', true)
+            ->assertJsonPath('provider', 'openai')
+            ->assertJsonPath('reply', 'Hello from org OpenAI');
     }
 }

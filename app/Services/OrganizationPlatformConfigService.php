@@ -388,6 +388,7 @@ class OrganizationPlatformConfigService
             $currentAi['enabled'] = true;
             $currentAi['provider'] = $freeProvider;
             $currentAi['use_platform_gemini'] = true;
+            $currentAi['use_platform_ai'] = true;
         }
         if (array_key_exists('enable_ai', $salesPlatform) && ! $salesPlatform['enable_ai']) {
             $currentAi['enabled'] = false;
@@ -885,9 +886,8 @@ class OrganizationPlatformConfigService
             unset($data['enabled'], $data['api_key'], $data['model'], $data['base_url'], $data['provider']);
         }
 
-        // Platform selects free Gemini for the org; tenants may still save their own
-        // API key/provider which takes precedence at runtime.
-        unset($data['use_platform_gemini'], $data['enable_ai']);
+        // Platform selects free AI for the org; tenants choose platform vs own key via use_platform_ai.
+        unset($data['use_platform_gemini'], $data['enable_ai'], $data['enabled']);
 
         return $data;
     }

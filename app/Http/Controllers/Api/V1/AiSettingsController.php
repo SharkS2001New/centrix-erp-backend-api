@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Services\Ai\AiCredentialTestService;
 use App\Services\Ai\AiSettingsResolver;
 use App\Services\Erp\ErpContext;
 use App\Services\OrganizationPlatformConfigService;
@@ -14,6 +15,7 @@ class AiSettingsController extends Controller
     public function __construct(
         protected ErpContext $erp,
         protected OrganizationPlatformConfigService $platformConfig,
+        protected AiCredentialTestService $credentialTest,
     ) {}
 
     public function show(Request $request)
@@ -34,7 +36,7 @@ class AiSettingsController extends Controller
         $gate = $this->erp->gateForRequest($request);
 
         $data = $request->validate([
-            'enabled' => 'sometimes|boolean',
+            'use_platform_ai' => 'sometimes|boolean',
             'provider' => 'sometimes|in:openai,gemini',
             'model' => 'sometimes|nullable|string|max:80',
             'api_key' => 'sometimes|nullable|string|max:512',
@@ -110,9 +112,9 @@ class AiSettingsController extends Controller
             abort(404);
         }
 
-        if ($data === [] && $request->hasAny(['enabled', 'provider', 'model', 'api_key', 'base_url', 'insights'])) {
+        if ($data === [] && $request->hasAny(['use_platform_ai', 'provider', 'model', 'api_key', 'base_url', 'insights'])) {
             throw ValidationException::withMessages([
-                'enabled' => ['AI assistant is not enabled for this organization by the platform administrator.'],
+                'use_platform_ai' => ['AI assistant is not enabled for this organization by the platform administrator.'],
             ]);
         }
 
@@ -122,5 +124,27 @@ class AiSettingsController extends Controller
         $org->update(['module_settings' => $moduleSettings]);
 
         return response()->json(AiSettingsResolver::describeForOrganization($org->fresh()));
+    }
+
+    public function testCredentials(Request $request)
+    {
+        $org = $this->erp->resolveOrganization($request);
+        $gate = $this->erp->gateForRequest($request);
+
+        if (! $gate->aiPlatformEnabled()) {
+            abort(404);
+        }
+
+        $data = $request->validate([
+            'provider' => 'sometimes|in:gemini,openai',
+            'use_platform_ai' => 'sometimes|boolean',
+            'api_key' => 'sometimes|nullable|string|max:512',
+            'model' => 'sometimes|nullable|string|max:80',
+            'base_url' => 'sometimes|nullable|string|max:500',
+        ]);
+
+        $result = $this->credentialTest->testForOrganization($org, $data);
+
+        return response()->json($result['body'], $result['status']);
     }
 }

@@ -757,6 +757,7 @@ return [
         'ai' => [
             'enable_ai' => true,
             'use_platform_gemini' => false,
+            'use_platform_ai' => false,
             'enabled' => false,
             'provider' => env('AI_PROVIDER', 'openai'),
             'model' => '',

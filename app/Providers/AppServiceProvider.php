@@ -6,6 +6,7 @@ use App\Models\PersonalAccessToken;
 use App\Models\Sale;
 use App\Observers\OrganizationObserver;
 use App\Observers\SaleObserver;
+use App\Services\Ai\AiSettingsResolver;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Queue\Events\JobFailed;
@@ -153,8 +154,15 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('ai-chat', function (Request $request) use ($aiChat) {
             $decay = max(1, (int) ($aiChat['decay_minutes'] ?? 1));
             $max = max(1, (int) ($aiChat['max_attempts'] ?? 30));
-            $key = $request->user()?->id
-                ? 'ai-chat:user:'.$request->user()->id
+            $user = $request->user();
+            if ($user?->organization_id) {
+                $org = Organization::find($user->organization_id);
+                if ($org && AiSettingsResolver::orgUsesPlatformRuntime($org)) {
+                    $max = max($max, (int) ($aiChat['platform_max_attempts'] ?? 180));
+                }
+            }
+            $key = $user?->id
+                ? 'ai-chat:user:'.$user->id
                 : 'ai-chat:ip:'.$request->ip();
 
             return Limit::perMinutes($decay, $max)->by($key)->response(function (Request $request, array $headers) {

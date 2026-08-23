@@ -321,6 +321,8 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.permission:admin.manage']);
         Route::patch('erp/settings/ai', [AiSettingsController::class, 'update'])
             ->middleware(['erp.permission:admin.manage']);
+        Route::post('erp/settings/ai/test-credentials', [AiSettingsController::class, 'testCredentials'])
+            ->middleware(['erp.permission:admin.manage']);
         Route::get('erp/settings/whatsapp', [WhatsAppSettingsController::class, 'show'])
             ->middleware(['erp.permission:admin.manage']);
         Route::patch('erp/settings/whatsapp', [WhatsAppSettingsController::class, 'update'])
@@ -636,6 +638,7 @@ Route::prefix('v1')->group(function () {
                 Route::patch('finance', [ErpSettingsController::class, 'updateFinance']);
                 Route::get('ai', [AiSettingsController::class, 'show']);
                 Route::patch('ai', [AiSettingsController::class, 'update']);
+                Route::post('ai/test-credentials', [AiSettingsController::class, 'testCredentials']);
                 Route::get('whatsapp', [WhatsAppSettingsController::class, 'show']);
                 Route::patch('whatsapp', [WhatsAppSettingsController::class, 'update']);
                 Route::get('general', [ErpSettingsController::class, 'general']);
