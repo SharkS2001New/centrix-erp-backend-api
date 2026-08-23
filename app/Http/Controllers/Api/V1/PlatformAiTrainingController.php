@@ -102,7 +102,9 @@ class PlatformAiTrainingController extends Controller
                     ['role' => 'user', 'content' => 'Say hello to Centrix ERP'],
                 ],
                 'temperature' => 0.2,
-                'max_output_tokens' => 64,
+                // Gemini 3.x thinking tokens count toward maxOutputTokens — keep headroom.
+                'max_output_tokens' => 1024,
+                'thinking_level' => 'MINIMAL',
             ]);
         } catch (AiProviderException $e) {
             return response()->json([

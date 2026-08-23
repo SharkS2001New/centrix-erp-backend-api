@@ -242,4 +242,63 @@ class GeminiProviderTest extends TestCase
             $this->assertSame('malformed_function_call', $e->codeKey);
         }
     }
+
+    public function test_max_tokens_with_empty_output_throws(): void
+    {
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::response([
+                'candidates' => [[
+                    'finishReason' => 'MAX_TOKENS',
+                    'content' => ['parts' => [['thought' => true, 'text' => 'reasoning…']]],
+                ]],
+            ], 200),
+        ]);
+
+        $provider = new GeminiProvider('key', 'gemini-3.6-flash');
+
+        try {
+            $provider->chat([
+                'messages' => [['role' => 'user', 'content' => 'hi']],
+                'max_output_tokens' => 64,
+            ]);
+            $this->fail('Expected AiProviderException');
+        } catch (AiProviderException $e) {
+            $this->assertSame('max_tokens', $e->codeKey);
+        }
+    }
+
+    public function test_max_tokens_with_visible_text_returns_partial(): void
+    {
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::response([
+                'candidates' => [[
+                    'finishReason' => 'MAX_TOKENS',
+                    'content' => [
+                        'parts' => [
+                            ['thought' => true, 'text' => 'reasoning…'],
+                            ['text' => 'Hello Centrix'],
+                        ],
+                    ],
+                ]],
+                'usageMetadata' => ['promptTokenCount' => 5, 'candidatesTokenCount' => 40, 'totalTokenCount' => 45],
+            ], 200),
+        ]);
+
+        $provider = new GeminiProvider('key', 'gemini-3.6-flash');
+        $turn = $provider->chat([
+            'messages' => [['role' => 'user', 'content' => 'hi']],
+            'max_output_tokens' => 64,
+            'thinking_level' => 'MINIMAL',
+        ]);
+
+        $this->assertSame('Hello Centrix', $turn['text']);
+        $this->assertSame('MAX_TOKENS', $turn['finish_reason']);
+
+        Http::assertSent(function ($request) {
+            $config = $request->data()['generationConfig'] ?? [];
+
+            return ($config['thinkingConfig']['thinkingLevel'] ?? null) === 'MINIMAL'
+                && (int) ($config['maxOutputTokens'] ?? 0) >= 256;
+        });
+    }
 }

@@ -77,10 +77,7 @@ class GeminiProvider implements AiProviderInterface
 
         $payload = [
             'contents' => $contents,
-            'generationConfig' => [
-                'temperature' => (float) ($request['temperature'] ?? 0.2),
-                'maxOutputTokens' => (int) ($request['max_output_tokens'] ?? config('ai.defaults.max_output_tokens', 2048)),
-            ],
+            'generationConfig' => $this->buildGenerationConfig($request),
         ];
         $system = trim((string) ($request['system'] ?? ''));
         if ($system !== '') {
@@ -225,13 +222,38 @@ class GeminiProvider implements AiProviderInterface
         }
 
         if ($finishReason === 'MAX_TOKENS') {
-            Log::warning('Gemini hit max tokens', ['model' => $model]);
-            throw new AiProviderException(
-                'The AI response was cut off. Please try a shorter question.',
-                'max_tokens',
-                502,
-                true,
-            );
+            // Gemini 3.x thinking tokens count toward maxOutputTokens. Prefer returning
+            // whatever visible text / tool calls we got instead of failing the whole turn.
+            $previewText = '';
+            $hasToolCall = false;
+            foreach ($parts as $part) {
+                if (! is_array($part)) {
+                    continue;
+                }
+                if (! empty($part['thought']) && isset($part['text'])) {
+                    continue;
+                }
+                if (isset($part['text']) && is_string($part['text']) && $part['text'] !== '') {
+                    $previewText .= $part['text'];
+                }
+                if (isset($part['functionCall']) && is_array($part['functionCall'])) {
+                    $hasToolCall = true;
+                }
+            }
+            if (trim($previewText) === '' && ! $hasToolCall) {
+                Log::warning('Gemini hit max tokens with empty output', ['model' => $model]);
+                throw new AiProviderException(
+                    'The AI response was cut off before any answer was returned. Try again, or raise the model output limit.',
+                    'max_tokens',
+                    502,
+                    true,
+                );
+            }
+            Log::info('Gemini hit max tokens but returned partial content', [
+                'model' => $model,
+                'has_text' => trim($previewText) !== '',
+                'has_tool_call' => $hasToolCall,
+            ]);
         }
 
         if (in_array($finishReason, ['SAFETY', 'RECITATION', 'BLOCKLIST', 'PROHIBITED_CONTENT'], true)) {
@@ -316,10 +338,7 @@ class GeminiProvider implements AiProviderInterface
         $system = trim((string) ($request['system'] ?? ''));
         $payload = [
             'contents' => $this->buildContentsFromHistory($request['messages'] ?? []),
-            'generationConfig' => [
-                'temperature' => (float) ($request['temperature'] ?? 0.2),
-                'maxOutputTokens' => (int) ($request['max_output_tokens'] ?? config('ai.defaults.max_output_tokens', 2048)),
-            ],
+            'generationConfig' => $this->buildGenerationConfig($request),
         ];
 
         if ($system !== '') {
@@ -334,6 +353,35 @@ class GeminiProvider implements AiProviderInterface
         }
 
         return $payload;
+    }
+
+    /**
+     * @param  array<string, mixed>  $request
+     * @return array<string, mixed>
+     */
+    protected function buildGenerationConfig(array $request): array
+    {
+        $maxOutput = (int) ($request['max_output_tokens'] ?? config('ai.defaults.max_output_tokens', 2048));
+        // Thinking models (Gemini 3.x) spend thought tokens against this budget.
+        $maxOutput = max(256, $maxOutput);
+
+        $config = [
+            'temperature' => (float) ($request['temperature'] ?? 0.2),
+            'maxOutputTokens' => $maxOutput,
+        ];
+
+        $thinkingLevel = strtoupper(trim((string) ($request['thinking_level'] ?? '')));
+        if ($thinkingLevel === '') {
+            // Keep connectivity / short prompts cheap; chat can override.
+            $thinkingLevel = $maxOutput <= 512 ? 'MINIMAL' : 'LOW';
+        }
+        if (in_array($thinkingLevel, ['MINIMAL', 'LOW', 'MEDIUM', 'HIGH'], true)) {
+            $config['thinkingConfig'] = [
+                'thinkingLevel' => $thinkingLevel,
+            ];
+        }
+
+        return $config;
     }
 
     /**
