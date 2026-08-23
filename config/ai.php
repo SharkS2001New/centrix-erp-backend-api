@@ -39,7 +39,7 @@ return [
 
     /** Application-level rate limit for POST /ai/chat (per user). */
     'rate_limit' => [
-        'max_attempts' => (int) env('AI_RATE_LIMIT', 30),
+        'max_attempts' => (int) env('AI_RATE_LIMIT', 90),
         'decay_minutes' => (int) env('AI_RATE_LIMIT_DECAY_MINUTES', 1),
     ],
 

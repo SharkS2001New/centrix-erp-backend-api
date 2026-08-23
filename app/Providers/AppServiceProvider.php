@@ -160,8 +160,8 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perMinutes($decay, $max)->by($key)->response(function (Request $request, array $headers) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'AI usage is temporarily limited. Please try again shortly.',
-                    'reply' => 'AI usage is temporarily limited. Please try again shortly.',
+                    'message' => 'Too many AI requests from your account. Please wait a minute and try again.',
+                    'reply' => 'Too many AI requests from your account. Please wait a minute and try again.',
                     'error_code' => 'rate_limited',
                     'tools_used' => [],
                     'usage' => [

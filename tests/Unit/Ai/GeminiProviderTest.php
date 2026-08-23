@@ -54,7 +54,7 @@ class GeminiProviderTest extends TestCase
             $this->fail('Expected AiProviderException');
         } catch (AiProviderException $e) {
             $this->assertSame('rate_limited', $e->codeKey);
-            $this->assertStringContainsString('temporarily limited', $e->getMessage());
+            $this->assertStringContainsString('Gemini quota', $e->getMessage());
         }
     }
 

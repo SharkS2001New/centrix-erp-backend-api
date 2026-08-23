@@ -321,12 +321,13 @@ class AiGeminiChatTest extends TestCase
             ], 429),
         ]);
 
-        $this->postJson('/api/v1/ai/chat', [
+        $response = $this->postJson('/api/v1/ai/chat', [
             'message' => 'What were our sales today?',
         ])->assertOk()
             ->assertJsonPath('success', false)
-            ->assertJsonPath('error_code', 'rate_limited')
-            ->assertJsonPath('message', 'AI usage is temporarily limited. Please try again shortly.');
+            ->assertJsonPath('error_code', 'rate_limited');
+
+        $this->assertStringContainsString('Gemini quota', (string) $response->json('message'));
     }
 
     public function test_application_rate_limit_on_ai_chat(): void
@@ -339,8 +340,8 @@ class AiGeminiChatTest extends TestCase
             return Limit::perMinutes(1, 2)->by($key)->response(function (Request $request, array $headers) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'AI usage is temporarily limited. Please try again shortly.',
-                    'reply' => 'AI usage is temporarily limited. Please try again shortly.',
+                    'message' => 'Too many AI requests from your account. Please wait a minute and try again.',
+                    'reply' => 'Too many AI requests from your account. Please wait a minute and try again.',
                     'error_code' => 'rate_limited',
                     'tools_used' => [],
                     'usage' => [
@@ -368,7 +369,7 @@ class AiGeminiChatTest extends TestCase
         $this->postJson('/api/v1/ai/chat', ['message' => 'Sales tip three'])
             ->assertStatus(429)
             ->assertJsonPath('error_code', 'rate_limited')
-            ->assertJsonPath('message', 'AI usage is temporarily limited. Please try again shortly.');
+            ->assertJsonPath('message', 'Too many AI requests from your account. Please wait a minute and try again.');
     }
 
     public function test_user_without_ai_permission_is_forbidden(): void

@@ -125,7 +125,35 @@ class GeminiProvider implements AiProviderInterface
 
         if ($response->status() === 429) {
             Log::warning('Gemini rate limited', ['body' => $response->body()]);
-            throw AiProviderException::rateLimited();
+
+            // Free-tier RPM is low; one short retry often recovers after a burst (tool rounds / tests).
+            usleep(1_200_000);
+            try {
+                $retry = Http::withHeaders([
+                    'Content-Type' => 'application/json',
+                    'x-goog-api-key' => $this->apiKey,
+                ])
+                    ->timeout($this->timeoutSeconds)
+                    ->post($url, $payload);
+            } catch (ConnectionException $e) {
+                throw AiProviderException::timeout();
+            }
+
+            if ($retry->successful()) {
+                $json = $retry->json();
+                if (is_array($json)) {
+                    return $this->parseGenerateResponse($json, $model);
+                }
+            }
+
+            if ($retry->status() === 429) {
+                throw AiProviderException::rateLimited(
+                    'Google Gemini quota is temporarily exhausted (free tier rate limits are low). Wait about a minute and try again, or add your own API key under Administration → Settings → AI.',
+                );
+            }
+
+            // Fall through to normal error handling with the retry response.
+            $response = $retry;
         }
 
         if ($this->isInvalidApiKeyResponse($response)) {
