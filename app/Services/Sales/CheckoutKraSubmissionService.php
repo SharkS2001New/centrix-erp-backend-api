@@ -93,6 +93,9 @@ class CheckoutKraSubmissionService
                     [
                         'document_type' => 'sale',
                         'soft_failed' => true,
+                        // Keep raw device text so the failure dialog can highlight the exact PLU.
+                        'technical_message' => $result['technical_message'] ?? null,
+                        'error_code' => $result['error_code'] ?? null,
                     ],
                 ),
                 'status' => 'failed',

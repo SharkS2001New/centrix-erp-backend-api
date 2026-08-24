@@ -248,7 +248,13 @@ class KraOperationsController extends Controller
                 'status' => 'failed',
                 'error_message' => $result['message'] ?? 'Retry failed',
                 'request_payload' => $result['payload'] ?? null,
-                'response_payload' => $result['response'] ?? null,
+                'response_payload' => array_merge(
+                    is_array($result['response'] ?? null) ? $result['response'] : [],
+                    [
+                        'technical_message' => $result['technical_message'] ?? null,
+                        'error_code' => $result['error_code'] ?? null,
+                    ],
+                ),
             ]);
 
             return response()->json([
