@@ -214,18 +214,9 @@ class AiSettingsResolver
     }
 
     /**
-     * Groq keys use the gsk_ prefix and require the Groq OpenAI-compatible base URL.
+     * Normalize an OpenAI-compatible chat base URL (OpenAI, Groq, Together, OpenRouter, …).
+     * Blank stays blank so callers can fall back to the OpenAI default.
      */
-    public static function isGroqApiKey(string $apiKey): bool
-    {
-        return str_starts_with(trim($apiKey), 'gsk_');
-    }
-
-    public static function isGroqBaseUrl(string $baseUrl): bool
-    {
-        return str_contains(strtolower(trim($baseUrl)), 'groq.com');
-    }
-
     public static function normalizeOpenAiBaseUrl(string $baseUrl): string
     {
         $baseUrl = rtrim(trim($baseUrl), '/');
@@ -235,15 +226,14 @@ class AiSettingsResolver
         if (str_ends_with($baseUrl, '/v1/v1')) {
             $baseUrl = preg_replace('#/v1/v1$#', '/v1', $baseUrl) ?? $baseUrl;
         }
-        if (! str_ends_with($baseUrl, '/v1') && str_contains(strtolower($baseUrl), 'groq.com')) {
-            $baseUrl .= '/v1';
-        }
 
         return $baseUrl;
     }
 
     /**
-     * Resolve OpenAI-compatible provider settings (OpenAI, Groq, etc.).
+     * Resolve OpenAI-compatible provider settings.
+     * Base URL defaults to OpenAI unless the operator sets another OpenAI-compatible endpoint
+     * (e.g. Groq https://api.groq.com/openai/v1). Key + base URL (+ model) is enough.
      *
      * @return array{api_key: string, model: string, base_url: string}
      */
@@ -253,17 +243,12 @@ class AiSettingsResolver
         $model = trim($model);
         $baseUrl = self::normalizeOpenAiBaseUrl($baseUrl);
 
-        $defaultOpenAi = rtrim((string) config('ai.defaults.base_url', 'https://api.openai.com/v1'), '/');
-        if ($baseUrl === '' || $baseUrl === $defaultOpenAi) {
-            $baseUrl = self::isGroqApiKey($apiKey)
-                ? 'https://api.groq.com/openai/v1'
-                : $defaultOpenAi;
+        if ($baseUrl === '') {
+            $baseUrl = rtrim((string) config('ai.defaults.base_url', 'https://api.openai.com/v1'), '/');
         }
 
         if ($model === '') {
-            $model = self::isGroqBaseUrl($baseUrl)
-                ? 'llama-3.3-70b-versatile'
-                : (string) config('ai.defaults.model', 'gpt-4o-mini');
+            $model = (string) config('ai.defaults.model', 'gpt-4o-mini');
         }
 
         return [
@@ -285,6 +270,7 @@ class AiSettingsResolver
         if (str_starts_with($key, 'AQ.') || str_starts_with($key, 'AIza')) {
             return 'gemini';
         }
+        // OpenAI-compatible keys (OpenAI sk-, Groq gsk_, etc.) use the OpenAI client + base URL.
         if (str_starts_with($key, 'sk-') || str_starts_with($key, 'gsk_')) {
             return 'openai';
         }

@@ -328,12 +328,12 @@ class PlatformAiControlTest extends TestCase
         });
     }
 
-    public function test_platform_auto_detects_groq_base_url_from_gsk_key(): void
+    public function test_platform_blank_base_url_defaults_to_openai(): void
     {
         Http::fake([
-            'api.groq.com/*' => Http::response([
+            'api.openai.com/*' => Http::response([
                 'choices' => [[
-                    'message' => ['content' => 'Groq auto-detected'],
+                    'message' => ['content' => 'Hello from OpenAI'],
                 ]],
                 'usage' => [
                     'prompt_tokens' => 8,
@@ -348,10 +348,10 @@ class PlatformAiControlTest extends TestCase
 
         $this->postJson('/api/v1/admin/ai-training/test-credentials', [
             'provider' => 'openai',
-            'api_key' => 'gsk_test_groq_key',
+            'api_key' => 'sk-test-openai-key',
         ])->assertOk()
-            ->assertJsonPath('endpoint', 'https://api.groq.com/openai/v1')
-            ->assertJsonPath('model', 'llama-3.3-70b-versatile');
+            ->assertJsonPath('endpoint', 'https://api.openai.com/v1')
+            ->assertJsonPath('model', 'gpt-4o-mini');
     }
 
     public function test_platform_can_test_gemini_credentials(): void

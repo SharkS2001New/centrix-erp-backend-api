@@ -141,18 +141,17 @@ class OpenAiProvider implements AiProviderInterface
                 ? trim((string) ($body['error']['message'] ?? $body['message'] ?? ''))
                 : '';
             if ($providerMessage !== '') {
+                $hint = '';
+                if (
+                    str_starts_with($this->apiKey, 'gsk_')
+                    && ! str_contains(strtolower($this->baseUrl), 'groq.com')
+                ) {
+                    $hint = ' For Groq, set base URL to https://api.groq.com/openai/v1.';
+                }
                 throw new AiProviderException(
-                    $providerMessage,
+                    $providerMessage.$hint,
                     'invalid_api_key',
                     $response->status(),
-                    false,
-                );
-            }
-            if (str_starts_with($this->apiKey, 'gsk_') && ! $this->usesGroqEndpoint()) {
-                throw new AiProviderException(
-                    'This looks like a Groq API key (gsk_…). Set the base URL to https://api.groq.com/openai/v1.',
-                    'invalid_api_key',
-                    401,
                     false,
                 );
             }
