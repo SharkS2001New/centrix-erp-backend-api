@@ -13,6 +13,14 @@ class PlatformMailSettingsResolver
 {
     public const SETTINGS_KEY = 'platform_mail';
 
+    /** Outbound kinds that use notification SMTP (not a mailbox). */
+    public const NOTIFICATION_KINDS = [
+        'two_factor',
+        'email_verification',
+        'system_issue_alert',
+        'system_issue_digest',
+    ];
+
     /** @return list<string> */
     public static function accountFieldKeys(): array
     {
@@ -382,7 +390,19 @@ class PlatformMailSettingsResolver
     }
 
     /**
-     * Effective settings for 2FA / email-verification mail.
+     * Whether this send uses notification SMTP (2FA, verification, system alerts).
+     *
+     * @param  array<string, mixed>  $meta
+     */
+    public static function isNotificationMail(string $kind, array $meta = []): bool
+    {
+        return (bool) ($meta['no_reply'] ?? false)
+            || in_array($kind, self::NOTIFICATION_KINDS, true);
+    }
+
+    /**
+     * Effective settings for 2FA, email-verification, and system-alert mail.
+     * Uses dedicated notification SMTP when configured; otherwise falls back to a mailbox.
      *
      * @return array<string, mixed>
      */
@@ -390,8 +410,9 @@ class PlatformMailSettingsResolver
     {
         $main = self::resolve();
         $stored = self::ensureAccounts(self::rawStored());
+        $host = trim((string) ($stored['auth_smtp_host'] ?? ''));
 
-        if (! ($main['auth_mail_use_dedicated'] ?? false)) {
+        if ($host === '') {
             $from = trim((string) ($main['noreply_address'] ?? ''));
             if ($from === '') {
                 $base = trim((string) ($main['from_address'] ?? ''));
@@ -410,20 +431,21 @@ class PlatformMailSettingsResolver
         }
 
         $fromName = trim((string) ($stored['auth_from_name'] ?? '')) ?: (string) ($main['from_name'] ?? 'Centrix');
-        $fromAddress = trim((string) ($stored['auth_from_address'] ?? '')) ?: (string) ($main['noreply_address'] ?? $main['from_address'] ?? '');
-        $host = trim((string) ($stored['auth_smtp_host'] ?? ''));
+        $fromAddress = trim((string) ($stored['auth_from_address'] ?? ''))
+            ?: trim((string) ($stored['auth_smtp_username'] ?? ''))
+            ?: (string) ($main['noreply_address'] ?? $main['from_address'] ?? '');
         $username = trim((string) ($stored['auth_smtp_username'] ?? ''));
 
         return array_merge($main, [
             'auth_profile' => 'auth',
-            'enabled' => $host !== '',
-            'from_name' => $fromName,
+            'enabled' => true,
+            'from_name' => $fromName !== '' ? $fromName : 'Centrix',
             'from_address' => $fromAddress,
             'reply_to' => '',
-            'smtp_host' => $host !== '' ? $host : (string) ($main['smtp_host'] ?? ''),
-            'smtp_port' => (int) ($stored['auth_smtp_port'] ?? $main['smtp_port'] ?? 587),
-            'smtp_username' => $username !== '' ? $username : (string) ($main['smtp_username'] ?? ''),
-            'smtp_encryption' => (string) ($stored['auth_smtp_encryption'] ?? $main['smtp_encryption'] ?? 'tls'),
+            'smtp_host' => $host,
+            'smtp_port' => (int) ($stored['auth_smtp_port'] ?? 587),
+            'smtp_username' => $username !== '' ? $username : $fromAddress,
+            'smtp_encryption' => (string) ($stored['auth_smtp_encryption'] ?? 'tls'),
             'smtp_password' => $stored['auth_smtp_password'] ?? null,
             'no_reply' => true,
         ]);
@@ -471,6 +493,9 @@ class PlatformMailSettingsResolver
         }
         if (! empty($data['auth_smtp_password'])) {
             $current['auth_smtp_password'] = $data['auth_smtp_password'];
+        }
+        if (trim((string) ($current['auth_smtp_host'] ?? '')) !== '') {
+            $current['auth_mail_use_dedicated'] = true;
         }
 
         if (! empty($data['add_account']) && is_array($data['add_account'])) {
@@ -718,16 +743,20 @@ class PlatformMailSettingsResolver
         $stored = self::ensureAccounts(self::rawStored());
         $defaults = self::accountDefaults();
 
-        if ($profile === 'auth' && ! empty($stored['auth_mail_use_dedicated']) && ! empty($stored['auth_smtp_host'])) {
+        if ($profile === 'auth' && ! empty($stored['auth_smtp_host'])) {
             $host = (string) $stored['auth_smtp_host'];
             $port = (int) ($stored['auth_smtp_port'] ?? 587);
             $encryption = (string) ($stored['auth_smtp_encryption'] ?? 'tls');
             $username = (string) ($stored['auth_smtp_username'] ?? '');
             $password = $stored['auth_smtp_password'] ?? null;
             $fromAddress = trim((string) ($stored['auth_from_address'] ?? ''))
+                ?: trim((string) ($stored['auth_smtp_username'] ?? ''))
                 ?: (string) ($stored['from_address'] ?? $defaults['from_address']);
             $fromName = trim((string) ($stored['auth_from_name'] ?? ''))
                 ?: (string) ($stored['from_name'] ?? $defaults['from_name']);
+            if ($username === '') {
+                $username = $fromAddress;
+            }
         } else {
             $account = self::findAccount($stored, $accountId) ?? $defaults;
             $host = (string) ($account['smtp_host'] ?? '');

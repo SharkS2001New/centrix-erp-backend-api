@@ -131,7 +131,7 @@ class SystemIssueAlertService
             Log::warning('system_issue.instant_email_skipped', [
                 'reason' => 'missing_from_address',
                 'report_id' => $report->id,
-                'hint' => 'Set From address under Platform → Settings → Email delivery (or MAIL_FROM_ADDRESS).',
+                'hint' => 'Set notification SMTP under Platform → Settings → Email delivery → Notifications.',
             ]);
 
             return false;
@@ -139,6 +139,7 @@ class SystemIssueAlertService
 
         PlatformMailSettingsResolver::sendRaw($to, $subject, $plainBody, null, [
             'kind' => 'system_issue_alert',
+            'no_reply' => true,
             'organization_id' => $report->organization_id,
         ]);
 
@@ -147,7 +148,7 @@ class SystemIssueAlertService
 
     protected function platformMailFromAddress(): string
     {
-        $settings = PlatformMailSettingsResolver::resolve();
+        $settings = PlatformMailSettingsResolver::resolveForAuth();
         $from = trim((string) ($settings['from_address'] ?? ''));
         if ($from === '') {
             $from = trim((string) config('mail.from.address', ''));

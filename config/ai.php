@@ -9,6 +9,21 @@ return [
 
     'enabled' => filter_var(env('AI_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
 
+    /**
+     * Workspace IDs accepted on AI chat / training (mirrors erp_workspaces + hospitality).
+     * Used for request validation and knowledge scoping.
+     */
+    'workspace_ids' => [
+        'pos',
+        'backoffice',
+        'hotel_bar_pos',
+        'hospitality_backoffice',
+        'admin',
+        'accounting',
+        'hr',
+        'distribution',
+    ],
+
     /** Default model/URL when an org leaves them blank in Settings → AI. */
     'defaults' => [
         'model' => env('OPENAI_MODEL', 'gpt-4o-mini'),

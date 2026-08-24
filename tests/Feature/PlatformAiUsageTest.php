@@ -121,7 +121,7 @@ class PlatformAiUsageTest extends TestCase
             'status' => 'ok',
             'tools_used' => ['get_sales_summary'],
             'latency_ms' => 120,
-            'prompt_preview' => 'Sales today?',
+            'prompt_preview' => 'Where is front desk check-in?',
         ]);
         AiUsageLog::query()->create([
             'organization_id' => $this->orgA->id,
@@ -135,6 +135,7 @@ class PlatformAiUsageTest extends TestCase
             'status' => 'success',
             'tools_used' => ['get_stock_summary'],
             'latency_ms' => 90,
+            'prompt_preview' => 'Where is front desk check in?',
         ]);
         AiUsageLog::query()->create([
             'organization_id' => $this->orgB->id,
@@ -147,6 +148,7 @@ class PlatformAiUsageTest extends TestCase
             'estimated_cost' => 0,
             'status' => 'ok',
             'latency_ms' => 140,
+            'prompt_preview' => 'Sales today?',
         ]);
         AiUsageLog::query()->create([
             'organization_id' => $this->orgB->id,
@@ -161,6 +163,25 @@ class PlatformAiUsageTest extends TestCase
             'error_code' => 'rate_limited',
             'error_message' => 'Too many requests',
             'latency_ms' => 40,
+            'prompt_preview' => 'Sales today?',
         ]);
+    }
+
+    public function test_usage_summary_includes_common_questions(): void
+    {
+        $this->seedLogs();
+        Sanctum::actingAs($this->superAdmin);
+
+        $from = now()->subDays(7)->toDateString();
+        $to = now()->toDateString();
+
+        $response = $this->getJson("/api/v1/admin/ai-training/usage?from={$from}&to={$to}")
+            ->assertOk();
+
+        $questions = collect($response->json('common_questions'));
+        $this->assertTrue($questions->isNotEmpty());
+        $this->assertTrue(
+            $questions->contains(fn ($row) => (int) $row['count'] >= 2 && str_contains(strtolower($row['question']), 'front desk')),
+        );
     }
 }

@@ -109,13 +109,13 @@ class PlatformMailController extends Controller
         $this->mailbox->send(
             $data['to'],
             'Centrix 2FA / auth mail test',
-            "This is a test of the dedicated 2FA / email-verification sender.\n\n"
+            "This is a test of notification email (2FA codes, verification, and system alerts).\n\n"
             ."This is an automated message — please do not reply.\n",
             $request->user(),
             ['kind' => 'two_factor', 'no_reply' => true, 'purpose' => 'test'],
         );
 
-        return response()->json(['message' => 'Auth / 2FA test email sent.']);
+        return response()->json(['message' => 'Notification / 2FA test email sent.']);
     }
 
     public function testRenewalReminder(Request $request)

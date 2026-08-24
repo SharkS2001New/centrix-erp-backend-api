@@ -172,14 +172,14 @@ class SystemIssueDigestService
 
         $body = $this->buildDigestBody($summary, $issues, $highPriorityGroups);
 
-        $from = trim((string) (PlatformMailSettingsResolver::resolve()['from_address'] ?? ''));
+        $from = trim((string) (PlatformMailSettingsResolver::resolveForAuth()['from_address'] ?? ''));
         if ($from === '') {
             $from = trim((string) config('mail.from.address', ''));
         }
         if ($from === '' || filter_var($from, FILTER_VALIDATE_EMAIL) === false) {
             Log::warning('system_issue.digest_email_skipped', [
                 'reason' => 'missing_from_address',
-                'hint' => 'Set From address under Platform → Settings → Email delivery (or MAIL_FROM_ADDRESS).',
+                'hint' => 'Set notification SMTP under Platform → Settings → Email delivery → Notifications.',
             ]);
 
             return false;
@@ -187,6 +187,7 @@ class SystemIssueDigestService
 
         PlatformMailSettingsResolver::sendRaw($to, $subject, $body, null, [
             'kind' => 'system_issue_digest',
+            'no_reply' => true,
         ]);
 
         return true;

@@ -269,6 +269,7 @@ class AiUsageAnalyticsService
             'by_status' => $byStatus,
             'top_tools' => $topTools,
             'error_codes' => $errorCodes,
+            'common_questions' => $this->commonQuestions($fromDate, $toDate, $filters),
             'default_tools' => config('ai.tools', []),
         ];
     }
@@ -343,6 +344,121 @@ class AiUsageAnalyticsService
                 'total' => $paginator->total(),
             ],
         ];
+    }
+
+    /**
+     * Cluster logged prompts so platform admins can train from frequent questions.
+     *
+     * @param  array{from?: ?string, to?: ?string, organization_id?: ?int, user_id?: ?int, provider?: ?string, limit?: int}  $filters
+     * @return list<array<string, mixed>>
+     */
+    public function platformCommonQuestions(array $filters = []): array
+    {
+        if (! Schema::hasTable('ai_usage_logs') || ! Schema::hasColumn('ai_usage_logs', 'prompt_preview')) {
+            return [];
+        }
+
+        [$fromDate, $toDate] = $this->period($filters['from'] ?? null, $filters['to'] ?? null);
+
+        return $this->commonQuestions($fromDate, $toDate, $filters, max(5, min(50, (int) ($filters['limit'] ?? 20))));
+    }
+
+    /**
+     * @param  array{organization_id?: ?int, user_id?: ?int, provider?: ?string}  $filters
+     * @return list<array<string, mixed>>
+     */
+    protected function commonQuestions(Carbon $fromDate, Carbon $toDate, array $filters, int $limit = 20): array
+    {
+        if (! Schema::hasColumn('ai_usage_logs', 'prompt_preview')) {
+            return [];
+        }
+
+        $rows = $this->filteredQuery($fromDate, $toDate, $filters)
+            ->whereNotNull('ai_usage_logs.prompt_preview')
+            ->where('ai_usage_logs.prompt_preview', '!=', '')
+            ->orderByDesc('ai_usage_logs.id')
+            ->limit(4000)
+            ->get(['ai_usage_logs.prompt_preview', 'ai_usage_logs.organization_id', 'ai_usage_logs.status']);
+
+        $clusters = [];
+        foreach ($rows as $row) {
+            $preview = trim((string) $row->prompt_preview);
+            if ($preview === '' || mb_strlen($preview) < 8) {
+                continue;
+            }
+            $key = $this->promptFingerprint($preview);
+            if ($key === '' || mb_strlen($key) < 8) {
+                continue;
+            }
+            if (! isset($clusters[$key])) {
+                $clusters[$key] = [
+                    'question' => Str::limit($preview, 180, ''),
+                    'fingerprint' => $key,
+                    'count' => 0,
+                    'ok_count' => 0,
+                    'error_count' => 0,
+                    'organization_ids' => [],
+                    'examples' => [],
+                    'suggested_workspace_id' => $this->suggestWorkspaceId($preview),
+                ];
+            }
+            $clusters[$key]['count']++;
+            $status = strtolower((string) ($row->status ?? ''));
+            if (in_array($status, ['ok', 'success'], true)) {
+                $clusters[$key]['ok_count']++;
+            } else {
+                $clusters[$key]['error_count']++;
+            }
+            if ($row->organization_id) {
+                $clusters[$key]['organization_ids'][(int) $row->organization_id] = true;
+            }
+            if (count($clusters[$key]['examples']) < 3 && ! in_array($preview, $clusters[$key]['examples'], true)) {
+                $clusters[$key]['examples'][] = Str::limit($preview, 180, '');
+            }
+        }
+
+        $out = array_values($clusters);
+        usort($out, fn ($a, $b) => ($b['count'] <=> $a['count']) ?: strcmp($a['question'], $b['question']));
+        $out = array_slice($out, 0, $limit);
+
+        return array_map(function (array $row) {
+            $row['organization_count'] = count($row['organization_ids']);
+            unset($row['organization_ids']);
+
+            return $row;
+        }, $out);
+    }
+
+    protected function promptFingerprint(string $text): string
+    {
+        $normalized = strtolower(trim($text));
+        $normalized = str_replace(['-', '_', '/', '\\'], ' ', $normalized);
+        $normalized = preg_replace('/\s+/u', ' ', $normalized) ?? $normalized;
+        $normalized = preg_replace('/[^\p{L}\p{N}\s?]/u', '', $normalized) ?? $normalized;
+
+        return Str::limit(trim($normalized), 160, '');
+    }
+
+    protected function suggestWorkspaceId(string $text): ?string
+    {
+        $lower = strtolower($text);
+        $bestId = null;
+        $bestHits = 0;
+        foreach (config('ai_workspaces', []) as $id => $def) {
+            $hits = 0;
+            foreach ($def['keywords'] ?? [] as $keyword) {
+                $keyword = strtolower((string) $keyword);
+                if ($keyword !== '' && str_contains($lower, $keyword)) {
+                    $hits++;
+                }
+            }
+            if ($hits > $bestHits) {
+                $bestHits = $hits;
+                $bestId = (string) $id;
+            }
+        }
+
+        return $bestHits > 0 ? $bestId : null;
     }
 
     /**

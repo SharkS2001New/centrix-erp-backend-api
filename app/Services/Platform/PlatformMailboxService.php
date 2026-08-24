@@ -22,8 +22,7 @@ class PlatformMailboxService
         array $cc = [],
     ): PlatformMailMessage {
         $kind = (string) ($meta['kind'] ?? '');
-        $isAuthMail = (bool) ($meta['no_reply'] ?? false)
-            || in_array($kind, ['two_factor', 'email_verification'], true);
+        $isAuthMail = PlatformMailSettingsResolver::isNotificationMail($kind, $meta);
 
         $accountId = isset($meta['mailbox_account_id'])
             ? (string) $meta['mailbox_account_id']
@@ -49,16 +48,21 @@ class PlatformMailboxService
         if ($isAuthMail && config('mail.default') !== 'smtp') {
             abort(
                 422,
-                '2FA email SMTP is not active on the server (mail would only be logged, not delivered). '
-                .'Set SMTP host, port, and credentials under Platform → Settings → Email delivery, then send an Auth / 2FA test email.',
+                'Notification email SMTP is not active (mail would only be logged, not delivered). '
+                .'Set SMTP under Platform → Settings → Email delivery → Notifications, then send a test email.',
             );
         }
 
         if (! ($settings['enabled'] ?? false)) {
             if ($isAuthMail && ($settings['auth_profile'] ?? '') === 'auth') {
-                abort(422, 'Dedicated 2FA email SMTP is enabled but not fully configured. Set Auth / 2FA email under Settings → Email delivery.');
+                abort(422, 'Notification SMTP is incomplete. Set host, From address, and password under Settings → Email delivery → Notifications.');
             }
-            abort(422, 'Platform outbound email is disabled. Enable it under Settings → Email delivery.');
+            abort(
+                422,
+                $isAuthMail
+                    ? 'Notification email is not configured. Add SMTP under Settings → Email delivery → Notifications (this is separate from mailboxes).'
+                    : 'Platform outbound email is disabled. Enable a mailbox under Settings → Email delivery → Mailboxes.',
+            );
         }
 
         $isNoReply = $isAuthMail || (bool) ($settings['no_reply'] ?? false);

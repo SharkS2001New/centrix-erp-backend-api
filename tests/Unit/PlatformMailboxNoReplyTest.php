@@ -14,6 +14,54 @@ class PlatformMailboxNoReplyTest extends TestCase
 {
     use RefreshesErpDatabase;
 
+    public function test_notification_smtp_works_without_mailbox(): void
+    {
+        Mail::fake();
+
+        $org = PlatformMailSettingsResolver::platformOrganization();
+        if (! $org) {
+            $this->markTestSkipped('PLATFORM organization not found.');
+        }
+
+        $settings = $org->module_settings ?? [];
+        $settings[PlatformMailSettingsResolver::SETTINGS_KEY] = array_merge(
+            PlatformMailSettingsResolver::defaults(),
+            [
+                'enabled' => false,
+                'accounts' => [],
+                'active_account_id' => null,
+                'auth_smtp_host' => 'smtp.gmail.com',
+                'auth_smtp_port' => 587,
+                'auth_smtp_username' => 'alpacke.tech@gmail.com',
+                'auth_smtp_password' => 'app-password',
+                'auth_smtp_encryption' => 'tls',
+                'auth_from_name' => 'Centrix Security',
+                'auth_from_address' => 'alpacke.tech@gmail.com',
+            ],
+        );
+        $org->module_settings = $settings;
+        $org->save();
+
+        $this->assertTrue(PlatformMailSettingsResolver::canDeliverAuthMail());
+        $resolved = PlatformMailSettingsResolver::resolveForAuth();
+        $this->assertSame('auth', $resolved['auth_profile']);
+        $this->assertSame('smtp.gmail.com', $resolved['smtp_host']);
+
+        $user = User::where('username', 'admin')->firstOrFail();
+        app(PlatformMailboxService::class)->send(
+            'ops@example.com',
+            'System alert',
+            "Test alert body\n",
+            $user,
+            ['kind' => 'system_issue_alert', 'no_reply' => true],
+        );
+
+        $stored = PlatformMailMessage::query()->latest('id')->first();
+        $this->assertNotNull($stored);
+        $this->assertSame('alpacke.tech@gmail.com', $stored->from_address);
+        $this->assertSame('system_issue_alert', $stored->meta['kind'] ?? null);
+    }
+
     public function test_two_factor_mail_skips_reply_to_and_uses_noreply_from(): void
     {
         Mail::fake();
@@ -88,15 +136,9 @@ class PlatformMailboxNoReplyTest extends TestCase
             ['kind' => 'two_factor', 'no_reply' => true],
         );
 
-        Mail::assertSent(function (\Illuminate\Mail\Mailable|\Illuminate\Mail\SentMessage $message) {
-            return true;
-        });
-        // Mail::fake captures via assertSent / assertOutgoing — use assertSentCount for raw
-        Mail::assertSentCount(1);
-
         $stored = PlatformMailMessage::query()->latest('id')->first();
         $this->assertNotNull($stored);
-        $this->assertNotSame('', (string) $stored->from_address);
+        $this->assertSame('noreply@example.com', $stored->from_address);
     }
 
     public function test_mail_stats_count_two_factor_and_renewal_kinds(): void

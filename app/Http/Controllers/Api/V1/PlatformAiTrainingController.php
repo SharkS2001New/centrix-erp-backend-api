@@ -11,6 +11,7 @@ use App\Services\Ai\AiKnowledgeService;
 use App\Services\Ai\AiProviderFactory;
 use App\Services\Ai\AiSettingsResolver;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class PlatformAiTrainingController extends Controller
@@ -62,6 +63,125 @@ class PlatformAiTrainingController extends Controller
         $data['per_page'] = $request->integer('per_page', 25);
 
         return response()->json($analytics->platformEvents($data));
+    }
+
+    public function usageCommonQuestions(Request $request, \App\Services\Ai\AiUsageAnalyticsService $analytics)
+    {
+        $data = $this->usageFilters($request);
+        $data['limit'] = $request->integer('limit', 20);
+
+        return response()->json([
+            'available' => true,
+            'data' => $analytics->platformCommonQuestions($data),
+        ]);
+    }
+
+    /**
+     * Draft (and optionally save) a platform knowledge note from a frequent usage question.
+     */
+    public function trainFromUsage(Request $request)
+    {
+        $data = $request->validate([
+            'question' => 'required|string|max:500',
+            'examples' => 'nullable|array|max:5',
+            'examples.*' => 'string|max:500',
+            'count' => 'nullable|integer|min:1',
+            'workspace_id' => 'nullable|string|max:40|in:'.implode(',', config('ai.workspace_ids')),
+            'save' => 'sometimes|boolean',
+        ]);
+
+        $runtime = \App\Services\Ai\AiSettingsResolver::resolveRuntimeForPlatformTraining();
+        if (! $runtime || empty($runtime['api_key'])) {
+            return response()->json([
+                'message' => 'Platform AI is not configured. Add credentials under Platform → AI training → Credentials.',
+            ], 422);
+        }
+
+        $question = trim((string) $data['question']);
+        $examples = array_values(array_filter(
+            array_map(fn ($row) => trim((string) $row), $data['examples'] ?? []),
+            fn ($row) => $row !== '',
+        ));
+        $workspaceIds = implode(', ', config('ai.workspace_ids', []));
+        $exampleBlock = $examples !== []
+            ? "Similar phrasings:\n- ".implode("\n- ", $examples)."\n"
+            : '';
+        $count = (int) ($data['count'] ?? 1);
+        $hint = $data['workspace_id'] ?? '';
+
+        $system = 'You write Centrix ERP training notes for the in-app AI assistant. '
+            .'The note must teach how to answer this user question inside Centrix, including the real screen path. '
+            .'Hotel & Hospitality (rooms, folios, hotel POS checks, F&B) is a first-class industry — do not assume retail-only. '
+            .'Return JSON only: {"topic":"...","content":"...","path":"/...","workspace_id":"...or null"}. '
+            .'workspace_id must be one of: '.$workspaceIds.', or null for all workspaces. '
+            .'content should be 2–6 short sentences, Kenya business English, no markdown headings.';
+
+        $userPrompt = "Users asked this {$count} time(s):\n{$question}\n{$exampleBlock}"
+            .($hint !== '' ? "Suggested workspace: {$hint}\n" : '')
+            ."Write a durable training note so the assistant answers this correctly next time.";
+
+        try {
+            $turn = $this->providers->make($runtime)->chat([
+                'system' => $system,
+                'messages' => [
+                    ['role' => 'user', 'content' => $userPrompt],
+                ],
+                'temperature' => 0.2,
+                'max_output_tokens' => 800,
+            ]);
+        } catch (AiProviderException $e) {
+            return response()->json(['message' => 'Could not draft training note: '.$e->getMessage()], 422);
+        } catch (\Throwable $e) {
+            return response()->json(['message' => 'Could not draft training note: '.$e->getMessage()], 422);
+        }
+
+        $raw = trim((string) ($turn['text'] ?? ''));
+        $parsed = json_decode($raw, true);
+        if (! is_array($parsed) && preg_match('/\{[\s\S]*\}/', $raw, $m)) {
+            $parsed = json_decode($m[0], true);
+        }
+        if (! is_array($parsed)) {
+            $parsed = [];
+        }
+
+        $allowed = config('ai.workspace_ids', []);
+        $workspaceId = $parsed['workspace_id'] ?? $data['workspace_id'] ?? null;
+        if (is_string($workspaceId) && $workspaceId !== '' && ! in_array($workspaceId, $allowed, true)) {
+            $workspaceId = $data['workspace_id'] ?? null;
+        }
+        if ($workspaceId === '' || $workspaceId === 'null') {
+            $workspaceId = null;
+        }
+
+        $draft = [
+            'topic' => Str::limit(trim((string) ($parsed['topic'] ?? $question)), 200, ''),
+            'content' => trim((string) ($parsed['content'] ?? $parsed['body'] ?? $raw)),
+            'path' => trim((string) ($parsed['path'] ?? '')),
+            'workspace_id' => $workspaceId,
+        ];
+        if ($draft['topic'] === '') {
+            $draft['topic'] = Str::limit($question, 200, '');
+        }
+        if ($draft['content'] === '') {
+            return response()->json(['message' => 'The model did not return a usable training note. Try again.'], 422);
+        }
+
+        $saved = null;
+        if (! empty($data['save'])) {
+            $saved = $this->knowledge->teachGlobal(
+                $request->user(),
+                $draft['topic'],
+                Str::limit($draft['content'], 8000, ''),
+                $draft['path'] !== '' ? $draft['path'] : null,
+                $draft['workspace_id'],
+                'usage_training',
+            );
+        }
+
+        return response()->json([
+            'draft' => $draft,
+            'saved' => $saved,
+        ], $saved ? 201 : 200);
     }
 
     /**
@@ -132,7 +252,7 @@ class PlatformAiTrainingController extends Controller
     public function listKnowledge(Request $request)
     {
         $data = $request->validate([
-            'workspace_id' => 'nullable|string|max:32|in:pos,backoffice,admin,accounting,hr,distribution',
+            'workspace_id' => 'nullable|string|max:40|in:'.implode(',', config('ai.workspace_ids')),
         ]);
 
         return response()->json([
@@ -147,7 +267,7 @@ class PlatformAiTrainingController extends Controller
             'topic' => 'required|string|max:200',
             'content' => 'required|string|max:8000',
             'path' => 'nullable|string|max:200',
-            'workspace_id' => 'nullable|string|max:32|in:pos,backoffice,admin,accounting,hr,distribution',
+            'workspace_id' => 'nullable|string|max:40|in:'.implode(',', config('ai.workspace_ids')),
         ]);
 
         $entry = $this->knowledge->teachGlobal(
@@ -167,7 +287,7 @@ class PlatformAiTrainingController extends Controller
             'topic' => 'sometimes|required|string|max:200',
             'content' => 'sometimes|required|string|max:8000',
             'path' => 'nullable|string|max:200',
-            'workspace_id' => 'nullable|string|max:32|in:pos,backoffice,admin,accounting,hr,distribution',
+            'workspace_id' => 'nullable|string|max:40|in:'.implode(',', config('ai.workspace_ids')),
         ]);
 
         $updated = $this->knowledge->updateGlobal($request->user(), $entry, $data);
@@ -193,7 +313,7 @@ class PlatformAiTrainingController extends Controller
 
         $data = $request->validate([
             'preview_organization_id' => 'required|integer|exists:organizations,id',
-            'workspace_id' => 'nullable|string|max:32|in:pos,backoffice,admin,accounting,hr,distribution',
+            'workspace_id' => 'nullable|string|max:40|in:'.implode(',', config('ai.workspace_ids')),
             'pathname' => 'nullable|string|max:300',
             'message' => ['required', 'string', 'max:4000', 'not_regex:/data:image\//i'],
             'history' => 'nullable|array|max:16',

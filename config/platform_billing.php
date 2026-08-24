@@ -65,7 +65,7 @@ return [
         ],
         'platform.ai' => [
             'label' => 'AI assistant',
-            'description' => 'Centrix AI assistant — natural language search, insights, and guided workflows.',
+            'description' => 'Centrix AI assistant for retail and hotel & hospitality — natural language search, insights, and guided workflows.',
             'default_amount' => 6000,
             'billing_period' => 'monthly',
             'platform_flag' => 'ai',

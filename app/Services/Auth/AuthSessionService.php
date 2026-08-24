@@ -148,8 +148,8 @@ class AuthSessionService
                     $session = $this->issueSession($account, $clientId, $forceLogout, $loginChannel);
                     $session['warnings'] = [[
                         'code' => 'platform_email_disabled',
-                        'message' => 'Platform outbound email is disabled, so email two-factor authentication was skipped. Enable it under Settings → Email delivery.',
-                        'action_url' => '/platform/settings?tab=email',
+                        'message' => 'Notification email (2FA / system alerts) is not configured, so email two-factor was skipped. Set it under Settings → Email delivery → Notifications.',
+                        'action_url' => '/platform/settings?tab=email&email_tab=auth',
                     ]];
 
                     return $session;
@@ -157,7 +157,7 @@ class AuthSessionService
 
                 throw ValidationException::withMessages([
                     'username' => [
-                        'Sign-in verification email cannot be sent because platform email delivery is disabled. Ask a platform administrator to enable Settings → Email delivery.',
+                        'Sign-in verification email cannot be sent because notification SMTP is not configured. Ask a platform administrator to set Settings → Email delivery → Notifications.',
                     ],
                 ]);
             }

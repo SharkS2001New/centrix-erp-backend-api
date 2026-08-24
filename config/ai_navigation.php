@@ -95,6 +95,66 @@ return [
             ],
         ],
         [
+            'id' => 'hospitality_dashboard',
+            'label' => 'Hotel dashboard',
+            'items' => [
+                ['label' => 'Hospitality overview', 'path' => '/hospitality', 'module' => 'hospitality.dashboard', 'permission' => 'hospitality.dashboard.view'],
+            ],
+        ],
+        [
+            'id' => 'hospitality_rooms',
+            'label' => 'Rooms & guests',
+            'items' => [
+                ['label' => 'Rooms', 'path' => '/hospitality/rooms', 'module' => 'hospitality.backend', 'permission' => 'hospitality.rooms.view'],
+                ['label' => 'Reservations', 'path' => '/hospitality/reservations', 'module' => 'hospitality.backend', 'permission' => 'hospitality.reservations.view'],
+                ['label' => 'Front desk', 'path' => '/hospitality/front-desk', 'module' => 'hospitality.backend', 'permission' => 'hospitality.frontdesk.view'],
+                ['label' => 'Folios', 'path' => '/hospitality/folios', 'module' => 'hospitality.backend', 'permission' => 'hospitality.folios.view'],
+            ],
+        ],
+        [
+            'id' => 'hospitality_ops',
+            'label' => 'Hotel operations',
+            'items' => [
+                ['label' => 'Housekeeping', 'path' => '/hospitality/housekeeping', 'module' => 'hospitality.backend', 'permission' => 'hospitality.housekeeping.view'],
+                ['label' => 'Outlets', 'path' => '/hospitality/outlets', 'module' => 'hospitality.backend', 'permission' => 'hospitality.outlets.view'],
+                ['label' => 'Night audit', 'path' => '/hospitality/night-audit', 'module' => 'hospitality.backend', 'permission' => 'hospitality.night_audit.view'],
+            ],
+        ],
+        [
+            'id' => 'hospitality_sales',
+            'label' => 'Hotel sales',
+            'items' => [
+                ['label' => 'Hotel POS', 'path' => '/hotel-bar-pos', 'module' => 'hospitality.bar_pos', 'permission' => 'hotel_bar_pos.terminal.view'],
+                ['label' => 'All checks', 'path' => '/hospitality/orders', 'module' => 'hospitality.backend', 'permission' => 'hospitality.orders.view'],
+                ['label' => 'Hotel orders', 'path' => '/hospitality/orders/hotel', 'module' => 'hospitality.backend', 'permission' => 'hospitality.orders.view'],
+                ['label' => 'Bar orders', 'path' => '/hospitality/orders/bar', 'module' => 'hospitality.backend', 'permission' => 'hospitality.orders.view'],
+            ],
+        ],
+        [
+            'id' => 'hospitality_catalogue',
+            'label' => 'Hotel catalog',
+            'items' => [
+                ['label' => 'Products', 'path' => '/products', 'permission' => 'catalogue.products.view'],
+                ['label' => 'Categories', 'path' => '/categories', 'permission' => 'catalogue.categories.view'],
+            ],
+        ],
+        [
+            'id' => 'hospitality_stock',
+            'label' => 'Hotel stock',
+            'items' => [
+                ['label' => 'Current stock', 'path' => '/inventory/stock', 'module' => 'inventory', 'permission' => 'inventory.stock.view'],
+                ['label' => 'Stock receipts (GRN)', 'path' => '/inventory/receipts', 'module' => 'inventory', 'permission' => 'inventory.receipts.view'],
+            ],
+        ],
+        [
+            'id' => 'hospitality_purchasing',
+            'label' => 'Hotel purchasing',
+            'items' => [
+                ['label' => 'Suppliers', 'path' => '/suppliers', 'module' => 'customers_suppliers', 'permission' => 'purchasing.suppliers.view'],
+                ['label' => 'Purchase orders (LPO)', 'path' => '/lpo', 'module' => 'customers_suppliers', 'permission' => 'purchasing.lpo.view'],
+            ],
+        ],
+        [
             'id' => 'reports',
             'label' => 'Reports',
             'module' => 'reports',
@@ -115,7 +175,12 @@ return [
                 ['label' => 'Headcount', 'path' => '/reports/headcount', 'module' => 'hr_payroll.reports', 'permission' => 'hr.employees.view'],
                 ['label' => 'Contract expiry', 'path' => '/reports/contract-expiry', 'module' => 'hr_payroll.reports', 'permission' => 'hr.employees.view'],
                 ['label' => 'Staff turnover', 'path' => '/reports/staff-turnover', 'module' => 'hr_payroll.reports', 'permission' => 'hr.employees.view'],
-                ['label' => 'Workforce summary', 'path' => '/reports/hr-dashboard-kpi', 'module' => 'hr_payroll.reports', 'permission' => 'hr.employees.view'],
+                ['label' => 'Occupancy KPI', 'path' => '/reports/hospitality-kpi-occupancy', 'module' => 'hospitality.reports', 'permission' => 'hospitality.reports.view'],
+                ['label' => 'Room status', 'path' => '/reports/hospitality-occupancy', 'module' => 'hospitality.reports', 'permission' => 'hospitality.reports.view'],
+                ['label' => 'Arrivals & departures', 'path' => '/reports/hospitality-arrivals-departures', 'module' => 'hospitality.reports', 'permission' => 'hospitality.reports.view'],
+                ['label' => 'Open folio balances', 'path' => '/reports/hospitality-folio-balances', 'module' => 'hospitality.reports', 'permission' => 'hospitality.reports.view'],
+                ['label' => 'F&B check sales', 'path' => '/reports/hospitality-fnb-checks', 'module' => 'hospitality.reports', 'permission' => 'hospitality.reports.view'],
+                ['label' => 'Manager flash', 'path' => '/reports/hospitality-manager-flash', 'module' => 'hospitality.reports', 'permission' => 'hospitality.reports.view'],
             ],
         ],
         [

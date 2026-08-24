@@ -6,15 +6,19 @@
  */
 return [
     'how_to_guide' => [
-        'Centrix is organized by workspaces (top bar): Backoffice, POS, Accounting, HR, Distribution/Admin depending on your org.',
-        'If you do not know where a feature lives, ask "Where is …?" — the assistant should reply with a path like /suppliers.',
+        'Centrix is organized by workspaces (top bar): Retail Backoffice/POS, Hotel Backoffice/Hotel POS, Accounting, HR, Distribution/Admin depending on industry.',
+        'AI assistant is available for both Retail & Distribution and Hotel & Hospitality industries when platform AI is enabled for the tenant.',
+        'If you do not know where a feature lives, ask "Where is …?" — the assistant should reply with a path like /suppliers or /hospitality/front-desk.',
         'Purchasing: Suppliers at /suppliers, purchase orders (LPO) at /lpo, receive goods (GRN) at /inventory/receipts, pay suppliers at /suppliers/payments.',
         'Inventory: Current stock at /inventory/stock, adjustments at /inventory/adjustments, stock take at /inventory/stock-take, products at /products.',
-        'Sales: Orders at /sales/orders, POS at /sales/pos or /pos, debtors under /sales/shop-debtors/*, Sales by User report at /reports (Sales by user).',
+        'Sales (retail): Orders at /sales/orders, POS at /sales/pos or /pos, debtors under /sales/shop-debtors/*, Sales by User report at /reports (Sales by user).',
+        'Hospitality: Hotel dashboard at /hospitality, rooms /hospitality/rooms, reservations /hospitality/reservations, front desk /hospitality/front-desk, folios /hospitality/folios, housekeeping /hospitality/housekeeping, night audit /hospitality/night-audit, outlets /hospitality/outlets.',
+        'Hotel POS (checks, not retail carts): /hotel-bar-pos — open/settle checks, room charge, F&B outlets. Hotel orders lists: /hospitality/orders, /hospitality/orders/hotel, /hospitality/orders/bar.',
+        'Hospitality reports: occupancy KPI, arrivals/departures, folio balances, F&B by outlet/hour, open checks, voids, manager flash, EOD cashier, P&L under /reports/hospitality-*.',
         'Accounting: Chart of accounts, journals, bank reconciliation, expenses, and AR under /accounting/*.',
         'HR: Employees, today\'s attendance (/hr/attendance), previous attendance (/hr/attendance/history), leave, and payroll under /hr/*. Field attendance for mobile reps: /sales/field-attendance.',
         'Admin: Users and roles/permissions under /admin/users and /admin/roles. Organization AI settings under Organization settings → AI.',
-        'Reports hub: /reports — sales, stock, payroll, and custom report builder at /reports/builder (saved reports open at /reports/custom/{id}).',
+        'Reports hub: /reports — sales, stock, payroll, hospitality, and custom report builder at /reports/builder (saved reports open at /reports/custom/{id}).',
         'Cashier sales targets/quotas are not stored as a Centrix AI metric — report actual sales with get_sales_by_cashier instead.',
         'When talking about people, use username and full name — never numeric user ids.',
         'Write formulas in plain language with real field names (Stock Value = Cost Price × Stock on Hand), never LaTeX.',
@@ -95,6 +99,26 @@ return [
             'paths' => ['/fulfillment/dispatch', '/fulfillment/trips', '/fulfillment/routes'],
             'tasks' => [
                 'Same as logistics & dispatch when distribution ops are enabled for the org',
+            ],
+        ],
+        [
+            'key' => 'hospitality',
+            'label' => 'Hotel & hospitality',
+            'paths' => [
+                '/hospitality',
+                '/hospitality/rooms',
+                '/hospitality/reservations',
+                '/hospitality/front-desk',
+                '/hospitality/folios',
+                '/hospitality/housekeeping',
+                '/hospitality/orders',
+                '/hotel-bar-pos',
+            ],
+            'tasks' => [
+                'Rooms, reservations, front desk check-in/out, guest folios',
+                'Housekeeping, night audit, outlets',
+                'Hotel POS checks (bar/restaurant) and room charge — not retail carts',
+                'F&B and occupancy reports under /reports/hospitality-*',
             ],
         ],
         [

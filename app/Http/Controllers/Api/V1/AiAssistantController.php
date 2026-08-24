@@ -89,7 +89,7 @@ class AiAssistantController extends Controller
 
         $data = $request->validate([
             'context' => 'nullable|string|in:products,reports,report_builder,general,erp',
-            'workspace_id' => 'nullable|string|max:32|in:pos,backoffice,admin,accounting,hr,distribution',
+            'workspace_id' => 'nullable|string|max:40|in:'.implode(',', config('ai.workspace_ids')),
             'pathname' => 'nullable|string|max:300',
             'page_context' => 'nullable|array',
             'page_context.screen_key' => 'nullable|string|max:80',
@@ -160,7 +160,7 @@ class AiAssistantController extends Controller
             'topic' => 'required|string|max:200',
             'content' => 'required|string|max:8000',
             'path' => 'nullable|string|max:200',
-            'workspace_id' => 'nullable|string|max:32|in:pos,backoffice,admin,accounting,hr,distribution',
+            'workspace_id' => 'nullable|string|max:40|in:'.implode(',', config('ai.workspace_ids')),
         ]);
 
         $entry = $this->knowledge->teachGlobal(

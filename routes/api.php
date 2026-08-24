@@ -593,6 +593,8 @@ Route::prefix('v1')->group(function () {
                 Route::post('chat', [PlatformAiTrainingController::class, 'chat']);
                 Route::get('usage', [PlatformAiTrainingController::class, 'usage']);
                 Route::get('usage/events', [PlatformAiTrainingController::class, 'usageEvents']);
+                Route::get('usage/common-questions', [PlatformAiTrainingController::class, 'usageCommonQuestions']);
+                Route::post('usage/train-from-question', [PlatformAiTrainingController::class, 'trainFromUsage']);
             });
 
         Route::prefix('admin/whatsapp')
