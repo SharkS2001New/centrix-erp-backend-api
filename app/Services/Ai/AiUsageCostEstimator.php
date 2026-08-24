@@ -16,6 +16,42 @@ class AiUsageCostEstimator
         return round($input + $output, 6);
     }
 
+    public function usdToKesRate(): float
+    {
+        $rate = (float) config('ai.pricing.usd_to_kes', 129);
+
+        return $rate > 0 ? $rate : 129.0;
+    }
+
+    public function toKes(float $usd): float
+    {
+        return round($usd * $this->usdToKesRate(), 2);
+    }
+
+    /**
+     * @return array{
+     *   input_rate_per_million: float,
+     *   output_rate_per_million: float,
+     *   input_usd: float,
+     *   output_usd: float,
+     *   computed_usd: float
+     * }
+     */
+    public function breakdown(string $provider, ?string $model, int $inputTokens, int $outputTokens): array
+    {
+        $rates = $this->ratesFor($provider, $model);
+        $inputUsd = max(0, $inputTokens) * ((float) $rates['input'] / 1_000_000);
+        $outputUsd = max(0, $outputTokens) * ((float) $rates['output'] / 1_000_000);
+
+        return [
+            'input_rate_per_million' => (float) $rates['input'],
+            'output_rate_per_million' => (float) $rates['output'],
+            'input_usd' => round($inputUsd, 6),
+            'output_usd' => round($outputUsd, 6),
+            'computed_usd' => round($inputUsd + $outputUsd, 6),
+        ];
+    }
+
     /**
      * @return array{input: float, output: float}
      */

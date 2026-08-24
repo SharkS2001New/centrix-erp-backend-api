@@ -293,6 +293,72 @@ class PlatformAiControlTest extends TestCase
             ->assertJsonPath('free_ai_provider', 'gemini');
     }
 
+    public function test_platform_tools_use_saved_gemini_even_when_enabled_flag_is_off(): void
+    {
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $platformOrg = Organization::query()
+            ->where('company_code', config('erp.platform_company_code', 'PLATFORM'))
+            ->firstOrFail();
+
+        $moduleSettings = $platformOrg->module_settings ?? [];
+        $moduleSettings['platform_ai_training'] = [
+            'enabled' => false,
+            'free_ai_provider' => 'gemini',
+            'gemini_api_key' => 'AIza-gemini-without-enabled-flag',
+            'gemini_model' => 'gemini-3.6-flash',
+            'api_key' => '',
+        ];
+        $platformOrg->update(['module_settings' => $moduleSettings]);
+        \App\Services\Ai\AiSettingsResolver::platformOrganization(refresh: true);
+
+        $runtime = \App\Services\Ai\AiSettingsResolver::resolveRuntimeForPlatformTraining();
+        $this->assertNotNull($runtime);
+        $this->assertSame('gemini', $runtime['provider']);
+        $this->assertSame('AIza-gemini-without-enabled-flag', $runtime['api_key']);
+    }
+
+    public function test_falls_back_to_saved_gemini_when_openai_is_preferred_but_not_configured(): void
+    {
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $platformOrg = Organization::query()
+            ->where('company_code', config('erp.platform_company_code', 'PLATFORM'))
+            ->firstOrFail();
+
+        $moduleSettings = $platformOrg->module_settings ?? [];
+        $moduleSettings['platform_ai_training'] = [
+            'enabled' => true,
+            'free_ai_provider' => 'openai',
+            'gemini_api_key' => 'AIza-already-configured-gemini',
+            'gemini_model' => 'gemini-3.6-flash',
+            'api_key' => '',
+        ];
+        $platformOrg->update(['module_settings' => $moduleSettings]);
+        \App\Services\Ai\AiSettingsResolver::platformOrganization(refresh: true);
+
+        $this->assertSame('openai', \App\Services\Ai\AiSettingsResolver::platformFreeAiProvider());
+        $this->assertSame('gemini', \App\Services\Ai\AiSettingsResolver::effectivePlatformFreeAiProvider());
+
+        $credentials = \App\Services\Ai\AiSettingsResolver::resolvePlatformFreeAiCredentials();
+        $this->assertNotNull($credentials);
+        $this->assertSame('gemini', $credentials['provider']);
+        $this->assertSame('AIza-already-configured-gemini', $credentials['api_key']);
+
+        $runtime = \App\Services\Ai\AiSettingsResolver::resolveRuntimeForPlatformTraining();
+        $this->assertNotNull($runtime);
+        $this->assertSame('gemini', $runtime['provider']);
+
+        $this->getJson('/api/v1/admin/ai-training/settings')
+            ->assertOk()
+            ->assertJsonPath('available', true)
+            ->assertJsonPath('free_ai_provider', 'openai')
+            ->assertJsonPath('effective_free_ai_provider', 'gemini')
+            ->assertJsonPath('provider', 'gemini');
+    }
+
     public function test_platform_can_test_groq_compatible_openai_credentials(): void
     {
         Http::fake([

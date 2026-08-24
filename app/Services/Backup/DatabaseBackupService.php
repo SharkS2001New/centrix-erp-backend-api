@@ -270,7 +270,11 @@ class DatabaseBackupService
     public function pruneOldBackups(?string $disk = null, ?int $retentionDays = null): int
     {
         $disk = $disk ?: (string) config('backup.disk', 'local');
-        $retentionDays = $retentionDays ?? (int) config('backup.retention_days', 7);
+        try {
+            $retentionDays = $retentionDays ?? \App\Services\Backup\BackupScheduleSettingsResolver::retentionDays();
+        } catch (\Throwable) {
+            $retentionDays = $retentionDays ?? (int) config('backup.retention_days', 7);
+        }
         $directory = trim((string) config('backup.path', 'backups/database'), '/');
         $cutoff = now()->subDays(max($retentionDays, 1))->getTimestamp();
         $deleted = 0;

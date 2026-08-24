@@ -58,4 +58,17 @@ class SystemIssueAlertServiceTest extends TestCase
 
         $this->assertFalse(app(SystemIssueAlertService::class)->shouldSendInstant($report));
     }
+
+    public function test_send_test_email_fails_without_digest_address(): void
+    {
+        SystemIssueAlertSettingsResolver::save([
+            'digest_email' => '',
+            'instant_email_enabled' => true,
+        ]);
+
+        $result = app(SystemIssueAlertService::class)->sendTest(['email']);
+        $this->assertFalse($result['ok']);
+        $this->assertFalse($result['channels']['email']['ok']);
+        $this->assertStringContainsString('digest email', strtolower($result['channels']['email']['message']));
+    }
 }

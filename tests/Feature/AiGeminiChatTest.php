@@ -327,7 +327,9 @@ class AiGeminiChatTest extends TestCase
             ->assertJsonPath('success', false)
             ->assertJsonPath('error_code', 'rate_limited');
 
-        $this->assertStringContainsString('Gemini quota', (string) $response->json('message'));
+        $this->assertStringContainsString('external provider API rate limits', (string) $response->json('message'));
+        $this->assertStringNotContainsString('Gemini', (string) $response->json('message'));
+        $this->assertStringNotContainsString('Google', (string) $response->json('message'));
     }
 
     public function test_application_rate_limit_on_ai_chat(): void

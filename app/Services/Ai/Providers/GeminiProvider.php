@@ -148,7 +148,7 @@ class GeminiProvider implements AiProviderInterface
 
             if ($retry->status() === 429) {
                 throw AiProviderException::rateLimited(
-                    'Google Gemini quota is temporarily exhausted (free tier rate limits are low). Wait about a minute and try again, or add your own API key under Administration → Settings → AI.',
+                    'Centrix AI is temporarily limited by external provider API rate limits. Wait about a minute and try again, or add your own API key under Administration → Settings → AI.',
                 );
             }
 
@@ -183,7 +183,7 @@ class GeminiProvider implements AiProviderInterface
             $lower = strtolower($providerMessage);
             if ($response->status() === 404 || str_contains($lower, 'not found')) {
                 throw new AiProviderException(
-                    'Gemini model "'.$model.'" was not found. Set a valid model under AI settings or GEMINI_MODEL.',
+                    'The configured AI model was not found. Set a valid model under Administration → Settings → AI.',
                     'model_not_found',
                     404,
                     false,
@@ -200,9 +200,8 @@ class GeminiProvider implements AiProviderInterface
             }
 
             if ($providerMessage !== '') {
-                $detail = strlen($providerMessage) > 200 ? substr($providerMessage, 0, 197).'…' : $providerMessage;
                 throw new AiProviderException(
-                    'Gemini request failed: '.$detail,
+                    'The AI request failed. Please try again, or check AI settings under Administration → Settings → AI.',
                     'provider_error',
                     $response->status(),
                     $response->status() >= 500 || $response->status() === 429,

@@ -18,7 +18,7 @@ class AiProviderException extends RuntimeException
     public static function rateLimited(string $detail = ''): self
     {
         return new self(
-            $detail !== '' ? $detail : 'AI usage is temporarily limited. Please try again shortly.',
+            $detail !== '' ? $detail : 'Centrix AI is temporarily limited by external provider API rate limits. Please try again shortly.',
             'rate_limited',
             429,
             true,

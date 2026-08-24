@@ -27,8 +27,16 @@ class AiRuntimeGuard
     public function health(): array
     {
         $enabled = filter_var(config('ai.enabled', true), FILTER_VALIDATE_BOOLEAN);
-        $provider = strtolower((string) config('ai.provider', 'openai'));
-        $model = $this->configuredModel($provider);
+        $runtime = AiSettingsResolver::resolveRuntimeForPlatformTraining();
+        $provider = strtolower((string) (
+            $runtime['provider']
+            ?? AiSettingsResolver::effectivePlatformFreeAiProvider()
+            ?? config('ai.provider', 'openai')
+        ));
+        $model = (string) (
+            $runtime['model']
+            ?? $this->configuredModel($provider)
+        );
 
         if (! $enabled) {
             return [
@@ -41,13 +49,13 @@ class AiRuntimeGuard
             ];
         }
 
-        $configured = match ($provider) {
-            'gemini' => trim((string) config('ai.gemini.api_key', '')) !== ''
-                || AiSettingsResolver::platformGeminiConfigured(),
-            'openai' => trim((string) config('ai.platform_training.api_key', '')) !== ''
-                || AiSettingsResolver::platformFreeAiConfigured(),
-            default => false,
-        };
+        $configured = $runtime !== null
+            || AiSettingsResolver::platformFreeAiConfigured()
+            || match ($provider) {
+                'gemini' => trim((string) config('ai.gemini.api_key', '')) !== '',
+                'openai' => trim((string) config('ai.platform_training.api_key', '')) !== '',
+                default => false,
+            };
 
         return [
             'enabled' => true,

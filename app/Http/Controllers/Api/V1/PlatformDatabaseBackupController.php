@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Jobs\RunDatabaseBackupJob;
 use App\Services\Background\BackgroundTaskService;
 use App\Services\Backup\BackupR2SettingsResolver;
+use App\Services\Backup\BackupScheduleSettingsResolver;
 use App\Services\Backup\CloudflareR2BackupUploader;
 use App\Services\Backup\DatabaseBackupException;
 use App\Services\Backup\DatabaseBackupService;
@@ -34,6 +35,7 @@ class PlatformDatabaseBackupController extends Controller
                 'r2_configured' => $r2['configured'],
                 'r2' => $r2,
                 'r2_settings' => BackupR2SettingsResolver::describe(),
+                'schedule' => BackupScheduleSettingsResolver::describe(),
             ]);
         } catch (\Throwable $e) {
             report($e);
@@ -45,15 +47,37 @@ class PlatformDatabaseBackupController extends Controller
     /** GET /api/v1/admin/database-backup-settings */
     public function showSettings()
     {
-        return response()->json(BackupR2SettingsResolver::describe());
+        return response()->json(array_merge(
+            BackupR2SettingsResolver::describe(),
+            ['schedule' => BackupScheduleSettingsResolver::describe()],
+        ));
     }
 
     /** PUT /api/v1/admin/database-backup-settings */
     public function updateSettings(Request $request)
     {
-        $data = $request->validate($this->r2SettingsRules());
+        $data = $request->validate(array_merge($this->r2SettingsRules(), $this->scheduleSettingsRules()));
 
-        return response()->json(BackupR2SettingsResolver::save($data));
+        $r2Keys = array_keys($this->r2SettingsRules());
+        $scheduleKeys = array_keys($this->scheduleSettingsRules());
+        $r2Data = array_intersect_key($data, array_flip($r2Keys));
+        $scheduleData = array_intersect_key($data, array_flip($scheduleKeys));
+
+        $response = $r2Data !== []
+            ? BackupR2SettingsResolver::save($r2Data)
+            : BackupR2SettingsResolver::describe();
+
+        if ($scheduleData !== []) {
+            if (array_key_exists('schedule_enabled', $scheduleData)) {
+                $scheduleData['enabled'] = (bool) $scheduleData['schedule_enabled'];
+                unset($scheduleData['schedule_enabled']);
+            }
+            $response['schedule'] = BackupScheduleSettingsResolver::save($scheduleData);
+        } else {
+            $response['schedule'] = BackupScheduleSettingsResolver::describe();
+        }
+
+        return response()->json($response);
     }
 
     /** POST /api/v1/admin/database-backup-settings/test-connection */
@@ -102,13 +126,29 @@ class PlatformDatabaseBackupController extends Controller
         ];
     }
 
+    /** @return array<string, mixed> */
+    protected function scheduleSettingsRules(): array
+    {
+        return [
+            'schedule_enabled' => ['sometimes', 'boolean'],
+            'frequency' => ['sometimes', 'in:hourly,every_6_hours,every_12_hours,daily'],
+            'schedule_time' => ['sometimes', 'string', 'regex:/^\d{2}:\d{2}$/'],
+            'retention_days' => ['sometimes', 'integer', 'min:1', 'max:90'],
+        ];
+    }
+
     /** POST /api/v1/admin/database-backups */
     public function store(Request $request)
     {
         try {
+            try {
+                BackupScheduleSettingsResolver::applyToRuntime();
+            } catch (\Throwable) {
+                // keep env config
+            }
             if (! config('backup.enabled', true)) {
                 return response()->json([
-                    'message' => 'Database backups are disabled (BACKUP_ENABLED=false).',
+                    'message' => 'Database backups are disabled (BACKUP_ENABLED=false or schedule disabled in Platform settings).',
                     'code' => 'backup_disabled',
                 ], 422);
             }

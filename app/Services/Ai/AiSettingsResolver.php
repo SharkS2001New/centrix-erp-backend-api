@@ -122,11 +122,22 @@ class AiSettingsResolver
     }
 
     /**
-     * Whether the currently selected free provider has credentials configured.
+     * Provider that will actually run (saved keys win over the radio).
+     * If the preferred provider has no key, use the other configured provider.
+     */
+    public static function effectivePlatformFreeAiProvider(): string
+    {
+        $credentials = self::resolvePlatformFreeAiCredentials();
+
+        return $credentials['provider'] ?? self::platformFreeAiProvider();
+    }
+
+    /**
+     * True when any platform provider has credentials (Gemini or OpenAI-compatible).
      */
     public static function platformFreeAiConfigured(): bool
     {
-        return self::resolvePlatformFreeAiCredentials(self::platformFreeAiProvider()) !== null;
+        return self::resolvePlatformFreeAiCredentials() !== null;
     }
 
     /**
@@ -134,22 +145,32 @@ class AiSettingsResolver
      */
     public static function resolvePlatformFreeAiCredentials(?string $provider = null): ?array
     {
-        $provider = $provider ?? self::platformFreeAiProvider();
+        $preferred = $provider ?? self::platformFreeAiProvider();
+        $preferredCreds = self::credentialsForProvider($preferred);
+        if ($preferredCreds) {
+            return $preferredCreds;
+        }
+
+        // Radio is only a preference. If Gemini is already saved (or OpenAI), use that.
+        $fallback = $preferred === 'openai' ? 'gemini' : 'openai';
+
+        return self::credentialsForProvider($fallback);
+    }
+
+    /**
+     * @return array{api_key: string, model: string, base_url: string, provider: string}|null
+     */
+    protected static function credentialsForProvider(string $provider): ?array
+    {
         if ($provider === 'openai') {
             $openai = self::resolvePlatformOpenAiCredentials();
-            if (! $openai) {
-                return null;
-            }
 
-            return array_merge($openai, ['provider' => 'openai']);
+            return $openai ? array_merge($openai, ['provider' => 'openai']) : null;
         }
 
         $gemini = self::resolvePlatformGeminiCredentials();
-        if (! $gemini) {
-            return null;
-        }
 
-        return array_merge($gemini, ['provider' => 'gemini']);
+        return $gemini ? array_merge($gemini, ['provider' => 'gemini']) : null;
     }
 
     /**
@@ -550,45 +571,70 @@ class AiSettingsResolver
     }
 
     /**
-     * Runtime credentials for platform-admin tools (email assist, training console).
-     * Uses the free AI provider selection: Gemini alone when Gemini is selected; OpenAI when OpenAI is selected.
+     * Runtime credentials for platform-admin tools (email assist, training console, train-from-usage).
+     * Prefer the selected free provider when that key exists; otherwise use any stored Gemini/OpenAI key
+     * even if "Enable platform AI tools" is still off.
      *
      * @return array{enabled: bool, api_key: string, model: string, base_url: string, provider: string}|null
      */
     public static function resolveRuntimeForPlatformTraining(): ?array
     {
         $settings = self::forPlatformTraining();
-        if (! ($settings['enabled'] ?? false)) {
-            $envKey = trim((string) config('ai.platform_training.api_key', ''));
-            if ($envKey === '') {
-                return null;
-            }
+        $preferred = self::platformFreeAiProvider();
 
-            return self::buildRuntimeFromOrgCredentials([
-                'enabled' => true,
-                'provider' => 'openai',
-                'api_key' => $envKey,
-                'model' => config('ai.platform_training.model'),
-                'base_url' => config('ai.platform_training.base_url'),
-            ]);
+        $preferredRuntime = $preferred === 'gemini'
+            ? self::platformGeminiRuntime()
+            : self::platformOpenAiRuntime($settings);
+        if ($preferredRuntime) {
+            return $preferredRuntime;
         }
 
-        $provider = self::platformFreeAiProvider();
-        if ($provider === 'gemini') {
-            $credentials = self::resolvePlatformGeminiCredentials();
-            if (! $credentials) {
-                return null;
-            }
-
-            return [
-                'enabled' => true,
-                'provider' => 'gemini',
-                'api_key' => $credentials['api_key'],
-                'model' => $credentials['model'],
-                'base_url' => $credentials['base_url'],
-            ];
+        $fallback = $preferred === 'gemini'
+            ? self::platformOpenAiRuntime($settings)
+            : self::platformGeminiRuntime();
+        if ($fallback) {
+            return $fallback;
         }
 
+        $envKey = trim((string) config('ai.platform_training.api_key', ''));
+        if ($envKey === '') {
+            return null;
+        }
+
+        return self::buildRuntimeFromOrgCredentials([
+            'enabled' => true,
+            'provider' => 'openai',
+            'api_key' => $envKey,
+            'model' => config('ai.platform_training.model'),
+            'base_url' => config('ai.platform_training.base_url'),
+        ]);
+    }
+
+    /**
+     * @return array{enabled: bool, api_key: string, model: string, base_url: string, provider: string}|null
+     */
+    protected static function platformGeminiRuntime(): ?array
+    {
+        $credentials = self::resolvePlatformGeminiCredentials();
+        if (! $credentials) {
+            return null;
+        }
+
+        return [
+            'enabled' => true,
+            'provider' => 'gemini',
+            'api_key' => $credentials['api_key'],
+            'model' => $credentials['model'],
+            'base_url' => $credentials['base_url'],
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $settings
+     * @return array{enabled: bool, api_key: string, model: string, base_url: string, provider: string}|null
+     */
+    protected static function platformOpenAiRuntime(array $settings): ?array
+    {
         return self::buildRuntimeFromOrgCredentials(array_merge($settings, [
             'enabled' => true,
             'provider' => 'openai',
@@ -670,7 +716,8 @@ class AiSettingsResolver
         $settings = self::maskForClient(self::forPlatformTraining());
         $runtime = self::resolveRuntimeForPlatformTraining();
         $gemini = self::resolvePlatformGeminiCredentials();
-        $freeProvider = self::platformFreeAiProvider();
+        $preferredProvider = self::platformFreeAiProvider();
+        $effectiveProvider = self::effectivePlatformFreeAiProvider();
         $freeConfigured = self::platformFreeAiConfigured();
 
         return [
@@ -678,13 +725,14 @@ class AiSettingsResolver
             'settings' => $settings,
             'available' => $runtime !== null,
             'gemini_available' => $gemini !== null,
-            'free_ai_provider' => $freeProvider,
+            'free_ai_provider' => $preferredProvider,
+            'effective_free_ai_provider' => $effectiveProvider,
             'free_ai_configured' => $freeConfigured,
             'model' => $runtime['model']
                 ?? (($settings['model'] ?? '') !== '' ? $settings['model'] : config('ai.defaults.model')),
             'provider' => $runtime['provider']
-                ?? ($freeProvider === 'gemini' ? 'gemini' : ($settings['provider'] ?? 'openai')),
-            'tools_provider' => $runtime['provider'] ?? $freeProvider,
+                ?? ($effectiveProvider === 'gemini' ? 'gemini' : ($settings['provider'] ?? 'openai')),
+            'tools_provider' => $runtime['provider'] ?? $effectiveProvider,
             'tools_available' => $runtime !== null,
             'gemini_model' => (is_array($gemini) ? ($gemini['model'] ?? '') : '')
                 ?: (($settings['gemini_model'] ?? '') !== '' ? $settings['gemini_model'] : config('ai.gemini.model')),
@@ -784,11 +832,11 @@ class AiSettingsResolver
         $hasOrgKey = trim((string) ($raw['api_key'] ?? '')) !== '';
         $platformOffersFree = (bool) ($raw['use_platform_gemini'] ?? false);
         $prefersPlatform = self::orgPrefersPlatformAi($raw);
-        $freeProvider = self::platformFreeAiProvider();
+        $freeProvider = self::effectivePlatformFreeAiProvider();
         $credentialSource = null;
         if ($runtime) {
             if ($prefersPlatform && $platformOffersFree) {
-                $credentialSource = match ($freeProvider) {
+                $credentialSource = match ($runtime['provider'] ?? $freeProvider) {
                     'openai' => 'platform_openai',
                     default => 'platform_gemini',
                 };
@@ -835,7 +883,7 @@ class AiSettingsResolver
         $prefersPlatform = self::orgPrefersPlatformAi($settings);
         $available = $gate->aiPlatformEnabled() && self::isAvailableForOrganization($org);
         $hasOrgKey = trim((string) ($settings['api_key'] ?? '')) !== '';
-        $freeProvider = self::platformFreeAiProvider();
+        $freeProvider = self::effectivePlatformFreeAiProvider();
         $credentialSource = null;
         if ($available) {
             if ($prefersPlatform && $platformOffersFree) {

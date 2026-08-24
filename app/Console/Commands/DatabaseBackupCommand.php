@@ -16,6 +16,12 @@ class DatabaseBackupCommand extends Command
 
     public function handle(DatabaseBackupService $backups): int
     {
+        try {
+            \App\Services\Backup\BackupScheduleSettingsResolver::applyToRuntime();
+        } catch (\Throwable) {
+            // ignore
+        }
+
         if (! config('backup.enabled', true)) {
             $this->warn('Database backups are disabled (BACKUP_ENABLED=false).');
 

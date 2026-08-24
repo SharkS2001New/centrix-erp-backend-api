@@ -9,6 +9,9 @@ return [
 
     'retention_days' => (int) env('BACKUP_RETENTION_DAYS', 7),
 
+    /** hourly | every_6_hours | every_12_hours | daily — overridden by Platform UI when saved. */
+    'schedule_frequency' => env('BACKUP_SCHEDULE_FREQUENCY', 'daily'),
+
     'schedule_time' => env('BACKUP_SCHEDULE_TIME', '02:00'),
 
     'notify_email' => env('BACKUP_NOTIFY_EMAIL'),

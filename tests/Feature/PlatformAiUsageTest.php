@@ -85,6 +85,10 @@ class PlatformAiUsageTest extends TestCase
         $users = collect($response->json('by_user'));
         $this->assertTrue($users->contains(fn ($row) => (int) $row['user_id'] === (int) $this->tenantAdmin->id && (int) $row['requests'] === 2));
         $this->assertGreaterThan(0, (float) $response->json('summary.estimated_cost'));
+        $this->assertGreaterThan(0, (float) $response->json('summary.estimated_cost_kes'));
+        $this->assertGreaterThan(0, (float) $response->json('usd_to_kes'));
+        $this->assertNotEmpty($response->json('cost_explanation.formula'));
+        $this->assertNotEmpty($response->json('cost_explanation.by_model'));
     }
 
     public function test_usage_events_lists_recent_rows(): void
@@ -180,8 +184,16 @@ class PlatformAiUsageTest extends TestCase
 
         $questions = collect($response->json('common_questions'));
         $this->assertTrue($questions->isNotEmpty());
-        $this->assertTrue(
-            $questions->contains(fn ($row) => (int) $row['count'] >= 2 && str_contains(strtolower($row['question']), 'front desk')),
+
+        $frontDesk = $questions->first(
+            fn ($row) => (int) $row['count'] >= 2 && str_contains(strtolower((string) $row['question']), 'front desk'),
         );
+        $this->assertNotNull($frontDesk);
+        $this->assertGreaterThanOrEqual(1, (int) ($frontDesk['organization_count'] ?? 0));
+        $this->assertGreaterThanOrEqual(1, (int) ($frontDesk['user_count'] ?? 0));
+        $this->assertNotEmpty($frontDesk['organizations'] ?? []);
+        $this->assertNotEmpty($frontDesk['users'] ?? []);
+        $this->assertSame($this->orgA->org_name, $frontDesk['organizations'][0]['name'] ?? null);
+        $this->assertNotEmpty($frontDesk['users'][0]['name'] ?? null);
     }
 }

@@ -103,7 +103,7 @@ class AiToolChatService
                     ? 'AI assistant is not enabled for this organization. Contact your platform administrator.'
                     : (! ($settings['enabled'] ?? false)
                         ? 'AI assistant is disabled for this organization. An admin can enable it under Administration → Settings → AI.'
-                        : 'AI assistant is not configured. Add a provider API key under Administration → Settings → AI (or set GEMINI_API_KEY / OPENAI keys in the environment).'),
+                        : 'AI assistant is not configured. Add a provider API key under Administration → Settings → AI.'),
                 'not_configured',
             );
         }

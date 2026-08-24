@@ -548,6 +548,8 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::put('admin/system-issue-alert-settings', [PlatformSystemIssueAlertSettingsController::class, 'update'])
             ->middleware(['erp.super_admin']);
+        Route::post('admin/system-issue-alert-settings/test', [PlatformSystemIssueAlertSettingsController::class, 'test'])
+            ->middleware(['erp.super_admin']);
         Route::get('admin/print-agent-msi', [PlatformPrintAgentMsiController::class, 'show'])
             ->middleware(['erp.super_admin']);
         Route::put('admin/print-agent-msi', [PlatformPrintAgentMsiController::class, 'update'])

@@ -300,7 +300,7 @@ class AiAssistantService
                 return [
                     'reply' => ! ($settings['enabled'] ?? false)
                         ? 'Platform AI training is disabled. Enable it under Platform → AI training → Platform AI credentials.'
-                        : 'Platform AI training is not configured — add a Gemini (or OpenAI) API key under Platform → Settings → AI credentials.',
+                        : 'Platform AI training is not configured — add an API key under Platform → Settings → AI credentials.',
                     'tools_used' => [],
                     'training_mode' => true,
                 ];
@@ -314,7 +314,7 @@ class AiAssistantService
                     ? 'AI assistant is not enabled at platform level for this organization.'
                     : (! ($settings['enabled'] ?? false)
                         ? 'AI assistant is disabled for this organization. Enable it under Organization settings → AI.'
-                        : 'AI assistant is not configured — add an OpenAI API key under Organization settings → AI.'),
+                        : 'AI assistant is not configured — add an API key under Organization settings → AI.'),
                 'tools_used' => [],
                 'training_mode' => $trainingMode,
             ];
@@ -665,22 +665,16 @@ class AiAssistantService
         }
 
         if (! empty($settings['use_platform_gemini'])) {
-            $providerLabel = AiSettingsResolver::platformFreeAiProvider() === 'openai' ? 'OpenAI' : 'Gemini';
-
             return AiSettingsResolver::platformFreeAiConfigured()
                 ? 'AI assistant is not available right now. Try again shortly.'
-                : "Platform {$providerLabel} is enabled for this organization, but no {$providerLabel} API key is configured. A platform admin must add it under Platform → Settings → AI credentials.";
+                : 'Platform AI is enabled for this organization, but credentials are not configured. A platform admin must add them under Platform → Settings → AI credentials.';
         }
 
         if (! ($settings['enabled'] ?? false)) {
             return 'AI assistant is disabled for this organization. An admin can enable it under Administration → Settings → AI.';
         }
 
-        $provider = strtolower((string) ($settings['provider'] ?? 'openai'));
-
-        return $provider === 'gemini'
-            ? 'AI assistant is not configured. Add a Gemini API key under Administration → Settings → AI, or ask a platform admin to enable Platform Gemini for this organization.'
-            : 'AI assistant is not configured for this organization. An admin must add an API key under Administration → Settings → AI.';
+        return 'AI assistant is not configured. Add an API key under Administration → Settings → AI, or ask a platform admin to enable Platform AI for this organization.';
     }
 
     protected function looksLikeFetchingReply(string $reply): bool

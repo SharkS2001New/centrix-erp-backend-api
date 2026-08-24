@@ -68,11 +68,31 @@ class SystemIssueAlertSettingsResolver
                 'instant_email_enabled' => (bool) $settings['instant_email_enabled'],
                 'whatsapp_instant_enabled' => (bool) $settings['whatsapp_instant_enabled'],
             ],
+            'delivery' => self::deliverySnapshot(),
             'hints' => [
                 'digest' => 'Daily email with the full open / acknowledged list.',
                 'instant_whatsapp' => 'Instant WhatsApp for high-priority repeats, brand-new fingerprints, and user reports.',
                 'instant_email' => 'Optional instant email for the same events as WhatsApp.',
+                'from' => 'Alerts send through Platform → Email delivery → Notifications (not mailbox SMTP).',
             ],
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    public static function deliverySnapshot(): array
+    {
+        $auth = \App\Services\Platform\PlatformMailSettingsResolver::resolveForAuth();
+        $from = trim((string) ($auth['from_address'] ?? ''));
+        if ($from === '' || filter_var($from, FILTER_VALIDATE_EMAIL) === false) {
+            $from = trim((string) config('mail.from.address', ''));
+        }
+
+        return [
+            'from_address' => filter_var($from, FILTER_VALIDATE_EMAIL) ? $from : '',
+            'from_name' => trim((string) ($auth['from_name'] ?? 'Centrix')) ?: 'Centrix',
+            'smtp_host' => trim((string) ($auth['smtp_host'] ?? '')),
+            'ready' => \App\Services\Platform\PlatformMailSettingsResolver::canDeliverAuthMail(),
+            'to_email' => self::digestEmail(),
         ];
     }
 

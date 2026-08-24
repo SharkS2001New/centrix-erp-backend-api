@@ -1,11 +1,26 @@
 <?php
 
+use App\Services\Backup\BackupScheduleSettingsResolver;
 use Illuminate\Support\Facades\Schedule;
 
+$backupCron = '0 2 * * *';
+try {
+    BackupScheduleSettingsResolver::applyToRuntime();
+    $backupCron = BackupScheduleSettingsResolver::cronExpression();
+} catch (\Throwable) {
+    try {
+        $backupCron = BackupScheduleSettingsResolver::cronExpression(
+            BackupScheduleSettingsResolver::defaults()
+        );
+    } catch (\Throwable) {
+        $backupCron = '0 2 * * *';
+    }
+}
+
 Schedule::command('erp:database-backup')
-    ->dailyAt(config('backup.schedule_time', '02:00'))
+    ->cron($backupCron)
     ->when(fn () => (bool) config('backup.enabled', true))
-    ->withoutOverlapping()
+    ->withoutOverlapping(180)
     ->appendOutputTo(storage_path('logs/backup.log'));
 
 Schedule::command('erp:release-expired-stock-reservations')

@@ -3,6 +3,8 @@
 namespace App\Services\Ai;
 
 use App\Models\AiUsageLog;
+use App\Models\Organization;
+use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -242,12 +244,14 @@ class AiUsageAnalyticsService
             $computedCost += (float) ($row['estimated_cost'] ?? 0);
         }
         $estimatedCost = $loggedCost > 0 ? $loggedCost : round($computedCost, 6);
+        $costExplanation = $this->costExplanation($estimatedCost, $loggedCost, $byModel);
 
         return [
             'available' => true,
             'from' => $fromDate->toDateString(),
             'to' => $toDate->toDateString(),
             'cost_currency' => (string) config('ai.pricing.currency', 'USD'),
+            'usd_to_kes' => $costExplanation['usd_to_kes'],
             'summary' => [
                 'requests' => (int) ($totals->requests ?? 0),
                 'ok_count' => (int) ($totals->ok_count ?? 0),
@@ -256,11 +260,13 @@ class AiUsageAnalyticsService
                 'output_tokens' => (int) ($totals->output_tokens ?? 0),
                 'total_tokens' => (int) ($totals->total_tokens ?? 0),
                 'estimated_cost' => round($estimatedCost, 6),
+                'estimated_cost_kes' => $costExplanation['estimated_cost_kes'],
                 'logged_cost' => round($loggedCost, 6),
                 'avg_latency_ms' => $totals->avg_latency_ms !== null ? (int) round((float) $totals->avg_latency_ms) : null,
                 'active_organizations' => $activeOrgs,
                 'active_users' => $activeUsers,
             ],
+            'cost_explanation' => $costExplanation,
             'by_day' => $this->fillDays($byDay, $fromDate, $toDate),
             'by_organization' => $byOrganization,
             'by_user' => $byUser,
@@ -378,7 +384,12 @@ class AiUsageAnalyticsService
             ->where('ai_usage_logs.prompt_preview', '!=', '')
             ->orderByDesc('ai_usage_logs.id')
             ->limit(4000)
-            ->get(['ai_usage_logs.prompt_preview', 'ai_usage_logs.organization_id', 'ai_usage_logs.status']);
+            ->get([
+                'ai_usage_logs.prompt_preview',
+                'ai_usage_logs.organization_id',
+                'ai_usage_logs.user_id',
+                'ai_usage_logs.status',
+            ]);
 
         $clusters = [];
         foreach ($rows as $row) {
@@ -398,6 +409,9 @@ class AiUsageAnalyticsService
                     'ok_count' => 0,
                     'error_count' => 0,
                     'organization_ids' => [],
+                    'user_ids' => [],
+                    'org_ask_counts' => [],
+                    'user_ask_counts' => [],
                     'examples' => [],
                     'suggested_workspace_id' => $this->suggestWorkspaceId($preview),
                 ];
@@ -410,7 +424,14 @@ class AiUsageAnalyticsService
                 $clusters[$key]['error_count']++;
             }
             if ($row->organization_id) {
-                $clusters[$key]['organization_ids'][(int) $row->organization_id] = true;
+                $orgId = (int) $row->organization_id;
+                $clusters[$key]['organization_ids'][$orgId] = true;
+                $clusters[$key]['org_ask_counts'][$orgId] = ($clusters[$key]['org_ask_counts'][$orgId] ?? 0) + 1;
+            }
+            if ($row->user_id) {
+                $userId = (int) $row->user_id;
+                $clusters[$key]['user_ids'][$userId] = true;
+                $clusters[$key]['user_ask_counts'][$userId] = ($clusters[$key]['user_ask_counts'][$userId] ?? 0) + 1;
             }
             if (count($clusters[$key]['examples']) < 3 && ! in_array($preview, $clusters[$key]['examples'], true)) {
                 $clusters[$key]['examples'][] = Str::limit($preview, 180, '');
@@ -421,9 +442,63 @@ class AiUsageAnalyticsService
         usort($out, fn ($a, $b) => ($b['count'] <=> $a['count']) ?: strcmp($a['question'], $b['question']));
         $out = array_slice($out, 0, $limit);
 
-        return array_map(function (array $row) {
+        $orgIds = [];
+        $userIds = [];
+        foreach ($out as $row) {
+            $orgIds = array_merge($orgIds, array_keys($row['org_ask_counts'] ?? []));
+            $userIds = array_merge($userIds, array_keys($row['user_ask_counts'] ?? []));
+        }
+        $orgIds = array_values(array_unique(array_map('intval', $orgIds)));
+        $userIds = array_values(array_unique(array_map('intval', $userIds)));
+
+        $orgs = $orgIds === []
+            ? collect()
+            : Organization::query()
+                ->whereIn('id', $orgIds)
+                ->get(['id', 'org_name', 'company_code'])
+                ->keyBy('id');
+        $users = $userIds === []
+            ? collect()
+            : User::query()
+                ->whereIn('id', $userIds)
+                ->get(['id', 'full_name', 'username', 'email', 'organization_id'])
+                ->keyBy('id');
+
+        return array_map(function (array $row) use ($orgs, $users) {
+            $organizations = [];
+            foreach ($row['org_ask_counts'] as $orgId => $count) {
+                $org = $orgs->get((int) $orgId);
+                $organizations[] = [
+                    'id' => (int) $orgId,
+                    'name' => $org?->org_name ?: ('Org #'.$orgId),
+                    'company_code' => $org?->company_code,
+                    'count' => (int) $count,
+                ];
+            }
+            usort($organizations, fn ($a, $b) => $b['count'] <=> $a['count']);
+
+            $askers = [];
+            foreach ($row['user_ask_counts'] as $userId => $count) {
+                $user = $users->get((int) $userId);
+                $label = trim((string) ($user?->full_name ?: $user?->username ?: $user?->email ?: ''));
+                $askers[] = [
+                    'id' => (int) $userId,
+                    'name' => $label !== '' ? $label : ('User #'.$userId),
+                    'username' => $user?->username,
+                    'organization_id' => $user?->organization_id ? (int) $user->organization_id : null,
+                    'organization_name' => $user?->organization_id
+                        ? ($orgs->get((int) $user->organization_id)?->org_name)
+                        : null,
+                    'count' => (int) $count,
+                ];
+            }
+            usort($askers, fn ($a, $b) => $b['count'] <=> $a['count']);
+
             $row['organization_count'] = count($row['organization_ids']);
-            unset($row['organization_ids']);
+            $row['user_count'] = count($row['user_ids']);
+            $row['organizations'] = array_slice($organizations, 0, 12);
+            $row['users'] = array_slice($askers, 0, 12);
+            unset($row['organization_ids'], $row['user_ids'], $row['org_ask_counts'], $row['user_ask_counts']);
 
             return $row;
         }, $out);
@@ -517,6 +592,53 @@ class AiUsageAnalyticsService
             'estimated_cost' => round((float) ($row->estimated_cost ?? 0), 6),
             'avg_latency_ms' => $avg !== null ? (int) round((float) $avg) : null,
         ]);
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $byModel
+     * @return array<string, mixed>
+     */
+    protected function costExplanation(float $estimatedUsd, float $loggedUsd, array $byModel): array
+    {
+        $rate = $this->estimator->usdToKesRate();
+        $basis = $loggedUsd > 0 ? 'logged' : 'token_rates';
+        $rows = [];
+        foreach ($byModel as $row) {
+            $provider = (string) ($row['provider'] ?? 'unknown');
+            $model = (string) ($row['model'] ?? 'unknown');
+            $detail = $this->estimator->breakdown(
+                $provider,
+                $model === 'unknown' ? null : $model,
+                (int) ($row['input_tokens'] ?? 0),
+                (int) ($row['output_tokens'] ?? 0),
+            );
+            $usd = (float) ($row['estimated_cost'] ?? $detail['computed_usd']);
+            $rows[] = [
+                'provider' => $provider,
+                'model' => $model,
+                'requests' => (int) ($row['requests'] ?? 0),
+                'input_tokens' => (int) ($row['input_tokens'] ?? 0),
+                'output_tokens' => (int) ($row['output_tokens'] ?? 0),
+                'input_rate_per_million' => $detail['input_rate_per_million'],
+                'output_rate_per_million' => $detail['output_rate_per_million'],
+                'input_usd' => $detail['input_usd'],
+                'output_usd' => $detail['output_usd'],
+                'estimated_cost' => round($usd, 6),
+                'estimated_cost_kes' => $this->estimator->toKes($usd),
+            ];
+        }
+
+        return [
+            'basis' => $basis,
+            'usd_to_kes' => $rate,
+            'estimated_cost' => round($estimatedUsd, 6),
+            'estimated_cost_kes' => $this->estimator->toKes($estimatedUsd),
+            'formula' => 'USD = (input tokens / 1,000,000 × input $/1M) + (output tokens / 1,000,000 × output $/1M). KES = USD × configured rate.',
+            'note' => $basis === 'logged'
+                ? 'Sum of per-request estimates stored when each chat ran (token counts × provider list prices). KES uses an indicative rate, not a live CBK rate or the provider invoice.'
+                : 'Stored per-request costs were zero, so this period is recomputed from token totals × configured list prices. KES uses an indicative rate, not a live CBK rate or the provider invoice.',
+            'by_model' => $rows,
+        ];
     }
 
     /**

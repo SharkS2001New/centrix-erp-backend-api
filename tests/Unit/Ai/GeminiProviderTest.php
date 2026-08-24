@@ -54,7 +54,9 @@ class GeminiProviderTest extends TestCase
             $this->fail('Expected AiProviderException');
         } catch (AiProviderException $e) {
             $this->assertSame('rate_limited', $e->codeKey);
-            $this->assertStringContainsString('Gemini quota', $e->getMessage());
+            $this->assertStringContainsString('external provider API rate limits', $e->getMessage());
+            $this->assertStringNotContainsString('Gemini', $e->getMessage());
+            $this->assertStringNotContainsString('Google', $e->getMessage());
         }
     }
 

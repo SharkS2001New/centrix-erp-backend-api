@@ -93,7 +93,7 @@ class PlatformAiTrainingController extends Controller
         $runtime = \App\Services\Ai\AiSettingsResolver::resolveRuntimeForPlatformTraining();
         if (! $runtime || empty($runtime['api_key'])) {
             return response()->json([
-                'message' => 'Platform AI is not configured. Add credentials under Platform → AI training → Credentials.',
+                'message' => 'No Gemini or OpenAI key is saved for platform tools. Add a Gemini key under Platform → AI training → Credentials (the same key used for tenant free AI).',
             ], 422);
         }
 
@@ -431,7 +431,7 @@ class PlatformAiTrainingController extends Controller
         $runtime = \App\Services\Ai\AiSettingsResolver::resolveRuntimeForPlatformTraining();
         if (! $runtime) {
             return response()->json([
-                'message' => 'Platform AI is not configured. Add credentials under Platform → AI training → Credentials.',
+                'message' => 'No Gemini or OpenAI key is saved for platform tools. Add a Gemini key under Platform → AI training → Credentials (the same key used for tenant free AI).',
             ], 422);
         }
 

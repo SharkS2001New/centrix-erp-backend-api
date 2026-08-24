@@ -110,6 +110,8 @@ return [
      */
     'pricing' => [
         'currency' => 'USD',
+        /** Indicative USD→KES for usage display; not a live CBK rate. */
+        'usd_to_kes' => (float) env('AI_USD_TO_KES', 129),
         'per_million' => [
             'openai' => [
                 'default' => ['input' => 0.15, 'output' => 0.60],

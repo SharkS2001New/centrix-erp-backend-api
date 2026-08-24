@@ -82,6 +82,9 @@ class SalePaymentAllocationService
             $updates = [
                 'amount_paid' => $newPaid,
                 'payment_status' => $paymentStatus,
+                // Keep primary method in sync for Orders/Sales Method column — cheque/bank
+                // tenders do not write cash/mpesa buckets, so the list UI relies on this code.
+                'payment_method_code' => $paymentMethodCode,
             ];
 
             if ($sale->status !== 'cancelled' && $sale->status !== 'held') {

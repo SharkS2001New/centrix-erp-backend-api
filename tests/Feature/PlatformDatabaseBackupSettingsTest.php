@@ -118,4 +118,22 @@ class PlatformDatabaseBackupSettingsTest extends TestCase
         $this->postJson('/api/v1/admin/database-backup-settings/test-upload')
             ->assertForbidden();
     }
+
+    public function test_super_admin_can_save_backup_schedule(): void
+    {
+        Sanctum::actingAs(User::where('username', 'superadmin')->firstOrFail());
+
+        $this->putJson('/api/v1/admin/database-backup-settings', [
+            'schedule_enabled' => true,
+            'frequency' => 'hourly',
+            'schedule_time' => '02:15',
+            'retention_days' => 3,
+        ])
+            ->assertOk()
+            ->assertJsonPath('schedule.settings.frequency', 'hourly')
+            ->assertJsonPath('schedule.settings.schedule_time', '02:15')
+            ->assertJsonPath('schedule.settings.retention_days', 3)
+            ->assertJsonPath('schedule.effective.cron', '15 * * * *')
+            ->assertJsonPath('schedule.effective.label', 'Every hour at :15');
+    }
 }

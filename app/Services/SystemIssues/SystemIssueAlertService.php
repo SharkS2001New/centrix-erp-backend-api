@@ -18,6 +18,44 @@ class SystemIssueAlertService
         protected MetaWhatsAppClient $whatsapp,
     ) {}
 
+    /**
+     * Send a test system-error alert so platform admins can verify email / WhatsApp delivery.
+     *
+     * @param  list<string>  $channels  email, whatsapp
+     * @return array{ok: bool, channels: array<string, array{ok: bool, message: string}>, from_address: string, to_email: string}
+     */
+    public function sendTest(array $channels = ['email']): array
+    {
+        $channels = array_values(array_unique(array_filter($channels)));
+        if ($channels === []) {
+            $channels = ['email'];
+        }
+
+        $delivery = SystemIssueAlertSettingsResolver::deliverySnapshot();
+        $results = [];
+        $body = "Centrix alert [TEST]\nThis is a test of System errors & reports notifications.\n"
+            ."If you received this, delivery is working.\n"
+            ."From: ".($delivery['from_address'] ?: '(not configured)')."\n"
+            ."Platform → Settings → Alert notifications";
+
+        if (in_array('email', $channels, true)) {
+            $results['email'] = $this->sendTestEmail($body, $delivery);
+        }
+        if (in_array('whatsapp', $channels, true)) {
+            $results['whatsapp'] = $this->sendTestWhatsApp($body);
+        }
+
+        $ok = $results !== [] && collect($results)->every(fn ($row) => (bool) ($row['ok'] ?? false));
+
+        return [
+            'ok' => $ok,
+            'channels' => $results,
+            'from_address' => $delivery['from_address'],
+            'from_name' => $delivery['from_name'],
+            'to_email' => $delivery['to_email'],
+        ];
+    }
+
     public function sendInstantIfNeeded(SystemIssueReport $report): void
     {
         try {
@@ -93,6 +131,65 @@ class SystemIssueAlertService
         $message = mb_substr((string) $report->message, 0, 280);
 
         return "Centrix alert{$priority}\n{$kind} · {$org} · {$user}\n{$message}{$api}\nPlatform → System errors & reports";
+    }
+
+    /** @return array{ok: bool, message: string} */
+    protected function sendTestEmail(string $plainBody, array $delivery): array
+    {
+        $to = SystemIssueAlertSettingsResolver::digestEmail();
+        if ($to === '') {
+            return [
+                'ok' => false,
+                'message' => 'No digest email is set. Save a recipient under Alert notifications first.',
+            ];
+        }
+        if (! ($delivery['ready'] ?? false) || ($delivery['from_address'] ?? '') === '') {
+            return [
+                'ok' => false,
+                'message' => 'Notification SMTP is not ready. Set From + SMTP under Email delivery → Notifications.',
+            ];
+        }
+
+        try {
+            PlatformMailSettingsResolver::sendRaw(
+                $to,
+                '[Centrix] TEST — System errors & reports',
+                $plainBody,
+                null,
+                ['kind' => 'system_issue_alert', 'no_reply' => true, 'purpose' => 'test'],
+            );
+
+            return [
+                'ok' => true,
+                'message' => "Sent from {$delivery['from_address']} to {$to}.",
+            ];
+        } catch (Throwable $e) {
+            return [
+                'ok' => false,
+                'message' => $e->getMessage(),
+            ];
+        }
+    }
+
+    /** @return array{ok: bool, message: string} */
+    protected function sendTestWhatsApp(string $message): array
+    {
+        $to = SystemIssueAlertSettingsResolver::whatsappNumberE164();
+        if (! $to) {
+            return ['ok' => false, 'message' => 'No WhatsApp number is set.'];
+        }
+        $config = $this->resolveWhatsAppConfig();
+        if (! $config) {
+            return ['ok' => false, 'message' => 'WhatsApp Cloud API credentials are missing.'];
+        }
+
+        try {
+            $this->whatsapp->sendText($config, $to, $message);
+
+            return ['ok' => true, 'message' => "Sent WhatsApp test to {$to}."];
+        } catch (Throwable $e) {
+            return ['ok' => false, 'message' => $e->getMessage()];
+        }
     }
 
     protected function sendWhatsApp(string $message): bool

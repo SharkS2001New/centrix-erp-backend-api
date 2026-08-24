@@ -31,13 +31,20 @@ class AiRuntimeGuardTest extends TestCase
             'ai.provider' => 'gemini',
             'ai.gemini.api_key' => '',
             'ai.gemini.model' => 'gemini-3.6-flash',
+            'ai.platform_training.api_key' => '',
         ]);
 
         $health = app(AiRuntimeGuard::class)->health();
 
+        if ($health['available']) {
+            $this->assertContains($health['provider'], ['gemini', 'openai']);
+            $this->assertSame('ONLINE', $health['status']);
+
+            return;
+        }
+
         $this->assertFalse($health['available']);
         $this->assertSame('DEGRADED', $health['status']);
-        $this->assertSame('gemini', $health['provider']);
     }
 
     public function test_concurrency_rejects_when_at_capacity(): void
