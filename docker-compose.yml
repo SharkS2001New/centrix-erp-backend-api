@@ -87,7 +87,7 @@ services:
 
   # Self-hosted LLM — private network only (no host port publish).
   # Pull a 7B/8B model once:
-  #   docker compose exec ollama ollama pull llama3.2
+  #   docker compose exec ollama ollama pull llama3.2:1b
   # Production tip: bind-mount /opt/ollama/models instead of the named volume if desired.
   ollama:
     image: ollama/ollama:latest

@@ -30,7 +30,7 @@ return [
      */
     'ollama' => [
         'api_key' => env('OLLAMA_API_KEY', 'ollama'),
-        'model' => env('OLLAMA_MODEL', 'llama3.2'),
+        'model' => env('OLLAMA_MODEL', 'llama3.2:1b'),
         'base_url' => rtrim(env('OLLAMA_BASE_URL', 'http://ollama:11434'), '/'),
         'request_timeout' => (int) env('OLLAMA_TIMEOUT', env('OLLAMA_REQUEST_TIMEOUT', 120)),
     ],
