@@ -3,7 +3,7 @@
 namespace App\Contracts\Ai;
 
 /**
- * Pluggable LLM provider (Gemini, OpenAI, Groq, OpenRouter, Ollama, …).
+ * Pluggable LLM provider (Gemini, OpenAI, Groq via OpenAI-compatible base URL, …).
  *
  * Providers must never receive database credentials or execute SQL.
  * Centrix tools run in Laravel; the provider only sees structured tool results.

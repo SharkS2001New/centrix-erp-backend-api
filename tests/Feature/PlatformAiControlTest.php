@@ -293,6 +293,67 @@ class PlatformAiControlTest extends TestCase
             ->assertJsonPath('free_ai_provider', 'gemini');
     }
 
+    public function test_platform_can_test_groq_compatible_openai_credentials(): void
+    {
+        Http::fake([
+            'api.groq.com/*' => Http::response([
+                'choices' => [[
+                    'message' => ['content' => 'Hello from Groq!'],
+                ]],
+                'usage' => [
+                    'prompt_tokens' => 8,
+                    'completion_tokens' => 6,
+                    'total_tokens' => 14,
+                ],
+            ], 200),
+        ]);
+
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $this->postJson('/api/v1/admin/ai-training/test-credentials', [
+            'provider' => 'openai',
+            'api_key' => 'gsk_test_groq_key',
+            'model' => 'llama-3.3-70b-versatile',
+            'base_url' => 'https://api.groq.com/openai/v1',
+        ])->assertOk()
+            ->assertJsonPath('ok', true)
+            ->assertJsonPath('provider', 'openai')
+            ->assertJsonPath('model', 'llama-3.3-70b-versatile')
+            ->assertJsonPath('endpoint', 'https://api.groq.com/openai/v1')
+            ->assertJsonPath('reply', 'Hello from Groq!');
+
+        Http::assertSent(function ($request) {
+            return str_contains($request->url(), 'api.groq.com/openai/v1/chat/completions');
+        });
+    }
+
+    public function test_platform_auto_detects_groq_base_url_from_gsk_key(): void
+    {
+        Http::fake([
+            'api.groq.com/*' => Http::response([
+                'choices' => [[
+                    'message' => ['content' => 'Groq auto-detected'],
+                ]],
+                'usage' => [
+                    'prompt_tokens' => 8,
+                    'completion_tokens' => 6,
+                    'total_tokens' => 14,
+                ],
+            ], 200),
+        ]);
+
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $this->postJson('/api/v1/admin/ai-training/test-credentials', [
+            'provider' => 'openai',
+            'api_key' => 'gsk_test_groq_key',
+        ])->assertOk()
+            ->assertJsonPath('endpoint', 'https://api.groq.com/openai/v1')
+            ->assertJsonPath('model', 'llama-3.3-70b-versatile');
+    }
+
     public function test_platform_can_test_gemini_credentials(): void
     {
         Http::fake([
@@ -371,64 +432,5 @@ class PlatformAiControlTest extends TestCase
             ->assertJsonPath('ok', true)
             ->assertJsonPath('provider', 'openai')
             ->assertJsonPath('reply', 'Hello from org OpenAI');
-    }
-
-    public function test_super_admin_can_list_ollama_models(): void
-    {
-        config([
-            'ai.ollama.base_url' => 'http://centrix-erp-ollama:11434',
-            'ai.ollama.model' => 'llama3.2',
-        ]);
-
-        Http::fake([
-            'http://centrix-erp-ollama:11434/api/tags' => Http::response([
-                'models' => [
-                    ['name' => 'llama3.2:latest'],
-                    ['name' => 'qwen2.5:7b'],
-                ],
-            ]),
-        ]);
-
-        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
-        Sanctum::actingAs($superAdmin);
-
-        $this->getJson('/api/v1/admin/ai-training/ollama/models')
-            ->assertOk()
-            ->assertJsonPath('ok', true)
-            ->assertJsonPath('models.0.name', 'llama3.2:latest')
-            ->assertJsonPath('models.1.name', 'qwen2.5:7b');
-    }
-
-    public function test_super_admin_can_save_and_test_ollama_credentials(): void
-    {
-        Http::fake([
-            'http://centrix-erp-ollama:11434/v1/chat/completions' => Http::response([
-                'choices' => [['message' => ['content' => 'Hello Centrix ERP']]],
-                'usage' => ['prompt_tokens' => 5, 'completion_tokens' => 3, 'total_tokens' => 8],
-            ]),
-        ]);
-
-        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
-        Sanctum::actingAs($superAdmin);
-
-        $this->patchJson('/api/v1/admin/ai-training/settings', [
-            'enabled' => true,
-            'free_ai_provider' => 'ollama',
-            'ollama_base_url' => 'http://centrix-erp-ollama:11434',
-            'ollama_model' => 'llama3.2',
-        ])
-            ->assertOk()
-            ->assertJsonPath('free_ai_provider', 'ollama')
-            ->assertJsonPath('ollama_model', 'llama3.2');
-
-        $this->postJson('/api/v1/admin/ai-training/test-credentials', [
-            'provider' => 'ollama',
-            'ollama_base_url' => 'http://centrix-erp-ollama:11434',
-            'ollama_model' => 'llama3.2',
-        ])
-            ->assertOk()
-            ->assertJsonPath('ok', true)
-            ->assertJsonPath('provider', 'ollama')
-            ->assertJsonPath('model', 'llama3.2');
     }
 }

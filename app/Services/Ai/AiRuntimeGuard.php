@@ -3,11 +3,10 @@
 namespace App\Services\Ai;
 
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Health + concurrency helpers for self-hosted Ollama / AI runtime.
+ * Health + concurrency helpers for AI runtime.
  */
 class AiRuntimeGuard
 {
@@ -42,11 +41,6 @@ class AiRuntimeGuard
             ];
         }
 
-        if ($provider === 'ollama') {
-            return $this->probeOllama($model);
-        }
-
-        // Cloud providers: configuration presence only (no live probe on every health poll).
         $configured = match ($provider) {
             'gemini' => trim((string) config('ai.gemini.api_key', '')) !== ''
                 || AiSettingsResolver::platformGeminiConfigured(),
@@ -131,83 +125,8 @@ class AiRuntimeGuard
     protected function configuredModel(string $provider): string
     {
         return match ($provider) {
-            'ollama' => (string) config('ai.ollama.model', 'llama3.2'),
             'gemini' => (string) config('ai.gemini.model', 'gemini-3.6-flash'),
             default => (string) config('ai.defaults.model', 'gpt-4o-mini'),
         };
-    }
-
-    /**
-     * @return array{enabled: bool, provider: string, available: bool, model: string, status: string, detail: string}
-     */
-    protected function probeOllama(string $model): array
-    {
-        $base = rtrim((string) config('ai.ollama.base_url', 'http://127.0.0.1:11434'), '/');
-        // Native Ollama API (not /v1) for tags.
-        $root = preg_replace('#/v1$#', '', $base) ?: $base;
-        $timeout = min(10, max(2, (int) config('ai.ollama.request_timeout', 120)));
-
-        try {
-            $response = Http::timeout($timeout)->acceptJson()->get($root.'/api/tags');
-            if (! $response->successful()) {
-                return [
-                    'enabled' => true,
-                    'provider' => 'ollama',
-                    'available' => false,
-                    'model' => $model,
-                    'status' => 'OFFLINE',
-                    'detail' => 'Ollama did not respond successfully.',
-                ];
-            }
-
-            $names = collect($response->json('models') ?? [])
-                ->map(fn ($row) => (string) (is_array($row) ? ($row['name'] ?? '') : ''))
-                ->filter()
-                ->values();
-
-            $modelOk = $names->contains(fn ($name) => $name === $model
-                || str_starts_with($name, $model.':')
-                || str_starts_with($name, $model));
-
-            if (! $modelOk && $names->isNotEmpty()) {
-                return [
-                    'enabled' => true,
-                    'provider' => 'ollama',
-                    'available' => false,
-                    'model' => $model,
-                    'status' => 'DEGRADED',
-                    'detail' => 'Ollama is online but the configured model is not pulled yet.',
-                ];
-            }
-
-            if ($names->isEmpty()) {
-                return [
-                    'enabled' => true,
-                    'provider' => 'ollama',
-                    'available' => false,
-                    'model' => $model,
-                    'status' => 'DEGRADED',
-                    'detail' => 'Ollama is online but no models are installed.',
-                ];
-            }
-
-            return [
-                'enabled' => true,
-                'provider' => 'ollama',
-                'available' => true,
-                'model' => $model,
-                'status' => 'ONLINE',
-                'detail' => 'Ollama is reachable and the configured model is available.',
-            ];
-        } catch (\Throwable $e) {
-            return [
-                'enabled' => true,
-                'provider' => 'ollama',
-                'available' => false,
-                'model' => $model,
-                'status' => 'OFFLINE',
-                'detail' => 'Cannot reach Ollama service.',
-            ];
-        }
     }
 }

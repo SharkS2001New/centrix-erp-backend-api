@@ -46,6 +46,9 @@ class OpenAiProvider implements AiProviderInterface
             'temperature' => (float) ($request['temperature'] ?? 0.2),
             'max_tokens' => (int) ($request['max_output_tokens'] ?? config('ai.defaults.max_output_tokens', 2048)),
         ];
+        if ($this->usesGroqEndpoint()) {
+            $payload['max_completion_tokens'] = $payload['max_tokens'];
+        }
 
         $tools = $this->formatTools($request['tools'] ?? []);
         if ($tools !== []) {
@@ -103,6 +106,9 @@ class OpenAiProvider implements AiProviderInterface
             'temperature' => (float) ($request['temperature'] ?? 0.2),
             'max_tokens' => (int) ($request['max_output_tokens'] ?? config('ai.defaults.max_output_tokens', 2048)),
         ];
+        if ($this->usesGroqEndpoint()) {
+            $payload['max_completion_tokens'] = $payload['max_tokens'];
+        }
         $tools = $this->formatTools($request['tools'] ?? []);
         if ($tools !== []) {
             $payload['tools'] = $tools;
@@ -130,13 +136,48 @@ class OpenAiProvider implements AiProviderInterface
             throw AiProviderException::rateLimited();
         }
         if (in_array($response->status(), [401, 403], true)) {
+            $body = $response->json();
+            $providerMessage = is_array($body)
+                ? trim((string) ($body['error']['message'] ?? $body['message'] ?? ''))
+                : '';
+            if ($providerMessage !== '') {
+                throw new AiProviderException(
+                    $providerMessage,
+                    'invalid_api_key',
+                    $response->status(),
+                    false,
+                );
+            }
+            if (str_starts_with($this->apiKey, 'gsk_') && ! $this->usesGroqEndpoint()) {
+                throw new AiProviderException(
+                    'This looks like a Groq API key (gsk_…). Set the base URL to https://api.groq.com/openai/v1.',
+                    'invalid_api_key',
+                    401,
+                    false,
+                );
+            }
             throw AiProviderException::unauthorized();
         }
         if ($response->status() >= 500) {
             throw AiProviderException::unavailable();
         }
         if (! $response->successful()) {
-            Log::warning('OpenAI request failed', ['status' => $response->status(), 'body' => $response->body()]);
+            $body = $response->json();
+            $providerMessage = is_array($body)
+                ? trim((string) ($body['error']['message'] ?? $body['message'] ?? ''))
+                : '';
+            Log::warning('OpenAI request failed', [
+                'status' => $response->status(),
+                'body' => $response->body(),
+            ]);
+            if ($providerMessage !== '') {
+                throw new AiProviderException(
+                    $providerMessage,
+                    $response->status() === 400 ? 'invalid_request' : 'unavailable',
+                    $response->status(),
+                    $response->status() >= 500 || $response->status() === 429,
+                );
+            }
             throw AiProviderException::unavailable();
         }
 
@@ -210,5 +251,10 @@ class OpenAiProvider implements AiProviderInterface
         }
 
         return $out;
+    }
+
+    protected function usesGroqEndpoint(): bool
+    {
+        return str_contains(strtolower($this->baseUrl), 'groq.com');
     }
 }

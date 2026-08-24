@@ -1,7 +1,4 @@
 # Local development only — do not deploy this compose file to production.
-#
-# Ollama is internal-only: reachable as http://ollama:11434 on the private
-# centrix network. Port 11434 is NOT published to the host/public internet.
 
 networks:
   centrix:
@@ -37,8 +34,6 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
-      ollama:
-        condition: service_started
     env_file:
       - .env
     environment:
@@ -51,10 +46,8 @@ services:
       CACHE_STORE: database
       QUEUE_CONNECTION: database
       SESSION_DRIVER: database
-      # Prefer compose DNS for Ollama (override .env if needed)
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
-      AI_PROVIDER: ${AI_PROVIDER:-ollama}
-      AI_FREE_PROVIDER: ${AI_FREE_PROVIDER:-ollama}
+      AI_PROVIDER: ${AI_PROVIDER:-gemini}
+      AI_FREE_PROVIDER: ${AI_FREE_PROVIDER:-gemini}
 
   queue:
     build: .
@@ -65,8 +58,6 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
-      ollama:
-        condition: service_started
     env_file:
       - .env
     environment:
@@ -81,44 +72,8 @@ services:
       SESSION_DRIVER: database
       RUN_MIGRATIONS_ON_START: "false"
       RUN_PERMISSIONS_SYNC_ON_START: "false"
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
-      AI_PROVIDER: ${AI_PROVIDER:-ollama}
+      AI_PROVIDER: ${AI_PROVIDER:-gemini}
     command: ["php", "artisan", "queue:work", "--memory=512", "--timeout=3600", "--sleep=1", "--tries=1"]
-
-  # Self-hosted LLM — private network only (no host port publish).
-  # This container is CPU-only unless you add NVIDIA GPU reservations (see comment below).
-  # On CPU, prefer llama3.2:1b or qwen2.5:0.5b over tiny-but-deep models like smollm2:135m.
-  #   docker compose exec ollama ollama pull llama3.2:1b
-  # Production tip: bind-mount /opt/ollama/models instead of the named volume if desired.
-  ollama:
-    image: ollama/ollama:latest
-    restart: unless-stopped
-    networks:
-      - centrix
-    environment:
-      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-30m}
-      OLLAMA_MAX_LOADED_MODELS: "1"
-      OLLAMA_NUM_PARALLEL: "1"
-    # Intentionally NO "ports:" — do not expose 11434 publicly.
-    expose:
-      - "11434"
-    volumes:
-      - ollama-data:/root/.ollama
-    healthcheck:
-      test: ["CMD", "ollama", "list"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 20s
-    # GPU (NVIDIA) — uncomment on hosts with the NVIDIA Container Toolkit:
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
 
 volumes:
   mysql-data:
-  ollama-data:

@@ -4,7 +4,6 @@ namespace Tests\Unit\Ai;
 
 use App\Services\Ai\AiRuntimeGuard;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class AiRuntimeGuardTest extends TestCase
@@ -13,8 +12,8 @@ class AiRuntimeGuardTest extends TestCase
     {
         config([
             'ai.enabled' => false,
-            'ai.provider' => 'ollama',
-            'ai.ollama.model' => 'llama3.2',
+            'ai.provider' => 'gemini',
+            'ai.gemini.model' => 'gemini-3.6-flash',
         ]);
 
         $health = app(AiRuntimeGuard::class)->health();
@@ -22,55 +21,23 @@ class AiRuntimeGuardTest extends TestCase
         $this->assertFalse($health['enabled']);
         $this->assertFalse($health['available']);
         $this->assertSame('OFFLINE', $health['status']);
-        $this->assertSame('llama3.2', $health['model']);
+        $this->assertSame('gemini-3.6-flash', $health['model']);
     }
 
-    public function test_ollama_health_online_when_model_present(): void
+    public function test_gemini_health_degraded_without_credentials(): void
     {
         config([
             'ai.enabled' => true,
-            'ai.provider' => 'ollama',
-            'ai.ollama.base_url' => 'http://ollama.test:11434',
-            'ai.ollama.model' => 'llama3.2',
-            'ai.ollama.request_timeout' => 5,
-        ]);
-
-        Http::fake([
-            'http://ollama.test:11434/api/tags' => Http::response([
-                'models' => [
-                    ['name' => 'llama3.2:latest'],
-                ],
-            ]),
-        ]);
-
-        $health = app(AiRuntimeGuard::class)->health();
-
-        $this->assertTrue($health['available']);
-        $this->assertSame('ONLINE', $health['status']);
-        $this->assertSame('ollama', $health['provider']);
-    }
-
-    public function test_ollama_health_degraded_when_model_missing(): void
-    {
-        config([
-            'ai.enabled' => true,
-            'ai.provider' => 'ollama',
-            'ai.ollama.base_url' => 'http://ollama.test:11434',
-            'ai.ollama.model' => 'llama3.2',
-        ]);
-
-        Http::fake([
-            'http://ollama.test:11434/api/tags' => Http::response([
-                'models' => [
-                    ['name' => 'mistral:latest'],
-                ],
-            ]),
+            'ai.provider' => 'gemini',
+            'ai.gemini.api_key' => '',
+            'ai.gemini.model' => 'gemini-3.6-flash',
         ]);
 
         $health = app(AiRuntimeGuard::class)->health();
 
         $this->assertFalse($health['available']);
         $this->assertSame('DEGRADED', $health['status']);
+        $this->assertSame('gemini', $health['provider']);
     }
 
     public function test_concurrency_rejects_when_at_capacity(): void

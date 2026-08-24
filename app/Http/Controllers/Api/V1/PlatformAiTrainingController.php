@@ -69,90 +69,41 @@ class PlatformAiTrainingController extends Controller
     {
         $data = $request->validate([
             'enabled' => 'sometimes|boolean',
-            'provider' => 'sometimes|in:openai,gemini,ollama',
+            'provider' => 'sometimes|in:openai,gemini',
             'model' => 'sometimes|nullable|string|max:80',
             'api_key' => 'sometimes|nullable|string|max:512',
             'base_url' => 'sometimes|nullable|string|max:500',
             'gemini_api_key' => 'sometimes|nullable|string|max:512',
             'gemini_model' => 'sometimes|nullable|string|max:80',
             'gemini_base_url' => 'sometimes|nullable|string|max:500',
-            'ollama_base_url' => 'sometimes|nullable|string|max:500',
-            'ollama_model' => 'sometimes|nullable|string|max:80',
-            'ollama_api_key' => 'sometimes|nullable|string|max:512',
-            'free_ai_provider' => 'sometimes|in:gemini,openai,ollama',
+            'free_ai_provider' => 'sometimes|in:gemini,openai',
         ]);
 
         return response()->json(AiSettingsResolver::savePlatformTraining($data));
     }
 
     /**
-     * Live connectivity check for platform Gemini / OpenAI / Ollama credentials (saved or draft from the form).
+     * Live connectivity check for platform Gemini / OpenAI credentials (saved or draft from the form).
      */
     public function testCredentials(Request $request)
     {
         $data = $request->validate([
-            'provider' => 'sometimes|in:gemini,openai,ollama',
+            'provider' => 'sometimes|in:gemini,openai',
             'gemini_api_key' => 'sometimes|nullable|string|max:512',
             'gemini_model' => 'sometimes|nullable|string|max:80',
             'api_key' => 'sometimes|nullable|string|max:512',
             'model' => 'sometimes|nullable|string|max:80',
             'base_url' => 'sometimes|nullable|string|max:500',
-            'ollama_base_url' => 'sometimes|nullable|string|max:500',
-            'ollama_model' => 'sometimes|nullable|string|max:80',
         ]);
 
         $provider = strtolower(trim((string) ($data['provider'] ?? AiSettingsResolver::platformFreeAiProvider())));
-        if (! in_array($provider, ['gemini', 'openai', 'ollama'], true)) {
+        if (! in_array($provider, ['gemini', 'openai'], true)) {
             $provider = 'gemini';
         }
 
         $result = $this->credentialTest->testForPlatform($provider, $data);
 
         return response()->json($result['body'], $result['status']);
-    }
-
-    /**
-     * List models available on the configured (or draft) Ollama host for the platform picker.
-     */
-    public function listOllamaModels(Request $request)
-    {
-        $data = $request->validate([
-            'ollama_base_url' => 'sometimes|nullable|string|max:500',
-        ]);
-
-        $baseUrl = trim((string) ($data['ollama_base_url'] ?? ''));
-        if ($baseUrl === '') {
-            $credentials = AiSettingsResolver::resolvePlatformOllamaCredentials();
-            $baseUrl = (string) ($credentials['base_url'] ?? config('ai.ollama.base_url', ''));
-        }
-
-        if (trim($baseUrl) === '') {
-            return response()->json([
-                'ok' => false,
-                'models' => [],
-                'message' => 'Set an Ollama base URL first (e.g. http://centrix-erp-ollama:11434).',
-            ], 422);
-        }
-
-        try {
-            $models = \App\Services\Ai\Providers\OllamaProvider::listModels($baseUrl);
-        } catch (AiProviderException $e) {
-            return response()->json([
-                'ok' => false,
-                'models' => [],
-                'message' => $e->getMessage(),
-                'error_code' => $e->codeKey,
-            ], 422);
-        }
-
-        return response()->json([
-            'ok' => true,
-            'base_url' => \App\Services\Ai\Providers\OllamaProvider::normalizeBaseUrl($baseUrl),
-            'models' => $models,
-            'message' => $models === []
-                ? 'Ollama is reachable but no models are pulled yet. Run: ollama pull llama3.2'
-                : 'Found '.count($models).' model(s).',
-        ]);
     }
 
     public function listKnowledge(Request $request)

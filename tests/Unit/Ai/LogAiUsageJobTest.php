@@ -26,8 +26,8 @@ class LogAiUsageJobTest extends TestCase
         (new LogAiUsageJob([
             'organization_id' => $org->id,
             'user_id' => $user->id,
-            'provider' => 'ollama',
-            'model' => 'llama3.2',
+            'provider' => 'gemini',
+            'model' => 'gemini-3.6-flash',
             'input_tokens' => 0,
             'output_tokens' => 0,
             'total_tokens' => 0,
@@ -41,8 +41,8 @@ class LogAiUsageJobTest extends TestCase
 
         $row = AiUsageLog::query()->latest('id')->first();
         $this->assertNotNull($row);
-        $this->assertSame('ollama', $row->provider);
-        $this->assertSame('llama3.2', $row->model);
+        $this->assertSame('gemini', $row->provider);
+        $this->assertSame('gemini-3.6-flash', $row->model);
         $this->assertSame('success', $row->status);
         $this->assertEquals(0, (float) $row->estimated_cost);
     }

@@ -3,7 +3,7 @@
 return [
     /**
      * Active provider for tool-calling chat (AiToolChatService).
-     * openai | gemini | ollama
+     * openai | gemini
      */
     'provider' => env('AI_PROVIDER', 'openai'),
 
@@ -25,30 +25,12 @@ return [
     ],
 
     /**
-     * Self-hosted Ollama (completely free). Run as a k8s/docker pod and point base_url at it.
-     * Example: http://centrix-erp-ollama:11434
-     */
-    'ollama' => [
-        'api_key' => env('OLLAMA_API_KEY', 'ollama'),
-        'model' => env('OLLAMA_MODEL', 'llama3.2:1b'),
-        'base_url' => rtrim(env('OLLAMA_BASE_URL', 'http://ollama:11434'), '/'),
-        'request_timeout' => (int) env('OLLAMA_TIMEOUT', env('OLLAMA_REQUEST_TIMEOUT', 120)),
-        /** Keep the model loaded so the next chat is not a cold start. */
-        'keep_alive' => env('OLLAMA_KEEP_ALIVE', '30m'),
-        /** Small context = much faster on CPU. Centrix still injects a short prompt. */
-        'num_ctx' => (int) env('OLLAMA_NUM_CTX', 2048),
-        'max_output_tokens' => (int) env('OLLAMA_MAX_OUTPUT_TOKENS', 256),
-        'history_limit' => (int) env('OLLAMA_HISTORY_LIMIT', 4),
-        'max_tool_rounds' => (int) env('OLLAMA_MAX_TOOL_ROUNDS', 1),
-    ],
-
-    /**
      * Which provider platform offers free to selected orgs (overridable in Platform → AI credentials).
-     * gemini | openai | ollama
+     * gemini | openai
      */
     'free_provider' => env('AI_FREE_PROVIDER', 'gemini'),
 
-    /** When true, OpenAI provider also uses tool-calling chat (Gemini/Ollama always do). */
+    /** When true, OpenAI provider also uses tool-calling chat (Gemini always does). */
     'use_tool_chat' => filter_var(env('AI_USE_TOOL_CHAT', false), FILTER_VALIDATE_BOOLEAN),
 
     'request_timeout' => (int) env('AI_REQUEST_TIMEOUT', 60),
@@ -88,7 +70,7 @@ return [
     ],
     'conversation_history_limit' => (int) env('AI_CONVERSATION_HISTORY_LIMIT', 12),
 
-    /** Application-level rate limit for POST /ai/chat (per user). Skipped entirely when provider is Ollama. */
+    /** Application-level rate limit for POST /ai/chat (per user). */
     'rate_limit' => [
         'max_attempts' => (int) env('AI_RATE_LIMIT', 90),
         'platform_max_attempts' => (int) env('AI_PLATFORM_RATE_LIMIT', 180),

@@ -4,7 +4,6 @@ namespace App\Services\Ai;
 
 use App\Contracts\Ai\AiProviderInterface;
 use App\Services\Ai\Providers\GeminiProvider;
-use App\Services\Ai\Providers\OllamaProvider;
 use App\Services\Ai\Providers\OpenAiProvider;
 use InvalidArgumentException;
 
@@ -23,7 +22,6 @@ class AiProviderFactory
         return match ($provider) {
             'gemini' => $this->makeGemini($apiKey, $model, $runtime, $timeout),
             'openai' => $this->makeOpenAi($apiKey, $model, $runtime, $timeout),
-            'ollama' => $this->makeOllama($apiKey, $model, $runtime, $timeout),
             default => throw new InvalidArgumentException("Unsupported AI provider [{$provider}]."),
         };
     }
@@ -59,21 +57,6 @@ class AiProviderFactory
             model: $model !== '' ? $model : (string) config('ai.defaults.model', 'gpt-4o-mini'),
             baseUrl: (string) ($runtime['base_url'] ?: config('ai.defaults.base_url')),
             timeoutSeconds: $timeout,
-        );
-    }
-
-    /**
-     * @param  array{base_url?: string}  $runtime
-     */
-    protected function makeOllama(string $apiKey, string $model, array $runtime, int $timeout): OllamaProvider
-    {
-        $ollamaTimeout = max($timeout, (int) config('ai.ollama.request_timeout', 120));
-
-        return new OllamaProvider(
-            apiKey: $apiKey !== '' ? $apiKey : (string) config('ai.ollama.api_key', 'ollama'),
-            model: $model !== '' ? $model : (string) config('ai.ollama.model', 'llama3.2'),
-            baseUrl: (string) ($runtime['base_url'] ?: config('ai.ollama.base_url', 'http://127.0.0.1:11434')),
-            timeoutSeconds: $ollamaTimeout,
         );
     }
 }

@@ -154,11 +154,6 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('ai-chat', function (Request $request) use ($aiChat) {
             $user = $request->user();
 
-            // Self-hosted Ollama: no per-user quota — only the concurrency gate protects the host.
-            if ($this->aiChatUsesUnlimitedOllama($user)) {
-                return Limit::none();
-            }
-
             $decay = max(1, (int) ($aiChat['decay_minutes'] ?? 1));
             $max = max(1, (int) ($aiChat['max_attempts'] ?? 30));
             if ($user?->organization_id) {
@@ -186,26 +181,6 @@ class AppServiceProvider extends ServiceProvider
                 ], 429, $headers);
             });
         });
-    }
-
-    protected function aiChatUsesUnlimitedOllama(?\App\Models\User $user): bool
-    {
-        if ($user?->organization_id) {
-            try {
-                $org = Organization::find($user->organization_id);
-                if ($org) {
-                    $runtime = AiSettingsResolver::resolveRuntimeForOrganization($org);
-                    if (is_array($runtime)) {
-                        return strtolower((string) ($runtime['provider'] ?? '')) === 'ollama';
-                    }
-                }
-            } catch (\Throwable) {
-                // fall through to config defaults
-            }
-        }
-
-        return strtolower((string) config('ai.provider', '')) === 'ollama'
-            || strtolower((string) config('ai.free_provider', '')) === 'ollama';
     }
 
     /**

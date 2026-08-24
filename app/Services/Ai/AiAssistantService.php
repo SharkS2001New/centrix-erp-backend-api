@@ -83,7 +83,6 @@ class AiAssistantService
         $provider = strtolower((string) ($runtime['provider'] ?? config('ai.provider', 'openai')));
         $preferToolChat = ! $inferredCreate && (
             $provider === 'gemini'
-            || $provider === 'ollama'
             || ($provider === 'openai' && filter_var(config('ai.use_tool_chat', false), FILTER_VALIDATE_BOOLEAN))
         );
         if ($preferToolChat) {

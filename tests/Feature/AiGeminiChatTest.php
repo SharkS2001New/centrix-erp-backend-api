@@ -271,48 +271,6 @@ class AiGeminiChatTest extends TestCase
         $this->assertNotEmpty($response->json('form_spec'));
     }
 
-    public function test_ollama_create_product_uses_classic_assistant(): void
-    {
-        config([
-            'ai.provider' => 'ollama',
-            'ai.ollama.base_url' => 'http://ollama.test:11434',
-            'ai.ollama.model' => 'llama3.2',
-        ]);
-
-        $settings = $this->org->module_settings ?? [];
-        $settings['ai'] = array_merge($settings['ai'] ?? [], [
-            'enable_ai' => true,
-            'enabled' => true,
-            'provider' => 'ollama',
-            'api_key' => 'ollama',
-            'model' => 'llama3.2',
-            'base_url' => 'http://ollama.test:11434',
-            'use_platform_gemini' => false,
-            'use_platform_ai' => false,
-        ]);
-        $this->org->update(['module_settings' => $settings]);
-        $this->org->refresh();
-
-        Http::fake([
-            'http://ollama.test:11434/v1/chat/completions' => Http::response([
-                'choices' => [[
-                    'message' => ['content' => 'I can help you create a product. Fill in the form below.'],
-                ]],
-                'usage' => ['prompt_tokens' => 10, 'completion_tokens' => 8, 'total_tokens' => 18],
-            ], 200),
-        ]);
-
-        $response = $this->postJson('/api/v1/ai/chat', [
-            'message' => 'Help me create a new product',
-            'context' => 'erp',
-        ])->assertOk()
-            ->assertJsonPath('success', true)
-            ->assertJsonPath('provider', 'ollama')
-            ->assertJsonPath('pending_action.type', 'create_product');
-
-        $this->assertNotEmpty($response->json('form_spec'));
-    }
-
     public function test_gemini_tool_chat_failure_falls_back_to_classic_assistant(): void
     {
         Http::fake([
