@@ -9,6 +9,7 @@ use App\Models\Supplier;
 use App\Models\User;
 use App\Services\Ai\AiToolRegistry;
 use App\Services\Ai\Tools\GetSupplierStatementTool;
+use Illuminate\Support\Facades\DB;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
@@ -30,6 +31,11 @@ class AiSupplierStatementToolTest extends TestCase
             ->where('organization_id', $admin->organization_id)
             ->whereNull('deleted_at')
             ->firstOrFail();
+
+        DB::table('lpo_statuses')->updateOrInsert(
+            ['status_code' => 4],
+            ['status_name' => 'Received'],
+        );
 
         $lpo = LpoMst::query()->create([
             'organization_id' => $admin->organization_id,
