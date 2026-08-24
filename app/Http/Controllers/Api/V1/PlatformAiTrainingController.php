@@ -52,17 +52,40 @@ class PlatformAiTrainingController extends Controller
 
     public function usage(Request $request, \App\Services\Ai\AiUsageAnalyticsService $analytics)
     {
+        return response()->json($analytics->platformSummary($this->usageFilters($request)));
+    }
+
+    public function usageEvents(Request $request, \App\Services\Ai\AiUsageAnalyticsService $analytics)
+    {
+        $data = $this->usageFilters($request);
+        $data['page'] = $request->integer('page', 1);
+        $data['per_page'] = $request->integer('per_page', 25);
+
+        return response()->json($analytics->platformEvents($data));
+    }
+
+    /**
+     * @return array{from: ?string, to: ?string, organization_id: ?int, user_id: ?int, provider: ?string}
+     */
+    protected function usageFilters(Request $request): array
+    {
         $data = $request->validate([
             'from' => 'nullable|date',
             'to' => 'nullable|date',
             'organization_id' => 'nullable|integer|exists:organizations,id',
+            'user_id' => 'nullable|integer|exists:users,id',
+            'provider' => 'nullable|string|max:40',
+            'page' => 'nullable|integer|min:1',
+            'per_page' => 'nullable|integer|min:1|max:100',
         ]);
 
-        return response()->json($analytics->platformSummary(
-            $data['from'] ?? null,
-            $data['to'] ?? null,
-            isset($data['organization_id']) ? (int) $data['organization_id'] : null,
-        ));
+        return [
+            'from' => $data['from'] ?? null,
+            'to' => $data['to'] ?? null,
+            'organization_id' => isset($data['organization_id']) ? (int) $data['organization_id'] : null,
+            'user_id' => isset($data['user_id']) ? (int) $data['user_id'] : null,
+            'provider' => isset($data['provider']) && $data['provider'] !== '' ? $data['provider'] : null,
+        ];
     }
 
     public function updateSettings(Request $request)

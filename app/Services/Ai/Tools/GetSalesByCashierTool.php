@@ -30,7 +30,8 @@ class GetSalesByCashierTool implements AiToolInterface
     {
         return 'Get Centrix sales totals grouped by cashier for a date or date range '
             .'(placed date — same as Sales by User report). Use relative_date=yesterday or today '
-            .'for calendar questions. Pass cashier_name or cashier_id when asking about one person.';
+            .'for calendar questions. Pass cashier_name or username when asking about one person. '
+            .'In replies, use username and full name — never numeric user ids.';
     }
 
     public function parametersSchema(): array
@@ -55,13 +56,13 @@ class GetSalesByCashierTool implements AiToolInterface
                     'type' => 'string',
                     'description' => 'Range end YYYY-MM-DD (inclusive). Use with from_date.',
                 ],
-                'cashier_id' => [
-                    'type' => 'integer',
-                    'description' => 'Filter to one cashier/user id when known.',
-                ],
                 'cashier_name' => [
                     'type' => 'string',
                     'description' => 'Filter to one cashier by full name or username (server-side match).',
+                ],
+                'username' => [
+                    'type' => 'string',
+                    'description' => 'Login username of the cashier (preferred over numeric ids).',
                 ],
             ],
         ];
@@ -98,7 +99,7 @@ class GetSalesByCashierTool implements AiToolInterface
 
         [$from, $to] = AiSalesDateResolver::resolve($arguments, $organization);
         $cashierId = isset($arguments['cashier_id']) ? (int) $arguments['cashier_id'] : null;
-        $cashierName = trim((string) ($arguments['cashier_name'] ?? ''));
+        $cashierName = trim((string) ($arguments['cashier_name'] ?? $arguments['username'] ?? ''));
 
         $summary = $this->insightData->salesByCashierForPeriod(
             $organization,
@@ -109,9 +110,9 @@ class GetSalesByCashierTool implements AiToolInterface
             $cashierName !== '' ? $cashierName : null,
         );
 
-        return array_merge($summary, [
-            'organization_id' => $orgId,
-        ]);
+        unset($summary['organization_id']);
+
+        return $summary;
     }
 
     protected function resolveOrganizationForUser(User $user): ?Organization

@@ -25,6 +25,8 @@ class AiToolRegistryTest extends TestCase
             'get_debtors_summary',
             'get_till_health',
             'get_route_orders',
+            'get_employee_attendance',
+            'create_custom_report',
         ] as $expected) {
             $this->assertContains($expected, $names);
         }

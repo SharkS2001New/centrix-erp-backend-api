@@ -16,7 +16,7 @@ class AiIntentResolver
         $text = strtolower(trim($message));
 
         return (bool) preg_match(
-            '/\b(sales|sold|revenue|turnover|daily|weekly|monthly|yesterday|today|last\s+week|cashier|till|stock|inventory|debtor|receivable|report|summary|how\s+much|how\s+many|total|analytics|performance|margin|forecast|best\s+seller|top\s+seller)\b/i',
+            '/\b(sales|sold|revenue|turnover|daily|weekly|monthly|yesterday|today|last\s+week|cashier|till|stock|inventory|debtor|receivable|report|summary|how\s+much|how\s+many|total|analytics|performance|margin|forecast|best\s+seller|top\s+seller|attendance|clock(?:ed|s)?|present|absent|late|lateness)\b/i',
             $text,
         );
     }

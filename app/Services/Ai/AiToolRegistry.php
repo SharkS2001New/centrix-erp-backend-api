@@ -5,8 +5,10 @@ namespace App\Services\Ai;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\Ai\Tools\AiToolInterface;
+use App\Services\Ai\Tools\CreateCustomReportTool;
 use App\Services\Ai\Tools\FindScreenTool;
 use App\Services\Ai\Tools\GetDebtorsSummaryTool;
+use App\Services\Ai\Tools\GetEmployeeAttendanceTool;
 use App\Services\Ai\Tools\GetPurchasingOverviewTool;
 use App\Services\Ai\Tools\GetRouteOrdersTool;
 use App\Services\Ai\Tools\GetSalesBriefTool;
@@ -31,6 +33,8 @@ class AiToolRegistry
         protected GetDebtorsSummaryTool $getDebtorsSummary,
         protected GetTillHealthTool $getTillHealth,
         protected GetRouteOrdersTool $getRouteOrders,
+        protected GetEmployeeAttendanceTool $getEmployeeAttendance,
+        protected CreateCustomReportTool $createCustomReport,
     ) {}
 
     /**
@@ -147,6 +151,8 @@ class AiToolRegistry
             $this->getDebtorsSummary,
             $this->getTillHealth,
             $this->getRouteOrders,
+            $this->getEmployeeAttendance,
+            $this->createCustomReport,
         ];
 
         $this->tools = [];

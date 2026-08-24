@@ -23,6 +23,7 @@ class AiAssistantService
         protected AiIntentResolver $intentResolver,
         protected AiToolChatService $toolChat,
         protected AiProviderFactory $providers,
+        protected AiReplyFormatter $replyFormatter,
     ) {}
 
     public function isAvailableForUser(User $user): bool
@@ -175,7 +176,7 @@ class AiAssistantService
             }
 
             $parsedAction = AiActionExecutor::parseActionBlock($rawReply);
-            $reply = AiActionExecutor::stripActionBlock($rawReply);
+            $reply = $this->replyFormatter->format(AiActionExecutor::stripActionBlock($rawReply));
 
             $result = [
                 'success' => true,
@@ -382,7 +383,7 @@ class AiAssistantService
             }
 
             $parsedAction = AiActionExecutor::parseActionBlock($rawReply);
-            $reply = AiActionExecutor::stripActionBlock($rawReply);
+            $reply = $this->replyFormatter->format(AiActionExecutor::stripActionBlock($rawReply));
 
             $result = [
                 'success' => true,
@@ -496,9 +497,10 @@ class AiAssistantService
             $result = $outcome['result'] ?? [];
             $path = $result['path'] ?? null;
             $linkHint = $path ? " Open: {$path}" : '';
+            $reply = $this->replyFormatter->format(($outcome['message'] ?? 'Done.').$linkHint);
 
             return [
-                'reply' => ($outcome['message'] ?? 'Done.').$linkHint,
+                'reply' => $reply,
                 'tools_used' => ['action_executor'],
                 'action_result' => $outcome,
                 'pending_action' => null,
@@ -696,7 +698,7 @@ You are the in-app assistant for Centrix ERP — a Kenya-focused business manage
 
 ACTIVE WORKSPACE: {$label}. {$description}
 Prefer answering in the context of {$label}, but you MAY answer navigation / "where do I…?" / "how do I…?" questions for ANY Centrix module.
-When guiding to another module, give the path (e.g. /suppliers) and mention they may need to switch workspace from the top bar.
+When guiding to another module, give the Centrix path (e.g. /hr/employees) — clicking it opens that application automatically.
 Do not invent numbers for other modules — for live sales/stock/purchasing data, tell them to ask again after switching workspace if create-actions are scoped here.
 
 Use entity_schemas in context — it lists every field, which are required, auto-generated, important, and FK relations (e.g. unit_id → uoms).
@@ -718,6 +720,11 @@ RULES:
    - Answer read-only questions using *_summary data in context when present.
    - Only decline WRITE actions not listed in available_actions.
 7. Always include clickable Centrix paths like /inventory/stock when telling users where to go.
+8. Only cite paths from navigation / workflows / find_screen — never invent menu paths.
+9. People: use username and full name — never numeric user id or employee id.
+10. Formulas: plain text with real field names (Stock Value = Cost Price × Stock on Hand). Never LaTeX.
+11. Markdown headings (# ## ###) are fine; the UI renders them as real headings.
+12. Custom report builder: ask what to name the report, then emit create_report_template with name + instruction (or wait for confirmation). After save, give /reports/custom/{id}.
 
 ```action
 {"type":"create_product","summary":"New product Widget","params":{"product_name":"Widget","unit_price":150}}

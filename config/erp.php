@@ -777,6 +777,8 @@ return [
                 'get_debtors_summary' => true,
                 'get_till_health' => true,
                 'get_route_orders' => true,
+                'get_employee_attendance' => true,
+                'create_custom_report' => true,
             ],
             'insights' => [
                 'enabled' => true,

@@ -240,13 +240,50 @@ class AiInsightDataBuilder
         return [
             'from_date' => $from,
             'to_date' => $to,
-            'cashiers' => $cashiers,
+            'cashiers' => $this->presentCashiersForAi($cashiers),
             'currency' => 'KES',
             'date_basis' => 'placed_date',
             'cashier_filter' => $cashierFilter['label'] ?? null,
             'note' => 'Actual recorded sales by cashier (placed date, same as Sales by User report). '
-                .'This is not a sales target / expected quota unless your org defines targets separately.',
+                .'This is not a sales target / expected quota unless your org defines targets separately. '
+                .'Identify cashiers by username and name — never by numeric user id.',
         ];
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $cashiers
+     * @return list<array<string, mixed>>
+     */
+    protected function presentCashiersForAi(array $cashiers): array
+    {
+        $ids = collect($cashiers)
+            ->pluck('cashier_id')
+            ->filter(fn ($id) => $id !== null && (int) $id > 0)
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        $users = $ids === []
+            ? collect()
+            : User::query()->whereIn('id', $ids)->get(['id', 'username', 'full_name'])->keyBy('id');
+
+        return collect($cashiers)->map(function (array $row) use ($users) {
+            $id = isset($row['cashier_id']) ? (int) $row['cashier_id'] : null;
+            $user = $id ? $users->get($id) : null;
+            $username = $user?->username;
+            $name = (string) ($row['cashier_name'] ?? '');
+            if ($name === '' && $user) {
+                $name = trim((string) ($user->full_name ?: $user->username));
+            }
+
+            return array_filter([
+                'username' => $username !== null && $username !== '' ? (string) $username : null,
+                'cashier_name' => $name !== '' ? $name : null,
+                'gross_sales' => $row['gross_sales'] ?? null,
+                'transactions' => $row['transactions'] ?? null,
+            ], fn ($v) => $v !== null && $v !== '');
+        })->values()->all();
     }
 
     /**
@@ -306,12 +343,11 @@ class AiInsightDataBuilder
 
         return [
             'error' => true,
-            'message' => "Multiple cashiers matched \"{$name}\". Ask the user to pick one or pass cashier_id.",
-            'candidates' => $matches->map(fn (User $row) => [
-                'cashier_id' => (int) $row->id,
-                'cashier_name' => trim((string) ($row->full_name ?: $row->username)),
+            'message' => "Multiple cashiers matched \"{$name}\". Ask the user to pick one by username or full name.",
+            'candidates' => $matches->map(fn (User $row) => array_filter([
                 'username' => (string) $row->username,
-            ])->all(),
+                'cashier_name' => trim((string) ($row->full_name ?: $row->username)),
+            ], fn ($v) => $v !== null && $v !== ''))->all(),
         ];
     }
 

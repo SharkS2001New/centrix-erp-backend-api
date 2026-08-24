@@ -12,10 +12,12 @@ return [
         'Inventory: Current stock at /inventory/stock, adjustments at /inventory/adjustments, stock take at /inventory/stock-take, products at /products.',
         'Sales: Orders at /sales/orders, POS at /sales/pos or /pos, debtors under /sales/shop-debtors/*, Sales by User report at /reports (Sales by user).',
         'Accounting: Chart of accounts, journals, bank reconciliation, expenses, and AR under /accounting/*.',
-        'HR: Employees, attendance, leave, and payroll under /hr/*.',
+        'HR: Employees, today\'s attendance (/hr/attendance), previous attendance (/hr/attendance/history), leave, and payroll under /hr/*. Field attendance for mobile reps: /sales/field-attendance.',
         'Admin: Users and roles/permissions under /admin/users and /admin/roles. Organization AI settings under Organization settings → AI.',
-        'Reports hub: /reports — sales, stock, payroll, and custom report builder.',
+        'Reports hub: /reports — sales, stock, payroll, and custom report builder at /reports/builder (saved reports open at /reports/custom/{id}).',
         'Cashier sales targets/quotas are not stored as a Centrix AI metric — report actual sales with get_sales_by_cashier instead.',
+        'When talking about people, use username and full name — never numeric user ids.',
+        'Write formulas in plain language with real field names (Stock Value = Cost Price × Stock on Hand), never LaTeX.',
     ],
     'modules' => [
         [
@@ -72,9 +74,10 @@ return [
         [
             'key' => 'hr_payroll',
             'label' => 'HR & payroll',
-            'paths' => ['/hr/employees', '/hr/departments', '/hr/payroll', '/hr/attendance', '/hr/leave'],
+            'paths' => ['/hr/employees', '/hr/departments', '/hr/payroll', '/hr/attendance', '/hr/attendance/history', '/hr/leave', '/sales/field-attendance'],
             'tasks' => [
-                'Employees, departments, shifts, attendance, leave',
+                'Employees, departments, shifts, attendance (today + history), leave',
+                'Field attendance for mobile sales reps at /sales/field-attendance',
                 'Payroll runs, deductions, organization KPIs',
             ],
         ],
@@ -97,11 +100,11 @@ return [
         [
             'key' => 'reports',
             'label' => 'Reports',
-            'paths' => ['/reports', '/reports/builder', '/reports/sales-summary'],
+            'paths' => ['/reports', '/reports/builder', '/reports/sales-by-user', '/reports/daily-sales', '/reports/low-stock'],
             'tasks' => [
                 'Built-in reports (sales, stock, payroll, KRA receipts)',
                 'Sales by user / cashier performance',
-                'Custom report builder — any module/source, unlimited columns',
+                'Custom report builder — ask for a report name, save template, open /reports/custom/{id}',
             ],
         ],
         [
@@ -154,9 +157,10 @@ return [
             'action' => 'create_employee',
         ],
         'create_report' => [
-            'summary' => 'Save a custom report template',
+            'summary' => 'Save a custom report template — ask for a name first, then create and share /reports/custom/{id}',
             'path' => '/reports/builder',
-            'required' => ['name', 'spec' => ['source', 'columns', 'group_by']],
+            'required' => ['name', 'instruction'],
+            'optional' => ['spec' => ['source', 'columns', 'group_by']],
             'action' => 'create_report_template',
         ],
         'record_customer_payment' => [

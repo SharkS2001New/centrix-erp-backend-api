@@ -48,5 +48,44 @@ class AiFindScreenToolTest extends TestCase
         $this->assertContains('get_purchasing_overview', $names);
         $this->assertContains('get_sales_summary', $names);
         $this->assertContains('get_sales_by_cashier', $names);
+        $this->assertContains('get_employee_attendance', $names);
+        $this->assertContains('create_custom_report', $names);
+    }
+
+    public function test_find_screen_returns_attendance_and_report_builder_paths(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        /** @var FindScreenTool $tool */
+        $tool = app(FindScreenTool::class);
+
+        $attendance = $tool->execute($admin, ['query' => 'employee attendance history']);
+        $paths = collect($attendance['screens'])->pluck('path')->all();
+        $this->assertTrue(
+            collect($paths)->contains('/hr/attendance')
+                || collect($paths)->contains('/hr/attendance/history'),
+            'Expected attendance paths, got: '.implode(', ', $paths),
+        );
+
+        $builder = $tool->execute($admin, ['query' => 'report builder']);
+        $builderPaths = collect($builder['screens'])->pluck('path')
+            ->merge(collect($builder['modules'] ?? [])->flatMap(fn ($m) => $m['paths'] ?? []))
+            ->merge(collect($builder['workflows'] ?? [])->pluck('path'))
+            ->filter()
+            ->values()
+            ->all();
+        $this->assertTrue(
+            collect($builderPaths)->contains(fn ($path) => str_contains((string) $path, '/reports')),
+            'Expected a reports path, got: '.implode(', ', $builderPaths),
+        );
+
+        $field = $tool->execute($admin, ['query' => 'field attendance']);
+        $fieldPaths = collect($field['screens'])->pluck('path')->all();
+        $this->assertTrue(
+            collect($fieldPaths)->contains('/sales/field-attendance')
+                || collect($field['modules'] ?? [])->isNotEmpty(),
+            'Expected /sales/field-attendance, got: '.implode(', ', $fieldPaths),
+        );
     }
 }

@@ -592,6 +592,7 @@ Route::prefix('v1')->group(function () {
                 Route::delete('knowledge/{entry}', [PlatformAiTrainingController::class, 'deleteKnowledge']);
                 Route::post('chat', [PlatformAiTrainingController::class, 'chat']);
                 Route::get('usage', [PlatformAiTrainingController::class, 'usage']);
+                Route::get('usage/events', [PlatformAiTrainingController::class, 'usageEvents']);
             });
 
         Route::prefix('admin/whatsapp')

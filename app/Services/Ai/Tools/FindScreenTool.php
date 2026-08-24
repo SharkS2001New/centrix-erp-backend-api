@@ -182,6 +182,9 @@ class FindScreenTool implements AiToolInterface
             'debtor' => 'debtor',
             'payroll' => 'payroll',
             'attendance' => 'attendance',
+            'clock' => 'attendance',
+            'punch' => 'attendance',
+            'builder' => 'builder',
             'permission' => 'role',
             'user' => 'user',
         ];
@@ -189,6 +192,13 @@ class FindScreenTool implements AiToolInterface
             if (str_contains($needle, $alias) && str_contains($haystack, $mapped)) {
                 $score += 3;
             }
+        }
+        if (str_contains($needle, 'field') && str_contains($haystack, 'field attendance')) {
+            $score += 5;
+        }
+        if ((str_contains($needle, 'custom report') || str_contains($needle, 'report builder'))
+            && str_contains($haystack, 'builder')) {
+            $score += 5;
         }
 
         return $score;

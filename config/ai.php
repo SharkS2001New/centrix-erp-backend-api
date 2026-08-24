@@ -30,8 +30,8 @@ return [
      */
     'free_provider' => env('AI_FREE_PROVIDER', 'gemini'),
 
-    /** When true, OpenAI provider also uses tool-calling chat (Gemini always does). */
-    'use_tool_chat' => filter_var(env('AI_USE_TOOL_CHAT', false), FILTER_VALIDATE_BOOLEAN),
+    /** When true, OpenAI-compatible providers also use tool-calling chat (Gemini always does). */
+    'use_tool_chat' => filter_var(env('AI_USE_TOOL_CHAT', true), FILTER_VALIDATE_BOOLEAN),
 
     'request_timeout' => (int) env('AI_REQUEST_TIMEOUT', 60),
     'max_tool_rounds' => (int) env('AI_MAX_TOOL_ROUNDS', 2),
@@ -67,6 +67,8 @@ return [
         'get_debtors_summary' => true,
         'get_till_health' => true,
         'get_route_orders' => true,
+        'get_employee_attendance' => true,
+        'create_custom_report' => true,
     ],
     'conversation_history_limit' => (int) env('AI_CONVERSATION_HISTORY_LIMIT', 12),
 
@@ -85,5 +87,33 @@ return [
         'api_key' => env('PLATFORM_OPENAI_API_KEY', ''),
         'model' => env('PLATFORM_OPENAI_MODEL', env('OPENAI_MODEL', 'gpt-4o-mini')),
         'base_url' => rtrim(env('PLATFORM_OPENAI_BASE_URL', env('OPENAI_BASE_URL', 'https://api.openai.com/v1')), '/'),
+    ],
+
+    /**
+     * Approximate USD list prices per 1M tokens for platform usage estimates.
+     * Override via config if provider billing changes; stored cost still wins when logged.
+     */
+    'pricing' => [
+        'currency' => 'USD',
+        'per_million' => [
+            'openai' => [
+                'default' => ['input' => 0.15, 'output' => 0.60],
+                'models' => [
+                    'gpt-4o-mini' => ['input' => 0.15, 'output' => 0.60],
+                    'gpt-4.1-mini' => ['input' => 0.40, 'output' => 1.60],
+                    'gpt-4o' => ['input' => 2.50, 'output' => 10.00],
+                    'gpt-4.1' => ['input' => 2.00, 'output' => 8.00],
+                ],
+            ],
+            'gemini' => [
+                'default' => ['input' => 0.10, 'output' => 0.40],
+                'models' => [
+                    'gemini-2.0-flash' => ['input' => 0.10, 'output' => 0.40],
+                    'gemini-2.5-flash' => ['input' => 0.15, 'output' => 0.60],
+                    'gemini-3.6-flash' => ['input' => 0.15, 'output' => 0.60],
+                    'gemini-3.7-flash' => ['input' => 0.15, 'output' => 0.60],
+                ],
+            ],
+        ],
     ],
 ];

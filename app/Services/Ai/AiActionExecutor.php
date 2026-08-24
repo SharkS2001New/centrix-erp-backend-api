@@ -467,16 +467,48 @@ class AiActionExecutor
         $this->assertPermission($user, 'reports.builder.create');
 
         $spec = is_array($params['spec'] ?? null) ? $params['spec'] : null;
+        $instruction = trim((string) ($params['instruction'] ?? $params['description'] ?? ''));
+        $workspaceId = trim((string) ($params['workspace_id'] ?? ''));
+
         if (! $spec) {
-            throw ValidationException::withMessages(['spec' => ['Report specification is required.']]);
+            if ($instruction === '') {
+                throw ValidationException::withMessages([
+                    'spec' => ['Describe what the report should show, or provide a report specification.'],
+                ]);
+            }
+            if ($workspaceId === '') {
+                $workspaceId = $this->workspaceFromInstruction($instruction);
+            }
+            $draft = app(\App\Services\Reports\ReportBuilderSuggestService::class)
+                ->localDraft($user, $instruction, $workspaceId !== '' ? $workspaceId : null);
+            $spec = is_array($draft['spec'] ?? null) ? $draft['spec'] : null;
+            if (! $spec) {
+                throw ValidationException::withMessages([
+                    'spec' => ['Could not build a report specification from that description.'],
+                ]);
+            }
         }
 
-        $req = Request::create('/reports/builder/templates', 'POST', [
-            'name' => $params['name'] ?? 'AI report',
-            'description' => $params['description'] ?? 'Created by AI assistant',
+        if ($workspaceId === '') {
+            $workspaceId = $this->workspaceFromSpec($spec);
+        }
+
+        $name = trim((string) ($params['name'] ?? ''));
+        if ($name === '') {
+            throw ValidationException::withMessages([
+                'name' => ['Please choose a name for this report.'],
+            ]);
+        }
+
+        $payload = [
+            'name' => $name,
+            'description' => $params['description'] ?? ($instruction !== '' ? $instruction : 'Created by AI assistant'),
             'spec' => $spec,
             'is_shared' => (bool) ($params['is_shared'] ?? false),
-        ]);
+            'workspace_id' => $workspaceId,
+        ];
+
+        $req = Request::create('/reports/builder/templates', 'POST', $payload);
         $req->setUserResolver(fn () => $user);
 
         /** @var CustomReportTemplate $template */
@@ -491,6 +523,36 @@ class AiActionExecutor
                 'path' => isset($template['id']) ? '/reports/custom/'.$template['id'] : '/reports/builder',
             ],
         ];
+    }
+
+    protected function workspaceFromInstruction(string $instruction): string
+    {
+        $text = mb_strtolower($instruction);
+        if (str_contains($text, 'attendance') || str_contains($text, 'payroll') || str_contains($text, 'employee') || str_contains($text, 'leave')) {
+            return 'hr';
+        }
+        if (str_contains($text, 'journal') || str_contains($text, 'ledger') || str_contains($text, 'expense')) {
+            return 'accounting';
+        }
+        if (str_contains($text, 'dispatch') || str_contains($text, 'trip') || str_contains($text, 'driver')) {
+            return 'distribution';
+        }
+
+        return 'backoffice';
+    }
+
+    /** @param  array<string, mixed>  $spec */
+    protected function workspaceFromSpec(array $spec): string
+    {
+        $source = (string) ($spec['source'] ?? (($spec['sources'][0] ?? null)));
+        $module = (string) (config("report_builder.sources.{$source}.module") ?? '');
+
+        return match ($module) {
+            'HR' => 'hr',
+            'Accounting', 'Payments' => 'accounting',
+            'Logistics' => 'distribution',
+            default => 'backoffice',
+        };
     }
 
     /** @param  array<string, mixed>  $params */

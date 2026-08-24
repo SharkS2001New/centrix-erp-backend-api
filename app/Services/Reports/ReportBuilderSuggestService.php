@@ -131,6 +131,27 @@ class ReportBuilderSuggestService
 
     /**
      * Keyword / schema matching when org AI is off or the model call fails.
+     * Also used by the AI create_custom_report tool (no nested LLM during tool rounds).
+     *
+     * @return array{name: string, description: string|null, spec: array<string, mixed>}
+     */
+    public function localDraft(User $user, string $instruction, ?string $workspaceId = null): array
+    {
+        $instruction = trim(preg_replace('/\s+/u', ' ', $instruction) ?? '');
+        if ($instruction === '') {
+            throw ValidationException::withMessages([
+                'instruction' => ['Describe the report you need.'],
+            ]);
+        }
+
+        $schema = $this->builder->schema($workspaceId);
+        $draft = $this->draftFromKeywords($instruction, $schema);
+
+        return $this->normalizeDraft($draft, $schema, $workspaceId);
+    }
+
+    /**
+     * Keyword / schema matching when org AI is off or the model call fails.
      *
      * @param  array<string, mixed>  $schema
      * @return array<string, mixed>
@@ -149,6 +170,7 @@ class ReportBuilderSuggestService
         $wantsBranch = $this->textHasAny($text, ['branch', 'branches', 'store', 'outlet', 'location']);
         $wantsSupplier = $this->textHasAny($text, ['supplier', 'suppliers', 'vendor', 'purchase', 'lpo', 'procurement']);
         $wantsEmployee = $this->textHasAny($text, ['employee', 'employees', 'payroll', 'staff', 'hr']);
+        $wantsAttendance = $this->textHasAny($text, ['attendance', 'clock', 'check in', 'check-in', 'absent', 'lateness', 'late']);
         $wantsDaily = $this->textHasAny($text, ['daily', 'by day', 'each day', 'per day', 'sale date', 'date']);
 
         $sourceScores = [];
@@ -180,6 +202,9 @@ class ReportBuilderSuggestService
             }
             if ($wantsEmployee && (str_contains($key, 'employee') || str_contains($key, 'payroll') || ($source['module'] ?? '') === 'HR')) {
                 $score += 4;
+            }
+            if ($wantsAttendance && $key === 'attendance') {
+                $score += 8;
             }
             if ($score > 0) {
                 $sourceScores[$key] = $score;
@@ -371,6 +396,7 @@ class ReportBuilderSuggestService
             'suppliers' => ['supplier', 'suppliers', 'vendor'],
             'stock_movements' => ['stock', 'inventory', 'movement'],
             'employees' => ['employee', 'employees', 'staff', 'payroll'],
+            'attendance' => ['attendance', 'clock', 'absent', 'late', 'check'],
         ];
 
         $score = 0;

@@ -71,7 +71,8 @@ class AiSalesByCashierToolTest extends TestCase
         $this->assertSame($placedDay, $result['from_date']);
         $this->assertSame($placedDay, $result['to_date']);
         $this->assertCount(1, $result['cashiers']);
-        $this->assertSame((int) $this->admin->id, $result['cashiers'][0]['cashier_id']);
+        $this->assertSame($this->admin->username, $result['cashiers'][0]['username'] ?? null);
+        $this->assertArrayNotHasKey('cashier_id', $result['cashiers'][0]);
         $this->assertEqualsWithDelta(6870.0, (float) $result['cashiers'][0]['gross_sales'], 0.01);
         $this->assertSame(1, (int) $result['cashiers'][0]['transactions']);
     }

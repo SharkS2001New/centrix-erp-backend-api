@@ -69,7 +69,7 @@ class AiSystemContextBuilder
                 'profile_label' => $caps['profile_label'] ?? null,
             ],
             'user' => [
-                'id' => $user->id,
+                'username' => $user->username,
                 'name' => $user->full_name ?? $user->username,
                 'branch_id' => $user->branch_id,
                 'is_admin' => $trainingMode || (bool) $user->is_admin,

@@ -73,9 +73,13 @@ return [
                 ['label' => 'HR Overview', 'path' => '/hr', 'module' => 'hr_payroll', 'permission' => 'hr.employees.view'],
                 ['label' => 'Employees', 'path' => '/hr/employees', 'module' => 'hr_payroll', 'permission' => 'hr.employees.view'],
                 ['label' => 'Departments', 'path' => '/hr/departments', 'module' => 'hr_payroll', 'permission' => 'hr.departments.view'],
-                ['label' => 'Attendance', 'path' => '/hr/attendance', 'module' => 'hr_payroll', 'permission' => 'hr.attendance.view'],
-                ['label' => 'Field attendance', 'path' => '/hr/field-attendance', 'module' => 'hr_payroll', 'permission' => 'hr.attendance.view'],
+                ['label' => "Today's attendance", 'path' => '/hr/attendance', 'module' => 'hr_payroll', 'permission' => 'hr.attendance.view'],
+                ['label' => 'Previous attendance', 'path' => '/hr/attendance/history', 'module' => 'hr_payroll', 'permission' => 'hr.attendance_history.view'],
+                ['label' => 'Absents', 'path' => '/hr/absents', 'module' => 'hr_payroll', 'permission' => 'hr.absents.view'],
+                ['label' => 'Lateness', 'path' => '/hr/lateness', 'module' => 'hr_payroll', 'permission' => 'hr.lateness.view'],
+                ['label' => 'Field attendance', 'path' => '/sales/field-attendance', 'module' => 'sales.backend', 'permission' => 'sales.field_attendance.view'],
                 ['label' => 'Leave', 'path' => '/hr/leave', 'module' => 'hr_payroll', 'permission' => 'hr.leave.view'],
+                ['label' => 'Shifts', 'path' => '/hr/shifts', 'module' => 'hr_payroll', 'permission' => 'hr.shifts.view'],
                 ['label' => 'Payroll', 'path' => '/hr/payroll', 'module' => 'hr_payroll', 'permission' => 'hr.payroll.view'],
             ],
         ],
@@ -97,7 +101,10 @@ return [
             'items' => [
                 ['label' => 'Report overview', 'path' => '/reports', 'module' => 'reports', 'permission' => 'reports.hub.view'],
                 ['label' => 'Report builder', 'path' => '/reports/builder', 'module' => 'reports', 'permission' => 'reports.builder.view'],
-                ['label' => 'Sales summary', 'path' => '/reports/sales-summary', 'module' => 'reports', 'permission' => 'reports.sales_summary.view'],
+                ['label' => 'Sales by user', 'path' => '/reports/sales-by-user', 'module' => 'reports', 'permission' => 'reports.sales_by_user.view'],
+                ['label' => 'Daily sales', 'path' => '/reports/daily-sales', 'module' => 'reports', 'permission' => 'reports.daily_sales.view'],
+                ['label' => 'Low stock', 'path' => '/reports/low-stock', 'module' => 'inventory', 'permission' => 'reports.low_stock.view'],
+                ['label' => 'Attendance register', 'path' => '/reports/attendance-register', 'module' => 'hr_payroll.reports', 'permission' => 'hr.attendance.view'],
                 ['label' => 'Items currently in stock', 'path' => '/inventory/stock', 'module' => 'inventory', 'permission' => 'inventory.stock.view'],
                 ['label' => 'Payroll summary', 'path' => '/reports/payroll-summary', 'module' => 'hr_payroll.reports', 'permission' => 'hr.payroll.view'],
                 ['label' => 'Leave balance', 'path' => '/reports/leave-balance', 'module' => 'hr_payroll.reports', 'permission' => 'hr.leave.view'],
@@ -205,5 +212,20 @@ return [
             'description' => 'Open a product card to review stock or mark hold.',
             'permission' => 'catalogue.products.view',
         ],
+    ],
+    /**
+     * Known mistaken paths the model may invent → real Centrix screens.
+     *
+     * @var array<string, string>
+     */
+    'path_aliases' => [
+        '/hr/field-attendance' => '/sales/field-attendance',
+        '/attendance' => '/hr/attendance',
+        '/hr/attendance-history' => '/hr/attendance/history',
+        '/reports/sales-summary' => '/reports/sales-by-user',
+        '/reports/custom-reports' => '/reports/builder',
+        '/reports/custom' => '/reports/builder',
+        '/custom-reports' => '/reports/builder',
+        '/report-builder' => '/reports/builder',
     ],
 ];

@@ -128,13 +128,15 @@ class ReportBuilderController extends Controller
 
     public function showTemplate(Request $request, int $templateId)
     {
-        $workspaceId = $this->workspaceIdFromRequest($request);
+        $preferredWorkspace = $this->workspaceIdFromRequest($request);
         $template = $this->findTemplate($request, $templateId);
+        $workspaceId = $this->workspaceForTemplate($template, $preferredWorkspace);
         $this->assertTemplateSourceAllowed($template, $workspaceId);
 
         return response()->json([
             'template' => $template,
             'definition' => $this->builder->toUiDefinition($template, $workspaceId),
+            'workspace_id' => $workspaceId,
         ]);
     }
 
@@ -197,8 +199,9 @@ class ReportBuilderController extends Controller
 
     public function runTemplate(Request $request, int $templateId)
     {
-        $workspaceId = $this->workspaceIdFromRequest($request);
+        $preferredWorkspace = $this->workspaceIdFromRequest($request);
         $template = $this->findTemplate($request, $templateId);
+        $workspaceId = $this->workspaceForTemplate($template, $preferredWorkspace);
         $this->assertTemplateSourceAllowed($template, $workspaceId);
         $filters = $request->only(['from_date', 'to_date', 'branch_id', 'per_page', 'page']);
         $result = $this->builder->run($request->user(), $template->spec, $filters, $workspaceId);
@@ -209,6 +212,42 @@ class ReportBuilderController extends Controller
     protected function workspaceIdFromRequest(Request $request): ?string
     {
         return $request->query('workspace_id') ?: $request->input('workspace_id');
+    }
+
+    /**
+     * Prefer the caller's workspace when it allows the template sources;
+     * otherwise pick a workspace that does (so AI-created HR reports open from any workspace).
+     */
+    protected function workspaceForTemplate(CustomReportTemplate $template, ?string $preferred): string
+    {
+        $sources = $this->builder->templateSpecSources($template->spec ?? []);
+        if ($preferred && $this->sourcesAllowedInWorkspace($sources, $preferred)) {
+            return $preferred;
+        }
+
+        foreach (['admin', 'hr', 'backoffice', 'accounting', 'distribution', 'hospitality_backoffice'] as $workspaceId) {
+            if ($this->sourcesAllowedInWorkspace($sources, $workspaceId)) {
+                return $workspaceId;
+            }
+        }
+
+        return $preferred ?: 'backoffice';
+    }
+
+    /** @param  list<string>  $sources */
+    protected function sourcesAllowedInWorkspace(array $sources, string $workspaceId): bool
+    {
+        if ($sources === []) {
+            return false;
+        }
+        $allowed = array_flip($this->builder->allowedSourceKeys($workspaceId));
+        foreach ($sources as $source) {
+            if (! isset($allowed[$source])) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     protected function assertTemplateSourceAllowed(CustomReportTemplate $template, ?string $workspaceId): void
