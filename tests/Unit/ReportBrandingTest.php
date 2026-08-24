@@ -3,6 +3,7 @@
 namespace Tests\Unit;
 
 use App\Models\Organization;
+use App\Services\Background\ExportInventoryQtyFormatter;
 use App\Services\Background\ReportBrandingService;
 use App\Services\Background\ReportExportService;
 use Illuminate\Support\Facades\Storage;
@@ -10,6 +11,13 @@ use Tests\TestCase;
 
 class ReportBrandingTest extends TestCase
 {
+    protected function makeExporter(?ReportBrandingService $brandingService = null): ReportExportService
+    {
+        return new ReportExportService(
+            $brandingService ?? new ReportBrandingService,
+            app(ExportInventoryQtyFormatter::class),
+        );
+    }
     public function test_resolve_display_prefers_logo_when_auto_and_logo_exists(): void
     {
         $service = new ReportBrandingService;
@@ -49,7 +57,7 @@ class ReportBrandingTest extends TestCase
             'branding' => $branding,
         ];
 
-        $exporter = new ReportExportService($brandingService);
+        $exporter = $this->makeExporter($brandingService);
         $method = new \ReflectionMethod(ReportExportService::class, 'buildPrintHtml');
         $method->setAccessible(true);
         $html = $method->invoke($exporter, $meta, [
@@ -68,7 +76,7 @@ class ReportBrandingTest extends TestCase
     public function test_build_print_html_paginates_named_sections(): void
     {
         $brandingService = new ReportBrandingService;
-        $exporter = new ReportExportService($brandingService);
+        $exporter = $this->makeExporter($brandingService);
         $method = new \ReflectionMethod(ReportExportService::class, 'buildPrintHtml');
         $method->setAccessible(true);
 
@@ -91,5 +99,57 @@ class ReportBrandingTest extends TestCase
         $this->assertStringContainsString('print-section-break', $html);
         $this->assertStringContainsString('Payment method', $html);
         $this->assertStringNotContainsString('<h1>Payments breakdown</h1>', $html);
+    }
+
+    public function test_resolve_print_orientation_prefers_landscape_for_statement_width(): void
+    {
+        $exporter = $this->makeExporter();
+        $method = new \ReflectionMethod(ReportExportService::class, 'resolvePrintOrientation');
+        $method->setAccessible(true);
+
+        $columns = [
+            ['key' => 'date', 'label' => 'Date'],
+            ['key' => 'document', 'label' => 'Document No', 'wrap' => true],
+            ['key' => 'description', 'label' => 'Description', 'wrap' => true],
+            ['key' => 'debit', 'label' => 'Debit', 'align' => 'right'],
+            ['key' => 'credit', 'label' => 'Credit', 'align' => 'right'],
+            ['key' => 'balance', 'label' => 'Balance', 'align' => 'right'],
+        ];
+
+        $this->assertSame('landscape', $method->invoke($exporter, [], $columns, []));
+        $this->assertSame(
+            'portrait',
+            $method->invoke($exporter, ['orientation' => 'portrait'], $columns, []),
+        );
+        $this->assertSame(
+            'landscape',
+            $method->invoke(
+                $exporter,
+                [],
+                [['key' => 'document', 'label' => 'Document']],
+                [['document' => 'UGBTQZ0GUY,UGBOIA0JBG,UGBTQ28DKD']],
+            ),
+        );
+    }
+
+    public function test_build_print_html_wraps_long_text_cells(): void
+    {
+        $exporter = $this->makeExporter();
+        $method = new \ReflectionMethod(ReportExportService::class, 'buildPrintHtml');
+        $method->setAccessible(true);
+
+        $html = $method->invoke($exporter, [
+            'title' => 'Customer Statement',
+            'printed_at' => '24 Aug 2026, 14:33',
+        ], [
+            ['key' => 'document', 'label' => 'Document No', 'wrap' => true],
+            ['key' => 'balance', 'label' => 'Balance', 'align' => 'right'],
+        ], [
+            ['document' => 'UGBTQZ0GUY,UGBOIA0JBG', 'balance' => '1,000.00'],
+        ], null, null);
+
+        $this->assertStringContainsString('overflow-wrap: anywhere', $html);
+        $this->assertStringContainsString('class="wrap"', $html);
+        $this->assertStringContainsString('UGBTQZ0GUY,UGBOIA0JBG', $html);
     }
 }

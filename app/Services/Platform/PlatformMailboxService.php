@@ -63,18 +63,15 @@ class PlatformMailboxService
 
         $isNoReply = $isAuthMail || (bool) ($settings['no_reply'] ?? false);
 
-        $fromAddress = (string) ($settings['from_address'] ?? '');
-        $fromName = (string) ($settings['from_name'] ?? 'Centrix');
-        if ($isNoReply && ($settings['auth_profile'] ?? 'default') === 'default') {
-            $main = PlatformMailSettingsResolver::resolve($accountId);
-            $candidate = $fromAddress !== ''
-                ? $fromAddress
-                : $this->deriveNoreplyAddress((string) ($main['from_address'] ?? ''));
-            if ($this->smtpAllowsCustomFrom($main, $candidate)) {
-                $fromAddress = $candidate;
-            } else {
-                $fromAddress = (string) ($main['from_address'] ?? $fromAddress);
-            }
+        $fromAddress = $this->resolveOutboundFromAddress($settings, $accountId, $isNoReply);
+        $fromName = trim((string) ($settings['from_name'] ?? 'Centrix')) ?: 'Centrix';
+
+        if ($fromAddress === '' || ! str_contains($fromAddress, '@')) {
+            abort(
+                422,
+                'Outbound From address is missing. Set From address under Platform → Settings → Email delivery '
+                .'(for Gmail, use the same address as your SMTP username), then retry.',
+            );
         }
 
         $inReplyTo = $replyTo?->message_id;
@@ -99,12 +96,11 @@ class PlatformMailboxService
             $fromName,
             $ccList,
         ) {
-            $message->to($to)->subject($subject);
+            // Always set From on the message. Config::set(mail.from) does not update a
+            // already-resolved Mailer alwaysFrom — missing From → Symfony LogicException.
+            $message->from($fromAddress, $fromName)->to($to)->subject($subject);
             if ($ccList !== []) {
                 $message->cc($ccList);
-            }
-            if ($fromAddress !== '') {
-                $message->from($fromAddress, $fromName !== '' ? $fromName : null);
             }
             $this->setIdentificationHeaders(
                 $message->getHeaders(),
@@ -136,8 +132,8 @@ class PlatformMailboxService
             'thread_key' => $threadKey,
             'message_id' => $messageId,
             'in_reply_to' => $inReplyTo,
-            'from_address' => $fromAddress !== '' ? $fromAddress : ($settings['from_address'] ?? ''),
-            'from_name' => $fromName !== '' ? $fromName : ($settings['from_name'] ?? null),
+            'from_address' => $fromAddress,
+            'from_name' => $fromName,
             'to_addresses' => [$to],
             'cc_addresses' => $ccList !== [] ? $ccList : null,
             'subject' => $subject,
@@ -149,6 +145,40 @@ class PlatformMailboxService
             'sent_at' => now(),
             'meta' => $meta ?: null,
         ]);
+    }
+
+    /**
+     * Pick a From address SMTP will accept. Prefer noreply when allowed; never return empty
+     * when SMTP username / account From exists (empty From → Symfony LogicException).
+     *
+     * @param  array<string, mixed>  $settings
+     */
+    protected function resolveOutboundFromAddress(array $settings, ?string $accountId, bool $isNoReply): string
+    {
+        $fromAddress = trim((string) ($settings['from_address'] ?? ''));
+        $main = PlatformMailSettingsResolver::resolve($accountId);
+
+        if ($isNoReply && ($settings['auth_profile'] ?? 'default') === 'default') {
+            $candidate = $fromAddress !== ''
+                ? $fromAddress
+                : $this->deriveNoreplyAddress((string) ($main['from_address'] ?? ''));
+            if ($this->smtpAllowsCustomFrom($main, $candidate)) {
+                $fromAddress = $candidate;
+            } else {
+                $fromAddress = trim((string) ($main['from_address'] ?? ''))
+                    ?: trim((string) ($main['smtp_username'] ?? ''))
+                    ?: $fromAddress;
+            }
+        }
+
+        if ($fromAddress === '' || ! str_contains($fromAddress, '@')) {
+            $fromAddress = trim((string) ($main['from_address'] ?? ''))
+                ?: trim((string) ($main['smtp_username'] ?? ''))
+                ?: trim((string) ($settings['smtp_username'] ?? ''))
+                ?: trim((string) config('mail.from.address', ''));
+        }
+
+        return $fromAddress;
     }
 
     /**
@@ -225,13 +255,9 @@ class PlatformMailboxService
             return true;
         }
 
-        // Same mailbox local-part variants are fine; different domains are not for Gmail SMTP.
-        $candidateDomain = str_contains($candidateFrom, '@') ? explode('@', $candidateFrom, 2)[1] : '';
-        $accountDomain = str_contains($smtpUser, '@')
-            ? explode('@', $smtpUser, 2)[1]
-            : (str_contains($fromAddress, '@') ? explode('@', $fromAddress, 2)[1] : '');
-
-        return $candidateDomain !== '' && $accountDomain !== '' && $candidateDomain === $accountDomain;
+        // Gmail SMTP only accepts the authenticated mailbox (or verified Send As aliases).
+        // noreply@gmail.com is rejected even though the domain matches.
+        return false;
     }
 
     /**

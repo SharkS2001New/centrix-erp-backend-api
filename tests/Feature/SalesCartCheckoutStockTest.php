@@ -1117,6 +1117,38 @@ class SalesCartCheckoutStockTest extends TestCase
         $this->assertEqualsWithDelta($tillDue + 8, (float) ($sale['amount_paid'] ?? 0), 0.05);
     }
 
+    public function test_pos_cash_stale_half_till_due_is_rejected(): void
+    {
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $cart = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 2,
+        ])->assertCreated()->json();
+
+        $billTotal = round((float) collect($cart['lines'] ?? [])->sum('amount'), 2);
+        $this->assertGreaterThan(20, $billTotal);
+        $halfDue = round($billTotal / 2, 2);
+
+        $response = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'completed',
+            'payment_method_code' => 'CASH',
+            'pay_now' => $halfDue,
+            'amount_tendered' => $halfDue,
+            // Stale confirm total after a second bag merged into the cart.
+            'till_amount_due' => $halfDue,
+        ]);
+
+        $response->assertStatus(422);
+        $this->assertStringContainsString(
+            'Full payment required for Cash, M-Pesa, bank, and cheque',
+            (string) $response->getContent(),
+        );
+    }
+
     public function test_pos_cash_change_splits_are_aligned_on_online_checkout(): void
     {
         $cartId = $this->postJson('/api/v1/sales/carts', [

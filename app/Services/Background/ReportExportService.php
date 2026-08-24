@@ -215,12 +215,11 @@ class ReportExportService
         $options->set('isRemoteEnabled', false);
         $options->set('defaultFont', 'DejaVu Sans');
 
-        $tableColumnCount = count(array_values(array_filter(
+        $tableColumns = array_values(array_filter(
             $columns,
             fn (array $column) => ! $this->isPrintAsRowColumn($column),
-        )));
-        // Wide payroll / remittance tables need landscape; narrow reports stay portrait.
-        $orientation = $tableColumnCount >= 7 ? 'landscape' : 'portrait';
+        ));
+        $orientation = $this->resolvePrintOrientation($meta, $tableColumns, $pdfRows);
 
         $dompdf = new Dompdf($options);
         $dompdf->loadHtml($html);
@@ -352,18 +351,21 @@ class ReportExportService
             fn (array $column) => $this->isPrintAsRowColumn($column),
         ));
         $colSpan = max(1, count($tableColumns));
-        $wideTable = count($tableColumns) >= 7;
+        $wideTable = count($tableColumns) >= 6;
         $veryWide = count($tableColumns) >= 10;
         $compactCss = $wideTable
             ? ($veryWide
-                ? 'table { font-size: 7px; } th, td { padding: 2px 3px; } th { white-space: nowrap; }'
-                : 'table { font-size: 8px; } th, td { padding: 3px 4px; } th { white-space: nowrap; }')
+                ? 'table { font-size: 7px; } th, td { padding: 2px 3px; }'
+                : 'table { font-size: 8px; } th, td { padding: 3px 4px; }')
             : '';
+        $wrapCss = 'table { table-layout: fixed; }'
+            .' th, td { vertical-align: top; overflow-wrap: anywhere; word-break: break-word; white-space: normal; }'
+            .' th.num, td.num { white-space: nowrap; overflow-wrap: normal; word-break: normal; }'
+            .' th.wrap, td.wrap { white-space: normal; overflow-wrap: anywhere; word-break: break-word; }';
 
         $head = '';
         foreach ($tableColumns as $column) {
-            $class = ($column['align'] ?? '') === 'right' ? ' class="num"' : '';
-            $head .= '<th'.$class.'>'.$escape($column['label']).'</th>';
+            $head .= '<th'.$this->printCellClassAttr($column).'>'.$escape($column['label']).'</th>';
         }
 
         $sections = $this->splitPrintSections($rows);
@@ -387,8 +389,7 @@ class ReportExportService
             foreach ($sectionRows as $row) {
                 $body .= '<tr>';
                 foreach ($tableColumns as $column) {
-                    $class = ($column['align'] ?? '') === 'right' ? ' class="num"' : '';
-                    $body .= '<td'.$class.'>'.$escape($this->cellValue($row, $column)).'</td>';
+                    $body .= '<td'.$this->printCellClassAttr($column).'>'.$escape($this->cellValue($row, $column)).'</td>';
                 }
                 $body .= '</tr>';
 
@@ -421,9 +422,8 @@ class ReportExportService
             if (! $hasNamedSections && is_array($footerRow) && $footerRow !== []) {
                 $foot .= '<tfoot><tr>';
                 foreach ($tableColumns as $index => $column) {
-                    $class = ($column['align'] ?? '') === 'right' ? ' class="num"' : '';
                     $value = $footerRow[$column['key']] ?? ($index === 0 ? 'Totals' : '');
-                    $foot .= '<td'.$class.'>'.$escape($value).'</td>';
+                    $foot .= '<td'.$this->printCellClassAttr($column).'>'.$escape($value).'</td>';
                 }
                 $foot .= '</tr></tfoot>';
             }
@@ -457,6 +457,7 @@ class ReportExportService
 tr.note-row td { background: #f8fafc; color: #334155; font-size: 0.92em; padding-top: 4px; padding-bottom: 6px; }
 .print-section-break { page-break-before: always; break-before: page; }
 h1.section-title { margin: 0 0 10px; font-size: 18px; font-weight: 700; color: #0f172a; }
+'.$wrapCss.'
 '.$compactCss.'
 </style></head><body>
 '.$watermarkHtml.'
@@ -514,6 +515,58 @@ h1.section-title { margin: 0 0 10px; font-size: 18px; font-weight: 700; color: #
     protected function isPrintAsRowColumn(array $column): bool
     {
         return ! empty($column['print_as_row']) || ! empty($column['printAsRow']);
+    }
+
+    /**
+     * @param  array{key?: string, label?: string, align?: string, wrap?: bool}  $column
+     */
+    protected function printCellClassAttr(array $column): string
+    {
+        $classes = [];
+        if (($column['align'] ?? '') === 'right') {
+            $classes[] = 'num';
+        }
+        if (! empty($column['wrap'])) {
+            $classes[] = 'wrap';
+        }
+
+        return $classes === [] ? '' : ' class="'.implode(' ', $classes).'"';
+    }
+
+    /**
+     * Landscape for wide tables (6+ cols), explicit meta, or long unbroken cell text.
+     *
+     * @param  array<string, mixed>  $meta
+     * @param  list<array{key?: string, label?: string, align?: string}>  $tableColumns
+     * @param  list<array<string, mixed>>  $rows
+     */
+    protected function resolvePrintOrientation(array $meta, array $tableColumns, array $rows): string
+    {
+        $explicit = strtolower(trim((string) ($meta['orientation'] ?? '')));
+        if ($explicit === 'landscape' || $explicit === 'portrait') {
+            return $explicit;
+        }
+
+        if (count($tableColumns) >= 6) {
+            return 'landscape';
+        }
+
+        foreach ($rows as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            foreach ($tableColumns as $column) {
+                if (($column['align'] ?? '') === 'right') {
+                    continue;
+                }
+                $value = $this->cellValue($row, $column);
+                if (strlen($value) >= 28 || preg_match('/[^\s,]{24,}/', $value) === 1) {
+                    return 'landscape';
+                }
+            }
+        }
+
+        return 'portrait';
     }
 
     protected function sanitizeFilename(string $value): string

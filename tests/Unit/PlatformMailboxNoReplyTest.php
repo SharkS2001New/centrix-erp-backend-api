@@ -41,6 +41,64 @@ class PlatformMailboxNoReplyTest extends TestCase
         $this->assertStringContainsString('******', (string) $stored->body_text);
     }
 
+    public function test_gmail_two_factor_uses_authenticated_from_not_noreply_gmail(): void
+    {
+        Mail::fake();
+        $this->enablePlatformMail([
+            'from_address' => 'alpacke.tech@gmail.com',
+            'smtp_host' => 'smtp.gmail.com',
+            'smtp_username' => 'alpacke.tech@gmail.com',
+            'noreply_address' => 'noreply@gmail.com',
+        ]);
+
+        $user = User::where('username', 'admin')->firstOrFail();
+
+        app(PlatformMailboxService::class)->send(
+            'alpacke.tech@gmail.com',
+            'Centrix 2FA / auth mail test',
+            "Code: 654321\n\nAutomated — do not reply.\n",
+            $user,
+            ['kind' => 'two_factor', 'no_reply' => true],
+        );
+
+        $stored = PlatformMailMessage::query()->latest('id')->first();
+        $this->assertNotNull($stored);
+        $this->assertSame('alpacke.tech@gmail.com', $stored->from_address);
+    }
+
+    public function test_two_factor_send_sets_from_when_mailer_global_from_is_empty(): void
+    {
+        Mail::fake();
+        $this->enablePlatformMail([
+            'from_address' => 'platform@example.com',
+            'noreply_address' => 'noreply@example.com',
+        ]);
+
+        config(['mail.from.address' => '', 'mail.from.name' => '']);
+        Mail::purge();
+        Mail::mailer(); // resolve with empty alwaysFrom (mirrors production bug)
+
+        $user = User::where('username', 'admin')->firstOrFail();
+
+        app(PlatformMailboxService::class)->send(
+            'user@example.com',
+            'Centrix 2FA / auth mail test',
+            "Code: 111222\n",
+            $user,
+            ['kind' => 'two_factor', 'no_reply' => true],
+        );
+
+        Mail::assertSent(function (\Illuminate\Mail\Mailable|\Illuminate\Mail\SentMessage $message) {
+            return true;
+        });
+        // Mail::fake captures via assertSent / assertOutgoing — use assertSentCount for raw
+        Mail::assertSentCount(1);
+
+        $stored = PlatformMailMessage::query()->latest('id')->first();
+        $this->assertNotNull($stored);
+        $this->assertNotSame('', (string) $stored->from_address);
+    }
+
     public function test_mail_stats_count_two_factor_and_renewal_kinds(): void
     {
         Mail::fake();

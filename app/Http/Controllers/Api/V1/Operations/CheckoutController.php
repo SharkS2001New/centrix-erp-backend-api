@@ -694,13 +694,20 @@ class CheckoutController extends Controller
                         ),
                     );
                     $seenDue = max($cashierSeenDue, $tillAmountDue);
-                    $paidTillBill = ($tillAmountDue > 0.01 && $tillTender + 0.01 >= $tillAmountDue)
-                        || (
-                            $seenDue > 0.01 && (
-                                $tillTender + 0.01 >= $seenDue
-                                || ($tillTender > 0.01 && ($seenDue - $tillTender) <= 5.01)
-                            )
-                        );
+                    // till_amount_due may lag a few shillings behind a KRA server-first
+                    // reprice — allow that band only when the cashier still covered the
+                    // till due. Never accept half-bill stale confirm totals, and never
+                    // accept intentional under-tender vs the till bill.
+                    $repriceSlack = 10.01;
+                    $paidTillBill = (
+                        $tillAmountDue > 0.01
+                        && abs($tillAmountDue - $total) <= $repriceSlack
+                        && $tillTender + 0.01 >= $tillAmountDue
+                    ) || (
+                        $seenDue > 0.01
+                        && abs($seenDue - $total) <= $repriceSlack
+                        && $tillTender + 0.01 >= $seenDue
+                    );
                     if ($offlineOrder || $paidTillBill) {
                         $payNow = $cashDue;
                         unset($input['payment_splits']);

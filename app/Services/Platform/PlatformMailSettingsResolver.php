@@ -6,6 +6,7 @@ use App\Models\Organization;
 use App\Models\PlatformMailMessage;
 use App\Models\User;
 use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 
 class PlatformMailSettingsResolver
@@ -755,10 +756,29 @@ class PlatformMailSettingsResolver
             'password' => $password,
             'timeout' => 20,
         ]);
+
+        $effectiveFrom = trim($fromAddress);
+        if ($effectiveFrom === '' || ! str_contains($effectiveFrom, '@')) {
+            $effectiveFrom = trim($username);
+        }
+        if ($effectiveFrom === '' || ! str_contains($effectiveFrom, '@')) {
+            $effectiveFrom = trim((string) Config::get('mail.from.address', ''));
+        }
+
         Config::set('mail.from', [
-            'address' => $fromAddress,
-            'name' => $fromName,
+            'address' => $effectiveFrom,
+            'name' => $fromName !== '' ? $fromName : 'Centrix',
         ]);
+
+        // Rebuild the smtp mailer so alwaysFrom matches the account we just applied.
+        // Config::set alone does not update a previously resolved Mailer instance.
+        Mail::purge('smtp');
+        if ($effectiveFrom !== '' && str_contains($effectiveFrom, '@')) {
+            Mail::mailer('smtp')->alwaysFrom(
+                $effectiveFrom,
+                $fromName !== '' ? $fromName : 'Centrix',
+            );
+        }
     }
 
     /**
