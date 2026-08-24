@@ -85,6 +85,7 @@ class AiSystemContextBuilder
             'platform_knowledge' => $this->knowledge->confirmedForContext(
                 30,
                 $scope['id'] ?? null,
+                $message,
             ),
         ];
 
@@ -276,8 +277,12 @@ class AiSystemContextBuilder
      *
      * @return array<string, mixed>
      */
-    public function documentationContext(User $user, ?Organization $organization = null): array
-    {
+    public function documentationContext(
+        User $user,
+        ?Organization $organization = null,
+        ?string $message = null,
+        ?string $workspaceId = null,
+    ): array {
         $org = $organization ?? Organization::find($user->organization_id);
         $orgId = (int) ($org?->id ?? $user->organization_id);
         $gate = $organization
@@ -322,7 +327,7 @@ class AiSystemContextBuilder
             'module_catalog' => $modules,
             'navigation' => array_slice($navigationFlat, 0, 80),
             'workflows' => array_slice($workflows, 0, 20),
-            'platform_knowledge' => $this->knowledge->confirmedForContext(20, null),
+            'platform_knowledge' => $this->knowledge->confirmedForContext(24, $workspaceId, $message),
             'how_to_use_centrix' => config('ai_knowledge.how_to_guide', []),
         ];
     }

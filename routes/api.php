@@ -590,6 +590,8 @@ Route::prefix('v1')->group(function () {
                 Route::post('test-credentials', [PlatformAiTrainingController::class, 'testCredentials']);
                 Route::get('knowledge', [PlatformAiTrainingController::class, 'listKnowledge']);
                 Route::post('knowledge', [PlatformAiTrainingController::class, 'teach']);
+                Route::post('knowledge/bulk', [PlatformAiTrainingController::class, 'teachBulk']);
+                Route::post('knowledge/install-foundation', [PlatformAiTrainingController::class, 'installFoundation']);
                 Route::patch('knowledge/{entry}', [PlatformAiTrainingController::class, 'updateKnowledge']);
                 Route::delete('knowledge/{entry}', [PlatformAiTrainingController::class, 'deleteKnowledge']);
                 Route::post('chat', [PlatformAiTrainingController::class, 'chat']);

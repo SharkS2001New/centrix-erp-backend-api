@@ -705,6 +705,8 @@ class TillSessionFlowTest extends TestCase
         $this->assertContains('MPESA', $codes);
         $this->assertContains('EQUITY', $codes);
         $this->assertContains('KCB', $codes);
+        $this->assertNotContains('CREDIT', $codes);
+        $this->assertNotContains('CHEQUE', $codes);
         $this->assertTrue(
             (bool) PaymentMethod::query()
                 ->where('organization_id', $orgId)

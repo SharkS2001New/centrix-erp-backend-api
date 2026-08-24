@@ -368,6 +368,8 @@ class TillOperationsController extends Controller
                     ->orWhere('is_active', 1)
                     ->orWhereNull('is_active');
             })
+            ->whereRaw("UPPER(TRIM(method_code)) NOT IN ('CREDIT', 'CHEQUE', 'CHECK')")
+            ->whereRaw("UPPER(TRIM(method_code)) NOT LIKE '%CREDIT%'")
             ->orderByRaw(
                 "CASE UPPER(TRIM(method_code))
                     WHEN 'CASH' THEN 0
@@ -422,16 +424,18 @@ class TillOperationsController extends Controller
 
         $paymentMethodId = isset($data['payment_method_id']) ? (int) $data['payment_method_id'] : 0;
         if ($paymentMethodId > 0) {
-            $methodOk = PaymentMethod::query()
+            $method = PaymentMethod::query()
                 ->where('id', $paymentMethodId)
                 ->where('organization_id', $organizationId)
                 ->where(function ($query) {
                     $query->where('is_active', true)->orWhere('is_active', 1);
                 })
-                ->exists();
-            if (! $methodOk) {
+                ->first();
+            if (! $method) {
                 throw new InvalidArgumentException('Payment method not found or inactive for this organization.');
             }
+            $this->assertExpensePaymentMethodAllowed($method);
+            $paymentMethodId = (int) $method->id;
         } else {
             // Backward compatible: default to Cash when the client omits a method.
             $paymentMethodId = $this->resolveCashPaymentMethodId($organizationId) ?? 0;
@@ -442,6 +446,10 @@ class TillOperationsController extends Controller
             );
         }
 
+        $sessionDate = $session->session_date
+            ? \Carbon\Carbon::parse($session->session_date)->toDateString()
+            : now()->toDateString();
+
         $expense = Expense::create([
             'organization_id' => $organizationId,
             'branch_id' => $session->branch_id,
@@ -449,7 +457,7 @@ class TillOperationsController extends Controller
             'float_session_id' => $session->id,
             'description' => $data['description'] ?? null,
             'expense_amount' => $data['expense_amount'],
-            'expense_date' => now()->toDateString(),
+            'expense_date' => $sessionDate,
             'payment_method_id' => $paymentMethodId,
             'recorded_by' => $request->user()->id,
         ]);
@@ -477,7 +485,7 @@ class TillOperationsController extends Controller
             return null;
         }
 
-        app(OrganizationReferenceDataService::class)->ensurePaymentMethods($organizationId);
+        app(OrganizationReferenceDataService::class)->ensureExpensePaymentMethods($organizationId);
 
         $exact = PaymentMethod::query()
             ->where('organization_id', $organizationId)
@@ -502,6 +510,20 @@ class TillOperationsController extends Controller
         return $fuzzy ? (int) $fuzzy : null;
     }
 
+    /** Credit / Cheque are sales tenders — not valid for expense payouts. */
+    protected function assertExpensePaymentMethodAllowed(PaymentMethod $method): void
+    {
+        $code = strtoupper(trim((string) ($method->method_code ?? '')));
+        if ($code === '' ) {
+            return;
+        }
+        if (in_array($code, ['CREDIT', 'CHEQUE', 'CHECK'], true) || str_contains($code, 'CREDIT')) {
+            throw new InvalidArgumentException(
+                'Credit and Cheque cannot be used for expenses. Choose Cash, M-Pesa, Equity, KCB, or another tender.',
+            );
+        }
+    }
+
     public function listSessionExpenses(Request $request, int $sessionId)
     {
         $session = $this->findScopedTillSession($sessionId, $request->user());
@@ -510,11 +532,15 @@ class TillOperationsController extends Controller
         $rows = Expense::query()
             ->where('float_session_id', $session->id)
             ->whereNull('deleted_at')
-            ->with('expenseGroup:id,group_name')
+            ->with([
+                'expenseGroup:id,group_name',
+                'paymentMethod:id,method_name,method_code',
+            ])
             ->orderByDesc('created_at')
             ->get([
                 'id',
                 'expense_group_id',
+                'payment_method_id',
                 'description',
                 'expense_amount',
                 'expense_date',

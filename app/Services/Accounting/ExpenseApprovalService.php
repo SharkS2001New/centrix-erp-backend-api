@@ -5,6 +5,7 @@ namespace App\Services\Accounting;
 use App\Models\ActionRequest;
 use App\Models\Branch;
 use App\Models\Expense;
+use App\Models\PaymentMethod;
 use App\Models\TillFloatSession;
 use App\Models\User;
 use App\Services\Auth\UserAccessService;
@@ -118,6 +119,25 @@ class ExpenseApprovalService
             }
             if ((int) $session->branch_id !== $branchId) {
                 throw new InvalidArgumentException('Expense branch must match the till session branch.');
+            }
+        }
+
+        $paymentMethodId = (int) ($data['payment_method_id'] ?? 0);
+        if ($paymentMethodId > 0) {
+            $method = PaymentMethod::query()
+                ->where('id', $paymentMethodId)
+                ->where('organization_id', (int) $user->organization_id)
+                ->first();
+            if (! $method) {
+                throw ValidationException::withMessages([
+                    'payment_method_id' => 'Payment method not found for this organization.',
+                ]);
+            }
+            $code = strtoupper(trim((string) ($method->method_code ?? '')));
+            if (in_array($code, ['CREDIT', 'CHEQUE', 'CHECK'], true) || str_contains($code, 'CREDIT')) {
+                throw ValidationException::withMessages([
+                    'payment_method_id' => 'Credit and Cheque cannot be used for expenses. Choose Cash, M-Pesa, Equity, KCB, or another tender.',
+                ]);
             }
         }
     }

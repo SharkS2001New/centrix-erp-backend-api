@@ -22,15 +22,21 @@ return [
         'Cashier sales targets/quotas are not stored as a Centrix AI metric — report actual sales with get_sales_by_cashier instead.',
         'When talking about people, use username and full name — never numeric user ids.',
         'Write formulas in plain language with real field names (Stock Value = Cost Price × Stock on Hand), never LaTeX.',
+        'Units of measure (UoM): stock is stored in base (smallest) units. A UoM can define full pack (e.g. Bag), optional middle pack, and small unit (e.g. kg). conversion_factor = base units per full pack. Screens: /uoms.',
+        'Display quantities as mixed packs (e.g. "2 Bag, 40 kg") — never invent kg vs bags; use qty_label from tools.',
+        'Retail packaging: products with Sell on retail use /retail-package-settings for retail vs wholesale markup tiers. This is separate from UoM conversion. Call get_product_details for a product\'s measurements and retail packaging.',
+        'Product weight (kg) on the product card is optional metadata — not the same as stock UoM unless the small packaging unit is also kg.',
     ],
     'modules' => [
         [
             'key' => 'catalogue',
             'label' => 'Product catalog',
-            'paths' => ['/products', '/categories'],
+            'paths' => ['/products', '/categories', '/uoms', '/retail-package-settings'],
             'tasks' => [
                 'Create and edit products (code, name, price, VAT, reorder point)',
                 'Manage categories and subcategories',
+                'Configure units of measure (full / middle / small packaging) at /uoms',
+                'Configure retail packaging / sell-on-retail tiers at /retail-package-settings',
                 'Register products with KRA device when fiscal module is enabled',
             ],
         ],

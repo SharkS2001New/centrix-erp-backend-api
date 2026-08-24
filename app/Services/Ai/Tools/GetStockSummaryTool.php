@@ -28,6 +28,7 @@ class GetStockSummaryTool implements AiToolInterface
     public function description(): string
     {
         return 'Get a Centrix inventory overview: low-stock items and recent fast movers. '
+            .'Each product row includes qty_label (Centrix stock UoM text, e.g. "2 Bag, 40 kg") — quote that in answers. '
             .'Use for questions about current stock levels, reorder alerts, or what is selling. '
             .'For full stock lists, also point the user to /inventory/stock.';
     }

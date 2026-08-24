@@ -1,0 +1,69 @@
+<?php
+
+/**
+ * Curated platform training notes that teach Centrix product mechanics.
+ * Installed via Platform → AI training → "Install foundation notes".
+ * Topics already present are skipped (safe to re-run).
+ */
+return [
+    [
+        'topic' => 'How Centrix stores stock quantities (base units)',
+        'content' => 'All stock quantities in Centrix are stored in the product UoM base (smallest) unit — e.g. kg, pcs, or litres. Display mixes full packs and remaining small units (example: "2 Bag, 40 kg"). Never invent kg vs bags; quote qty_label from tools or product details. Configure packs at /uoms and assign the UoM on each product.',
+        'path' => '/uoms',
+        'workspace_id' => 'backoffice',
+    ],
+    [
+        'topic' => 'What is a Unit of Measure (UoM)?',
+        'content' => 'A UoM defines packaging hierarchy: full pack name (e.g. Bag), optional middle pack, and small/base label (e.g. kg). conversion_factor is how many base units equal one full pack (e.g. 1 Bag = 50 kg). Manage at /uoms. For a specific product, call get_product_details or open /products/{code}.',
+        'path' => '/uoms',
+        'workspace_id' => 'backoffice',
+    ],
+    [
+        'topic' => 'Retail packaging vs UoM — what is the difference?',
+        'content' => 'UoM controls how stock is counted and displayed. Retail packaging (Sell on retail + /retail-package-settings) controls POS retail vs wholesale entry and markup tiers. They are separate: a bag/kg UoM can still sell retail by kg with retail markups. Use get_product_details for both on one product.',
+        'path' => '/retail-package-settings',
+        'workspace_id' => 'backoffice',
+    ],
+    [
+        'topic' => 'Where do I receive goods (GRN)?',
+        'content' => 'Receive stock against an LPO at /inventory/receipts (GRN). Create LPOs at /lpo and manage suppliers at /suppliers. After receiving, stock updates shop/store quantities in base UoM units.',
+        'path' => '/inventory/receipts',
+        'workspace_id' => 'backoffice',
+    ],
+    [
+        'topic' => 'Where is End of Day / cashier sales summary?',
+        'content' => 'End of Day and related cashier summaries live under reports and sales EOD screens (often /reports or Sales → End of Day depending on industry). Prefer find_screen with "end of day" or "EOD" and open the returned path. Payment mix and till variance also appear in till health tools.',
+        'path' => '/reports',
+        'workspace_id' => 'backoffice',
+    ],
+    [
+        'topic' => 'How should answers cite Centrix screens?',
+        'content' => 'Always give a real Centrix path users can open (e.g. /suppliers, /lpo, /inventory/stock, /hr/attendance). Call find_screen when unsure. Only cite paths from tools, navigation, or trained notes — never invent menus.',
+        'path' => '/dashboard',
+        'workspace_id' => null,
+    ],
+    [
+        'topic' => 'Hotel POS vs retail POS',
+        'content' => 'Retail carts use /sales/pos or External POS /pos. Hotel & Hospitality checks use /hotel-bar-pos (not retail carts). Hotel lists: /hospitality/orders. Do not mix hotel check workflows with retail cart checkout.',
+        'path' => '/hotel-bar-pos',
+        'workspace_id' => 'hotel_bar_pos',
+    ],
+    [
+        'topic' => 'Q: Is product stock in kg or bags?',
+        'content' => 'A: Call get_product_details for that product. Read measurements.conversion_meaning and stock.*_qty_label. Example answer: "Stock is stored in kg (base). 1 Bag = 50 kg. On hand shows as 1 Bag, 40 kg." Do not guess from the product name alone.',
+        'path' => '/products',
+        'workspace_id' => 'backoffice',
+    ],
+    [
+        'topic' => 'Q: How do I set retail packaging for a product?',
+        'content' => 'A: Turn on Sell on retail on the product, then configure tiers at /retail-package-settings (min/max measures and markups). Confirm with get_product_details → retail_packaging. Path: /retail-package-settings.',
+        'path' => '/retail-package-settings',
+        'workspace_id' => 'backoffice',
+    ],
+    [
+        'topic' => 'Custom reports',
+        'content' => 'Users build saved reports in Report Builder at /reports/builder. After create_custom_report, give /reports/custom/{id}. Do not invent report ids.',
+        'path' => '/reports/builder',
+        'workspace_id' => 'backoffice',
+    ],
+];

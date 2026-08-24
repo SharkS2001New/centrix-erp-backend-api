@@ -23,4 +23,18 @@ class EntityMentionRefsTest extends TestCase
         $this->assertTrue(EntityMentionRefs::hasType($refs, 'product'));
         $this->assertFalse(EntityMentionRefs::hasType($refs, 'branch'));
     }
+
+    public function test_normalize_accepts_user_and_employee_refs(): void
+    {
+        $refs = EntityMentionRefs::normalize([
+            ['type' => 'employee', 'id' => '3', 'code' => 'E001', 'label' => 'Jane Doe'],
+            ['type' => 'user', 'id' => '9', 'label' => 'Diana'],
+        ]);
+
+        $this->assertCount(2, $refs);
+        $this->assertTrue(EntityMentionRefs::hasType($refs, 'employee'));
+        $this->assertTrue(EntityMentionRefs::hasType($refs, 'user'));
+        $this->assertSame('3', $refs[0]['id']);
+        $this->assertSame('9', $refs[1]['id']);
+    }
 }

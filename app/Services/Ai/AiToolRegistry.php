@@ -9,6 +9,8 @@ use App\Services\Ai\Tools\CreateCustomReportTool;
 use App\Services\Ai\Tools\FindScreenTool;
 use App\Services\Ai\Tools\GetDebtorsSummaryTool;
 use App\Services\Ai\Tools\GetEmployeeAttendanceTool;
+use App\Services\Ai\Tools\SearchTrainingNotesTool;
+use App\Services\Ai\Tools\GetProductDetailsTool;
 use App\Services\Ai\Tools\GetPurchasingOverviewTool;
 use App\Services\Ai\Tools\GetRouteOrdersTool;
 use App\Services\Ai\Tools\GetSalesBriefTool;
@@ -29,6 +31,8 @@ class AiToolRegistry
         protected GetSalesBriefTool $getSalesBrief,
         protected FindScreenTool $findScreen,
         protected GetStockSummaryTool $getStockSummary,
+        protected GetProductDetailsTool $getProductDetails,
+        protected SearchTrainingNotesTool $searchTrainingNotes,
         protected GetPurchasingOverviewTool $getPurchasingOverview,
         protected GetDebtorsSummaryTool $getDebtorsSummary,
         protected GetTillHealthTool $getTillHealth,
@@ -147,6 +151,8 @@ class AiToolRegistry
             $this->getSalesByCashier,
             $this->getSalesBrief,
             $this->getStockSummary,
+            $this->getProductDetails,
+            $this->searchTrainingNotes,
             $this->getPurchasingOverview,
             $this->getDebtorsSummary,
             $this->getTillHealth,

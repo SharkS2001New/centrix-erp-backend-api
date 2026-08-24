@@ -78,6 +78,8 @@ return [
         'get_sales_by_cashier' => true,
         'get_sales_brief' => true,
         'get_stock_summary' => true,
+        'get_product_details' => true,
+        'search_training_notes' => true,
         'get_purchasing_overview' => true,
         'get_debtors_summary' => true,
         'get_till_health' => true,

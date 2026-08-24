@@ -114,7 +114,7 @@ class AiAssistantController extends Controller
             'confirm_action' => 'nullable|boolean',
             'confirm_learn_id' => 'nullable|integer',
             'entity_refs' => 'nullable|array|max:40',
-            'entity_refs.*.type' => 'required_with:entity_refs|string|in:product,supplier,customer,employee,branch',
+            'entity_refs.*.type' => 'required_with:entity_refs|string|in:product,supplier,customer,employee,user,branch',
             'entity_refs.*.id' => 'nullable|string|max:64',
             'entity_refs.*.code' => 'nullable|string|max:64',
             'entity_refs.*.label' => 'nullable|string|max:200',

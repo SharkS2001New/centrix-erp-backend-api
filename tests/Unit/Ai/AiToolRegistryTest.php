@@ -21,6 +21,8 @@ class AiToolRegistryTest extends TestCase
             'get_sales_by_cashier',
             'get_sales_brief',
             'get_stock_summary',
+            'get_product_details',
+            'search_training_notes',
             'get_purchasing_overview',
             'get_debtors_summary',
             'get_till_health',

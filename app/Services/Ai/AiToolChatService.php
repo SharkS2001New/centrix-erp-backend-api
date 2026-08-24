@@ -130,7 +130,15 @@ class AiToolChatService
 
         $this->persistMessage($conversation, $user, $organization, 'user', $message);
 
-        $system = $this->systemPrompt($organization, $user, $workspaceId, $pathname, $pageContext, $entityRefs);
+        $system = $this->systemPrompt(
+            $organization,
+            $user,
+            $workspaceId,
+            $pathname,
+            $pageContext,
+            $entityRefs,
+            $message,
+        );
         $providerName = (string) ($runtime['provider'] ?? config('ai.provider', 'openai'));
         $toolsUsed = [];
         $usageTotal = ['input_tokens' => 0, 'output_tokens' => 0, 'total_tokens' => 0];
@@ -291,6 +299,7 @@ class AiToolChatService
         ?string $pathname = null,
         ?array $pageContext = null,
         array $entityRefs = [],
+        ?string $message = null,
     ): string {
         $orgName = $organization->org_name ?? $organization->company_code ?? 'this organization';
         $calendar = AiSalesDateResolver::calendarAnchor($organization);
@@ -298,7 +307,7 @@ class AiToolChatService
         $yesterday = $calendar['yesterday'];
         $timezone = $calendar['timezone'];
 
-        $docs = $this->contextBuilder->documentationContext($user, $organization);
+        $docs = $this->contextBuilder->documentationContext($user, $organization, $message, $workspaceId);
         $docsJson = json_encode($docs, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         if ($docsJson === false || strlen($docsJson) > 14000) {
             $docs['platform_knowledge'] = array_slice($docs['platform_knowledge'] ?? [], 0, 8);
@@ -350,8 +359,10 @@ CENTRIX_DOCUMENTATION (modules, screens the user can open, workflows, trained no
 
 Tools:
 - find_screen — where to go / how to open a feature (suppliers, GRN, payroll, roles, reports, etc.)
+- search_training_notes — look up platform-trained Q&A / how-to notes (Platform → AI training). Use for Centrix procedures and FAQs.
 - get_sales_summary / get_sales_by_cashier / get_sales_brief — recorded sales figures
 - get_stock_summary — low stock + recent movers; also point to /inventory/stock
+- get_product_details — product UoM measurements (kg/bags/packs), stock qty_label, sell-on-retail + retail packaging tiers; use for "is it kg or bags?" / packaging questions
 - get_purchasing_overview — supplier count + recent LPOs; point to /suppliers and /lpo
 - get_debtors_summary — unpaid / AR / who to call
 - get_till_health — till variance and payment mix
@@ -361,6 +372,7 @@ Tools:
 
 Rules:
 - For "where is / how do I / which menu" questions, call find_screen (or use CENTRIX_DOCUMENTATION) and answer with the path.
+- For how Centrix works / FAQs / trained procedures, prefer platform_knowledge in context and call search_training_notes when more depth is needed.
 - When page context is present, prefer answering about that screen/filters before asking the user to clarify.
 - When resolved entities are present, use those product_code / customer_num / supplier id values in tools and answers.
 - Never invent financial figures or attendance. Use tools for numbers and attendance. If a tool cannot answer (e.g. sales targets/quotas), say so and offer actual sales or the right screen.
@@ -370,6 +382,11 @@ Rules:
 - People: always use username and full name — never numeric user id or employee id.
 - Formulas: write plain text with real Centrix field names, e.g. Stock Value = Cost Price × Stock on Hand. Never use LaTeX ($$ or \text{}).
 - You may use markdown headings (# ## ###) — the UI renders them as real headings.
+- Structured numbers: prefer GitHub-flavored markdown tables (header row + |---| separator + data rows). The UI renders real HTML tables.
+- Quantities: when a tool returns qty_label / stock_on_hand_label / suggested_qty_label (e.g. "2 Bag, 40 kg"), quote that label exactly in answers and table Qty columns — do not invent kg/bags/pcs. qty / qty_base / stock_on_hand numbers are raw base units for math only.
+- Product measurements / retail packaging: call get_product_details. Explain UoM hierarchy from the tool (conversion_factor, full/middle/small labels). Distinguish UoM (how stock is counted) from retail packaging (POS retail markup tiers at /retail-package-settings). Do not guess packaging.
+- Mixed products: never sum bare qty across different UOMs into one "items sold" without labels; list per product with qty_label in a markdown table, or say totals are in base units.
+- Accuracy: copy amounts and qty_label values from tool JSON without rounding inventively; keep currency as returned.
 - Custom reports: if the user wants a report-builder report and has not named it, call create_custom_report without name (or ask), then call again with their chosen name. After create, give the /reports/custom/{id} link.
 - Attendance: call get_employee_attendance — do not guess who was present/late.
 - Respect permissions; do not access other companies/tenants.

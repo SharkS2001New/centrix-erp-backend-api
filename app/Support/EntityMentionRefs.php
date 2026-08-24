@@ -7,7 +7,7 @@ namespace App\Support;
  */
 class EntityMentionRefs
 {
-    public const TYPES = ['product', 'supplier', 'customer', 'employee', 'branch'];
+    public const TYPES = ['product', 'supplier', 'customer', 'employee', 'user', 'branch'];
 
     /**
      * @param  mixed  $refs

@@ -64,7 +64,7 @@ class FindScreenTool implements AiToolInterface
             ];
         }
 
-        $docs = $this->contextBuilder->documentationContext($user, $organization);
+        $docs = $this->contextBuilder->documentationContext($user, $organization, $query);
         $needle = mb_strtolower($query);
         $tokens = preg_split('/[\s,;\/\-]+/', $needle) ?: [];
         $tokens = array_values(array_filter($tokens, fn ($t) => mb_strlen($t) >= 2));

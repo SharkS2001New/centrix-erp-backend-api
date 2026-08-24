@@ -23,6 +23,7 @@ class AiInsightDataBuilder
 
     public function __construct(
         protected LowStockReportService $lowStock,
+        protected AiQtyLabelEnricher $qtyLabels,
     ) {}
 
     /**
@@ -71,7 +72,14 @@ class AiInsightDataBuilder
 
         $lowStock = $this->lowStock->paginate($request, $orgId);
         $lowRows = array_slice($lowStock['data'] ?? [], 0, 30);
+        $lowRows = $this->qtyLabels->enrichProductRows($orgId, array_map(
+            function (array $row) {
+                $row['qty'] = (float) ($row['total_quantity'] ?? $row['total_base_units'] ?? 0);
 
+                return $row;
+            },
+            array_map(fn ($row) => is_array($row) ? $row : (array) $row, $lowRows),
+        ));
         $from = now()->subDays($lookbackDays)->toDateString();
         $to = now()->toDateString();
         $movers = $this->topProductSales($orgId, $from, $to, 20);
@@ -461,7 +469,7 @@ class AiInsightDataBuilder
             return [];
         }
 
-        return DB::table('v_sales_by_product')
+        $rows = DB::table('v_sales_by_product')
             ->where('organization_id', $organizationId)
             ->whereBetween('sale_date', [$from, $to])
             ->selectRaw('product_code, product_name, SUM(qty_sold) as qty, SUM(total_revenue) as amount')
@@ -476,6 +484,21 @@ class AiInsightDataBuilder
                 'amount' => round((float) $row->amount, 2),
             ])
             ->all();
+
+        return $this->withQtyLabels($organizationId, $rows);
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $rows
+     * @return list<array<string, mixed>>
+     */
+    protected function withQtyLabels(
+        int $organizationId,
+        array $rows,
+        string $qtyKey = 'qty',
+        string $labelKey = 'qty_label',
+    ): array {
+        return $this->qtyLabels->enrichProductRows($organizationId, $rows, $qtyKey, $labelKey);
     }
 
     /** @return list<array<string, mixed>> */

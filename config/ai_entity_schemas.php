@@ -58,6 +58,7 @@ return [
                 'required' => true,
                 'important' => true,
                 'relation' => ['table' => 'uoms', 'value' => 'id', 'label' => 'full_name'],
+                'hint' => 'UoM defines full pack, optional middle pack, and small/base unit (e.g. Bag of 50 kg). Manage at /uoms.',
             ],
             'unit_price' => [
                 'label' => 'Selling price (KES)',
@@ -109,6 +110,7 @@ return [
                 'type' => 'boolean',
                 'required' => false,
                 'important' => false,
+                'hint' => 'When on, configure retail packaging tiers at /retail-package-settings (separate from UoM conversion).',
             ],
         ],
     ],

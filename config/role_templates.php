@@ -197,6 +197,8 @@ return [
                 'mobile_manager.notifications.manage',
                 'mobile_manager.reports.view',
                 'sales.orders.approve',
+                'sales.orders.edit',
+                'sales.order_queue_mobile.view',
                 'reports.hub.view',
                 'reports.daily_sales.view',
                 'reports.top_debtors.view',

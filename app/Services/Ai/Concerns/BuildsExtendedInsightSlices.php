@@ -251,6 +251,7 @@ trait BuildsExtendedInsightSlices
                 'amount' => (float) $r->amount,
             ])
             ->all();
+        $topSkus = $this->withQtyLabels($orgId, $topSkus);
 
         $stalled = DB::table('sales')
             ->leftJoin('customers', function ($join) use ($orgId) {
@@ -472,23 +473,36 @@ trait BuildsExtendedInsightSlices
                 ->map(fn ($r) => [
                     'customer_num' => $r->customer_num,
                     'customer_name' => $r->customer_name,
+                    'product_code' => $focusCode,
                     'qty' => (float) $r->qty,
                     'amount' => (float) $r->amount,
                     'orders' => (int) $r->orders,
                 ])
                 ->all();
+            $buyers = $this->withQtyLabels($orgId, $buyers);
 
             $soldQty = (float) collect($buyers)->sum('qty');
             $daily = $lookbackDays > 0 ? round($soldQty / $lookbackDays, 2) : 0;
             $onHand = (float) ($product->stock_in_shop ?? 0) + (float) ($product->stock_in_store ?? 0);
+            $reorderQty = $daily > 0
+                ? max(0, (int) ceil(($daily * 14) - $onHand))
+                : (int) ($product->reorder_point ?? 0);
+            $qtyLabels = $this->withQtyLabels($orgId, [
+                ['product_code' => $focusCode, 'qty' => $soldQty],
+                ['product_code' => $focusCode, 'qty' => $daily],
+                ['product_code' => $focusCode, 'qty' => $onHand],
+                ['product_code' => $focusCode, 'qty' => (float) $reorderQty],
+            ]);
             $velocity = [
                 'qty_sold' => $soldQty,
+                'qty_sold_label' => $qtyLabels[0]['qty_label'] ?? null,
                 'avg_daily_qty' => $daily,
+                'avg_daily_qty_label' => $qtyLabels[1]['qty_label'] ?? null,
                 'stock_on_hand' => $onHand,
+                'stock_on_hand_label' => $qtyLabels[2]['qty_label'] ?? null,
                 'days_of_cover' => $daily > 0 ? round($onHand / $daily, 1) : null,
-                'suggested_reorder_qty' => $daily > 0
-                    ? max(0, (int) ceil(($daily * 14) - $onHand))
-                    : (int) ($product->reorder_point ?? 0),
+                'suggested_reorder_qty' => $reorderQty,
+                'suggested_reorder_qty_label' => $qtyLabels[3]['qty_label'] ?? null,
             ];
         }
 
@@ -507,20 +521,36 @@ trait BuildsExtendedInsightSlices
                 'unit_price' => (float) $p->unit_price,
             ])
             ->all();
+        $dead = $this->withQtyLabels($orgId, $dead, 'stock_on_hand');
+
+        $focusProduct = null;
+        if ($product) {
+            $focusLabeled = $this->withQtyLabels($orgId, [
+                [
+                    'product_code' => $product->product_code,
+                    'stock_in_shop' => (float) $product->stock_in_shop,
+                    'stock_in_store' => (float) $product->stock_in_store,
+                ],
+            ], 'stock_in_shop', 'stock_in_shop_label');
+            $focusLabeled = $this->withQtyLabels($orgId, $focusLabeled, 'stock_in_store', 'stock_in_store_label');
+            $focusProduct = [
+                'product_code' => $product->product_code,
+                'product_name' => $product->product_name,
+                'stock_in_shop' => (float) $product->stock_in_shop,
+                'stock_in_shop_label' => $focusLabeled[0]['stock_in_shop_label'] ?? null,
+                'stock_in_store' => (float) $product->stock_in_store,
+                'stock_in_store_label' => $focusLabeled[0]['stock_in_store_label'] ?? null,
+                'reorder_point' => $product->reorder_point,
+                'unit_price' => (float) $product->unit_price,
+            ];
+        }
 
         return [
             'type' => 'product_demand',
             'organization' => $organization->org_name ?? $organization->name,
             'lookback_days' => $lookbackDays,
             'product_query' => $productQuery,
-            'focus_product' => $product ? [
-                'product_code' => $product->product_code,
-                'product_name' => $product->product_name,
-                'stock_in_shop' => (float) $product->stock_in_shop,
-                'stock_in_store' => (float) $product->stock_in_store,
-                'reorder_point' => $product->reorder_point,
-                'unit_price' => (float) $product->unit_price,
-            ] : null,
+            'focus_product' => $focusProduct,
             'velocity' => $velocity,
             'buyers' => $buyers,
             'fast_movers' => $movers,
@@ -585,6 +615,7 @@ trait BuildsExtendedInsightSlices
                 'amount' => (float) $r->amount,
             ])
             ->all();
+        $mix = $this->withQtyLabels($orgId, $mix);
 
         $paidOnTime = 0;
         $partialCount = 0;
@@ -678,6 +709,7 @@ trait BuildsExtendedInsightSlices
                 'cashier_id' => $r->cashier_id,
             ])
             ->all();
+        $belowCost = $this->withQtyLabels($orgId, $belowCost);
 
         $byCashier = DB::table('sale_items as si')
             ->join('sales as s', 's.id', '=', 'si.sale_id')
@@ -768,6 +800,8 @@ trait BuildsExtendedInsightSlices
                 'href' => '/lpo',
             ];
         }
+        $suggestions = $this->withQtyLabels($orgId, $suggestions, 'suggested_qty', 'suggested_qty_label');
+        $suggestions = $this->withQtyLabels($orgId, $suggestions, 'stock_on_hand', 'stock_on_hand_label');
 
         return [
             'type' => 'procurement_companion',
@@ -979,6 +1013,7 @@ trait BuildsExtendedInsightSlices
                 ];
             })
             ->all();
+        $bySku = $this->withQtyLabels($orgId, $bySku, 'qty_sold_period');
 
         $byRoute = DB::table('sales')
             ->where('organization_id', $orgId)

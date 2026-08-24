@@ -264,21 +264,61 @@ class PlatformAiTrainingController extends Controller
     public function teach(Request $request)
     {
         $data = $request->validate([
-            'topic' => 'required|string|max:200',
-            'content' => 'required|string|max:8000',
+            'topic' => 'nullable|string|max:200',
+            'question' => 'nullable|string|max:200',
+            'content' => 'nullable|string|max:8000',
+            'answer' => 'nullable|string|max:8000',
             'path' => 'nullable|string|max:200',
             'workspace_id' => 'nullable|string|max:40|in:'.implode(',', config('ai.workspace_ids')),
         ]);
 
+        $topic = trim((string) ($data['topic'] ?? $data['question'] ?? ''));
+        $content = trim((string) ($data['content'] ?? $data['answer'] ?? ''));
+        if ($topic === '' || $content === '') {
+            throw ValidationException::withMessages([
+                'topic' => ['Provide a topic/question and content/answer.'],
+            ]);
+        }
+
         $entry = $this->knowledge->teachGlobal(
             $request->user(),
-            $data['topic'],
-            $data['content'],
+            $topic,
+            $content,
             $data['path'] ?? null,
             $data['workspace_id'] ?? null,
         );
 
         return response()->json($entry, 201);
+    }
+
+    /**
+     * Bulk-import Q&A training notes (platform-wide).
+     */
+    public function teachBulk(Request $request)
+    {
+        $data = $request->validate([
+            'notes' => 'required|array|min:1|max:200',
+            'notes.*.topic' => 'nullable|string|max:200',
+            'notes.*.question' => 'nullable|string|max:200',
+            'notes.*.content' => 'nullable|string|max:8000',
+            'notes.*.answer' => 'nullable|string|max:8000',
+            'notes.*.path' => 'nullable|string|max:200',
+            'notes.*.workspace_id' => 'nullable|string|max:40|in:'.implode(',', config('ai.workspace_ids')),
+        ]);
+
+        $result = $this->knowledge->teachGlobalBulk($request->user(), $data['notes'], 'platform_bulk');
+
+        return response()->json($result, 201);
+    }
+
+    /**
+     * Install curated Centrix foundation notes (UoM, retail, navigation, etc.).
+     */
+    public function installFoundation(Request $request)
+    {
+        $result = $this->knowledge->installFoundationNotes($request->user());
+
+        return response()->json($result);
     }
 
     public function updateKnowledge(Request $request, int $entry)
