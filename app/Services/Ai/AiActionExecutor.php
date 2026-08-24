@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\V1\Operations\CartOperationsController;
 use App\Http\Controllers\Api\V1\Operations\CheckoutController;
 use App\Http\Controllers\Api\V1\Operations\PaymentOperationsController;
 use App\Http\Controllers\Api\V1\Operations\ReportBuilderController;
+use App\Http\Controllers\Api\V1\LpoMstController;
 use App\Http\Controllers\Api\V1\ProductController;
 use App\Http\Controllers\Api\V1\SupplierController;
 use App\Http\Requests\Sales\AddCartLineRequest;
@@ -50,6 +51,7 @@ class AiActionExecutor
             'create_held_order' => $this->createSalesOrder($user, $params, hold: true),
             'create_product' => $this->createProduct($user, $params),
             'create_supplier' => $this->createSupplier($user, $params),
+            'create_lpo' => $this->createLpo($user, $params),
             'create_customer' => $this->createCustomer($user, $params),
             'create_employee' => $this->createEmployee($user, $params),
             'create_report_template' => $this->createReportTemplate($user, $params),
@@ -363,6 +365,180 @@ class AiActionExecutor
                 'path' => isset($supplier['id']) ? '/suppliers/'.$supplier['id'] : '/suppliers',
             ],
         ];
+    }
+
+    /**
+     * Create a purchase order (LPO) via POST /lpo-mst/full.
+     * Lines may be supplied directly, or seeded from a sales order (sale_id / order_num)
+     * using each product's last cost price — supplier is still required.
+     *
+     * @param  array<string, mixed>  $params
+     */
+    protected function createLpo(User $user, array $params): array
+    {
+        $this->assertModule($user, 'customers_suppliers');
+        $this->assertPermission($user, 'purchasing.lpo.create');
+
+        $supplierId = (int) ($params['supplier_id'] ?? 0);
+        if ($supplierId <= 0) {
+            throw ValidationException::withMessages([
+                'supplier_id' => ['Select a supplier for this purchase order.'],
+            ]);
+        }
+
+        Supplier::query()
+            ->where('organization_id', $user->organization_id)
+            ->whereKey($supplierId)
+            ->first() ?? throw ValidationException::withMessages([
+                'supplier_id' => ['Supplier was not found in your organization.'],
+            ]);
+
+        $lines = is_array($params['lines'] ?? null) ? $params['lines'] : [];
+        $fromSale = null;
+        if ($lines === []) {
+            $seeded = $this->lpoLinesFromSale($user, $params);
+            $lines = $seeded['lines'];
+            $fromSale = $seeded['sale'];
+        }
+
+        if ($lines === []) {
+            throw ValidationException::withMessages([
+                'lines' => ['Add at least one product line, or provide a sales order number to copy products from.'],
+            ]);
+        }
+
+        $normalized = [];
+        foreach ($lines as $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+            $productCode = trim((string) ($line['product_code'] ?? ''));
+            $qty = (float) ($line['ordered_qty'] ?? $line['quantity'] ?? 0);
+            if ($productCode === '' || $qty <= 0) {
+                continue;
+            }
+
+            $product = Product::query()
+                ->where('organization_id', $user->organization_id)
+                ->whereNull('deleted_at')
+                ->where('product_code', $productCode)
+                ->first();
+            if (! $product) {
+                throw ValidationException::withMessages([
+                    'lines' => ["Product [{$productCode}] was not found in your catalog."],
+                ]);
+            }
+
+            $cost = array_key_exists('cost_price', $line) && $line['cost_price'] !== '' && $line['cost_price'] !== null
+                ? (float) $line['cost_price']
+                : (float) ($product->last_cost_price ?? 0);
+
+            $normalized[] = [
+                'product_code' => $productCode,
+                'ordered_qty' => $qty,
+                'cost_price' => $cost,
+                'uom' => $line['uom'] ?? null,
+            ];
+        }
+
+        if ($normalized === []) {
+            throw ValidationException::withMessages([
+                'lines' => ['No valid product lines were provided.'],
+            ]);
+        }
+
+        $reference = trim((string) ($params['reference_number'] ?? ''));
+        if ($reference === '' && $fromSale) {
+            $orderLabel = $fromSale->order_num
+                ?: $fromSale->pos_order_num
+                ?: ('Sale #'.$fromSale->id);
+            $reference = 'From order '.$orderLabel;
+        }
+
+        $payload = array_filter([
+            'supplier_id' => $supplierId,
+            'branch_id' => $params['branch_id'] ?? $user->branch_id,
+            'reference_number' => $reference !== '' ? $reference : null,
+            'due_date' => $params['due_date'] ?? null,
+            'delivery_address' => $params['delivery_address'] ?? null,
+            'terms' => $params['terms'] ?? null,
+            'instructions' => $params['instructions'] ?? null,
+            'lines' => $normalized,
+        ], fn ($v) => $v !== null && $v !== '');
+
+        $req = Request::create('/lpo-mst/full', 'POST', $payload);
+        $req->setUserResolver(fn () => $user);
+
+        $data = app(LpoMstController::class)->storeFull($req)->getData(true);
+        $lpoNo = $data['lpo_no'] ?? $data['lpo']['lpo_no'] ?? null;
+
+        return [
+            'success' => true,
+            'message' => $lpoNo
+                ? "Purchase order (LPO) {$lpoNo} created."
+                : 'Purchase order (LPO) created.',
+            'result' => [
+                'lpo_no' => $lpoNo,
+                'supplier_id' => $supplierId,
+                'line_count' => count($normalized),
+                'from_sale_id' => $fromSale?->id,
+                'path' => $lpoNo ? '/lpo/'.$lpoNo : '/lpo',
+            ],
+        ];
+    }
+
+    /**
+     * Seed LPO lines from a sales order's products (quantities + catalog cost).
+     *
+     * @param  array<string, mixed>  $params
+     * @return array{lines: list<array<string, mixed>>, sale: ?Sale}
+     */
+    protected function lpoLinesFromSale(User $user, array $params): array
+    {
+        $saleId = (int) ($params['sale_id'] ?? 0);
+        $orderRef = trim((string) ($params['order_num'] ?? $params['order_ref'] ?? $params['sale_ref'] ?? ''));
+
+        $query = Sale::query()
+            ->with('items')
+            ->where('organization_id', $user->organization_id)
+            ->whereNull('deleted_at');
+
+        if ($saleId > 0) {
+            $sale = (clone $query)->whereKey($saleId)->first();
+        } elseif ($orderRef !== '') {
+            $sale = (clone $query)
+                ->where(function ($q) use ($orderRef) {
+                    $q->where('order_num', $orderRef)
+                        ->orWhere('pos_order_num', $orderRef)
+                        ->orWhere('id', ctype_digit($orderRef) ? (int) $orderRef : 0);
+                })
+                ->orderByDesc('id')
+                ->first();
+        } else {
+            return ['lines' => [], 'sale' => null];
+        }
+
+        if (! $sale) {
+            throw ValidationException::withMessages([
+                'order_num' => ['No sales order matched that reference in your organization.'],
+            ]);
+        }
+
+        $lines = [];
+        foreach ($sale->items as $item) {
+            $code = trim((string) ($item->product_code ?? ''));
+            $qty = (float) ($item->quantity ?? 0);
+            if ($code === '' || $qty <= 0) {
+                continue;
+            }
+            $lines[] = [
+                'product_code' => $code,
+                'ordered_qty' => $qty,
+                'uom' => $item->uom,
+            ];
+        }
+
+        return ['lines' => $lines, 'sale' => $sale];
     }
 
     /** @param  array<string, mixed>  $params */

@@ -45,4 +45,48 @@ class AiIntentResolverTest extends TestCase
         $this->assertTrue($this->resolver->isDataQuestion('Whats my daily sales for yesterday'));
         $this->assertFalse($this->resolver->isDataQuestion('Create product Widget'));
     }
+
+    public function test_create_lpo_inferred_and_not_open_or_sales_order(): void
+    {
+        $this->assertSame(
+            'create_lpo',
+            $this->resolver->inferCreateAction('If I gave you an order can you create an lpo for me?', [], '/dashboard')['type'] ?? null,
+        );
+        $this->assertSame(
+            'create_lpo',
+            $this->resolver->inferCreateAction('If i gave you an order can you create an lpo for me /', [], '/dashboard')['type'] ?? null,
+        );
+        $this->assertSame(
+            'create_lpo',
+            $this->resolver->inferCreateAction('If i gave you an order can you create an lpo for me/', [], null)['type'] ?? null,
+        );
+        $this->assertSame(
+            'create_lpo',
+            $this->resolver->inferCreateAction('Create a purchase order for supplier ABC', [], null)['type'] ?? null,
+        );
+        $this->assertSame(
+            'create_lpo',
+            $this->resolver->inferCreateAction('Draft LPO from order ORD-1001', [], null)['type'] ?? null,
+        );
+        $this->assertSame(
+            'open_lpo',
+            $this->resolver->inferCreateAction('Open purchase orders', [], null)['type'] ?? null,
+        );
+    }
+
+    public function test_normalize_for_intent_strips_trailing_signs(): void
+    {
+        $this->assertSame(
+            'if i gave you an order can you create an lpo for me',
+            $this->resolver->normalizeForIntent('If i gave you an order can you create an lpo for me?'),
+        );
+        $this->assertSame(
+            'if i gave you an order can you create an lpo for me',
+            $this->resolver->normalizeForIntent('If i gave you an order can you create an lpo for me /'),
+        );
+        $this->assertSame(
+            'if i gave you an order can you create an lpo for me',
+            $this->resolver->normalizeForIntent('If i gave you an order can you create an lpo for me!!!'),
+        );
+    }
 }

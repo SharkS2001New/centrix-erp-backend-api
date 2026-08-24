@@ -64,8 +64,8 @@ return [
             '/reports/hospitality-eod-cashier', '/reports/hospitality-profit-loss',
         ],
         'module_catalog_keys' => ['hospitality', 'catalogue', 'inventory', 'purchasing', 'reports'],
-        'action_types' => ['create_product', 'create_supplier', 'create_report_template'],
-        'workflow_keys' => ['create_product', 'create_supplier', 'create_report_template'],
+        'action_types' => ['create_product', 'create_supplier', 'create_lpo', 'create_report_template'],
+        'workflow_keys' => ['create_product', 'create_supplier', 'create_lpo', 'create_report_template'],
         'keywords' => [
             'hotel', 'hospitality', 'room', 'reservation', 'front desk', 'check-in', 'check-out', 'folio',
             'housekeeping', 'night audit', 'outlet', 'menu', 'fnb', 'f&b', 'occupancy', 'adr', 'revpar',
@@ -89,11 +89,11 @@ return [
         'report_exclude_paths' => ['/reports/payroll-summary'],
         'module_catalog_keys' => ['catalogue', 'sales', 'inventory', 'purchasing', 'reports'],
         'action_types' => [
-            'create_sales_order', 'create_held_order', 'create_product', 'create_supplier', 'create_customer',
-            'create_report_template', 'record_customer_payment',
+            'create_sales_order', 'create_held_order', 'create_product', 'create_supplier', 'create_lpo', 'create_customer',
+            'create_report_template', 'record_customer_payment', 'open_lpo', 'navigate_orders',
         ],
         'workflow_keys' => [
-            'create_product', 'create_supplier', 'create_customer', 'create_sales_order', 'create_held_order',
+            'create_product', 'create_supplier', 'create_lpo', 'create_customer', 'create_sales_order', 'create_held_order',
             'record_customer_payment', 'create_report_template',
         ],
         'keywords' => [

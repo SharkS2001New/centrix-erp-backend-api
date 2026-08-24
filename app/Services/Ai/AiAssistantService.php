@@ -727,6 +727,7 @@ RULES:
 10. Formulas: plain text with real field names (Stock Value = Cost Price × Stock on Hand). Never LaTeX.
 11. Markdown headings (# ## ###) are fine; the UI renders them as real headings.
 12. Custom report builder: ask what to name the report, then emit create_report_template with name + instruction (or wait for confirmation). After save, give /reports/custom/{id}.
+13. Focus on the user's meaning, not punctuation or stray symbols (trailing ?, /, !, …). "…create an lpo for me /" means the same as with "?".
 
 ```action
 {"type":"create_product","summary":"New product Widget","params":{"product_name":"Widget","unit_price":150}}

@@ -93,7 +93,7 @@ class AiSystemContextBuilder
         if ($this->needsLookup($lower, 'product', 'catalog', 'sku')) {
             $context['entity_detail']['product'] = $this->entitySchemas->forEntityWithOptions($contextUser, 'product');
         }
-        if ($this->needsLookup($lower, 'employee', 'hire', 'staff', 'hr')) {
+        if ($this->needsLookup($lower, 'employee', 'hire', 'staff', 'hr', 'salary', 'payroll', 'nssf', 'paye')) {
             $context['entity_detail']['employee'] = $this->entitySchemas->forEntityWithOptions($contextUser, 'employee');
         }
         if ($this->needsLookup($lower, 'order', 'sale', 'checkout')) {
@@ -115,7 +115,7 @@ class AiSystemContextBuilder
         if ($this->needsLookup($lower, 'report', 'builder', 'template')) {
             $context['report_builder_schema'] = $this->reportBuilder->schema();
         }
-        if ($this->needsLookup($lower, 'employee', 'hire', 'staff', 'hr')) {
+        if ($this->needsLookup($lower, 'employee', 'hire', 'staff', 'hr', 'salary', 'payroll', 'department')) {
             $context['hr_reference'] = $this->hrReference($contextUser);
         }
         if ($this->needsLookup($lower, 'customer', 'order', 'held')) {

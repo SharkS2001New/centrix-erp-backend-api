@@ -36,7 +36,8 @@ class GetEmployeeAttendanceTool implements AiToolInterface
         return 'Look up live Centrix employee attendance (clock in/out, hours, late, status). '
             .'Use when the user asks whether someone is in, who was late/absent, or an employee\'s attendance. '
             .'Pass employee_name (full name, employee code, or login username). '
-            .'Use relative_date=today/yesterday/last_7_days. Never invent attendance — always call this tool. '
+            .'Use relative_date=today/yesterday/last_7_days/this_month/last_month, or year_month=YYYY-MM, or from_date/to_date. '
+            .'Never invent attendance — always call this tool. '
             .'In the reply, identify people by name and username, never by numeric id.';
     }
 
@@ -51,8 +52,12 @@ class GetEmployeeAttendanceTool implements AiToolInterface
                 ],
                 'relative_date' => [
                     'type' => 'string',
-                    'enum' => ['today', 'yesterday', 'last_7_days'],
-                    'description' => 'Prefer this for "today", "yesterday", or "this week".',
+                    'enum' => ['today', 'yesterday', 'last_7_days', 'this_month', 'last_month', 'this_month_to_date'],
+                    'description' => 'Prefer this for "today", "yesterday", "this week", or a full calendar month.',
+                ],
+                'year_month' => [
+                    'type' => 'string',
+                    'description' => 'Calendar month YYYY-MM (e.g. 2026-08).',
                 ],
                 'date' => [
                     'type' => 'string',
@@ -198,7 +203,7 @@ class GetEmployeeAttendanceTool implements AiToolInterface
         $this->access->applyBranchListFilter($query, $user);
 
         return $query->orderByDesc('attendance_date')
-            ->limit(31)
+            ->limit(62)
             ->get()
             ->map(fn (EmployeeAttendance $row) => $this->presentDay($row))
             ->all();

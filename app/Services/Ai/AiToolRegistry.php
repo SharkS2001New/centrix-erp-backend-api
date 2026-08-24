@@ -7,8 +7,12 @@ use App\Models\User;
 use App\Services\Ai\Tools\AiToolInterface;
 use App\Services\Ai\Tools\CreateCustomReportTool;
 use App\Services\Ai\Tools\FindScreenTool;
+use App\Services\Ai\Tools\GetCustomerStatementTool;
 use App\Services\Ai\Tools\GetDebtorsSummaryTool;
 use App\Services\Ai\Tools\GetEmployeeAttendanceTool;
+use App\Services\Ai\Tools\GetEmployeeDetailsTool;
+use App\Services\Ai\Tools\GetEmployeePayrollPreviewTool;
+use App\Services\Ai\Tools\GetSupplierStatementTool;
 use App\Services\Ai\Tools\SearchTrainingNotesTool;
 use App\Services\Ai\Tools\GetProductDetailsTool;
 use App\Services\Ai\Tools\GetPurchasingOverviewTool;
@@ -35,9 +39,13 @@ class AiToolRegistry
         protected SearchTrainingNotesTool $searchTrainingNotes,
         protected GetPurchasingOverviewTool $getPurchasingOverview,
         protected GetDebtorsSummaryTool $getDebtorsSummary,
+        protected GetCustomerStatementTool $getCustomerStatement,
+        protected GetSupplierStatementTool $getSupplierStatement,
         protected GetTillHealthTool $getTillHealth,
         protected GetRouteOrdersTool $getRouteOrders,
         protected GetEmployeeAttendanceTool $getEmployeeAttendance,
+        protected GetEmployeeDetailsTool $getEmployeeDetails,
+        protected GetEmployeePayrollPreviewTool $getEmployeePayrollPreview,
         protected CreateCustomReportTool $createCustomReport,
     ) {}
 
@@ -155,9 +163,13 @@ class AiToolRegistry
             $this->searchTrainingNotes,
             $this->getPurchasingOverview,
             $this->getDebtorsSummary,
+            $this->getCustomerStatement,
+            $this->getSupplierStatement,
             $this->getTillHealth,
             $this->getRouteOrders,
             $this->getEmployeeAttendance,
+            $this->getEmployeeDetails,
+            $this->getEmployeePayrollPreview,
             $this->createCustomReport,
         ];
 

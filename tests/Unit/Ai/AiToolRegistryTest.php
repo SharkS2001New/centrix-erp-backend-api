@@ -25,9 +25,13 @@ class AiToolRegistryTest extends TestCase
             'search_training_notes',
             'get_purchasing_overview',
             'get_debtors_summary',
+            'get_customer_statement',
+            'get_supplier_statement',
             'get_till_health',
             'get_route_orders',
             'get_employee_attendance',
+            'get_employee_details',
+            'get_employee_payroll_preview',
             'create_custom_report',
         ] as $expected) {
             $this->assertContains($expected, $names);

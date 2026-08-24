@@ -13,7 +13,7 @@ class AiIntentResolver
      */
     public function isDataQuestion(string $message): bool
     {
-        $text = strtolower(trim($message));
+        $text = $this->normalizeForIntent($message);
 
         return (bool) preg_match(
             '/\b(sales|sold|revenue|turnover|daily|weekly|monthly|yesterday|today|last\s+week|cashier|till|stock|inventory|debtor|receivable|report|summary|how\s+much|how\s+many|total|analytics|performance|margin|forecast|best\s+seller|top\s+seller|attendance|clock(?:ed|s)?|present|absent|late|lateness)\b/i',
@@ -25,7 +25,7 @@ class AiIntentResolver
     {
         return (bool) preg_match(
             '/^(cancel|never\s*mind|forget\s+(?:that|it)|stop|discard|ignore)\b/i',
-            trim($message),
+            $this->normalizeForIntent($message),
         );
     }
 
@@ -35,8 +35,8 @@ class AiIntentResolver
             return null;
         }
 
-        // Match create intent from the current message only — not stale history.
-        $text = strtolower($message);
+        // Match on wording — ignore trailing punctuation / stray symbols (?, /, !, …).
+        $text = $this->normalizeForIntent($message);
 
         $pathEntity = $this->entityFromPath($pathname);
 
@@ -69,6 +69,14 @@ class AiIntentResolver
                 'type' => 'create_employee',
                 'summary' => 'Create employee',
                 'params' => $this->extractEmployeeParams($message, $history),
+            ];
+        }
+
+        if ($this->matchesLpoCreate($text)) {
+            return [
+                'type' => 'create_lpo',
+                'summary' => 'Create purchase order (LPO)',
+                'params' => $this->extractLpoParams($message, $history),
             ];
         }
 
@@ -110,7 +118,10 @@ class AiIntentResolver
      */
     protected function inferNavigateOrders(string $message): ?array
     {
-        $text = strtolower($message);
+        $text = $this->normalizeForIntent($message);
+        if (preg_match('/\b(lpo|purchase\s+orders?)\b/', $text)) {
+            return null;
+        }
         if (! preg_match('/\b(show|list|find|filter|open)\b.*\b(order|orders|sale|sales)\b/', $text)
             && ! preg_match('/\borders?\s+(with|containing|for)\b/', $text)
             && ! preg_match('/\bwho\s+bought\b/', $text)) {
@@ -151,10 +162,80 @@ class AiIntentResolver
         ];
     }
 
+    protected function matchesLpoCreate(string $text): bool
+    {
+        if (preg_match('/\b(create|draft|make|raise|generate|issue|new)\b.{0,40}\b(lpo|purchase\s+orders?)\b/', $text)) {
+            return true;
+        }
+        if (preg_match('/\b(lpo|purchase\s+order)\b.{0,40}\b(from|for)\b.{0,40}\b(order|sale|sales)\b/', $text)) {
+            return true;
+        }
+        if (preg_match('/\b(gave|give|giving)\b.{0,30}\border\b.{0,40}\b(lpo|purchase\s+order)\b/', $text)) {
+            return true;
+        }
+        if (preg_match('/\bcan\s+you\s+create\b.{0,40}\b(lpo|purchase\s+order)\b/', $text)) {
+            return true;
+        }
+
+        return false;
+    }
+
     protected function matchesOpenLpo(string $text): bool
     {
-        return (bool) preg_match('/\b(open|create|draft)\b.*\b(lpo|purchase\s+order|procurement)\b/', $text)
-            || ((bool) preg_match('/\b(lpo|purchase\s+order)\b/', $text) && (bool) preg_match('/\b(suggest|draft|need)\b/', $text));
+        if ($this->matchesLpoCreate($text)) {
+            return false;
+        }
+
+        return (bool) preg_match('/\b(open|show|list|view|where)\b.{0,40}\b(lpo|purchase\s+orders?)\b/', $text)
+            || ((bool) preg_match('/\b(lpo|purchase\s+orders?)\b/', $text)
+                && (bool) preg_match('/\b(suggest|need|find)\b/', $text));
+    }
+
+    /**
+     * @param  array<int, array{role?: string, content?: string}>  $history
+     * @return array<string, mixed>
+     */
+    protected function extractLpoParams(string $message, array $history = []): array
+    {
+        $params = [];
+        $sources = [$message];
+        foreach (array_reverse($history) as $turn) {
+            if (($turn['role'] ?? '') === 'user') {
+                $sources[] = (string) ($turn['content'] ?? '');
+            }
+        }
+        $blob = implode("\n", $sources);
+
+        if (preg_match('/\b(?:order|sale|receipt)\s*[#:]?\s*([A-Z0-9][\w\-\/]{2,40})\b/i', $blob, $m)) {
+            $params['order_num'] = trim($m[1]);
+        } elseif (preg_match('/\b(ORD[-\w]+|SO[-\w]+|POS[-\w]+)\b/i', $blob, $m)) {
+            $params['order_num'] = trim($m[1]);
+        }
+
+        if (preg_match('/\bsale_id\s*[:=]?\s*(\d+)\b/i', $blob, $m)) {
+            $params['sale_id'] = (int) $m[1];
+        }
+
+        return $params;
+    }
+
+    /**
+     * Focus matching on words, not trailing punctuation or stray symbols.
+     * "…lpo for me?" / "…lpo for me /" / "…lpo for me!!!" → same intent text.
+     */
+    public function normalizeForIntent(string $message): string
+    {
+        $text = strtolower(trim($message));
+        // Soft hyphens / zero-width / odd spaces
+        $text = preg_replace('/[\x{00AD}\x{200B}-\x{200D}\x{FEFF}]/u', '', $text) ?? $text;
+        $text = preg_replace('/\s+/u', ' ', $text) ?? $text;
+        // Strip trailing punctuation / symbols the user typed instead of "?" (?, !, /, \, ., …, quotes, etc.)
+        $text = preg_replace('/[\s\/\\\\|~`\'".,;:!?\-–—…•·]+$/u', '', $text) ?? $text;
+        // Also strip a trailing run of the same after leftover spaces
+        $text = rtrim($text);
+        $text = preg_replace('/[\s\/\\\\|~`\'".,;:!?\-–—…•·]+$/u', '', $text) ?? $text;
+
+        return trim($text);
     }
 
     protected function entityFromPath(?string $pathname): ?string
@@ -194,6 +275,10 @@ class AiIntentResolver
 
     protected function matchesSupplierCreate(string $text): bool
     {
+        if (preg_match('/\b(lpo|purchase\s+orders?)\b/', $text)) {
+            return false;
+        }
+
         return (bool) preg_match('/\b(create|add|new|register)\b.*\bsupplier/i', $text)
             || (bool) preg_match('/\bsupplier\b.*\b(create|add|new)\b/i', $text);
     }
@@ -211,6 +296,10 @@ class AiIntentResolver
 
     protected function matchesOrderCreate(string $text): bool
     {
+        if ($this->matchesLpoCreate($text) || preg_match('/\bpurchase\s+order\b/', $text)) {
+            return false;
+        }
+
         return (bool) preg_match('/\b(create|add|new|place)\b.*\b(order|sale)/i', $text)
             || (bool) preg_match('/\b(order|sale)\b.*\b(create|add|new)\b/i', $text);
     }

@@ -38,7 +38,9 @@ class AiFormSpecBuilder
             }
 
             if (($field['type'] ?? '') === 'line_items') {
-                $hints[] = 'Line items: tell me product codes and quantities in chat, or use Sales → Orders.';
+                $hints[] = $type === 'create_lpo'
+                    ? 'Line items: tell me product codes, quantities, and costs in chat — or pass a sales order number to copy products from.'
+                    : 'Line items: tell me product codes and quantities in chat, or use Sales → Orders.';
 
                 continue;
             }
@@ -74,6 +76,7 @@ class AiFormSpecBuilder
                 'record_customer_payment' => 'Confirm & record payment',
                 'create_supplier' => 'Confirm & add supplier',
                 'create_customer' => 'Confirm & add customer',
+                'create_lpo' => 'Confirm & create LPO',
                 default => 'Confirm & create',
             },
         ];

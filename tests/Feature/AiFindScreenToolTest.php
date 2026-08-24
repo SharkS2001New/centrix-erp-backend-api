@@ -51,6 +51,7 @@ class AiFindScreenToolTest extends TestCase
         $this->assertContains('get_sales_summary', $names);
         $this->assertContains('get_sales_by_cashier', $names);
         $this->assertContains('get_employee_attendance', $names);
+        $this->assertContains('get_employee_details', $names);
         $this->assertContains('create_custom_report', $names);
     }
 

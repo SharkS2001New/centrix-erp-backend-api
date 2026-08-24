@@ -223,6 +223,13 @@ return [
             'module' => 'customers_suppliers',
         ],
         [
+            'type' => 'create_lpo',
+            'label' => 'Create a purchase order (LPO)',
+            'description' => 'Create an LPO with supplier and product lines. Can seed lines from a sales order number.',
+            'permission' => 'purchasing.lpo.create',
+            'module' => 'customers_suppliers',
+        ],
+        [
             'type' => 'create_customer',
             'label' => 'Create a customer',
             'description' => 'Add a new customer for sales and receivables.',
