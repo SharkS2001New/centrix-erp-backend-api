@@ -46,6 +46,7 @@ class LocalPrintingSettingsResolver
      */
     public static function normalize(array $settings): array
     {
+        $raw = $settings;
         $defaults = self::defaults();
         $out = array_merge($defaults, $settings);
 
@@ -59,7 +60,14 @@ class LocalPrintingSettingsResolver
         }
 
         $out['printer_name'] = trim((string) ($out['printer_name'] ?? ''));
-        $out['kitchen_printer_name'] = trim((string) ($out['kitchen_printer_name'] ?? ''));
+        $kitchen = trim((string) ($out['kitchen_printer_name'] ?? ''));
+        $out['kitchen_printer_name'] = $kitchen;
+        $hadSecondCopyFlag = array_key_exists('second_copy_enabled', $raw)
+            || array_key_exists('secondCopyEnabled', $raw);
+        // Legacy: a saved second/kitchen printer implies the feature was already in use.
+        $out['second_copy_enabled'] = $hadSecondCopyFlag
+            ? filter_var($raw['second_copy_enabled'] ?? $raw['secondCopyEnabled'], FILTER_VALIDATE_BOOLEAN)
+            : $kitchen !== '';
         $out['copies'] = max(1, min(10, (int) ($out['copies'] ?? 1)));
         $out['fallback_to_browser'] = true;
         $out['require_qz'] = false;

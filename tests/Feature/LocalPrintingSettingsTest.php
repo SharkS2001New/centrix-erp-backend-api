@@ -79,11 +79,30 @@ class LocalPrintingSettingsTest extends TestCase
             'provider' => 'agent',
             'printer_name' => 'Star TSP143',
             'kitchen_printer_name' => 'Kitchen EPSON',
+            'second_copy_enabled' => true,
             'fallback_to_browser' => true,
         ])
             ->assertOk()
             ->assertJsonPath('local_printing.provider', 'agent')
             ->assertJsonPath('local_printing.printer_name', 'Star TSP143')
-            ->assertJsonPath('local_printing.kitchen_printer_name', 'Kitchen EPSON');
+            ->assertJsonPath('local_printing.kitchen_printer_name', 'Kitchen EPSON')
+            ->assertJsonPath('local_printing.second_copy_enabled', true);
+    }
+
+    public function test_second_copy_can_be_disabled_while_keeping_printer_name(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $this->patchJson('/api/v1/erp/settings/local-printing', [
+            'provider' => 'agent',
+            'printer_name' => 'Star TSP143',
+            'kitchen_printer_name' => 'Office EPSON',
+            'second_copy_enabled' => false,
+            'fallback_to_browser' => true,
+        ])
+            ->assertOk()
+            ->assertJsonPath('local_printing.kitchen_printer_name', 'Office EPSON')
+            ->assertJsonPath('local_printing.second_copy_enabled', false);
     }
 }

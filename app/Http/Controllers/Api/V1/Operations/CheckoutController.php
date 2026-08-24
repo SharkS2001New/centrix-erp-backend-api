@@ -1916,12 +1916,15 @@ class CheckoutController extends Controller
                 if ($method === '') {
                     $method = 'CASH';
                 }
-                $adjustmentRows = [[
-                    'adjustment_type' => 'return',
-                    'method_code' => $method,
-                    'amount' => $expectedReturn,
-                    'reference_number' => null,
-                ]];
+                $adjustmentRows = [];
+                foreach ($this->expandCompositePaymentMethodRows($method, $expectedReturn) as $part) {
+                    $adjustmentRows[] = [
+                        'adjustment_type' => 'return',
+                        'method_code' => $part['method_code'],
+                        'amount' => $part['amount'],
+                        'reference_number' => null,
+                    ];
+                }
                 $returnTotal = $expectedReturn;
             }
             if ($expectedReturn > 0.009 && abs($returnTotal - $expectedReturn) > 0.02) {
@@ -2049,15 +2052,106 @@ class CheckoutController extends Controller
                 continue;
             }
             $reference = trim((string) ($row['reference_number'] ?? ''));
-            $normalized[] = [
-                'method_code' => $methodCode,
-                'amount' => $amount,
-                'adjustment_type' => $type,
-                'reference_number' => $reference !== '' ? $reference : null,
-            ];
+            $referenceNumber = $reference !== '' ? $reference : null;
+            foreach ($this->expandCompositePaymentMethodRows($methodCode, $amount) as $part) {
+                $normalized[] = [
+                    'method_code' => $part['method_code'],
+                    'amount' => $part['amount'],
+                    'adjustment_type' => $type,
+                    'reference_number' => $referenceNumber,
+                ];
+            }
         }
 
         return $normalized;
+    }
+
+    /**
+     * Cashiers type CM / CE / MK for mixed Cash+M-Pesa (etc.). Expand before
+     * payment_methods lookup so sync never fails with "Payment method CM is not configured."
+     *
+     * @return list<array{method_code: string, amount: float}>
+     */
+    protected function expandCompositePaymentMethodRows(string $methodCode, float $amount): array
+    {
+        $codes = $this->expandCompositePaymentMethodCodes($methodCode);
+        if (count($codes) <= 1) {
+            return [[
+                'method_code' => $codes[0] ?? (strtoupper(trim($methodCode)) ?: 'CASH'),
+                'amount' => round($amount, 2),
+            ]];
+        }
+
+        $n = count($codes);
+        $parts = [];
+        $allocated = 0.0;
+        foreach ($codes as $index => $code) {
+            if ($index === $n - 1) {
+                $share = round($amount - $allocated, 2);
+            } else {
+                $share = round($amount / $n, 2);
+                $allocated = round($allocated + $share, 2);
+            }
+            if ($share > 0.009) {
+                $parts[] = ['method_code' => $code, 'amount' => $share];
+            }
+        }
+
+        return $parts !== [] ? $parts : [[
+            'method_code' => $codes[0],
+            'amount' => round($amount, 2),
+        ]];
+    }
+
+    /**
+     * @return list<string>
+     */
+    protected function expandCompositePaymentMethodCodes(string $methodCode): array
+    {
+        $normalized = strtoupper(str_replace([' ', '-', '_', '/', '+', '.'], '', trim($methodCode)));
+        if ($normalized === '') {
+            return ['CASH'];
+        }
+
+        $singleAliases = [
+            'C' => 'CASH',
+            'CASH' => 'CASH',
+            'M' => 'MPESA',
+            'MPESA' => 'MPESA',
+            'E' => 'EQUITY',
+            'EQUITY' => 'EQUITY',
+            'K' => 'KCB',
+            'KCB' => 'KCB',
+            'ECO' => 'ECOBANK',
+            'ECOBANK' => 'ECOBANK',
+            'CARD' => 'CARD',
+            'BANK' => 'BANK',
+            'CREDIT' => 'CREDIT',
+        ];
+        if (isset($singleAliases[$normalized])) {
+            return [$singleAliases[$normalized]];
+        }
+
+        if (preg_match('/^[CMEK]{2,4}$/', $normalized) === 1) {
+            $letterMap = [
+                'C' => 'CASH',
+                'M' => 'MPESA',
+                'E' => 'EQUITY',
+                'K' => 'KCB',
+            ];
+            $codes = [];
+            foreach (str_split($normalized) as $ch) {
+                $code = $letterMap[$ch] ?? null;
+                if ($code !== null && ! in_array($code, $codes, true)) {
+                    $codes[] = $code;
+                }
+            }
+            if (count($codes) >= 2) {
+                return $codes;
+            }
+        }
+
+        return [strtoupper(str_replace([' ', '-'], '_', trim($methodCode)))];
     }
 
     /**
@@ -2089,12 +2183,17 @@ class CheckoutController extends Controller
 
         $fallback = strtoupper(trim($fallbackMethodCode)) ?: 'CASH';
         if ($rows === []) {
-            return [[
-                'method_code' => $fallback,
-                'amount' => $expectedAbs,
-                'adjustment_type' => $type,
-                'reference_number' => null,
-            ]];
+            $expanded = [];
+            foreach ($this->expandCompositePaymentMethodRows($fallback, $expectedAbs) as $part) {
+                $expanded[] = [
+                    'method_code' => $part['method_code'],
+                    'amount' => $part['amount'],
+                    'adjustment_type' => $type,
+                    'reference_number' => null,
+                ];
+            }
+
+            return $expanded;
         }
 
         $sum = round(array_sum(array_map(

@@ -760,12 +760,12 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:admin.kra_responses.view');
         });
 
-        // List/show for checkout, collect-payment, drivers — not admin-module-only.
+        // List/show for checkout, collect-payment, drivers, External POS till — not admin-module-only.
         Route::apiResource('payment-methods', PaymentMethodController::class)
             ->only(['index', 'show'])
             ->middleware([
-                'erp.module:admin,sales,payments,customers_suppliers,distribution',
-                'erp.permission:admin.view|admin.payment_methods.view|purchasing.view|payments.view|payments.manage|payments.sale_payments.view|payments.sale_payments.create|sales.orders.view|sales.orders.edit|pos.checkout.create|driver.mobile|reports.view',
+                'erp.module:admin,sales,sales.pos,payments,customers_suppliers,distribution',
+                'erp.permission:admin.view|admin.payment_methods.view|purchasing.view|payments.view|payments.manage|payments.sale_payments.view|payments.sale_payments.create|sales.orders.view|sales.orders.edit|pos.checkout.create|pos.till|driver.mobile|reports.view',
             ]);
         // Branch pickers (HR employee form, sales, etc.) — not admin-module-only.
         Route::apiResource('branches', BranchController::class)

@@ -656,6 +656,33 @@ class TillSessionFlowTest extends TestCase
         $this->assertNotContains('Other Org Rent', $names);
     }
 
+    public function test_session_expense_resolves_cash_when_payment_method_omitted(): void
+    {
+        $groupId = (int) DB::table('expense_groups')
+            ->where('organization_id', $this->user->organization_id)
+            ->value('id');
+        $this->assertGreaterThan(0, $groupId);
+        $cashMethod = PaymentMethod::where('method_code', 'CASH')->firstOrFail();
+
+        $session = $this->openFreshSession(5000);
+
+        $groupsPayload = $this->getJson('/api/v1/pos/expense-groups')->assertOk()->json();
+        $this->assertEquals($cashMethod->id, (int) ($groupsPayload['cash_payment_method_id'] ?? 0));
+
+        $expense = $this->postJson("/api/v1/pos/sessions/{$session->id}/expenses", [
+            'expense_group_id' => $groupId,
+            'expense_amount' => 10100,
+            'description' => 'packing papers',
+        ])->assertCreated()->json();
+
+        $this->assertSame((int) $cashMethod->id, (int) $expense['payment_method_id']);
+        $this->assertSame((int) $session->id, (int) $expense['float_session_id']);
+        $this->assertEqualsWithDelta(10100, (float) $expense['expense_amount'], 0.01);
+
+        $listed = $this->getJson("/api/v1/pos/sessions/{$session->id}/expenses")->assertOk()->json('data');
+        $this->assertTrue(collect($listed)->contains(fn ($row) => (int) ($row['id'] ?? 0) === (int) $expense['id']));
+    }
+
     public function test_session_history_supports_date_filter_and_pagination(): void
     {
         $this->clearCashierSessionsForToday();

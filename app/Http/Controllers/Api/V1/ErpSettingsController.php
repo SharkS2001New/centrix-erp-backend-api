@@ -1536,6 +1536,7 @@ class ErpSettingsController extends Controller
             'provider' => ['sometimes', Rule::in(['browser', 'qz', 'qz-tray', 'qz_tray', 'agent', 'print-agent', 'print_agent'])],
             'printer_name' => 'sometimes|nullable|string|max:200',
             'kitchen_printer_name' => 'sometimes|nullable|string|max:200',
+            'second_copy_enabled' => 'sometimes|boolean',
             'copies' => 'sometimes|integer|min:1|max:10',
             'fallback_to_browser' => 'sometimes|boolean',
             'require_qz' => 'sometimes|boolean',

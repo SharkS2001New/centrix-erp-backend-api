@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Operations;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesBranchScope;
 use App\Http\Controllers\Controller;
 use App\Models\Expense;
+use App\Models\PaymentMethod;
 use App\Models\Till;
 use App\Models\TillFloatSession;
 use App\Services\Accounting\ExpenseJournalService;
@@ -14,6 +15,7 @@ use App\Services\Erp\FloatSessionValidator;
 use App\Services\Erp\OrderWorkflowService;
 use App\Services\Erp\TillSessionAuthorization;
 use App\Services\Erp\TillVarianceJournal;
+use App\Services\Organization\OrganizationReferenceDataService;
 use App\Services\Pos\TillReportMetrics;
 use App\Models\User;
 use Illuminate\Http\Request;
@@ -344,7 +346,7 @@ class TillOperationsController extends Controller
     {
         $orgId = (int) ($request->user()->organization_id ?? 0);
         if ($orgId <= 0) {
-            return response()->json(['data' => []]);
+            return response()->json(['data' => [], 'cash_payment_method_id' => null]);
         }
 
         $rows = DB::table('expense_groups')
@@ -353,7 +355,10 @@ class TillOperationsController extends Controller
             ->orderBy('group_name')
             ->get();
 
-        return response()->json(['data' => $rows]);
+        return response()->json([
+            'data' => $rows,
+            'cash_payment_method_id' => $this->resolveCashPaymentMethodId($orgId),
+        ]);
     }
 
     public function recordSessionExpense(Request $request, int $sessionId)
@@ -362,7 +367,8 @@ class TillOperationsController extends Controller
             'expense_group_id' => 'required|integer',
             'expense_amount' => 'required|numeric|min:0.01',
             'description' => 'required|string|min:1|max:200',
-            'payment_method_id' => 'required|integer',
+            // Optional — till payouts are always cash; External POS may not load /payment-methods.
+            'payment_method_id' => 'sometimes|nullable|integer',
         ]);
 
         $session = $this->findScopedTillSession($sessionId, $request->user());
@@ -384,6 +390,24 @@ class TillOperationsController extends Controller
             throw new InvalidArgumentException('Expense category not found for this organization.');
         }
 
+        $paymentMethodId = isset($data['payment_method_id']) ? (int) $data['payment_method_id'] : 0;
+        if ($paymentMethodId > 0) {
+            $methodOk = PaymentMethod::query()
+                ->where('id', $paymentMethodId)
+                ->where('organization_id', $organizationId)
+                ->exists();
+            if (! $methodOk) {
+                throw new InvalidArgumentException('Payment method not found for this organization.');
+            }
+        } else {
+            $paymentMethodId = $this->resolveCashPaymentMethodId($organizationId) ?? 0;
+        }
+        if ($paymentMethodId <= 0) {
+            throw new InvalidArgumentException(
+                'No active Cash payment method is configured. Ask an admin to enable Cash under Payment methods.',
+            );
+        }
+
         $expense = Expense::create([
             'organization_id' => $organizationId,
             'branch_id' => $session->branch_id,
@@ -392,7 +416,7 @@ class TillOperationsController extends Controller
             'description' => $data['description'] ?? null,
             'expense_amount' => $data['expense_amount'],
             'expense_date' => now()->toDateString(),
-            'payment_method_id' => $data['payment_method_id'],
+            'payment_method_id' => $paymentMethodId,
             'recorded_by' => $request->user()->id,
         ]);
 
@@ -403,11 +427,45 @@ class TillOperationsController extends Controller
             'float_session_id' => (int) $session->id,
             'expense_group_id' => (int) $data['expense_group_id'],
             'expense_amount' => (float) $data['expense_amount'],
-            'payment_method_id' => (int) $data['payment_method_id'],
+            'payment_method_id' => $paymentMethodId,
             'description' => $data['description'] ?? null,
         ]);
 
         return response()->json($expense, 201);
+    }
+
+    /**
+     * Active Cash tender for till payouts (org-scoped). Ensures defaults exist when missing.
+     */
+    protected function resolveCashPaymentMethodId(int $organizationId): ?int
+    {
+        if ($organizationId <= 0) {
+            return null;
+        }
+
+        app(OrganizationReferenceDataService::class)->ensurePaymentMethods($organizationId);
+
+        $exact = PaymentMethod::query()
+            ->where('organization_id', $organizationId)
+            ->whereRaw('UPPER(TRIM(method_code)) = ?', ['CASH'])
+            ->where(function ($query) {
+                $query->where('is_active', true)->orWhere('is_active', 1);
+            })
+            ->value('id');
+        if ($exact) {
+            return (int) $exact;
+        }
+
+        $fuzzy = PaymentMethod::query()
+            ->where('organization_id', $organizationId)
+            ->whereRaw('UPPER(method_code) LIKE ?', ['%CASH%'])
+            ->where(function ($query) {
+                $query->where('is_active', true)->orWhere('is_active', 1)->orWhereNull('is_active');
+            })
+            ->orderBy('id')
+            ->value('id');
+
+        return $fuzzy ? (int) $fuzzy : null;
     }
 
     public function listSessionExpenses(Request $request, int $sessionId)

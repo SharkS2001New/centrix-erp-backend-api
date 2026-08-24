@@ -42,26 +42,102 @@ class SalePaymentAdjustmentService
                 if ($methodCode === '') {
                     throw new InvalidArgumentException('Payment adjustment requires a method code.');
                 }
-                $method = $this->resolvePaymentMethod($orgId, $methodCode);
-                if (! $method) {
-                    throw new InvalidArgumentException("Payment method {$methodCode} is not configured.");
-                }
 
-                $created[] = SalePaymentAdjustment::create([
-                    'sale_id' => $sale->id,
-                    'payment_method_id' => $method->id,
-                    'amount' => $amount,
-                    'adjustment_type' => $type,
-                    'reference_number' => isset($row['reference_number'])
-                        ? trim((string) $row['reference_number']) ?: null
-                        : null,
-                    'float_session_id' => $floatSessionId,
-                    'paid_at' => $paidAt ?? now(),
-                ]);
+                foreach ($this->expandCompositePaymentMethodRows($methodCode, $amount) as $part) {
+                    $method = $this->resolvePaymentMethod($orgId, $part['method_code']);
+                    if (! $method) {
+                        throw new InvalidArgumentException("Payment method {$part['method_code']} is not configured.");
+                    }
+
+                    $created[] = SalePaymentAdjustment::create([
+                        'sale_id' => $sale->id,
+                        'payment_method_id' => $method->id,
+                        'amount' => $part['amount'],
+                        'adjustment_type' => $type,
+                        'reference_number' => isset($row['reference_number'])
+                            ? trim((string) $row['reference_number']) ?: null
+                            : null,
+                        'float_session_id' => $floatSessionId,
+                        'paid_at' => $paidAt ?? now(),
+                    ]);
+                }
             }
         });
 
         return $created;
+    }
+
+    /**
+     * Cashiers type CM for Cash+M-Pesa mixed tender — expand before catalog lookup.
+     *
+     * @return list<array{method_code: string, amount: float}>
+     */
+    protected function expandCompositePaymentMethodRows(string $methodCode, float $amount): array
+    {
+        $normalized = strtoupper(str_replace([' ', '-', '_', '/', '+', '.'], '', trim($methodCode)));
+        $codes = [$normalized !== '' ? $normalized : 'CASH'];
+
+        $singleAliases = [
+            'C' => 'CASH',
+            'CASH' => 'CASH',
+            'M' => 'MPESA',
+            'MPESA' => 'MPESA',
+            'E' => 'EQUITY',
+            'EQUITY' => 'EQUITY',
+            'K' => 'KCB',
+            'KCB' => 'KCB',
+            'ECO' => 'ECOBANK',
+            'ECOBANK' => 'ECOBANK',
+            'CARD' => 'CARD',
+            'BANK' => 'BANK',
+        ];
+        if (isset($singleAliases[$normalized])) {
+            $codes = [$singleAliases[$normalized]];
+        } elseif (preg_match('/^[CMEK]{2,4}$/', $normalized) === 1) {
+            $letterMap = [
+                'C' => 'CASH',
+                'M' => 'MPESA',
+                'E' => 'EQUITY',
+                'K' => 'KCB',
+            ];
+            $expanded = [];
+            foreach (str_split($normalized) as $ch) {
+                $code = $letterMap[$ch] ?? null;
+                if ($code !== null && ! in_array($code, $expanded, true)) {
+                    $expanded[] = $code;
+                }
+            }
+            if (count($expanded) >= 2) {
+                $codes = $expanded;
+            }
+        }
+
+        if (count($codes) <= 1) {
+            return [[
+                'method_code' => $codes[0],
+                'amount' => round($amount, 2),
+            ]];
+        }
+
+        $n = count($codes);
+        $parts = [];
+        $allocated = 0.0;
+        foreach ($codes as $index => $code) {
+            if ($index === $n - 1) {
+                $share = round($amount - $allocated, 2);
+            } else {
+                $share = round($amount / $n, 2);
+                $allocated = round($allocated + $share, 2);
+            }
+            if ($share > 0.009) {
+                $parts[] = ['method_code' => $code, 'amount' => $share];
+            }
+        }
+
+        return $parts !== [] ? $parts : [[
+            'method_code' => $codes[0],
+            'amount' => round($amount, 2),
+        ]];
     }
 
     protected function resolvePaymentMethod(int $organizationId, string $methodCode): ?PaymentMethod
