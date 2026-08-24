@@ -46,6 +46,7 @@ class AiAssistantService
         ?string $pathname = null,
         ?string $conversationId = null,
         ?array $pageContext = null,
+        ?array $entityRefs = null,
     ): array {
         $teachResult = $this->tryCaptureUserTeaching($user, $message);
         if ($teachResult) {
@@ -77,6 +78,8 @@ class AiAssistantService
             $pendingAction = null;
         }
 
+        $normalizedRefs = \App\Support\EntityMentionRefs::normalize($entityRefs);
+
         // Create / write intents stay on the classic assistant (forms + confirm).
         // Tool chat is used for Gemini data Q&A (and OpenAI when AI_USE_TOOL_CHAT=true),
         // with automatic fallback to classic Gemini/OpenAI if the tool path fails.
@@ -95,6 +98,7 @@ class AiAssistantService
                 $workspaceId,
                 $pathname,
                 $pageContext,
+                $normalizedRefs,
             );
             if (! empty($toolResult['success']) || ! empty($toolResult['declined_off_topic'])) {
                 return $toolResult;
@@ -129,6 +133,10 @@ class AiAssistantService
         $systemContext = $this->contextBuilder->build($user, $message, $scope);
         if (is_array($pageContext) && $pageContext !== []) {
             $systemContext['page_context'] = $this->compactPageContext($pageContext);
+        }
+        if ($normalizedRefs !== []) {
+            $systemContext['resolved_entities'] = $normalizedRefs;
+            $systemContext['resolved_entity_lines'] = \App\Support\EntityMentionRefs::contextLines($normalizedRefs);
         }
         $messages = [
             ['role' => 'system', 'content' => $this->systemPrompt($scope)],

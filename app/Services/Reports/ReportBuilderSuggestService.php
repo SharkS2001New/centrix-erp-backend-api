@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Services\Ai\AiProviderFactory;
 use App\Services\Ai\AiSettingsResolver;
 use App\Support\AppTimezone;
+use App\Support\EntityMentionRefs;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -37,10 +38,20 @@ class ReportBuilderSuggestService
 
     /**
      * @param  list<string>|null  $selectedProductCodes
+     * @param  list<array<string, mixed>>|null  $entityRefs
+     * @param  list<string>|null  $selectedCustomerNums
+     * @param  list<int|string>|null  $selectedSupplierIds
      * @return array<string, mixed>
      */
-    public function suggest(User $user, string $instruction, ?string $workspaceId = null, ?array $selectedProductCodes = null): array
-    {
+    public function suggest(
+        User $user,
+        string $instruction,
+        ?string $workspaceId = null,
+        ?array $selectedProductCodes = null,
+        ?array $entityRefs = null,
+        ?array $selectedCustomerNums = null,
+        ?array $selectedSupplierIds = null,
+    ): array {
         $instruction = trim(preg_replace('/\s+/u', ' ', $instruction) ?? '');
         if ($instruction === '') {
             throw ValidationException::withMessages([
@@ -49,12 +60,13 @@ class ReportBuilderSuggestService
         }
 
         $wordCount = count(preg_split('/\s+/u', $instruction, -1, PREG_SPLIT_NO_EMPTY) ?: []);
-        if ($wordCount > 100) {
+        if ($wordCount > 150) {
             throw ValidationException::withMessages([
-                'instruction' => ['Keep the description under 100 words.'],
+                'instruction' => ['Keep the description under 150 words.'],
             ]);
         }
 
+        $refs = EntityMentionRefs::normalize($entityRefs);
         $schema = $this->builder->schema($workspaceId);
 
         $runtime = AiSettingsResolver::isAvailableForUser($user)
@@ -63,12 +75,21 @@ class ReportBuilderSuggestService
 
         if ($runtime) {
             try {
-                $draft = $this->askModel($runtime, $instruction, $this->compactSchema($schema));
+                $draft = $this->askModel($runtime, $instruction, $this->compactSchema($schema), $refs);
                 $normalized = $this->normalizeDraft($draft, $schema, $workspaceId);
                 $normalized['mode'] = 'ai';
                 $normalized['provider'] = (string) ($runtime['provider'] ?? 'openai');
 
-                return $this->attachFiltersAndProducts($normalized, $instruction, $user, $draft, $selectedProductCodes);
+                return $this->attachFiltersAndProducts(
+                    $normalized,
+                    $instruction,
+                    $user,
+                    $draft,
+                    $selectedProductCodes,
+                    $refs,
+                    $selectedCustomerNums,
+                    $selectedSupplierIds,
+                );
             } catch (ValidationException $e) {
                 Log::info('Report builder AI suggest fell back to local matching', [
                     'message' => $e->getMessage(),
@@ -77,12 +98,21 @@ class ReportBuilderSuggestService
             }
         }
 
-        $draft = $this->draftFromKeywords($instruction, $schema);
+        $draft = $this->draftFromKeywords($instruction, $schema, $refs);
         $normalized = $this->normalizeDraft($draft, $schema, $workspaceId);
         $normalized['mode'] = 'local';
         $normalized['provider'] = null;
 
-        return $this->attachFiltersAndProducts($normalized, $instruction, $user, $draft, $selectedProductCodes);
+        return $this->attachFiltersAndProducts(
+            $normalized,
+            $instruction,
+            $user,
+            $draft,
+            $selectedProductCodes,
+            $refs,
+            $selectedCustomerNums,
+            $selectedSupplierIds,
+        );
     }
 
     /**
@@ -154,9 +184,10 @@ class ReportBuilderSuggestService
      * Keyword / schema matching when org AI is off or the model call fails.
      *
      * @param  array<string, mixed>  $schema
+     * @param  list<array{type: string, id: ?string, code: ?string, label: string}>  $entityRefs
      * @return array<string, mixed>
      */
-    protected function draftFromKeywords(string $instruction, array $schema): array
+    protected function draftFromKeywords(string $instruction, array $schema, array $entityRefs = []): array
     {
         $text = mb_strtolower($instruction);
         $tokens = $this->tokenize($text);
@@ -165,11 +196,16 @@ class ReportBuilderSuggestService
         $wantsSummary = $this->textHasAny($text, ['total', 'totals', 'sum', 'summary', 'by day', 'daily', 'monthly', 'weekly', 'grouped', 'per ']);
         $wantsUnpaid = $this->textHasAny($text, ['unpaid', 'owing', 'outstanding', 'balance due', 'not paid']);
         $wantsPaid = $this->textHasAny($text, ['paid', 'payments collected']) && ! $wantsUnpaid;
-        $wantsProduct = $this->textHasAny($text, ['product', 'products', 'sku', 'item', 'items', 'stock', 'inventory']);
-        $wantsCustomer = $this->textHasAny($text, ['customer', 'customers', 'debtor', 'client', 'buyer']);
-        $wantsBranch = $this->textHasAny($text, ['branch', 'branches', 'store', 'outlet', 'location']);
-        $wantsSupplier = $this->textHasAny($text, ['supplier', 'suppliers', 'vendor', 'purchase', 'lpo', 'procurement']);
-        $wantsEmployee = $this->textHasAny($text, ['employee', 'employees', 'payroll', 'staff', 'hr']);
+        $wantsProduct = $this->textHasAny($text, ['product', 'products', 'sku', 'item', 'items', 'stock', 'inventory'])
+            || EntityMentionRefs::hasType($entityRefs, 'product');
+        $wantsCustomer = $this->textHasAny($text, ['customer', 'customers', 'debtor', 'client', 'buyer', 'aging', 'debtors'])
+            || EntityMentionRefs::hasType($entityRefs, 'customer');
+        $wantsBranch = $this->textHasAny($text, ['branch', 'branches', 'store', 'outlet', 'location'])
+            || EntityMentionRefs::hasType($entityRefs, 'branch');
+        $wantsSupplier = $this->textHasAny($text, ['supplier', 'suppliers', 'vendor', 'purchase', 'lpo', 'procurement', 'purchases'])
+            || EntityMentionRefs::hasType($entityRefs, 'supplier');
+        $wantsEmployee = $this->textHasAny($text, ['employee', 'employees', 'payroll', 'staff', 'hr'])
+            || EntityMentionRefs::hasType($entityRefs, 'employee');
         $wantsAttendance = $this->textHasAny($text, ['attendance', 'clock', 'check in', 'check-in', 'absent', 'lateness', 'late']);
         $wantsDaily = $this->textHasAny($text, ['daily', 'by day', 'each day', 'per day', 'sale date', 'date']);
 
@@ -488,9 +524,10 @@ class ReportBuilderSuggestService
     /**
      * @param  array<string, mixed>  $runtime
      * @param  array<string, mixed>  $compactSchema
+     * @param  list<array{type: string, id: ?string, code: ?string, label: string}>  $entityRefs
      * @return array<string, mixed>
      */
-    protected function askModel(array $runtime, string $instruction, array $compactSchema): array
+    protected function askModel(array $runtime, string $instruction, array $compactSchema, array $entityRefs = []): array
     {
         $system = <<<'PROMPT'
 You are Centrix Report Builder assistant. Pick the best data sources and columns for the user's report request.
@@ -504,19 +541,29 @@ Respond with a single JSON object only (no markdown):
   "group_by": [],
   "blend_by": null,
   "relative_date": null,
-  "product_queries": []
+  "product_queries": [],
+  "customer_queries": [],
+  "supplier_queries": []
 }
 Rules:
 - Prefer 1 source unless the request clearly needs related tables.
 - For product sales / items sold, prefer sale_items (+ products if needed) with product_name, quantity/qty, and line revenue totals.
+- For suppliers / purchases / LPO, prefer lpo or purchasing sources with supplier_name.
+- For debtors / unpaid customers, prefer sales or customer_invoices with customer_name and balances.
 - Prefer label fields (names, dates, status) plus the key numeric totals the user asked for.
 - Use aggregate only when summarizing (sum/avg/count/max/min) and only if that field lists it in aggregates.
 - group_by: string field keys for a single source, or {source, field} objects for multi-source; omit when not needed.
 - blend_by: only a blend dimension key when comparing unrelated sources side-by-side; otherwise null.
 - relative_date: "yesterday", "today", or "last_7_days" when the user mentions those; otherwise null.
-- product_queries: short product name fragments the user wants filtered (e.g. ["Al Eman","Sugar","Polished"]); empty array if none.
+- product_queries / customer_queries / supplier_queries: short name fragments to filter; empty arrays if none.
+- When RESOLVED_ENTITIES are provided, prefer those exact product codes / customer nums / supplier ids and do not invent alternate names.
 - Keep columns focused (typically 4–10). Never exceed max_sources / max_columns from the schema.
 PROMPT;
+
+        $entityBlock = $entityRefs === []
+            ? 'RESOLVED_ENTITIES: (none)'
+            : 'RESOLVED_ENTITIES (user @mentions — use these codes/ids):\n'
+                .json_encode($entityRefs, JSON_UNESCAPED_UNICODE);
 
         try {
             $provider = $this->providers->make($runtime);
@@ -525,7 +572,7 @@ PROMPT;
                 'messages' => [
                     [
                         'role' => 'user',
-                        'content' => "Report request:\n{$instruction}\n\nSCHEMA:\n"
+                        'content' => "Report request:\n{$instruction}\n\n{$entityBlock}\n\nSCHEMA:\n"
                             .json_encode($compactSchema, JSON_UNESCAPED_UNICODE),
                     ],
                 ],
@@ -841,6 +888,9 @@ PROMPT;
      * @param  array<string, mixed>  $normalized
      * @param  array<string, mixed>  $draft
      * @param  list<string>|null  $selectedProductCodes
+     * @param  list<array{type: string, id: ?string, code: ?string, label: string}>  $entityRefs
+     * @param  list<string>|null  $selectedCustomerNums
+     * @param  list<int|string>|null  $selectedSupplierIds
      * @return array<string, mixed>
      */
     protected function attachFiltersAndProducts(
@@ -849,41 +899,118 @@ PROMPT;
         User $user,
         array $draft,
         ?array $selectedProductCodes = null,
+        array $entityRefs = [],
+        ?array $selectedCustomerNums = null,
+        ?array $selectedSupplierIds = null,
     ): array {
         $filters = $this->resolveDateFilters($instruction, $draft);
-        $productQueries = $this->resolveProductQueries($instruction, $draft);
-        $selected = array_values(array_unique(array_filter(array_map(
+        $orgId = (int) $user->organization_id;
+
+        $selectedProducts = array_values(array_unique(array_filter(array_map(
             static fn ($code) => trim((string) $code),
-            is_array($selectedProductCodes) ? $selectedProductCodes : [],
+            array_merge(
+                is_array($selectedProductCodes) ? $selectedProductCodes : [],
+                EntityMentionRefs::productCodes($entityRefs),
+            ),
         ), static fn ($code) => $code !== '')));
 
-        $resolution = [
+        $selectedCustomers = array_values(array_unique(array_filter(array_map(
+            static fn ($num) => trim((string) $num),
+            array_merge(
+                is_array($selectedCustomerNums) ? $selectedCustomerNums : [],
+                EntityMentionRefs::customerNums($entityRefs),
+            ),
+        ), static fn ($num) => $num !== '')));
+
+        $selectedSuppliers = array_values(array_unique(array_filter(array_map(
+            static fn ($id) => (int) $id,
+            array_merge(
+                is_array($selectedSupplierIds) ? $selectedSupplierIds : [],
+                EntityMentionRefs::supplierIds($entityRefs),
+            ),
+        ), static fn ($id) => $id > 0)));
+
+        $branchIds = EntityMentionRefs::branchIds($entityRefs);
+        if (count($branchIds) === 1) {
+            $filters['branch_id'] = $branchIds[0];
+        }
+
+        $productQueries = $selectedProducts === []
+            ? $this->resolveProductQueries($instruction, $draft)
+            : [];
+        $productResolution = [
             'status' => 'none',
             'queries' => [],
             'unmatched' => [],
             'matched_codes' => [],
         ];
-
-        if ($productQueries !== [] || $selected !== []) {
-            $resolution = $this->resolveProductsForOrganization(
-                (int) $user->organization_id,
+        if ($productQueries !== [] || $selectedProducts !== []) {
+            $productResolution = $this->resolveProductsForOrganization(
+                $orgId,
                 $productQueries,
-                $selected,
+                $selectedProducts,
             );
         }
+        if (($productResolution['status'] ?? '') === 'ready' && ($productResolution['matched_codes'] ?? []) !== []) {
+            $filters['product_codes'] = $productResolution['matched_codes'];
+        }
 
-        if (($resolution['status'] ?? '') === 'ready' && ($resolution['matched_codes'] ?? []) !== []) {
-            $filters['product_codes'] = $resolution['matched_codes'];
+        $customerQueries = $selectedCustomers === []
+            ? $this->resolveNamedQueries($instruction, $draft, 'customer_queries', ['customer', 'customers', 'debtor', 'client'])
+            : [];
+        $customerResolution = [
+            'status' => 'none',
+            'queries' => [],
+            'unmatched' => [],
+            'matched_nums' => [],
+        ];
+        if ($customerQueries !== [] || $selectedCustomers !== []) {
+            $customerResolution = $this->resolveCustomersForOrganization(
+                $orgId,
+                $customerQueries,
+                $selectedCustomers,
+            );
+        }
+        if (($customerResolution['status'] ?? '') === 'ready' && ($customerResolution['matched_nums'] ?? []) !== []) {
+            $filters['customer_nums'] = $customerResolution['matched_nums'];
+        }
+
+        $supplierQueries = $selectedSuppliers === []
+            ? $this->resolveNamedQueries($instruction, $draft, 'supplier_queries', ['supplier', 'suppliers', 'vendor'])
+            : [];
+        $supplierResolution = [
+            'status' => 'none',
+            'queries' => [],
+            'unmatched' => [],
+            'matched_ids' => [],
+        ];
+        if ($supplierQueries !== [] || $selectedSuppliers !== []) {
+            $supplierResolution = $this->resolveSuppliersForOrganization(
+                $orgId,
+                $supplierQueries,
+                $selectedSuppliers,
+            );
+        }
+        if (($supplierResolution['status'] ?? '') === 'ready' && ($supplierResolution['matched_ids'] ?? []) !== []) {
+            $filters['supplier_ids'] = $supplierResolution['matched_ids'];
         }
 
         $normalized['filters'] = $filters;
-        $normalized['product_resolution'] = $resolution;
-        $normalized['needs_product_selection'] = ($resolution['status'] ?? '') === 'needs_selection';
+        $normalized['product_resolution'] = $productResolution;
+        $normalized['customer_resolution'] = $customerResolution;
+        $normalized['supplier_resolution'] = $supplierResolution;
+        $normalized['needs_product_selection'] = ($productResolution['status'] ?? '') === 'needs_selection';
+        $normalized['needs_customer_selection'] = ($customerResolution['status'] ?? '') === 'needs_selection';
+        $normalized['needs_supplier_selection'] = ($supplierResolution['status'] ?? '') === 'needs_selection';
 
         if ($normalized['needs_product_selection']) {
             $normalized['message'] = 'Several products matched your description. Pick the ones to include, then apply.';
-        } elseif (($resolution['unmatched'] ?? []) !== []) {
-            $normalized['message'] = 'Could not find catalog matches for: '.implode(', ', $resolution['unmatched']).'.';
+        } elseif ($normalized['needs_customer_selection']) {
+            $normalized['message'] = 'Several customers matched your description. Pick the ones to include, then apply.';
+        } elseif ($normalized['needs_supplier_selection']) {
+            $normalized['message'] = 'Several suppliers matched your description. Pick the ones to include, then apply.';
+        } elseif (($productResolution['unmatched'] ?? []) !== []) {
+            $normalized['message'] = 'Could not find catalog matches for: '.implode(', ', $productResolution['unmatched']).'.';
         }
 
         return $normalized;
@@ -1105,6 +1232,248 @@ PROMPT;
             ];
         }
 
+        usort($scored, fn ($a, $b) => $b['score'] <=> $a['score']);
+
+        return array_slice($scored, 0, 8);
+    }
+
+    /**
+     * @param  array<string, mixed>  $draft
+     * @param  list<string>  $stopWords
+     * @return list<string>
+     */
+    protected function resolveNamedQueries(string $instruction, array $draft, string $draftKey, array $stopWords): array
+    {
+        $fromDraft = [];
+        foreach ((array) ($draft[$draftKey] ?? []) as $query) {
+            $query = trim((string) $query);
+            if ($query !== '') {
+                $fromDraft[] = $query;
+            }
+        }
+        if ($fromDraft !== []) {
+            return array_values(array_unique($fromDraft));
+        }
+
+        // Only extract free-text fragments when the draft/instruction clearly mentions the entity class.
+        $text = mb_strtolower($instruction);
+        $mentioned = false;
+        foreach ($stopWords as $word) {
+            if (preg_match('/\b'.preg_quote($word, '/').'\b/u', $text)) {
+                $mentioned = true;
+                break;
+            }
+        }
+        if (! $mentioned) {
+            return [];
+        }
+
+        return [];
+    }
+
+    /**
+     * @param  list<string>  $queries
+     * @param  list<string>  $selectedNums
+     * @return array{status: string, queries: list<array<string, mixed>>, unmatched: list<string>, matched_nums: list<string>}
+     */
+    protected function resolveCustomersForOrganization(int $organizationId, array $queries, array $selectedNums): array
+    {
+        if ($selectedNums !== []) {
+            return [
+                'status' => 'ready',
+                'queries' => [],
+                'unmatched' => [],
+                'matched_nums' => array_values(array_unique($selectedNums)),
+            ];
+        }
+
+        if ($queries === [] || ! Schema::hasTable('customers')) {
+            return [
+                'status' => 'none',
+                'queries' => [],
+                'unmatched' => [],
+                'matched_nums' => [],
+            ];
+        }
+
+        $groups = [];
+        $matched = [];
+        $unmatched = [];
+        $needsSelection = false;
+
+        foreach ($queries as $query) {
+            $matches = $this->searchCustomers($organizationId, $query);
+            if ($matches === []) {
+                $unmatched[] = $query;
+                $groups[] = ['query' => $query, 'matches' => []];
+                continue;
+            }
+            if (count($matches) === 1) {
+                $matched[] = $matches[0]['customer_num'];
+                $groups[] = ['query' => $query, 'matches' => $matches, 'auto_selected' => true];
+                continue;
+            }
+            $needsSelection = true;
+            $groups[] = ['query' => $query, 'matches' => $matches];
+        }
+
+        if ($needsSelection) {
+            return [
+                'status' => 'needs_selection',
+                'queries' => $groups,
+                'unmatched' => $unmatched,
+                'matched_nums' => array_values(array_unique($matched)),
+            ];
+        }
+
+        return [
+            'status' => $matched !== [] ? 'ready' : ($unmatched !== [] ? 'unmatched' : 'none'),
+            'queries' => $groups,
+            'unmatched' => $unmatched,
+            'matched_nums' => array_values(array_unique($matched)),
+        ];
+    }
+
+    /**
+     * @return list<array{customer_num: string, customer_name: string, score: int}>
+     */
+    protected function searchCustomers(int $organizationId, string $query): array
+    {
+        $needle = mb_strtolower(trim($query));
+        if ($needle === '') {
+            return [];
+        }
+
+        $rows = DB::table('customers')
+            ->where('organization_id', $organizationId)
+            ->where(function ($q) use ($needle) {
+                $q->whereRaw('LOWER(customer_name) LIKE ?', ['%'.$needle.'%'])
+                    ->orWhereRaw('CAST(customer_num AS CHAR) LIKE ?', ['%'.$needle.'%']);
+            })
+            ->orderBy('customer_name')
+            ->limit(12)
+            ->get(['customer_num', 'customer_name']);
+
+        $scored = [];
+        foreach ($rows as $row) {
+            $name = mb_strtolower((string) $row->customer_name);
+            $num = mb_strtolower((string) $row->customer_num);
+            $score = str_contains($name, $needle) || str_contains($num, $needle) ? 20 : 1;
+            if ($name === $needle || $num === $needle) {
+                $score = 100;
+            } elseif (str_starts_with($name, $needle)) {
+                $score = 50;
+            }
+            $scored[] = [
+                'customer_num' => (string) $row->customer_num,
+                'customer_name' => (string) $row->customer_name,
+                'score' => $score,
+            ];
+        }
+        usort($scored, fn ($a, $b) => $b['score'] <=> $a['score']);
+
+        return array_slice($scored, 0, 8);
+    }
+
+    /**
+     * @param  list<string>  $queries
+     * @param  list<int>  $selectedIds
+     * @return array{status: string, queries: list<array<string, mixed>>, unmatched: list<string>, matched_ids: list<int>}
+     */
+    protected function resolveSuppliersForOrganization(int $organizationId, array $queries, array $selectedIds): array
+    {
+        if ($selectedIds !== []) {
+            return [
+                'status' => 'ready',
+                'queries' => [],
+                'unmatched' => [],
+                'matched_ids' => array_values(array_unique($selectedIds)),
+            ];
+        }
+
+        if ($queries === [] || ! Schema::hasTable('suppliers')) {
+            return [
+                'status' => 'none',
+                'queries' => [],
+                'unmatched' => [],
+                'matched_ids' => [],
+            ];
+        }
+
+        $groups = [];
+        $matched = [];
+        $unmatched = [];
+        $needsSelection = false;
+
+        foreach ($queries as $query) {
+            $matches = $this->searchSuppliers($organizationId, $query);
+            if ($matches === []) {
+                $unmatched[] = $query;
+                $groups[] = ['query' => $query, 'matches' => []];
+                continue;
+            }
+            if (count($matches) === 1) {
+                $matched[] = (int) $matches[0]['id'];
+                $groups[] = ['query' => $query, 'matches' => $matches, 'auto_selected' => true];
+                continue;
+            }
+            $needsSelection = true;
+            $groups[] = ['query' => $query, 'matches' => $matches];
+        }
+
+        if ($needsSelection) {
+            return [
+                'status' => 'needs_selection',
+                'queries' => $groups,
+                'unmatched' => $unmatched,
+                'matched_ids' => array_values(array_unique($matched)),
+            ];
+        }
+
+        return [
+            'status' => $matched !== [] ? 'ready' : ($unmatched !== [] ? 'unmatched' : 'none'),
+            'queries' => $groups,
+            'unmatched' => $unmatched,
+            'matched_ids' => array_values(array_unique($matched)),
+        ];
+    }
+
+    /**
+     * @return list<array{id: int, supplier_name: string, score: int}>
+     */
+    protected function searchSuppliers(int $organizationId, string $query): array
+    {
+        $needle = mb_strtolower(trim($query));
+        if ($needle === '') {
+            return [];
+        }
+
+        $rows = DB::table('suppliers')
+            ->where('organization_id', $organizationId)
+            ->where(function ($q) use ($needle) {
+                $q->whereRaw('LOWER(supplier_name) LIKE ?', ['%'.$needle.'%'])
+                    ->orWhereRaw("LOWER(COALESCE(supplier_code, '')) LIKE ?", ['%'.$needle.'%']);
+            })
+            ->orderBy('supplier_name')
+            ->limit(12)
+            ->get(['id', 'supplier_name', 'supplier_code']);
+
+        $scored = [];
+        foreach ($rows as $row) {
+            $name = mb_strtolower((string) $row->supplier_name);
+            $code = mb_strtolower((string) ($row->supplier_code ?? ''));
+            $score = 20;
+            if ($name === $needle || $code === $needle) {
+                $score = 100;
+            } elseif (str_starts_with($name, $needle)) {
+                $score = 50;
+            }
+            $scored[] = [
+                'id' => (int) $row->id,
+                'supplier_name' => (string) $row->supplier_name,
+                'score' => $score,
+            ];
+        }
         usort($scored, fn ($a, $b) => $b['score'] <=> $a['score']);
 
         return array_slice($scored, 0, 8);

@@ -52,10 +52,19 @@ class ReportBuilderController extends Controller
     public function suggest(Request $request)
     {
         $data = $request->validate([
-            'instruction' => 'required|string|max:800',
+            'instruction' => 'required|string|max:1200',
             'workspace_id' => 'nullable|string|max:50',
             'selected_product_codes' => 'sometimes|array|max:50',
             'selected_product_codes.*' => 'string|max:64',
+            'selected_customer_nums' => 'sometimes|array|max:50',
+            'selected_customer_nums.*' => 'string|max:64',
+            'selected_supplier_ids' => 'sometimes|array|max:50',
+            'selected_supplier_ids.*' => 'integer|min:1',
+            'entity_refs' => 'sometimes|array|max:40',
+            'entity_refs.*.type' => 'required_with:entity_refs|string|in:product,supplier,customer,employee,branch',
+            'entity_refs.*.id' => 'nullable|string|max:64',
+            'entity_refs.*.code' => 'nullable|string|max:64',
+            'entity_refs.*.label' => 'nullable|string|max:200',
         ]);
 
         $workspaceId = $this->workspaceIdFromRequest($request);
@@ -64,6 +73,9 @@ class ReportBuilderController extends Controller
             $data['instruction'],
             $workspaceId,
             $data['selected_product_codes'] ?? null,
+            $data['entity_refs'] ?? null,
+            $data['selected_customer_nums'] ?? null,
+            $data['selected_supplier_ids'] ?? null,
         );
 
         return response()->json($result);

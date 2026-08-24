@@ -42,6 +42,7 @@ class AiToolChatService
         ?string $workspaceId = null,
         ?string $pathname = null,
         ?array $pageContext = null,
+        ?array $entityRefs = null,
     ): array {
         $started = microtime(true);
         $organization = $this->resolveOrganizationForChat($user);
@@ -71,6 +72,7 @@ class AiToolChatService
                 $pathname,
                 $pageContext,
                 $started,
+                $entityRefs ?? [],
             );
         } finally {
             $this->runtimeGuard->release();
@@ -79,6 +81,7 @@ class AiToolChatService
 
     /**
      * @param  list<array{role: string, content: string}>  $clientHistory
+     * @param  list<array{type: string, id: ?string, code: ?string, label: string}>  $entityRefs
      * @return array<string, mixed>
      */
     protected function runChat(
@@ -91,6 +94,7 @@ class AiToolChatService
         ?string $pathname,
         ?array $pageContext,
         float $started,
+        array $entityRefs = [],
     ): array {
 
         $runtime = AiSettingsResolver::resolveRuntimeForOrganization($organization);
@@ -126,7 +130,7 @@ class AiToolChatService
 
         $this->persistMessage($conversation, $user, $organization, 'user', $message);
 
-        $system = $this->systemPrompt($organization, $user, $workspaceId, $pathname, $pageContext);
+        $system = $this->systemPrompt($organization, $user, $workspaceId, $pathname, $pageContext, $entityRefs);
         $providerName = (string) ($runtime['provider'] ?? config('ai.provider', 'openai'));
         $toolsUsed = [];
         $usageTotal = ['input_tokens' => 0, 'output_tokens' => 0, 'total_tokens' => 0];
@@ -286,6 +290,7 @@ class AiToolChatService
         ?string $workspaceId = null,
         ?string $pathname = null,
         ?array $pageContext = null,
+        array $entityRefs = [],
     ): string {
         $orgName = $organization->org_name ?? $organization->company_code ?? 'this organization';
         $calendar = AiSalesDateResolver::calendarAnchor($organization);
@@ -322,6 +327,10 @@ class AiToolChatService
                 $pageLines[] = 'Page context JSON: '.json_encode($pageCompact, JSON_UNESCAPED_SLASHES);
             }
         }
+        if ($entityRefs !== []) {
+            $pageLines[] = 'Resolved entities the user @mentioned (prefer these exact codes/ids; do not invent names): '
+                .json_encode($entityRefs, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        }
         $pageBlock = $pageLines !== [] ? implode("\n", $pageLines)."\n\n" : '';
 
         return <<<PROMPT
@@ -353,6 +362,7 @@ Tools:
 Rules:
 - For "where is / how do I / which menu" questions, call find_screen (or use CENTRIX_DOCUMENTATION) and answer with the path.
 - When page context is present, prefer answering about that screen/filters before asking the user to clarify.
+- When resolved entities are present, use those product_code / customer_num / supplier id values in tools and answers.
 - Never invent financial figures or attendance. Use tools for numbers and attendance. If a tool cannot answer (e.g. sales targets/quotas), say so and offer actual sales or the right screen.
 - Do not claim you lack access to Purchasing, Inventory, or Admin — guide with find_screen and documentation even when live lists are limited.
 - Include paths as Centrix links like /hr/employees — the UI opens them and switches application when needed.

@@ -1075,6 +1075,7 @@ class ReportBuilderService
                 $requiredJoins[$field['requires_join']] = true;
             }
         }
+        $this->expandRequiredJoinsForFilters($source, $filters, $requiredJoins);
 
         $this->applyConfiguredJoins($query, $source, $requiredJoins);
         $this->applySourceFilters($query, $source, $user, $filters, $source['default_date_column'] ?? null);
@@ -1288,6 +1289,7 @@ class ReportBuilderService
                 $requiredJoins[$field['requires_join']] = true;
             }
         }
+        $this->expandRequiredJoinsForFilters($source, $filters, $requiredJoins);
 
         $this->applyConfiguredJoins($query, $source, $requiredJoins, $blendSource['left_joins'] ?? []);
         $this->applySourceFilters($query, $source, $user, $filters, $blendSource['date_filter'] ?? null);
@@ -1420,6 +1422,75 @@ class ReportBuilderService
                     $query->whereRaw("{$productExpr} IN ({$placeholders})", $codes);
                 }
             }
+        }
+
+        $customerNums = $filters['customer_nums'] ?? $filters['customer_num'] ?? null;
+        if (is_string($customerNums) && $customerNums !== '') {
+            $customerNums = [$customerNums];
+        }
+        if (is_array($customerNums) && $customerNums !== []) {
+            $nums = array_values(array_unique(array_filter(array_map(
+                static fn ($num) => trim((string) $num),
+                $customerNums,
+            ), static fn ($num) => $num !== '')));
+            if ($nums !== []) {
+                $customerExpr = $source['fields']['customer_num']['expr'] ?? null;
+                if (is_string($customerExpr) && $customerExpr !== '') {
+                    $placeholders = implode(', ', array_fill(0, count($nums), '?'));
+                    $query->whereRaw("{$customerExpr} IN ({$placeholders})", $nums);
+                }
+            }
+        }
+
+        $supplierIds = $filters['supplier_ids'] ?? $filters['supplier_id'] ?? null;
+        if (is_numeric($supplierIds)) {
+            $supplierIds = [(int) $supplierIds];
+        }
+        if (is_array($supplierIds) && $supplierIds !== []) {
+            $ids = array_values(array_unique(array_filter(array_map(
+                static fn ($id) => (int) $id,
+                $supplierIds,
+            ), static fn ($id) => $id > 0)));
+            if ($ids !== []) {
+                $supplierExpr = $source['fields']['supplier_id']['expr'] ?? null;
+                if ((! is_string($supplierExpr) || $supplierExpr === '') && isset($source['joins']['suppliers'])) {
+                    $supplierExpr = 'sup.id';
+                }
+                if (is_string($supplierExpr) && $supplierExpr !== '') {
+                    $placeholders = implode(', ', array_fill(0, count($ids), '?'));
+                    $query->whereRaw("{$supplierExpr} IN ({$placeholders})", $ids);
+                }
+            }
+        }
+    }
+
+    /**
+     * Ensure joins needed by entity filters are present (e.g. suppliers for supplier_ids).
+     *
+     * @param  array<string, mixed>  $source
+     * @param  array<string, mixed>  $filters
+     * @param  array<string, bool>  $requiredJoins
+     */
+    protected function expandRequiredJoinsForFilters(array $source, array $filters, array &$requiredJoins): void
+    {
+        $supplierIds = $filters['supplier_ids'] ?? $filters['supplier_id'] ?? null;
+        $hasSupplierFilter = (is_array($supplierIds) && $supplierIds !== []) || is_numeric($supplierIds);
+        if ($hasSupplierFilter && isset($source['joins']['suppliers']) && empty($source['fields']['supplier_id']['expr'])) {
+            $requiredJoins['suppliers'] = true;
+        }
+
+        $customerNums = $filters['customer_nums'] ?? $filters['customer_num'] ?? null;
+        $hasCustomerFilter = (is_array($customerNums) && $customerNums !== [])
+            || (is_string($customerNums) && $customerNums !== '');
+        if ($hasCustomerFilter && isset($source['joins']['customers']) && empty($source['fields']['customer_num']['expr'])) {
+            $requiredJoins['customers'] = true;
+        }
+
+        $productCodes = $filters['product_codes'] ?? $filters['product_code'] ?? null;
+        $hasProductFilter = (is_array($productCodes) && $productCodes !== [])
+            || (is_string($productCodes) && $productCodes !== '');
+        if ($hasProductFilter && isset($source['joins']['products']) && empty($source['fields']['product_code']['expr'])) {
+            $requiredJoins['products'] = true;
         }
     }
 
