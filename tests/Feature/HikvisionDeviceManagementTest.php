@@ -100,6 +100,32 @@ class HikvisionDeviceManagementTest extends TestCase
         $this->assertSame($commandsBefore, HikvisionAgentCommand::query()->count());
     }
 
+    public function test_test_connection_after_overnight_pc_off_does_not_force_redownload(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $device = AttendanceClockDevice::create([
+            'organization_id' => $this->org->id,
+            'device_no' => 'T001-OVERNIGHT',
+            'is_active' => true,
+            'provider' => 'hikvision',
+            'host' => '192.168.100.215',
+            'port' => 80,
+            'username' => 'admin',
+        ]);
+        $device->setPlainPassword('secret');
+        $device->agent_last_seen_at = now()->subHours(12);
+        $device->save();
+
+        $response = $this->postJson("/api/v1/attendance-clock-devices/{$device->id}/hikvision/test-connection");
+        $response->assertOk();
+        $response->assertJsonPath('online', false);
+        $response->assertJsonPath('recovering', true);
+        $response->assertJsonPath('agent.name', 'CentrixAttendanceAgent');
+        $this->assertStringContainsString('Do not re-download after a reboot', (string) $response->json('error'));
+        $this->assertStringNotContainsString('Download the agent zip once', (string) $response->json('error'));
+    }
+
     public function test_test_connection_still_tries_recently_known_agent_when_heartbeat_is_stale(): void
     {
         Sanctum::actingAs($this->admin);

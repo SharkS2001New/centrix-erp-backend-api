@@ -117,16 +117,23 @@ class HikvisionAgentBridge
         $device = $device->fresh() ?? $device;
         $status = $this->agentStatus($device);
         if (! $status['online'] && ! $this->hasCheckedIn($device)) {
-            $lastSeen = $status['last_seen_at'] ?? null;
-            $ttl = $this->onlineTtlSeconds($device);
-            $error = $lastSeen
-                ? self::AGENT_NAME." is installed but has not checked in with Centrix in the last {$ttl} seconds. Windows Services can show Running while the PC is still getting internet or the agent is starting. Wait for the next agent poll and refresh — do not re-download unless this stays offline."
-                : self::AGENT_NAME.' is not checking in. Download the agent zip for this device, run BUILD-AND-INSTALL.bat as Administrator on a LAN PC, and keep the Windows service running.';
-
             return [
                 'online' => false,
                 'agent' => $status,
-                'error' => $error,
+                'error' => self::AGENT_NAME.' has never checked in. Download the agent zip once for this device, run BUILD-AND-INSTALL.bat as Administrator on the office PC, and leave the Windows service on Automatic. After that, reboots check in by themselves — do not re-download every morning.',
+            ];
+        }
+
+        // Overnight PC off / reboot: last check-in is hours old. The service starts with
+        // Windows and will heartbeat on its own. Do not block on PING or tell them to re-download.
+        if (! $status['online'] && $this->hasCheckedIn($device) && ! $this->hasRecentCheckIn($device)) {
+            $when = $status['last_seen_at'] ?? 'the last session';
+
+            return [
+                'online' => false,
+                'recovering' => true,
+                'agent' => $status,
+                'error' => self::AGENT_NAME." last checked in at {$when}. After the office PC is turned on, the Windows service starts automatically, pings Centrix, and continues punch sync. Wait 1–2 minutes and test again. Do not re-download after a reboot.",
             ];
         }
 
@@ -254,8 +261,8 @@ class HikvisionAgentBridge
             $ttl = $this->onlineTtlSeconds($device);
             throw new RuntimeException(
                 $seen
-                    ? self::AGENT_NAME." is offline (last check-in was more than {$ttl} seconds ago). The Windows service can still show Running. Wait for the next agent poll, then refresh — re-download only if it never comes online."
-                    : self::AGENT_NAME.' is offline. Download the agent zip for this device and keep the Windows service running.',
+                    ? self::AGENT_NAME." has not checked in recently (last seen more than {$ttl} seconds ago). After a PC reboot the Windows service starts by itself — wait 1–2 minutes and retry. Do not re-download after a reboot."
+                    : self::AGENT_NAME.' has never checked in. Download the agent zip once for this device and keep the Windows service on Automatic.',
             );
         }
 
@@ -324,7 +331,7 @@ class HikvisionAgentBridge
             ->update(['status' => 'expired']);
 
         throw new RuntimeException(
-            'Attendance agent did not respond in time. The Windows service can show Running while the agent is busy syncing punches or cannot reach Centrix. Wait a minute and test again — re-download only if last check-in never updates.',
+            'Attendance agent did not respond in time. After a reboot, Windows may still be starting the service and connecting to the internet. Wait 1–2 minutes and test again. Do not re-download after a reboot.',
         );
     }
 
@@ -418,7 +425,7 @@ class HikvisionAgentBridge
     protected function formatPingTimeout(string $raw): string
     {
         if (str_contains($raw, 'did not respond in time')) {
-            return 'Attendance agent did not respond in time. The Windows service can show Running while the agent is busy syncing punches or cannot reach Centrix. Wait a minute and test again — re-download only if last check-in never updates.';
+            return 'Attendance agent did not respond in time. After a reboot, wait 1–2 minutes for the Windows service to check in. Do not re-download after a reboot.';
         }
 
         return $raw;
