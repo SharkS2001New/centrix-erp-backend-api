@@ -346,8 +346,14 @@ class TillOperationsController extends Controller
     {
         $orgId = (int) ($request->user()->organization_id ?? 0);
         if ($orgId <= 0) {
-            return response()->json(['data' => [], 'cash_payment_method_id' => null]);
+            return response()->json([
+                'data' => [],
+                'cash_payment_method_id' => null,
+                'payment_methods' => [],
+            ]);
         }
+
+        app(OrganizationReferenceDataService::class)->ensurePaymentMethods($orgId);
 
         $rows = DB::table('expense_groups')
             ->select('id', 'group_name')
@@ -355,9 +361,20 @@ class TillOperationsController extends Controller
             ->orderBy('group_name')
             ->get();
 
+        $paymentMethods = PaymentMethod::query()
+            ->where('organization_id', $orgId)
+            ->where(function ($query) {
+                $query->where('is_active', true)->orWhere('is_active', 1);
+            })
+            ->orderBy('method_name')
+            ->get(['id', 'method_name', 'method_code', 'is_active']);
+
+        $cashId = $this->resolveCashPaymentMethodId($orgId);
+
         return response()->json([
             'data' => $rows,
-            'cash_payment_method_id' => $this->resolveCashPaymentMethodId($orgId),
+            'cash_payment_method_id' => $cashId,
+            'payment_methods' => $paymentMethods,
         ]);
     }
 
@@ -367,7 +384,6 @@ class TillOperationsController extends Controller
             'expense_group_id' => 'required|integer',
             'expense_amount' => 'required|numeric|min:0.01',
             'description' => 'required|string|min:1|max:200',
-            // Optional — till payouts are always cash; External POS may not load /payment-methods.
             'payment_method_id' => 'sometimes|nullable|integer',
         ]);
 
@@ -395,16 +411,20 @@ class TillOperationsController extends Controller
             $methodOk = PaymentMethod::query()
                 ->where('id', $paymentMethodId)
                 ->where('organization_id', $organizationId)
+                ->where(function ($query) {
+                    $query->where('is_active', true)->orWhere('is_active', 1);
+                })
                 ->exists();
             if (! $methodOk) {
-                throw new InvalidArgumentException('Payment method not found for this organization.');
+                throw new InvalidArgumentException('Payment method not found or inactive for this organization.');
             }
         } else {
+            // Backward compatible: default to Cash when the client omits a method.
             $paymentMethodId = $this->resolveCashPaymentMethodId($organizationId) ?? 0;
         }
         if ($paymentMethodId <= 0) {
             throw new InvalidArgumentException(
-                'No active Cash payment method is configured. Ask an admin to enable Cash under Payment methods.',
+                'Select a payment method. Ask an admin to enable at least one under Payment methods.',
             );
         }
 

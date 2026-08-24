@@ -668,6 +668,9 @@ class TillSessionFlowTest extends TestCase
 
         $groupsPayload = $this->getJson('/api/v1/pos/expense-groups')->assertOk()->json();
         $this->assertEquals($cashMethod->id, (int) ($groupsPayload['cash_payment_method_id'] ?? 0));
+        $this->assertNotEmpty($groupsPayload['payment_methods'] ?? []);
+        $methodIds = array_map(fn ($row) => (int) ($row['id'] ?? 0), $groupsPayload['payment_methods'] ?? []);
+        $this->assertContains((int) $cashMethod->id, $methodIds);
 
         $expense = $this->postJson("/api/v1/pos/sessions/{$session->id}/expenses", [
             'expense_group_id' => $groupId,
@@ -681,6 +684,37 @@ class TillSessionFlowTest extends TestCase
 
         $listed = $this->getJson("/api/v1/pos/sessions/{$session->id}/expenses")->assertOk()->json('data');
         $this->assertTrue(collect($listed)->contains(fn ($row) => (int) ($row['id'] ?? 0) === (int) $expense['id']));
+    }
+
+    public function test_session_expense_accepts_chosen_payment_method(): void
+    {
+        $groupId = (int) DB::table('expense_groups')
+            ->where('organization_id', $this->user->organization_id)
+            ->value('id');
+        $this->assertGreaterThan(0, $groupId);
+
+        $mpesa = PaymentMethod::query()->firstOrCreate(
+            [
+                'organization_id' => $this->user->organization_id,
+                'method_code' => 'MPESA',
+            ],
+            [
+                'method_name' => 'M-Pesa',
+                'is_active' => true,
+            ],
+        );
+        $mpesa->forceFill(['is_active' => true])->save();
+
+        $session = $this->openFreshSession(5000);
+
+        $expense = $this->postJson("/api/v1/pos/sessions/{$session->id}/expenses", [
+            'expense_group_id' => $groupId,
+            'expense_amount' => 250,
+            'description' => 'airtime via mpesa',
+            'payment_method_id' => (int) $mpesa->id,
+        ])->assertCreated()->json();
+
+        $this->assertSame((int) $mpesa->id, (int) $expense['payment_method_id']);
     }
 
     public function test_session_history_supports_date_filter_and_pagination(): void
