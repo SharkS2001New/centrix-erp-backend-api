@@ -2,6 +2,7 @@
 
 namespace App\Services\Organization;
 
+use App\Models\PaymentMethod;
 use Illuminate\Support\Facades\DB;
 
 class OrganizationReferenceDataService
@@ -65,6 +66,92 @@ class OrganizationReferenceDataService
             ]);
             $existingSet[$code] = true;
         }
+    }
+
+    /** @return list<string> */
+    public function systemMethodCodes(): array
+    {
+        return array_map(
+            fn (array $template) => strtoupper($template['method_code']),
+            $this->paymentMethodTemplates(),
+        );
+    }
+
+    public function isSystemMethodCode(string $methodCode): bool
+    {
+        return in_array($this->normalizeMethodCode($methodCode), $this->systemMethodCodes(), true);
+    }
+
+    /**
+     * Resolve a POS/checkout tender, seeding catalog defaults when CASH (etc.) was deleted.
+     * Lookup is case-insensitive so Admin → Payment methods cannot strand offline cash sales.
+     */
+    public function resolvePaymentMethod(int $organizationId, string $methodCode): ?PaymentMethod
+    {
+        $normalized = $this->normalizeMethodCode($methodCode);
+        if ($organizationId <= 0 || $normalized === '') {
+            return null;
+        }
+
+        $this->ensurePaymentMethods($organizationId);
+
+        $found = $this->findPaymentMethod($organizationId, $normalized);
+        if ($found) {
+            return $found;
+        }
+
+        foreach ($this->paymentMethodTemplates() as $template) {
+            if (strtoupper($template['method_code']) !== $normalized) {
+                continue;
+            }
+            DB::table('payment_methods')->insert([
+                'method_name' => $template['method_name'],
+                'method_code' => $normalized,
+                'requires_reference' => $template['requires_reference'],
+                'organization_id' => $organizationId,
+                'is_active' => true,
+            ]);
+
+            return $this->findPaymentMethod($organizationId, $normalized);
+        }
+
+        return $this->findPaymentMethod($organizationId, $normalized);
+    }
+
+    public function normalizeMethodCode(string $methodCode): string
+    {
+        $normalized = strtoupper(str_replace([' ', '-'], '_', trim($methodCode)));
+
+        return match ($normalized) {
+            'M_PESA' => 'MPESA',
+            'BANK_TRANSFER', 'TRANSFER', 'OTHER' => 'BANK',
+            default => $normalized,
+        };
+    }
+
+    protected function findPaymentMethod(int $organizationId, string $normalized): ?PaymentMethod
+    {
+        $candidates = [$normalized];
+        if (in_array($normalized, ['EQUITY', 'KCB'], true)) {
+            $candidates[] = 'BANK';
+            $candidates[] = 'BANK_TRANSFER';
+        }
+
+        $candidates = array_values(array_unique($candidates));
+
+        return PaymentMethod::query()
+            ->where('organization_id', $organizationId)
+            ->where(function ($query) use ($candidates) {
+                foreach ($candidates as $index => $code) {
+                    if ($index === 0) {
+                        $query->whereRaw('UPPER(method_code) = ?', [$code]);
+                    } else {
+                        $query->orWhereRaw('UPPER(method_code) = ?', [$code]);
+                    }
+                }
+            })
+            ->orderByRaw('CASE WHEN UPPER(method_code) = ? THEN 0 ELSE 1 END', [$normalized])
+            ->first();
     }
 
     protected function seedExpenseGroups(int $organizationId): void

@@ -766,8 +766,8 @@ Route::prefix('v1')->group(function () {
         Route::apiResource('branches', BranchController::class)
             ->only(['index', 'show'])
             ->middleware([
-                'erp.module:admin,hr_payroll,sales,inventory,accounting,distribution,customers_suppliers',
-                'erp.permission:admin.view|hr.view|hr.manage|fulfillment.manage|fulfillment.view|customers.view|customers.manage|sales.view|inventory.view|accounting.view|reports.view',
+                'erp.module:admin,hr_payroll,sales,inventory,accounting,distribution,customers_suppliers,sales.pos',
+                'erp.permission:admin.view|hr.view|hr.manage|fulfillment.manage|fulfillment.view|customers.view|customers.manage|sales.view|inventory.view|accounting.view|reports.view|catalogue.view|catalogue.products.view|pos.checkout.create|pos.terminal.view|pos.till',
             ]);
         // User pickers for HR employee linking — index/show also via hr_payroll.
         Route::apiResource('users', UserController::class)
@@ -826,9 +826,9 @@ Route::prefix('v1')->group(function () {
             Route::post('sub-categories/import-batch', [SubCategoryImportController::class, 'store'])
                 ->middleware(['erp.permission:products.manage']);
             Route::get('products/catalog-summary', [ProductController::class, 'catalogSummary'])
-                ->middleware(['erp.permission:catalogue.view|inventory.view|purchasing.view|pos.checkout.create|pos.terminal.view']);
+                ->middleware(['erp.permission:catalogue.view|catalogue.products.view|inventory.view|purchasing.view|pos.checkout.create|pos.terminal.view']);
             Route::get('products/group-counts', [ProductController::class, 'groupCounts'])
-                ->middleware(['erp.permission:catalogue.view|inventory.view|purchasing.view|pos.checkout.create|pos.terminal.view']);
+                ->middleware(['erp.permission:catalogue.view|catalogue.products.view|inventory.view|purchasing.view|pos.checkout.create|pos.terminal.view']);
             Route::get('products/generate-code', [ProductController::class, 'generateCode'])
                 ->middleware(['erp.permission:products.manage']);
             Route::post('products/import-batch', [ProductImportController::class, 'store'])
@@ -846,7 +846,7 @@ Route::prefix('v1')->group(function () {
             Route::delete('products/{product}/image', [ProductController::class, 'deleteImage'])
                 ->middleware(['erp.permission:products.manage']);
             Route::apiResource('products', ProductController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|inventory.view|purchasing.view|pos.checkout.create|pos.terminal.view'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|catalogue.products.view|inventory.view|purchasing.view|pos.checkout.create|pos.terminal.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
             Route::apiResource('retail-package-settings', RetailPackageSettingController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|inventory.view|pos.checkout.create|pos.terminal.view'])
@@ -933,8 +933,6 @@ Route::prefix('v1')->group(function () {
         });
 
         Route::middleware(['erp.module:customers_suppliers'])->group(function () {
-            Route::get('branches', [BranchController::class, 'index'])
-                ->middleware('erp.permission:fulfillment.manage|fulfillment.view|customers.view|customers.manage|sales.view|inventory.view|accounting.view|reports.view|admin.view');
             Route::get('supplier-payments', [SupplierPaymentController::class, 'index'])
                 ->middleware('erp.permission:purchasing.view');
 

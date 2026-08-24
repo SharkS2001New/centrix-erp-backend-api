@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Http\Middleware\EnsureOrganizationLicenseActive;
 use App\Models\CurrentStock;
 use App\Models\InventoryTransaction;
+use App\Models\PaymentMethod;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\StockReservation;
@@ -1226,5 +1227,42 @@ class SalesCartCheckoutStockTest extends TestCase
             'Full payment required for Cash, M-Pesa, bank, and cheque',
             (string) $response->getContent(),
         );
+    }
+
+    public function test_checkout_recreates_missing_cash_payment_method(): void
+    {
+        PaymentMethod::query()
+            ->where('organization_id', $this->user->organization_id)
+            ->whereRaw('UPPER(method_code) = ?', ['CASH'])
+            ->delete();
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $cart = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 1,
+        ])->assertCreated()->json();
+
+        $due = round((float) collect($cart['lines'] ?? [])->sum('amount'), 2);
+        $this->assertGreaterThan(0, $due);
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'completed',
+            'payment_method_code' => 'CASH',
+            'pay_now' => $due,
+            'payment_splits' => [
+                ['method_code' => 'CASH', 'amount' => $due],
+            ],
+            'offline_order' => true,
+            'client_sale_uuid' => 'pos-cash-method-'.uniqid(),
+        ])->assertCreated();
+
+        $this->assertDatabaseHas('payment_methods', [
+            'organization_id' => $this->user->organization_id,
+            'method_code' => 'CASH',
+        ]);
     }
 }

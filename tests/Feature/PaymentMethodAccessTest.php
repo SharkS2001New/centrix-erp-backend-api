@@ -183,6 +183,23 @@ class PaymentMethodAccessTest extends TestCase
         ])->assertForbidden();
     }
 
+    public function test_system_cash_method_cannot_be_deleted(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $this->ensureOrgSubscription($admin);
+        Sanctum::actingAs($admin);
+
+        $cash = PaymentMethod::query()
+            ->where('organization_id', $admin->organization_id)
+            ->whereRaw('UPPER(method_code) = ?', ['CASH'])
+            ->firstOrFail();
+
+        $this->deleteJson('/api/v1/payment-methods/'.$cash->id)
+            ->assertStatus(422);
+
+        $this->assertDatabaseHas('payment_methods', ['id' => $cash->id, 'method_code' => 'CASH']);
+    }
+
     /** @param  list<string>  $codes */
     protected function grantRolePermissions(int $roleId, array $codes): void
     {

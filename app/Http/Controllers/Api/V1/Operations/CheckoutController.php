@@ -46,6 +46,7 @@ use App\Services\Sales\PosCashRoundingSettings;
 use App\Services\Sales\OrderNumberAllocator;
 use App\Services\Sales\PosDailyOrderNumberAllocator;
 use App\Services\Sales\PosOfflineCheckoutIdempotency;
+use App\Services\Organization\OrganizationReferenceDataService;
 use App\Services\Sales\SameDayCustomerOrderService;
 use App\Services\Sales\SaleRouteResolver;
 use App\Support\CustomerCreditLimit;
@@ -2398,27 +2399,8 @@ class CheckoutController extends Controller
 
     protected function resolveCheckoutPaymentMethod(int $organizationId, string $methodCode): ?PaymentMethod
     {
-        $method = PaymentMethod::query()
-            ->where('organization_id', $organizationId)
-            ->where('method_code', $methodCode)
-            ->first();
-        if ($method) {
-            return $method;
-        }
-
-        $aliases = match (strtoupper($methodCode)) {
-            'EQUITY', 'KCB', 'OTHER' => ['BANK', 'BANK_TRANSFER'],
-            'M-PESA', 'M_PESA' => ['MPESA'],
-            default => [],
-        };
-        if ($aliases === []) {
-            return null;
-        }
-
-        return PaymentMethod::query()
-            ->where('organization_id', $organizationId)
-            ->whereIn('method_code', $aliases)
-            ->first();
+        return app(OrganizationReferenceDataService::class)
+            ->resolvePaymentMethod($organizationId, $methodCode);
     }
 
     /**

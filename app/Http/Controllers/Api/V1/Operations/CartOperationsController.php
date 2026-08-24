@@ -387,8 +387,16 @@ class CartOperationsController extends Controller
         );
 
         $gate = $this->erp->gateForUser($user);
-        $channel = $this->resolveCartChannel($sale->channel ?: 'pos', $gate, [
-            'order_source' => $sale->order_source ?? 'backoffice',
+        $saleChannel = strtolower(trim((string) ($sale->channel ?: '')));
+        $loginChannel = strtolower(trim((string) ($user->currentAccessToken()?->login_channel ?? '')));
+        // Mobile app edits must stay on the sticky mobile cart — never fall through to POS.
+        if ($loginChannel === UserLoginChannelService::MOBILE || $saleChannel === 'mobile') {
+            $saleChannel = 'mobile';
+        } elseif ($saleChannel === '') {
+            $saleChannel = 'pos';
+        }
+        $channel = $this->resolveCartChannel($saleChannel, $gate, [
+            'order_source' => $sale->order_source ?? ($saleChannel === 'mobile' ? 'mobile' : 'backoffice'),
         ], $user->currentAccessToken());
 
         $cart = $this->getOrCreateCart($user, [

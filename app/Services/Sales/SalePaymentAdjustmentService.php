@@ -5,6 +5,7 @@ namespace App\Services\Sales;
 use App\Models\PaymentMethod;
 use App\Models\Sale;
 use App\Models\SalePaymentAdjustment;
+use App\Services\Organization\OrganizationReferenceDataService;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -65,24 +66,7 @@ class SalePaymentAdjustmentService
 
     protected function resolvePaymentMethod(int $organizationId, string $methodCode): ?PaymentMethod
     {
-        $normalized = strtoupper(str_replace([' ', '-'], '_', $methodCode));
-        $normalized = match ($normalized) {
-            'M_PESA' => 'MPESA',
-            'BANK_TRANSFER', 'TRANSFER' => 'BANK',
-            default => $normalized,
-        };
-
-        return PaymentMethod::query()
-            ->where('is_active', 1)
-            ->where(function ($q) use ($organizationId) {
-                $q->where('organization_id', $organizationId)
-                    ->orWhereNull('organization_id');
-            })
-            ->where(function ($q) use ($normalized) {
-                $q->whereRaw('UPPER(REPLACE(REPLACE(method_code, " ", "_"), "-", "_")) = ?', [$normalized])
-                    ->orWhere('method_code', $normalized);
-            })
-            ->orderByRaw('organization_id IS NULL ASC')
-            ->first();
+        return app(OrganizationReferenceDataService::class)
+            ->resolvePaymentMethod($organizationId, $methodCode);
     }
 }

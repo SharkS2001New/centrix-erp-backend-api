@@ -588,7 +588,9 @@ class MobileSalesApiTest extends TestCase
     public function test_mobile_paid_order_cannot_be_restored_to_cart_for_editing(): void
     {
         $user = $this->makeMobileUser();
+        $this->setMobileCheckoutMode($user, 'payment');
         $product = \App\Models\Product::firstOrFail();
+        $customer = \App\Models\Customer::firstOrFail();
         $token = $this->loginMobile($user);
 
         $cart = $this->withToken($token)
@@ -610,6 +612,7 @@ class MobileSalesApiTest extends TestCase
 
         $sale = $this->withToken($token)
             ->postJson("/api/v1/sales/carts/{$cart['id']}/checkout", [
+                'customer_num' => $customer->customer_num,
                 'payment_method_code' => 'CASH',
                 'pay_now' => 100,
             ])
@@ -625,6 +628,75 @@ class MobileSalesApiTest extends TestCase
             ->assertStatus(422);
 
         $this->assertEquals('paid', Sale::find($sale['id'])->status);
+    }
+
+    public function test_mobile_same_day_unpaid_order_can_be_restored_to_cart(): void
+    {
+        $user = $this->makeMobileUser();
+        $this->setMobileCheckoutMode($user, 'save_only');
+        $product = \App\Models\Product::firstOrFail();
+        $customer = \App\Models\Customer::firstOrFail();
+        $token = $this->loginMobile($user);
+
+        $cart = $this->withToken($token)
+            ->postJson('/api/v1/sales/carts', [
+                'channel' => 'mobile',
+                'branch_id' => $user->branch_id,
+            ])
+            ->assertCreated()
+            ->json();
+
+        $this->withToken($token)
+            ->postJson("/api/v1/sales/carts/{$cart['id']}/lines", [
+                'product_code' => $product->product_code,
+                'quantity' => 1,
+                'unit_price' => 100,
+                'on_wholesale_retail' => 0,
+            ])
+            ->assertCreated();
+
+        $sale = $this->withToken($token)
+            ->postJson("/api/v1/sales/carts/{$cart['id']}/checkout", [
+                'customer_num' => $customer->customer_num,
+                'save_only' => true,
+                'pay_now' => 0,
+            ])
+            ->assertCreated()
+            ->json();
+
+        $this->assertEquals('unpaid', $sale['status'] ?? null);
+
+        $this->withToken($token)
+            ->getJson("/api/v1/mobile/orders/{$sale['id']}")
+            ->assertOk()
+            ->assertJsonPath('can_edit', true);
+
+        $restored = $this->withToken($token)
+            ->postJson("/api/v1/sales/orders/{$sale['id']}/restore-to-cart", [
+                'replace' => true,
+            ])
+            ->assertOk()
+            ->json();
+
+        $this->assertSame('mobile', $restored['channel'] ?? null);
+        $this->assertSame((int) $sale['id'], (int) ($restored['superseded_sale_id'] ?? 0));
+        $this->assertNotEmpty($restored['lines'] ?? []);
+
+        // Leaving the edit (clear cart) must unlock new checkouts.
+        $this->withToken($token)
+            ->deleteJson("/api/v1/sales/carts/{$restored['id']}/lines")
+            ->assertOk();
+
+        $freshCart = $this->withToken($token)
+            ->postJson('/api/v1/sales/carts', [
+                'channel' => 'mobile',
+                'branch_id' => $user->branch_id,
+            ])
+            ->assertCreated()
+            ->json();
+
+        $this->assertNull($freshCart['superseded_sale_id'] ?? null);
+        $this->assertNull($freshCart['held_order_num'] ?? null);
     }
 
     public function test_mobile_paid_order_cannot_be_cancelled(): void

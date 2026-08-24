@@ -389,4 +389,61 @@ class StockClerkAccessTest extends TestCase
         $this->getJson('/api/v1/reference/uoms?per_page=500')->assertOk();
         $this->getJson('/api/v1/reference/vats?per_page=50')->assertOk();
     }
+
+    public function test_backoffice_cashier_can_list_products_and_branches(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+
+        PlatformSubscription::query()->firstOrCreate(
+            ['organization_id' => $admin->organization_id],
+            [
+                'status' => 'active',
+                'current_period_start' => now()->subMonth()->toDateString(),
+                'current_period_end' => now()->addYear()->toDateString(),
+                'renewal_price' => 0,
+                'amount' => 0,
+                'currency' => 'KES',
+            ],
+        );
+
+        $role = Role::query()->firstOrCreate(
+            ['role_name' => 'Cashier Products Page '.uniqid()],
+            ['scope' => 'branch', 'is_active' => true],
+        );
+
+        $permissionIds = Permission::query()
+            ->whereIn('permission_code', [
+                'pos.terminal.view',
+                'pos.checkout.create',
+                'catalogue.products.view',
+                'sales.collect_payment.create',
+            ])
+            ->pluck('id');
+        $this->assertNotEmpty($permissionIds);
+
+        foreach ($permissionIds as $permissionId) {
+            DB::table('role_permissions')->updateOrInsert(
+                ['role_id' => $role->id, 'permission_id' => $permissionId],
+                [],
+            );
+        }
+
+        $cashier = User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $role->id,
+            'username' => 'cashier_products_'.uniqid(),
+            'password' => Hash::make('password'),
+            'full_name' => 'Cashier Products Page',
+            'access_scope' => 'branch',
+            'login_channels' => ['backoffice', 'pos'],
+            'is_active' => true,
+        ]);
+
+        Sanctum::actingAs($cashier);
+
+        $this->getJson('/api/v1/products?per_page=5')->assertOk();
+        $this->getJson('/api/v1/products/catalog-summary')->assertOk();
+        $this->getJson('/api/v1/branches?per_page=20')->assertOk();
+    }
 }

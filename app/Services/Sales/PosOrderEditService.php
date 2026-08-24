@@ -104,6 +104,16 @@ class PosOrderEditService
         }
 
         // Sales & Orders “Edit Order” follows Platform → Edit order stages (defaults: booked, pending).
+        // Mobile save-only checkouts land on unpaid / pending_payment — those must be editable
+        // the same day even when Platform stages still list only booked/pending/editable.
+        if (
+            $channel === 'mobile'
+            && $sale->created_at?->isSameDay(now())
+            && in_array($status, ['unpaid', 'pending_payment'], true)
+        ) {
+            return;
+        }
+
         if (! $workflowService->isEditableLineStatus($status, $channel)) {
             if ($isPosSale) {
                 throw new InvalidArgumentException(
