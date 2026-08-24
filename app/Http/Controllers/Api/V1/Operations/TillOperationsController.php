@@ -353,7 +353,7 @@ class TillOperationsController extends Controller
             ]);
         }
 
-        app(OrganizationReferenceDataService::class)->ensurePaymentMethods($orgId);
+        app(OrganizationReferenceDataService::class)->ensureExpensePaymentMethods($orgId);
 
         $rows = DB::table('expense_groups')
             ->select('id', 'group_name')
@@ -368,6 +368,16 @@ class TillOperationsController extends Controller
                     ->orWhere('is_active', 1)
                     ->orWhereNull('is_active');
             })
+            ->orderByRaw(
+                "CASE UPPER(TRIM(method_code))
+                    WHEN 'CASH' THEN 0
+                    WHEN 'MPESA' THEN 1
+                    WHEN 'M-PESA' THEN 1
+                    WHEN 'EQUITY' THEN 2
+                    WHEN 'KCB' THEN 3
+                    ELSE 50
+                 END",
+            )
             ->orderBy('method_name')
             ->get(['id', 'method_name', 'method_code', 'is_active'])
             ->values()

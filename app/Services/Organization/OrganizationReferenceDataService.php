@@ -68,6 +68,26 @@ class OrganizationReferenceDataService
         }
     }
 
+    /**
+     * Core tenders for Record expense / till payouts. Seeds missing rows and
+     * re-activates CASH → MPESA → EQUITY → KCB so the picker always offers them.
+     */
+    public function ensureExpensePaymentMethods(int $organizationId): void
+    {
+        if ($organizationId <= 0 || ! $this->tableHasOrganizationColumn('payment_methods')) {
+            return;
+        }
+
+        $this->ensurePaymentMethods($organizationId);
+
+        foreach (['CASH', 'MPESA', 'EQUITY', 'KCB'] as $code) {
+            DB::table('payment_methods')
+                ->where('organization_id', $organizationId)
+                ->whereRaw('UPPER(TRIM(method_code)) = ?', [$code])
+                ->update(['is_active' => true]);
+        }
+    }
+
     /** @return list<string> */
     public function systemMethodCodes(): array
     {

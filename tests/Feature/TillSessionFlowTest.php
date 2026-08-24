@@ -686,6 +686,34 @@ class TillSessionFlowTest extends TestCase
         $this->assertTrue(collect($listed)->contains(fn ($row) => (int) ($row['id'] ?? 0) === (int) $expense['id']));
     }
 
+    public function test_expense_groups_reactivates_core_tenders_for_record_expense(): void
+    {
+        $orgId = (int) $this->user->organization_id;
+        foreach (['CASH', 'EQUITY', 'KCB'] as $code) {
+            PaymentMethod::query()
+                ->where('organization_id', $orgId)
+                ->whereRaw('UPPER(TRIM(method_code)) = ?', [$code])
+                ->update(['is_active' => false]);
+        }
+
+        $payload = $this->getJson('/api/v1/pos/expense-groups')->assertOk()->json();
+        $codes = collect($payload['payment_methods'] ?? [])
+            ->map(fn ($row) => strtoupper((string) ($row['method_code'] ?? '')))
+            ->all();
+
+        $this->assertContains('CASH', $codes);
+        $this->assertContains('MPESA', $codes);
+        $this->assertContains('EQUITY', $codes);
+        $this->assertContains('KCB', $codes);
+        $this->assertTrue(
+            (bool) PaymentMethod::query()
+                ->where('organization_id', $orgId)
+                ->whereRaw('UPPER(TRIM(method_code)) = ?', ['CASH'])
+                ->where('is_active', true)
+                ->exists(),
+        );
+    }
+
     public function test_session_expense_accepts_chosen_payment_method(): void
     {
         $groupId = (int) DB::table('expense_groups')
