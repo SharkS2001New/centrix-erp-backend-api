@@ -68,7 +68,15 @@ class OllamaProviderTest extends TestCase
 
         $this->assertSame('Hello from Ollama', $turn['text']);
         $this->assertSame(7, $turn['usage']['total_tokens']);
-        Http::assertSent(fn ($request) => str_contains($request->url(), '/v1/chat/completions'));
+        Http::assertSent(function ($request) {
+            $data = $request->data();
+
+            return str_contains($request->url(), '/v1/chat/completions')
+                && ($data['keep_alive'] ?? null) === '30m'
+                && (int) ($data['max_tokens'] ?? 0) === 64
+                && (int) ($data['options']['num_ctx'] ?? 0) === 2048
+                && (int) ($data['options']['num_predict'] ?? 0) === 64;
+        });
     }
 
     public function test_free_provider_accepts_ollama(): void

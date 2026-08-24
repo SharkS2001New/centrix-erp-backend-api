@@ -60,21 +60,7 @@ class OllamaProvider implements AiProviderInterface
             $messages[] = ['role' => $role === 'model' ? 'assistant' : $role, 'content' => $content];
         }
 
-        $payload = [
-            'model' => $request['model'] ?? $this->model,
-            'messages' => $messages,
-            'temperature' => (float) ($request['temperature'] ?? 0.2),
-            'max_tokens' => (int) ($request['max_output_tokens'] ?? config('ai.defaults.max_output_tokens', 2048)),
-            'stream' => false,
-        ];
-
-        $tools = $this->formatTools($request['tools'] ?? []);
-        if ($tools !== []) {
-            $payload['tools'] = $tools;
-            $payload['tool_choice'] = 'auto';
-        }
-
-        return $this->request($payload);
+        return $this->request($this->buildPayload($request, $messages));
     }
 
     public function continueWithToolResults(array $request): array
@@ -118,19 +104,37 @@ class OllamaProvider implements AiProviderInterface
             ];
         }
 
+        return $this->request($this->buildPayload($request, $messages));
+    }
+
+    /**
+     * @param  array<string, mixed>  $request
+     * @param  list<array<string, mixed>>  $messages
+     * @return array<string, mixed>
+     */
+    protected function buildPayload(array $request, array $messages): array
+    {
+        $maxTokens = (int) ($request['max_output_tokens'] ?? config('ai.ollama.max_output_tokens', 256));
         $payload = [
             'model' => $request['model'] ?? $this->model,
             'messages' => $messages,
             'temperature' => (float) ($request['temperature'] ?? 0.2),
-            'max_tokens' => (int) ($request['max_output_tokens'] ?? config('ai.defaults.max_output_tokens', 2048)),
+            'max_tokens' => max(32, $maxTokens),
             'stream' => false,
+            'keep_alive' => (string) config('ai.ollama.keep_alive', '30m'),
+            'options' => [
+                'num_ctx' => max(512, (int) config('ai.ollama.num_ctx', 2048)),
+                'num_predict' => max(32, $maxTokens),
+            ],
         ];
+
         $tools = $this->formatTools($request['tools'] ?? []);
         if ($tools !== []) {
             $payload['tools'] = $tools;
+            $payload['tool_choice'] = 'auto';
         }
 
-        return $this->request($payload);
+        return $payload;
     }
 
     /**

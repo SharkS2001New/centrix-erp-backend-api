@@ -33,6 +33,13 @@ return [
         'model' => env('OLLAMA_MODEL', 'llama3.2:1b'),
         'base_url' => rtrim(env('OLLAMA_BASE_URL', 'http://ollama:11434'), '/'),
         'request_timeout' => (int) env('OLLAMA_TIMEOUT', env('OLLAMA_REQUEST_TIMEOUT', 120)),
+        /** Keep the model loaded so the next chat is not a cold start. */
+        'keep_alive' => env('OLLAMA_KEEP_ALIVE', '30m'),
+        /** Small context = much faster on CPU. Centrix still injects a short prompt. */
+        'num_ctx' => (int) env('OLLAMA_NUM_CTX', 2048),
+        'max_output_tokens' => (int) env('OLLAMA_MAX_OUTPUT_TOKENS', 256),
+        'history_limit' => (int) env('OLLAMA_HISTORY_LIMIT', 4),
+        'max_tool_rounds' => (int) env('OLLAMA_MAX_TOOL_ROUNDS', 1),
     ],
 
     /**
