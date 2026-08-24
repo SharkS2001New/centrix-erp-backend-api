@@ -364,10 +364,14 @@ class TillOperationsController extends Controller
         $paymentMethods = PaymentMethod::query()
             ->where('organization_id', $orgId)
             ->where(function ($query) {
-                $query->where('is_active', true)->orWhere('is_active', 1);
+                $query->where('is_active', true)
+                    ->orWhere('is_active', 1)
+                    ->orWhereNull('is_active');
             })
             ->orderBy('method_name')
-            ->get(['id', 'method_name', 'method_code', 'is_active']);
+            ->get(['id', 'method_name', 'method_code', 'is_active'])
+            ->values()
+            ->all();
 
         $cashId = $this->resolveCashPaymentMethodId($orgId);
 

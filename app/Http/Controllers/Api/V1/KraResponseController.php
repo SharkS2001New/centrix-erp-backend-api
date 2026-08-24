@@ -32,6 +32,20 @@ class KraResponseController extends BaseResourceController
         return $query;
     }
 
+    protected function kraResponseRelations(bool $withSaleItems = false): array
+    {
+        $relations = [
+            'sale:id,channel,cashier_id',
+            'sale.cashier:id,full_name,username',
+        ];
+        if ($withSaleItems) {
+            $relations[] = 'sale.items';
+            $relations[] = 'sale.items.product';
+        }
+
+        return $relations;
+    }
+
     public function index(Request $request)
     {
         $request->validate([
@@ -72,26 +86,26 @@ class KraResponseController extends BaseResourceController
 
         return response()->json(
             $query
-                ->with(['sale:id,channel,cashier_id', 'sale.cashier:id,full_name,username'])
+                ->with($this->kraResponseRelations(false))
                 ->orderByDesc('created_at')
                 ->orderByDesc('id')
                 ->paginate($perPage)
-                ->through(fn (KraResponse $row) => $this->formatKraResponse($row))
+                ->through(fn (KraResponse $row) => $this->formatKraResponse($row, false))
         );
     }
 
     public function show(Request $request, string $id)
     {
         $model = $this->baseQuery($request)
-            ->with(['sale:id,channel,cashier_id', 'sale.cashier:id,full_name,username'])
+            ->with($this->kraResponseRelations(true))
             ->where('id', $id)
             ->firstOrFail();
 
-        return response()->json($this->formatKraResponse($model));
+        return response()->json($this->formatKraResponse($model, true));
     }
 
     /** @return array<string, mixed> */
-    protected function formatKraResponse(KraResponse $row): array
+    protected function formatKraResponse(KraResponse $row, bool $includeSaleItems = false): array
     {
         $cashier = $row->sale?->cashier;
         $cashierName = null;
@@ -101,10 +115,23 @@ class KraResponseController extends BaseResourceController
             $cashierName = $fullName !== '' ? $fullName : ($username !== '' ? $username : null);
         }
 
-        return array_merge($row->toArray(), [
+        $payload = array_merge($row->toArray(), [
             'channel' => $row->sale?->channel,
             'cashier_id' => $row->sale?->cashier_id,
             'cashier_name' => $cashierName,
         ]);
+
+        if ($includeSaleItems) {
+            $saleItems = [];
+            foreach ($row->sale?->items ?? [] as $line) {
+                $saleItems[] = [
+                    'product_code' => (string) ($line->product_code ?? ''),
+                    'product_name' => $line->resolvedProductName(),
+                ];
+            }
+            $payload['sale_items'] = $saleItems;
+        }
+
+        return $payload;
     }
 }

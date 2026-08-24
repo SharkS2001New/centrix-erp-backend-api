@@ -30,14 +30,14 @@ class CheckoutKraSubmissionService
             return $sale->kraResponse()->where('status', 'success')->latest('id')->first();
         }
 
-        $sale->loadMissing('items');
+        $sale->loadMissing(['items.product']);
         $lines = $sale->items;
         if ($lines->isEmpty()) {
             return null;
         }
 
         $orderItems = $lines->map(fn ($line) => [
-            'product_name' => $line->product_name ?? $line->product_code,
+            'product_name' => $line->resolvedProductName(),
             'product_code' => $line->product_code,
             'quantity' => (float) $line->quantity,
             'amount' => (float) $line->amount,

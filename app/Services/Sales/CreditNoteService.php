@@ -280,7 +280,7 @@ class CreditNoteService
             throw new InvalidArgumentException('Enable KRA device in Finance settings first.');
         }
 
-        $sale->loadMissing(['items', 'customer']);
+        $sale->loadMissing(['items.product', 'customer']);
         if ($sale->items->isEmpty()) {
             throw new InvalidArgumentException('Sale has no line items to credit on KRA.');
         }
@@ -318,7 +318,7 @@ class CreditNoteService
             ->forOrganization((int) $sale->organization_id);
 
         $orderItems = $sale->items->map(fn ($line) => [
-            'product_name' => $line->product_name ?? $line->product_code,
+            'product_name' => $line->resolvedProductName(),
             'product_code' => $line->product_code,
             'quantity' => (float) $line->quantity,
             'amount' => (float) $line->amount,

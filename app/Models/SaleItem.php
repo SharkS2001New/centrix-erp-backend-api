@@ -22,6 +22,31 @@ class SaleItem extends Model
         return $this->belongsTo(Product::class, 'product_code', 'product_code')->withTrashed();
     }
 
+    /**
+     * Human-readable product label for receipts / KRA PLU lines.
+     * Prefer the sale-line snapshot unless it is empty or identical to the SKU
+     * (legacy rows often stored product_code as product_name).
+     */
+    public function resolvedProductName(): string
+    {
+        $code = trim((string) ($this->product_code ?? ''));
+        $snap = trim((string) ($this->product_name ?? ''));
+        if ($snap !== '' && ($code === '' || strcasecmp($snap, $code) !== 0)) {
+            return $snap;
+        }
+
+        $fromProduct = trim((string) ($this->product?->product_name ?? ''));
+        if ($fromProduct !== '') {
+            return $fromProduct;
+        }
+
+        if ($snap !== '') {
+            return $snap;
+        }
+
+        return $code !== '' ? $code : 'Product';
+    }
+
     public function sale()
     {
         return $this->belongsTo(Sale::class, 'sale_id');

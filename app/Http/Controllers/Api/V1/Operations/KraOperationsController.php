@@ -211,7 +211,7 @@ class KraOperationsController extends Controller
             return response()->json(['message' => 'Receipt already succeeded.'], 422);
         }
 
-        $sale = Sale::with(['items', 'customer'])->find($row->sale_id);
+        $sale = Sale::with(['items.product', 'customer'])->find($row->sale_id);
         if (! $sale) {
             return response()->json(['message' => 'Linked sale not found.'], 422);
         }
@@ -226,7 +226,7 @@ class KraOperationsController extends Controller
         $invoiceNumber = $allocator->extractFromKraResponse($row)
             ?: $service->traderInvoiceForSale($sale, $finance);
         $orderItems = $sale->items->map(fn ($line) => [
-            'product_name' => $line->product_name ?? $line->product_code,
+            'product_name' => $line->resolvedProductName(),
             'product_code' => $line->product_code,
             'quantity' => (float) $line->quantity,
             'amount' => (float) $line->amount,
