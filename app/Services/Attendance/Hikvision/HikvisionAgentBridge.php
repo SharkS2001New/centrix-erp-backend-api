@@ -124,16 +124,18 @@ class HikvisionAgentBridge
             ];
         }
 
-        // Overnight PC off / reboot: last check-in is hours old. The service starts with
-        // Windows and will heartbeat on its own. Do not block on PING or tell them to re-download.
+        // Stale last-seen: either the PC just woke up, or the service is Running but
+        // heartbeats to Centrix are failing (token / network / API URL).
         if (! $status['online'] && $this->hasCheckedIn($device) && ! $this->hasRecentCheckIn($device)) {
             $when = $status['last_seen_at'] ?? 'the last session';
+            $minutesAgo = $this->minutesSinceCheckIn($device);
 
             return [
                 'online' => false,
-                'recovering' => true,
+                'recovering' => $minutesAgo <= 15,
+                'stale' => $minutesAgo > 15,
                 'agent' => $status,
-                'error' => self::AGENT_NAME." last checked in at {$when}. After the office PC is turned on, the Windows service starts automatically, pings Centrix, and continues punch sync. Wait 1–2 minutes and test again. Do not re-download after a reboot.",
+                'error' => $this->formatStaleCheckInError($when, $minutesAgo),
             ];
         }
 
@@ -213,6 +215,29 @@ class HikvisionAgentBridge
         }
 
         return $seen->greaterThan(AppTimezone::now()->subSeconds(self::RECENT_CHECKIN_GRACE_SECONDS));
+    }
+
+    public function minutesSinceCheckIn(AttendanceClockDevice $device): int
+    {
+        $seen = AppTimezone::normalize($device->agent_last_seen_at);
+        if ($seen === null) {
+            return 0;
+        }
+
+        return max(0, (int) $seen->diffInMinutes(AppTimezone::now()));
+    }
+
+    protected function formatStaleCheckInError(string $when, int $minutesAgo): string
+    {
+        if ($minutesAgo <= 15) {
+            return self::AGENT_NAME." last checked in at {$when}. After the office PC is turned on, the Windows service starts automatically, pings Centrix, and continues punch sync. Wait 1–2 minutes and test again. Do not re-download after a reboot.";
+        }
+
+        $age = $minutesAgo >= 120
+            ? ((int) round($minutesAgo / 60)).' hours ago'
+            : $minutesAgo.' minutes ago';
+
+        return self::AGENT_NAME." last checked in at {$when} ({$age}). Windows showing the service as Running is not enough — Centrix has not received a heartbeat. On that PC open http://127.0.0.1:9251 and click Test connection. If it says unauthorized, re-download the agent zip for this device once. If it cannot reach Centrix, check internet/firewall. Do not re-download after a normal reboot.";
     }
 
     public function shouldUseAgent(AttendanceClockDevice $device): bool

@@ -120,9 +120,10 @@ class HikvisionDeviceManagementTest extends TestCase
         $response = $this->postJson("/api/v1/attendance-clock-devices/{$device->id}/hikvision/test-connection");
         $response->assertOk();
         $response->assertJsonPath('online', false);
-        $response->assertJsonPath('recovering', true);
+        $response->assertJsonPath('stale', true);
         $response->assertJsonPath('agent.name', 'CentrixAttendanceAgent');
-        $this->assertStringContainsString('Do not re-download after a reboot', (string) $response->json('error'));
+        $this->assertStringContainsString('127.0.0.1:9251', (string) $response->json('error'));
+        $this->assertStringContainsString('heartbeat', (string) $response->json('error'));
         $this->assertStringNotContainsString('Download the agent zip once', (string) $response->json('error'));
     }
 
