@@ -268,7 +268,7 @@ class AiGeminiChatTest extends TestCase
             ->assertJsonPath('provider', 'gemini')
             ->assertJsonPath('pending_action.type', 'create_product');
 
-        $this->assertNotEmpty($response->json('form_spec'));
+        $this->assertEmpty($response->json('form_spec.fields') ?? []);
     }
 
     public function test_gemini_tool_chat_failure_falls_back_to_classic_assistant(): void

@@ -49,7 +49,15 @@ return [
     'use_tool_chat' => filter_var(env('AI_USE_TOOL_CHAT', true), FILTER_VALIDATE_BOOLEAN),
 
     'request_timeout' => (int) env('AI_REQUEST_TIMEOUT', 60),
-    'max_tool_rounds' => (int) env('AI_MAX_TOOL_ROUNDS', 2),
+    'max_tool_rounds' => (int) env('AI_MAX_TOOL_ROUNDS', 1),
+
+    /**
+     * Trim prompts, history, and tool loops for lower latency (recommended for production chat).
+     */
+    'fast_mode' => filter_var(env('AI_FAST_MODE', true), FILTER_VALIDATE_BOOLEAN),
+
+    /** Stream token deltas to the web assistant via POST /ai/chat/stream (OpenAI-compatible providers). */
+    'stream_responses' => filter_var(env('AI_STREAM_RESPONSES', true), FILTER_VALIDATE_BOOLEAN),
 
     /** Cap simultaneous in-flight inferences (0 = unlimited). Only rejects under extreme concurrent load. */
     'max_concurrent_requests' => (int) env('AI_MAX_CONCURRENT_REQUESTS', 32),
@@ -92,8 +100,22 @@ return [
         'get_employee_details' => true,
         'get_employee_payroll_preview' => true,
         'create_custom_report' => true,
+        'run_insight' => true,
+        'get_profit_loss' => true,
+        'get_expense_summary' => true,
+        'get_customer_portfolio' => true,
+        'get_inventory_valuation' => true,
+        'get_cash_position' => true,
+        'calculate_scenario' => true,
     ],
-    'conversation_history_limit' => (int) env('AI_CONVERSATION_HISTORY_LIMIT', 12),
+    'conversation_history_limit' => (int) env('AI_CONVERSATION_HISTORY_LIMIT', 8),
+
+    /**
+     * Create/write actions that may show an inline form immediately (exceptions).
+     * All other create_* and record_customer_payment actions defer the form until
+     * the user replies "show form" or validation fails on confirm.
+     */
+    'immediate_form_create_actions' => [],
 
     /** Application-level rate limit for POST /ai/chat (per user). */
     'rate_limit' => [

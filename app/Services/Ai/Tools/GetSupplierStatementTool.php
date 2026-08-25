@@ -5,6 +5,7 @@ namespace App\Services\Ai\Tools;
 use App\Models\Organization;
 use App\Models\Supplier;
 use App\Models\User;
+use App\Services\Ai\AiNearMissHelper;
 use App\Services\Ai\AiQtyLabelEnricher;
 use App\Services\Ai\AiSalesDateResolver;
 use App\Services\Ai\Tools\Concerns\ResolvesAiToolOrganization;
@@ -258,10 +259,37 @@ class GetSupplierStatementTool implements AiToolInterface
             ->get();
 
         if ($matches->isEmpty()) {
-            return [
-                'error' => true,
-                'message' => "No supplier matched \"{$needle}\" in this organization.",
-            ];
+            $relaxed = $this->relaxedSupplierMatches($organizationId, $needle);
+            if ($relaxed->isEmpty()) {
+                return AiNearMissHelper::noExact(
+                    $needle,
+                    null,
+                    [],
+                    $this->screens(null),
+                    'Try a shorter supplier name or open Suppliers to confirm the record.',
+                );
+            }
+
+            $ranked = $relaxed->map(function (Supplier $s) use ($needle) {
+                $label = (string) $s->supplier_name;
+
+                return [
+                    'label' => $label,
+                    'reason' => AiNearMissHelper::matchReason($needle, $label),
+                    'score' => AiNearMissHelper::scoreNameMatch($needle, $label),
+                    'supplier_id' => (int) $s->id,
+                ];
+            })->sortByDesc('score')->values()->all();
+
+            ['closest' => $closest, 'alternatives' => $alternatives] = AiNearMissHelper::splitRankedMatches($ranked);
+
+            return AiNearMissHelper::noExact(
+                $needle,
+                $closest,
+                $alternatives,
+                $this->screens(null),
+                'Reply with the exact supplier name or code and I can pull their statement.',
+            );
         }
         if ($matches->count() === 1) {
             return ['supplier' => $matches->first()];
@@ -269,16 +297,44 @@ class GetSupplierStatementTool implements AiToolInterface
 
         $balances = $this->suppliers->balancesForSuppliers($matches->pluck('id'), $organizationId);
 
-        return [
-            'error' => true,
-            'message' => "Multiple suppliers matched \"{$needle}\". Ask the user to pick one by name or code.",
-            'candidates' => $matches->map(fn (Supplier $s) => [
+        return AiNearMissHelper::ambiguous(
+            $needle,
+            $matches->map(fn (Supplier $s) => [
+                'label' => (string) $s->supplier_name,
                 'supplier_id' => (int) $s->id,
                 'supplier_code' => $s->supplier_code,
-                'supplier_name' => (string) $s->supplier_name,
                 'current_balance' => round((float) ($balances[(int) $s->id] ?? 0), 2),
             ])->all(),
-        ];
+            'supplier',
+        );
+    }
+
+    /**
+     * @return \Illuminate\Support\Collection<int, Supplier>
+     */
+    protected function relaxedSupplierMatches(int $organizationId, string $needle)
+    {
+        $tokens = AiNearMissHelper::tokens($needle);
+        if ($tokens === []) {
+            return collect();
+        }
+
+        return Supplier::query()
+            ->where('organization_id', $organizationId)
+            ->whereNull('deleted_at')
+            ->where(function ($q) use ($tokens) {
+                foreach ($tokens as $token) {
+                    if (mb_strlen($token) < 3) {
+                        continue;
+                    }
+                    $like = '%'.$token.'%';
+                    $q->orWhere('supplier_name', 'like', $like)
+                        ->orWhere('supplier_code', 'like', $like);
+                }
+            })
+            ->orderBy('supplier_name')
+            ->limit(10)
+            ->get();
     }
 
     /**

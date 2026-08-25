@@ -3,6 +3,7 @@
 namespace App\Services\Ai\Tools\Concerns;
 
 use App\Models\Employee;
+use App\Services\Ai\AiNearMissHelper;
 
 trait ResolvesAiEmployees
 {
@@ -19,6 +20,42 @@ trait ResolvesAiEmployees
             ];
         }
 
+        $matches = $this->employeeNameQuery($organizationId, $needle, $withRelations)->get();
+
+        if ($matches->isEmpty()) {
+            $matches = $this->employeeRelaxedQuery($organizationId, $name, $withRelations)->get();
+        }
+
+        if ($matches->isEmpty()) {
+            return AiNearMissHelper::noExact(
+                $name,
+                null,
+                [],
+                [['label' => 'Employees', 'path' => '/hr/employees']],
+                'Open the employees list to verify the name or employee code.',
+            );
+        }
+
+        if ($matches->count() === 1) {
+            return ['employee' => $matches->first()];
+        }
+
+        return AiNearMissHelper::ambiguous(
+            $name,
+            $matches->map(fn (Employee $row) => [
+                'label' => (string) ($row->full_name ?: trim($row->first_name.' '.$row->last_name)),
+                'username' => $row->user?->username,
+                'employee_code' => $row->employee_code ? (string) $row->employee_code : null,
+            ])->all(),
+            'employee',
+        );
+    }
+
+    /**
+     * @return \Illuminate\Database\Eloquent\Builder<Employee>
+     */
+    protected function employeeNameQuery(int $organizationId, string $needle, bool $withRelations)
+    {
         $query = Employee::query()->where('organization_id', $organizationId);
         if ($withRelations) {
             $query->with([
@@ -35,7 +72,7 @@ trait ResolvesAiEmployees
             $query->with(['user:id,username,full_name']);
         }
 
-        $matches = $query
+        return $query
             ->where(function ($q) use ($needle) {
                 $q->whereRaw('LOWER(full_name) LIKE ?', ['%'.$needle.'%'])
                     ->orWhereRaw('LOWER(first_name) LIKE ?', ['%'.$needle.'%'])
@@ -48,29 +85,37 @@ trait ResolvesAiEmployees
                     });
             })
             ->orderBy('full_name')
-            ->limit(10)
-            ->get();
+            ->limit(10);
+    }
 
-        if ($matches->isEmpty()) {
-            return [
-                'error' => true,
-                'message' => "No employee matched \"{$name}\" in this organization.",
-            ];
+    /**
+     * @return \Illuminate\Database\Eloquent\Builder<Employee>
+     */
+    protected function employeeRelaxedQuery(int $organizationId, string $name, bool $withRelations)
+    {
+        $tokens = AiNearMissHelper::tokens($name);
+        if ($tokens === []) {
+            return Employee::query()->whereRaw('1 = 0');
         }
 
-        if ($matches->count() === 1) {
-            return ['employee' => $matches->first()];
+        $query = Employee::query()->where('organization_id', $organizationId);
+        if ($withRelations) {
+            $query->with(['user:id,username,full_name']);
         }
 
-        return [
-            'error' => true,
-            'message' => "Multiple employees matched \"{$name}\". Ask the user to pick one by name, employee code, or username.",
-            'candidates' => $matches->map(fn (Employee $row) => [
-                'name' => (string) ($row->full_name ?: trim($row->first_name.' '.$row->last_name)),
-                'username' => $row->user?->username,
-                'employee_code' => $row->employee_code ? (string) $row->employee_code : null,
-            ])->all(),
-        ];
+        return $query
+            ->where(function ($q) use ($tokens) {
+                foreach ($tokens as $token) {
+                    if (mb_strlen($token) < 3) {
+                        continue;
+                    }
+                    $like = '%'.$token.'%';
+                    $q->orWhereRaw('LOWER(full_name) LIKE ?', [$like])
+                        ->orWhereRaw('LOWER(employee_code) LIKE ?', [$like]);
+                }
+            })
+            ->orderBy('full_name')
+            ->limit(10);
     }
 
     protected function resolveEmployeeById(int $organizationId, int $employeeId, bool $withRelations = true): ?Employee

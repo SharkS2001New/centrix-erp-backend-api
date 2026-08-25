@@ -2,6 +2,7 @@
 
 namespace App\Services\Sales;
 
+use App\Models\Customer;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 
@@ -155,18 +156,38 @@ class RouteOrderScope
 
     /**
      * Shop Debtors: same sales list as Unpaid / Partial / Paid Orders, scoped to
-     * regular & debtor customers only. Payment bucket is applied separately.
+     * saved regular & debtor customers only (never walk-in / route / deleted).
+     * Payment bucket is applied separately.
      */
     public static function applyShopDebtors(Builder $query): Builder
     {
         return $query
             ->whereNotNull('sales.customer_num')
+            ->where('sales.customer_num', '>', 0)
             ->whereExists(function ($sub) {
                 $sub->select(DB::raw('1'))
                     ->from('customers')
                     ->whereColumn('customers.customer_num', 'sales.customer_num')
                     ->whereColumn('customers.organization_id', 'sales.organization_id')
+                    ->whereNull('customers.deleted_at')
                     ->whereIn('customers.customer_type', ['regular', 'debtor']);
             });
+    }
+
+    /**
+     * Saved shop customer eligible for AR / convert-to-unpaid / Shop Debtors.
+     */
+    public static function findShopDebtorCustomer(int $organizationId, ?int $customerNum): ?Customer
+    {
+        if (! $customerNum || $customerNum <= 0) {
+            return null;
+        }
+
+        return Customer::query()
+            ->where('organization_id', $organizationId)
+            ->where('customer_num', $customerNum)
+            ->whereNull('deleted_at')
+            ->whereIn('customer_type', ['regular', 'debtor'])
+            ->first();
     }
 }

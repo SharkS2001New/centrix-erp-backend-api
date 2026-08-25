@@ -5,13 +5,19 @@ namespace App\Services\Ai;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\Ai\Tools\AiToolInterface;
+use App\Services\Ai\Tools\CalculateScenarioTool;
 use App\Services\Ai\Tools\CreateCustomReportTool;
 use App\Services\Ai\Tools\FindScreenTool;
+use App\Services\Ai\Tools\GetCashPositionTool;
+use App\Services\Ai\Tools\GetCustomerPortfolioTool;
 use App\Services\Ai\Tools\GetCustomerStatementTool;
 use App\Services\Ai\Tools\GetDebtorsSummaryTool;
 use App\Services\Ai\Tools\GetEmployeeAttendanceTool;
 use App\Services\Ai\Tools\GetEmployeeDetailsTool;
 use App\Services\Ai\Tools\GetEmployeePayrollPreviewTool;
+use App\Services\Ai\Tools\GetExpenseSummaryTool;
+use App\Services\Ai\Tools\GetInventoryValuationTool;
+use App\Services\Ai\Tools\GetProfitLossTool;
 use App\Services\Ai\Tools\GetSupplierStatementTool;
 use App\Services\Ai\Tools\SearchTrainingNotesTool;
 use App\Services\Ai\Tools\GetProductDetailsTool;
@@ -24,6 +30,7 @@ use App\Services\Ai\Tools\GetSalesSummaryTool;
 use App\Services\Ai\Tools\GetStockSummaryTool;
 use App\Services\Ai\Tools\GetTillHealthTool;
 use App\Services\Ai\Tools\GetVatCollectedTool;
+use App\Services\Ai\Tools\RunInsightTool;
 use InvalidArgumentException;
 
 class AiToolRegistry
@@ -51,6 +58,13 @@ class AiToolRegistry
         protected GetEmployeeDetailsTool $getEmployeeDetails,
         protected GetEmployeePayrollPreviewTool $getEmployeePayrollPreview,
         protected CreateCustomReportTool $createCustomReport,
+        protected RunInsightTool $runInsight,
+        protected GetProfitLossTool $getProfitLoss,
+        protected GetExpenseSummaryTool $getExpenseSummary,
+        protected GetCustomerPortfolioTool $getCustomerPortfolio,
+        protected GetInventoryValuationTool $getInventoryValuation,
+        protected GetCashPositionTool $getCashPosition,
+        protected CalculateScenarioTool $calculateScenario,
     ) {}
 
     /**
@@ -177,6 +191,13 @@ class AiToolRegistry
             $this->getEmployeeDetails,
             $this->getEmployeePayrollPreview,
             $this->createCustomReport,
+            $this->runInsight,
+            $this->getProfitLoss,
+            $this->getExpenseSummary,
+            $this->getCustomerPortfolio,
+            $this->getInventoryValuation,
+            $this->getCashPosition,
+            $this->calculateScenario,
         ];
 
         $this->tools = [];

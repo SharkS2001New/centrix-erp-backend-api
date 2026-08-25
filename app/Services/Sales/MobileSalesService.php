@@ -214,7 +214,7 @@ class MobileSalesService
                             $status,
                             $channel,
                             (string) ($row['payment_status'] ?? ''),
-                        ),
+                        ) && (int) ($row['customer_num'] ?? 0) > 0,
                         'can_return' => $workflow->isCustomerReturnStatus($status, $channel),
                     ]);
                 })
@@ -653,7 +653,7 @@ class MobileSalesService
                     $status,
                     $channel,
                     (string) ($sale->payment_status ?? ''),
-                ),
+                ) && (int) ($sale->customer_num ?? 0) > 0,
                 'can_return' => $workflow->isCustomerReturnStatus($status, $channel),
             ],
             $this->cancellationCapabilitiesForSale(

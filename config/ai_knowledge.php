@@ -156,7 +156,7 @@ return [
             'required' => ['product_name'],
             'optional' => ['product_code', 'unit_price', 'unit_id', 'subcategory_id', 'last_cost_price', 'reorder_point', 'vat_id'],
             'action' => 'create_product',
-            'notes' => 'product_code is auto-generated as a unique 6-digit SKU when omitted. unit_id from uoms, subcategory_id from subcategories, vat_id from vats.',
+            'notes' => 'Collect details in chat first; offer inline form only when user asks (e.g. "show form"). product_code is auto-generated as a unique 6-digit SKU when omitted. unit_id from uoms, subcategory_id from subcategories, vat_id from vats.',
         ],
         'create_sales_order' => [
             'summary' => 'Create a normal sales order (checkout with payment)',
@@ -164,7 +164,7 @@ return [
             'required' => ['customer_num', 'lines' => [['product_code', 'quantity']]],
             'optional' => ['payment_method_code', 'pay_now', 'is_credit_sale', 'channel'],
             'action' => 'create_sales_order',
-            'notes' => 'Default: backoffice channel, CASH payment, full amount paid. Not the same as a held order.',
+            'notes' => 'Collect customer + line items in chat first; offer inline form only when user asks. Default: backoffice channel, CASH payment, full amount paid. Not the same as a held order.',
         ],
         'create_held_order' => [
             'summary' => 'Save an order without payment (held / save-only)',
@@ -172,6 +172,7 @@ return [
             'required' => ['customer_num', 'lines' => [['product_code', 'quantity']]],
             'optional' => ['status'],
             'action' => 'create_held_order',
+            'notes' => 'Collect customer + line items in chat first; offer inline form only when user asks.',
         ],
         'pos_checkout' => [
             'summary' => 'Quick POS sale — cart → lines → checkout completed',
@@ -186,6 +187,7 @@ return [
             'required' => ['first_name', 'last_name'],
             'optional' => ['department_id', 'shift_id', 'email', 'phone', 'base_salary', 'hire_date'],
             'action' => 'create_employee',
+            'notes' => 'Collect name and HR details in chat first; offer inline form only when user asks.',
         ],
         'create_supplier' => [
             'summary' => 'Add a supplier',
@@ -193,6 +195,7 @@ return [
             'required' => ['supplier_name'],
             'optional' => ['contact_person', 'phone', 'email', 'town', 'tax_pin', 'address'],
             'action' => 'create_supplier',
+            'notes' => 'Collect supplier name and contacts in chat first; offer inline form only when user asks.',
         ],
         'create_lpo' => [
             'summary' => 'Create a purchase order (LPO) for a supplier',
@@ -207,7 +210,7 @@ return [
                 'lines' => [['product_code', 'ordered_qty', 'cost_price']],
             ],
             'action' => 'create_lpo',
-            'notes' => 'Prefer confirming via the form. If order_num / sale_id is given, copy product lines from that sales order and use each product\'s last_cost_price. Always require a supplier. After create, open /lpo/{lpo_no}.',
+            'notes' => 'Collect supplier + line items in chat first. Offer an inline form only when the user asks (e.g. "show form"). If order_num / sale_id is given, copy product lines from that sales order and use each product\'s last_cost_price. After create, open /lpo/{lpo_no}.',
         ],
         'create_report' => [
             'summary' => 'Save a custom report template — ask for a name first, then create and share /reports/custom/{id}',
@@ -215,6 +218,7 @@ return [
             'required' => ['name', 'instruction'],
             'optional' => ['spec' => ['source', 'columns', 'group_by']],
             'action' => 'create_report_template',
+            'notes' => 'Collect report name and instructions in chat first; offer inline form only when user asks.',
         ],
         'record_customer_payment' => [
             'summary' => 'Record a customer payment against an outstanding sale/invoice',
@@ -222,7 +226,7 @@ return [
             'required' => ['sale_id', 'payment_method_id'],
             'optional' => ['amount', 'reference_number', 'mark_paid_full'],
             'action' => 'record_customer_payment',
-            'notes' => 'Omit amount to pay the full balance_due. Use amount for partial payments. Requires payments.manage permission.',
+            'notes' => 'Collect order and payment details in chat first; offer inline form only when user asks. Omit amount to pay the full balance_due. Requires payments.manage permission.',
         ],
         'analyze_debtors' => [
             'summary' => 'Review who owes money and open invoice balances',

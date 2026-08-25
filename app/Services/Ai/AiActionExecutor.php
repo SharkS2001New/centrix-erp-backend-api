@@ -851,6 +851,23 @@ class AiActionExecutor
         return (bool) preg_match('/^(yes|yeah|yep|confirm|proceed|go ahead|do it|create it|ok|okay)\b/i', trim($message));
     }
 
+    /** User explicitly wants the inline confirmation form (not chat-only collection). */
+    public function wantsFormUi(string $message): bool
+    {
+        $text = strtolower(trim($message));
+        if (preg_match('/\b(show|open|use|display|bring up|load|give me|i want|prefer)\b.{0,25}\b(form|form ui)\b/i', $text)) {
+            return true;
+        }
+        if (preg_match('/\b(form|form ui)\b.{0,25}\b(please|now|instead|yes|yeah)\b/i', $text)) {
+            return true;
+        }
+        if (preg_match('/\b(yes|yeah|yep|ok|okay)\b.{0,15}\b(form|form ui)\b/i', $text)) {
+            return true;
+        }
+
+        return (bool) preg_match('/\b(use|with)\s+(?:the\s+)?form\b/i', $text);
+    }
+
     /** @return array<string, mixed> */
     protected function defaultProductFields(User $user): array
     {

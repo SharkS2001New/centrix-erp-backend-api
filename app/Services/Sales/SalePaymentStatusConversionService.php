@@ -2,7 +2,6 @@
 
 namespace App\Services\Sales;
 
-use App\Models\Customer;
 use App\Models\PaymentMethod;
 use App\Models\Sale;
 use App\Models\SalePayment;
@@ -146,26 +145,28 @@ class SalePaymentStatusConversionService
                 ]);
             }
 
+            $customer = RouteOrderScope::findShopDebtorCustomer(
+                (int) $sale->organization_id,
+                $sale->customer_num ? (int) $sale->customer_num : null,
+            );
+            if (! $customer) {
+                throw ValidationException::withMessages([
+                    'customer_num' => [
+                        'Converting to unpaid requires a saved customer from Customers. Walk-in orders cannot be charged to accounts receivable.',
+                    ],
+                ]);
+            }
+
             SalePayment::query()->where('sale_id', $sale->id)->delete();
             SalePaymentColumnMapper::replaceFromMethodMap($sale, []);
 
             $updates = [
                 'amount_paid' => 0,
                 'payment_status' => 'unpaid',
+                // Shop receivable: convert-to-unpaid always lands on a saved regular/debtor.
+                'is_credit_sale' => 1,
+                'payment_method_code' => 'CREDIT',
             ];
-
-            // Shop receivable: mark credit when the sale is tied to a regular/debtor customer.
-            if ($sale->customer_num) {
-                $customer = Customer::query()
-                    ->where('organization_id', $sale->organization_id)
-                    ->where('customer_num', $sale->customer_num)
-                    ->first();
-                $customerType = strtolower(trim((string) ($customer?->customer_type ?? '')));
-                if ($customerType === '' || in_array($customerType, ['regular', 'debtor'], true)) {
-                    $updates['is_credit_sale'] = 1;
-                    $updates['payment_method_code'] = 'CREDIT';
-                }
-            }
 
             if (
                 $sale->status !== 'cancelled'
@@ -178,14 +179,12 @@ class SalePaymentStatusConversionService
             $sale->update($updates);
             $sale = $sale->fresh();
 
-            if ($sale->customer_num) {
-                app(CustomerInvoiceService::class)->ensureForSale(
-                    $sale,
-                    $user,
-                    (float) $sale->order_total,
-                    0,
-                );
-            }
+            app(CustomerInvoiceService::class)->ensureForSale(
+                $sale,
+                $user,
+                (float) $sale->order_total,
+                0,
+            );
 
             return $sale;
         });

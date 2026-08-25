@@ -3,6 +3,7 @@
 namespace App\Services\Ai\Providers;
 
 use App\Contracts\Ai\AiProviderInterface;
+use App\Contracts\Ai\AiStreamingProviderInterface;
 use App\Exceptions\Ai\AiProviderException;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
@@ -12,7 +13,7 @@ use Illuminate\Support\Str;
 /**
  * OpenAI Chat Completions with tools — kept so AI_PROVIDER can switch without rewriting callers.
  */
-class OpenAiProvider implements AiProviderInterface
+class OpenAiProvider implements AiProviderInterface, AiStreamingProviderInterface
 {
     public function __construct(
         protected string $apiKey,
@@ -27,6 +28,20 @@ class OpenAiProvider implements AiProviderInterface
     }
 
     public function chat(array $request): array
+    {
+        return $this->request($this->buildChatPayload($request, false));
+    }
+
+    public function continueWithToolResults(array $request): array
+    {
+        return $this->request($this->buildContinuePayload($request, false));
+    }
+
+    /**
+     * @param  array<string, mixed>  $request
+     * @return array<string, mixed>
+     */
+    protected function buildChatPayload(array $request, bool $stream = true): array
     {
         $messages = [
             ['role' => 'system', 'content' => (string) ($request['system'] ?? '')],
@@ -46,6 +61,12 @@ class OpenAiProvider implements AiProviderInterface
             'temperature' => (float) ($request['temperature'] ?? 0.2),
             'max_tokens' => (int) ($request['max_output_tokens'] ?? config('ai.defaults.max_output_tokens', 2048)),
         ];
+        if ($stream) {
+            $payload['stream'] = true;
+            if ($this->supportsStreamUsage()) {
+                $payload['stream_options'] = ['include_usage' => true];
+            }
+        }
         if ($this->usesGroqEndpoint()) {
             $payload['max_completion_tokens'] = $payload['max_tokens'];
         }
@@ -56,10 +77,24 @@ class OpenAiProvider implements AiProviderInterface
             $payload['tool_choice'] = 'auto';
         }
 
-        return $this->request($payload);
+        return $payload;
     }
 
-    public function continueWithToolResults(array $request): array
+    public function streamChat(array $request): \Generator
+    {
+        yield from $this->streamRequest($this->buildChatPayload($request, true));
+    }
+
+    public function streamContinueWithToolResults(array $request): \Generator
+    {
+        yield from $this->streamRequest($this->buildContinuePayload($request, true));
+    }
+
+    /**
+     * @param  array<string, mixed>  $request
+     * @return array<string, mixed>
+     */
+    protected function buildContinuePayload(array $request, bool $stream = true): array
     {
         $messages = [
             ['role' => 'system', 'content' => (string) ($request['system'] ?? '')],
@@ -106,6 +141,12 @@ class OpenAiProvider implements AiProviderInterface
             'temperature' => (float) ($request['temperature'] ?? 0.2),
             'max_tokens' => (int) ($request['max_output_tokens'] ?? config('ai.defaults.max_output_tokens', 2048)),
         ];
+        if ($stream) {
+            $payload['stream'] = true;
+            if ($this->supportsStreamUsage()) {
+                $payload['stream_options'] = ['include_usage' => true];
+            }
+        }
         if ($this->usesGroqEndpoint()) {
             $payload['max_completion_tokens'] = $payload['max_tokens'];
         }
@@ -114,7 +155,139 @@ class OpenAiProvider implements AiProviderInterface
             $payload['tools'] = $tools;
         }
 
-        return $this->request($payload);
+        return $payload;
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return \Generator<int, array<string, mixed>>
+     */
+    protected function streamRequest(array $payload): \Generator
+    {
+        try {
+            $response = Http::withToken($this->apiKey)
+                ->timeout($this->timeoutSeconds)
+                ->withOptions(['stream' => true])
+                ->post(rtrim($this->baseUrl, '/').'/chat/completions', $payload);
+        } catch (ConnectionException $e) {
+            Log::warning('OpenAI stream connection failed', ['message' => $e->getMessage()]);
+            throw AiProviderException::timeout();
+        }
+
+        if ($response->status() === 429) {
+            throw AiProviderException::rateLimited();
+        }
+        if (in_array($response->status(), [401, 403], true)) {
+            throw AiProviderException::unauthorized();
+        }
+        if ($response->status() >= 500) {
+            throw AiProviderException::unavailable();
+        }
+        if (! $response->successful()) {
+            throw AiProviderException::unavailable();
+        }
+
+        $body = $response->toPsrResponse()->getBody();
+        $buffer = '';
+        $text = '';
+        $toolCalls = [];
+        $usage = ['input_tokens' => 0, 'output_tokens' => 0, 'total_tokens' => 0];
+        $model = (string) ($payload['model'] ?? $this->model);
+
+        while (! $body->eof()) {
+            $buffer .= $body->read(2048);
+            while (($newline = strpos($buffer, "\n")) !== false) {
+                $line = rtrim(substr($buffer, 0, $newline), "\r");
+                $buffer = substr($buffer, $newline + 1);
+                if ($line === '' || ! str_starts_with($line, 'data: ')) {
+                    continue;
+                }
+                $data = trim(substr($line, 6));
+                if ($data === '[DONE]') {
+                    break 2;
+                }
+                $json = json_decode($data, true);
+                if (! is_array($json)) {
+                    continue;
+                }
+
+                if (! empty($json['model'])) {
+                    $model = (string) $json['model'];
+                }
+
+                if (is_array($json['usage'] ?? null)) {
+                    $usage['input_tokens'] = (int) ($json['usage']['prompt_tokens'] ?? $usage['input_tokens']);
+                    $usage['output_tokens'] = (int) ($json['usage']['completion_tokens'] ?? $usage['output_tokens']);
+                    $usage['total_tokens'] = (int) ($json['usage']['total_tokens'] ?? $usage['total_tokens']);
+                }
+
+                $choice = $json['choices'][0] ?? null;
+                if (! is_array($choice)) {
+                    continue;
+                }
+
+                $delta = $choice['delta'] ?? [];
+                if (! is_array($delta)) {
+                    continue;
+                }
+
+                $content = (string) ($delta['content'] ?? '');
+                if ($content !== '') {
+                    $text .= $content;
+                    yield ['type' => 'delta', 'content' => $content];
+                }
+
+                foreach ($delta['tool_calls'] ?? [] as $toolDelta) {
+                    if (! is_array($toolDelta)) {
+                        continue;
+                    }
+                    $index = (int) ($toolDelta['index'] ?? 0);
+                    if (! isset($toolCalls[$index])) {
+                        $toolCalls[$index] = [
+                            'id' => (string) ($toolDelta['id'] ?? ('call_'.Str::lower(Str::random(12)))),
+                            'name' => (string) ($toolDelta['function']['name'] ?? ''),
+                            'arguments' => (string) ($toolDelta['function']['arguments'] ?? ''),
+                        ];
+                        continue;
+                    }
+                    if (! empty($toolDelta['id'])) {
+                        $toolCalls[$index]['id'] = (string) $toolDelta['id'];
+                    }
+                    if (! empty($toolDelta['function']['name'])) {
+                        $toolCalls[$index]['name'] = (string) $toolDelta['function']['name'];
+                    }
+                    if (isset($toolDelta['function']['arguments'])) {
+                        $toolCalls[$index]['arguments'] .= (string) $toolDelta['function']['arguments'];
+                    }
+                }
+            }
+        }
+
+        ksort($toolCalls);
+        $parsedToolCalls = [];
+        foreach ($toolCalls as $call) {
+            $name = (string) ($call['name'] ?? '');
+            if ($name === '') {
+                continue;
+            }
+            $args = json_decode((string) ($call['arguments'] ?? '{}'), true);
+            if (! is_array($args)) {
+                $args = [];
+            }
+            $parsedToolCalls[] = [
+                'id' => (string) ($call['id'] ?? ''),
+                'name' => $name,
+                'arguments' => $args,
+            ];
+        }
+
+        yield [
+            'type' => 'complete',
+            'text' => trim($text) !== '' ? trim($text) : null,
+            'tool_calls' => $parsedToolCalls,
+            'usage' => $usage,
+            'model' => $model,
+        ];
     }
 
     /**
@@ -255,5 +428,10 @@ class OpenAiProvider implements AiProviderInterface
     protected function usesGroqEndpoint(): bool
     {
         return str_contains(strtolower($this->baseUrl), 'groq.com');
+    }
+
+    protected function supportsStreamUsage(): bool
+    {
+        return str_contains(strtolower($this->baseUrl), 'openai.com');
     }
 }

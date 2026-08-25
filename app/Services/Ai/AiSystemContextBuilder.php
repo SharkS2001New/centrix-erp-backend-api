@@ -291,16 +291,6 @@ class AiSystemContextBuilder
         $contextUser = $this->contextUser($user, $organization, $orgId, false);
         $caps = $gate->toArray();
 
-        $modules = [];
-        foreach (config('ai_knowledge.modules', []) as $module) {
-            $modules[] = [
-                'key' => $module['key'] ?? null,
-                'label' => $module['label'] ?? null,
-                'paths' => array_slice($module['paths'] ?? [], 0, 6),
-                'tasks' => array_slice($module['tasks'] ?? [], 0, 5),
-            ];
-        }
-
         $navigationFlat = [];
         foreach ($this->visibleNavigation($gate, $contextUser) as $section) {
             foreach ($section['items'] ?? [] as $item) {
@@ -310,6 +300,23 @@ class AiSystemContextBuilder
                     'section' => $section['section'] ?? $item['section'] ?? null,
                 ];
             }
+        }
+
+        $fastMode = filter_var(config('ai.fast_mode', true), FILTER_VALIDATE_BOOLEAN);
+        $navLimit = $fastMode ? 40 : 80;
+        $workflowLimit = $fastMode ? 12 : 20;
+        $knowledgeLimit = $fastMode ? 8 : 24;
+        $modulePathLimit = $fastMode ? 4 : 6;
+        $moduleTaskLimit = $fastMode ? 3 : 5;
+
+        $modules = [];
+        foreach (config('ai_knowledge.modules', []) as $module) {
+            $modules[] = [
+                'key' => $module['key'] ?? null,
+                'label' => $module['label'] ?? null,
+                'paths' => array_slice($module['paths'] ?? [], 0, $modulePathLimit),
+                'tasks' => array_slice($module['tasks'] ?? [], 0, $moduleTaskLimit),
+            ];
         }
 
         $workflows = [];
@@ -325,10 +332,10 @@ class AiSystemContextBuilder
             'organization' => $org?->org_name ?? $org?->company_code,
             'enabled_modules' => array_keys(array_filter($caps['modules'] ?? [])),
             'module_catalog' => $modules,
-            'navigation' => array_slice($navigationFlat, 0, 80),
-            'workflows' => array_slice($workflows, 0, 20),
-            'platform_knowledge' => $this->knowledge->confirmedForContext(24, $workspaceId, $message),
-            'how_to_use_centrix' => config('ai_knowledge.how_to_guide', []),
+            'navigation' => array_slice($navigationFlat, 0, $navLimit),
+            'workflows' => array_slice($workflows, 0, $workflowLimit),
+            'platform_knowledge' => $this->knowledge->confirmedForContext($knowledgeLimit, $workspaceId, $message),
+            'how_to_use_centrix' => $fastMode ? [] : config('ai_knowledge.how_to_guide', []),
         ];
     }
 

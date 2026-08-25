@@ -72,4 +72,34 @@ return [
         'path' => '/reports/builder',
         'workspace_id' => 'backoffice',
     ],
+    [
+        'topic' => 'Profit, margins, and P&L in AI chat',
+        'content' => 'Use get_profit_loss for gross/net profit, margins, COGS, and branch/product profitability. Link /reports/profit-loss for full detail. Never invent profit figures.',
+        'path' => '/reports/profit-loss',
+        'workspace_id' => 'backoffice',
+    ],
+    [
+        'topic' => 'AI insights from chat (anomaly, forecast, margins)',
+        'content' => 'Call run_insight with insight_type such as anomaly_detection, forecast_light, margin_discount_watchdog, exception_radar, customer_360 (requires customer_num), procurement_companion, collections_playbook. Narrate the returned JSON slice.',
+        'path' => '/reports',
+        'workspace_id' => 'backoffice',
+    ],
+    [
+        'topic' => 'Customer portfolio and churn',
+        'content' => 'For lists of inactive or declining customers: get_customer_portfolio. For one customer deep-dive: run_insight customer_360 with customer_num. Collections: get_debtors_summary or run_insight collections_playbook.',
+        'path' => '/customers',
+        'workspace_id' => 'backoffice',
+    ],
+    [
+        'topic' => 'Cash position and inventory valuation',
+        'content' => 'Cash/treasury questions: get_cash_position (till + GL cash/bank + AR + AP estimate). Stock value: get_inventory_valuation. Accounting cash flow statement: /reports/cash-flow — different from till cash.',
+        'path' => '/reports/cash-flow',
+        'workspace_id' => 'backoffice',
+    ],
+    [
+        'topic' => 'What-if scenarios in AI chat',
+        'content' => 'Use calculate_scenario with scenario_type (price_increase, sales_increase, supplier_cost_increase, discount_reduction) and percent_change. Always label results as illustrative estimates.',
+        'path' => '/reports/profit-loss',
+        'workspace_id' => 'backoffice',
+    ],
 ];

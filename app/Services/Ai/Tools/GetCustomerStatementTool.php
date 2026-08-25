@@ -5,6 +5,7 @@ namespace App\Services\Ai\Tools;
 use App\Models\Customer;
 use App\Models\Organization;
 use App\Models\User;
+use App\Services\Ai\AiNearMissHelper;
 use App\Services\Ai\AiQtyLabelEnricher;
 use App\Services\Ai\AiSalesDateResolver;
 use App\Services\Ai\Tools\Concerns\ResolvesAiToolOrganization;
@@ -225,24 +226,81 @@ class GetCustomerStatementTool implements AiToolInterface
             ->get();
 
         if ($matches->isEmpty()) {
-            return [
-                'error' => true,
-                'message' => "No customer matched \"{$needle}\" in this organization.",
-            ];
+            $relaxed = $this->relaxedCustomerMatches($organizationId, $needle);
+            if ($relaxed->isEmpty()) {
+                return AiNearMissHelper::noExact(
+                    $needle,
+                    null,
+                    [],
+                    $this->screens(null),
+                    'Try a shorter name, customer number, or open View Customers to confirm the record exists.',
+                );
+            }
+
+            $ranked = $relaxed->map(function (Customer $c) use ($needle) {
+                $label = (string) $c->customer_name;
+
+                return [
+                    'label' => $label,
+                    'reason' => AiNearMissHelper::matchReason($needle, $label),
+                    'score' => AiNearMissHelper::scoreNameMatch($needle, $label),
+                    'customer_num' => (int) $c->customer_num,
+                ];
+            })->sortByDesc('score')->values()->all();
+
+            ['closest' => $closest, 'alternatives' => $alternatives] = AiNearMissHelper::splitRankedMatches($ranked);
+            if ($closest !== null && isset($ranked[0]['customer_num'])) {
+                $closest['customer_num'] = $ranked[0]['customer_num'];
+            }
+
+            return AiNearMissHelper::noExact(
+                $needle,
+                $closest,
+                $alternatives,
+                $this->screens(null),
+                'Reply with the exact customer name or number and I can pull their statement.',
+            );
         }
         if ($matches->count() === 1) {
             return ['customer' => $matches->first()];
         }
 
-        return [
-            'error' => true,
-            'message' => "Multiple customers matched \"{$needle}\". Ask the user to pick one by name or customer number.",
-            'candidates' => $matches->map(fn (Customer $c) => [
+        return AiNearMissHelper::ambiguous(
+            $needle,
+            $matches->map(fn (Customer $c) => [
+                'label' => (string) $c->customer_name,
                 'customer_num' => (int) $c->customer_num,
-                'customer_name' => (string) $c->customer_name,
                 'current_balance' => round((float) ($c->current_balance ?? 0), 2),
             ])->all(),
-        ];
+            'customer',
+        );
+    }
+
+    /**
+     * @return \Illuminate\Support\Collection<int, Customer>
+     */
+    protected function relaxedCustomerMatches(int $organizationId, string $needle)
+    {
+        $tokens = AiNearMissHelper::tokens($needle);
+        if ($tokens === []) {
+            return collect();
+        }
+
+        return Customer::query()
+            ->where('organization_id', $organizationId)
+            ->whereNull('deleted_at')
+            ->where(function ($q) use ($tokens) {
+                foreach ($tokens as $token) {
+                    if (mb_strlen($token) < 3) {
+                        continue;
+                    }
+                    $like = '%'.$token.'%';
+                    $q->orWhere('customer_name', 'like', $like);
+                }
+            })
+            ->orderBy('customer_name')
+            ->limit(10)
+            ->get();
     }
 
     /**

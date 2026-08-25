@@ -153,6 +153,62 @@ class FindScreenTool implements AiToolInterface
             'tip' => $screens === []
                 ? 'No exact screen match. Suggest the closest module from module_catalog in the system context, or ask the user to clarify.'
                 : 'Reply with the best path as a clickable Centrix link (e.g. /suppliers). Explain briefly what the screen is for.',
+            ...($screens === [] ? $this->nearMissWhenNoScreens($query, $modules, $workflows, $knowledge) : []),
+        ];
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $modules
+     * @param  list<array<string, mixed>>  $workflows
+     * @param  list<array<string, mixed>>  $knowledge
+     * @return array<string, mixed>
+     */
+    protected function nearMissWhenNoScreens(string $query, array $modules, array $workflows, array $knowledge): array
+    {
+        $closest = null;
+        $alternatives = [];
+
+        if ($modules !== []) {
+            $first = $modules[0];
+            $closest = [
+                'label' => (string) ($first['label'] ?? $first['module'] ?? 'Related module'),
+                'reason' => 'closest module for "'.$query.'"',
+            ];
+            foreach (array_slice($modules, 1, 3) as $mod) {
+                $alternatives[] = [
+                    'label' => (string) ($mod['label'] ?? $mod['module'] ?? 'Module'),
+                    'reason' => 'related module',
+                ];
+            }
+        } elseif ($workflows !== []) {
+            $first = $workflows[0];
+            $closest = [
+                'label' => (string) ($first['label'] ?? 'Related workflow'),
+                'reason' => 'related workflow for "'.$query.'"',
+            ];
+        } elseif ($knowledge !== []) {
+            $first = $knowledge[0];
+            $closest = [
+                'label' => (string) ($first['topic'] ?? 'Platform note'),
+                'reason' => 'trained Centrix note mentions something similar',
+            ];
+        }
+
+        $payload = \App\Services\Ai\AiNearMissHelper::noExact(
+            $query,
+            $closest,
+            $alternatives,
+            null,
+            'Ask the user to clarify what they want to do, or try a shorter search phrase.',
+        );
+
+        return [
+            'near_miss' => true,
+            'searched_for' => $query,
+            'match_type' => $closest !== null ? 'closest' : 'none',
+            'closest_match' => $closest,
+            'alternatives' => $alternatives,
+            'message' => $payload['message'],
         ];
     }
 

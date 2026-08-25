@@ -279,7 +279,7 @@ class AiAssistantTest extends TestCase
             '*' => Http::response([
                 'choices' => [[
                     'message' => [
-                        'content' => 'Now, I will fetch the available options for subcategory, unit, and VAT. Please hold on.',
+                        'content' => 'Share the product name, unit price, and category. Reply **show form** if you prefer a form.',
                     ],
                 ]],
             ]),
@@ -289,14 +289,102 @@ class AiAssistantTest extends TestCase
             'message' => 'Help me create a new product called Test Widget',
         ])
             ->assertOk()
-            ->assertJsonPath('pending_action.type', 'create_product')
+            ->assertJsonPath('pending_action.type', 'create_product');
+
+        $this->assertEmpty($response->json('form_spec.fields') ?? []);
+    }
+
+    public function test_conversational_create_shows_form_when_user_asks(): void
+    {
+        $this->patchJson('/api/v1/erp/settings/ai', [
+            'enabled' => true,
+            'api_key' => 'sk-test-org-key-123456',
+            'model' => 'gpt-4o-mini',
+        ])->assertOk();
+
+        Http::fake([
+            '*' => Http::response([
+                'choices' => [[
+                    'message' => [
+                        'content' => 'What is the product name and price?',
+                    ],
+                ]],
+            ]),
+        ]);
+
+        $first = $this->postJson('/api/v1/ai/chat', [
+            'message' => 'Help me create a new product called Test Widget',
+        ])->assertOk()
+            ->assertJsonPath('pending_action.type', 'create_product');
+
+        Http::fake([
+            '*' => Http::response([
+                'choices' => [[
+                    'message' => [
+                        'content' => 'Use the form below to finish creating the product.',
+                    ],
+                ]],
+            ]),
+        ]);
+
+        $second = $this->postJson('/api/v1/ai/chat', [
+            'message' => 'show form',
+            'pending_action' => $first->json('pending_action'),
+        ])
+            ->assertOk()
             ->assertJsonStructure([
                 'form_spec' => ['fields', 'title'],
             ]);
 
-        $fieldNames = collect($response->json('form_spec.fields'))->pluck('name')->all();
+        $fieldNames = collect($second->json('form_spec.fields'))->pluck('name')->all();
         $this->assertContains('product_name', $fieldNames);
         $this->assertContains('unit_id', $fieldNames);
+    }
+
+    public function test_create_lpo_defers_inline_form_until_user_asks(): void
+    {
+        $this->patchJson('/api/v1/erp/settings/ai', [
+            'enabled' => true,
+            'api_key' => 'sk-test-org-key-123456',
+            'model' => 'gpt-4o-mini',
+        ])->assertOk();
+
+        Http::fake([
+            '*' => Http::response([
+                'choices' => [[
+                    'message' => [
+                        'content' => "I can help you create an LPO. Please share:\n- Supplier\n- Line items (product, qty, cost)\n\nReply **show form** if you prefer a form.",
+                    ],
+                ]],
+            ]),
+        ]);
+
+        $first = $this->postJson('/api/v1/ai/chat', [
+            'message' => 'I need you to help me create an LPO, can I give you the details?',
+        ])
+            ->assertOk()
+            ->assertJsonPath('pending_action.type', 'create_lpo');
+
+        $this->assertEmpty($first->json('form_spec.fields') ?? []);
+
+        Http::fake([
+            '*' => Http::response([
+                'choices' => [[
+                    'message' => [
+                        'content' => 'Here is the form to complete your LPO.',
+                    ],
+                ]],
+            ]),
+        ]);
+
+        $second = $this->postJson('/api/v1/ai/chat', [
+            'message' => 'show form',
+            'pending_action' => $first->json('pending_action'),
+        ])
+            ->assertOk()
+            ->assertJsonPath('pending_action.type', 'create_lpo');
+
+        $this->assertNotEmpty($second->json('form_spec.fields') ?? []);
     }
 
     public function test_chat_rejects_image_content(): void

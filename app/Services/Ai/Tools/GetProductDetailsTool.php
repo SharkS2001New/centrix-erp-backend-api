@@ -7,6 +7,7 @@ use App\Models\Product;
 use App\Models\RetailPackageSetting;
 use App\Models\Uom;
 use App\Models\User;
+use App\Services\Ai\AiNearMissHelper;
 use App\Services\Ai\Tools\Concerns\ResolvesAiToolOrganization;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\ErpContext;
@@ -104,15 +105,19 @@ class GetProductDetailsTool implements AiToolInterface
 
         $product = $this->findProduct($orgId, $code, $query);
         if (! $product) {
-            return [
-                'error' => true,
-                'message' => 'No matching product found.',
-                'searched' => ['product_code' => $code !== '' ? $code : null, 'query' => $query !== '' ? $query : null],
-                'screens' => [
+            $searched = $code !== '' ? $code : $query;
+            $alternatives = $this->suggestClosestProducts($orgId, $searched);
+
+            return AiNearMissHelper::noExact(
+                $searched,
+                $alternatives['closest'],
+                $alternatives['alternatives'],
+                [
                     ['label' => 'Products', 'path' => '/products'],
                     ['label' => 'Units of measure', 'path' => '/uoms'],
                 ],
-            ];
+                'Check the SKU/product code or try a shorter product name.',
+            );
         }
 
         $uom = null;
@@ -198,6 +203,47 @@ class GetProductDetailsTool implements AiToolInterface
             })
             ->orderBy('product_name')
             ->first();
+    }
+
+    /**
+     * @return array{closest: ?array<string, mixed>, alternatives: list<array<string, mixed>>}
+     */
+    protected function suggestClosestProducts(int $orgId, string $searched): array
+    {
+        $tokens = AiNearMissHelper::tokens($searched);
+        if ($tokens === []) {
+            return ['closest' => null, 'alternatives' => []];
+        }
+
+        $rows = Product::query()
+            ->where('organization_id', $orgId)
+            ->whereNull('deleted_at')
+            ->where(function ($q) use ($tokens) {
+                foreach ($tokens as $token) {
+                    if (mb_strlen($token) < 2) {
+                        continue;
+                    }
+                    $like = '%'.$token.'%';
+                    $q->orWhere('product_code', 'like', $like)
+                        ->orWhere('product_name', 'like', $like);
+                }
+            })
+            ->orderBy('product_name')
+            ->limit(10)
+            ->get(['product_code', 'product_name']);
+
+        $ranked = $rows->map(function (Product $p) use ($searched) {
+            $label = trim((string) $p->product_name).' ('.(string) $p->product_code.')';
+
+            return [
+                'label' => $label,
+                'reason' => AiNearMissHelper::matchReason($searched, (string) $p->product_name),
+                'score' => AiNearMissHelper::scoreNameMatch($searched, (string) $p->product_name),
+                'product_code' => (string) $p->product_code,
+            ];
+        })->sortByDesc('score')->values()->all();
+
+        return AiNearMissHelper::splitRankedMatches($ranked);
     }
 
     /**

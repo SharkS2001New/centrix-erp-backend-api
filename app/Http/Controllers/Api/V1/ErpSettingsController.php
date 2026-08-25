@@ -160,6 +160,7 @@ class ErpSettingsController extends Controller
             'stock_deduct_on',
             'orders_list_default_days',
             'reports_default_date_range_days',
+            'shop_debtors_default_days',
             'orders_list_search_days',
             'orders_list_sort',
             'show_receipt_payment_details',
@@ -270,6 +271,7 @@ class ErpSettingsController extends Controller
             'stock_deduct_on.backend' => 'sometimes|in:order_created,order_completed,trip_pick,trip_load,trip_depart',
             'orders_list_default_days' => 'sometimes|integer|min:1|max:90',
             'reports_default_date_range_days' => 'sometimes|integer|min:1|max:90',
+            'shop_debtors_default_days' => 'sometimes|integer|min:1|max:90',
             'orders_list_search_days' => 'sometimes|integer|min:1|max:90',
             'discount_approval_threshold_percent' => 'sometimes|numeric|min:0|max:100',
             'orders_list_sort' => 'sometimes|in:-created_at,created_at,-order_num,order_num',
@@ -472,6 +474,11 @@ class ErpSettingsController extends Controller
         if (array_key_exists('orders_list_default_days', $data)) {
             $nextSales['orders_list_default_days'] = $this->platformConfig->normalizeOrdersListDefaultDays(
                 $data['orders_list_default_days'],
+            );
+        }
+        if (array_key_exists('shop_debtors_default_days', $data)) {
+            $nextSales['shop_debtors_default_days'] = $this->platformConfig->normalizeShopDebtorsDefaultDays(
+                $data['shop_debtors_default_days'],
             );
         }
         if (array_key_exists('reports_default_date_range_days', $data)) {

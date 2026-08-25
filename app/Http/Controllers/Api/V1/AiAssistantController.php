@@ -42,6 +42,8 @@ class AiAssistantController extends Controller
             'allows_images' => false,
             'supports_teaching' => true,
             'supports_page_explore' => true,
+            'supports_streaming' => filter_var(config('ai.stream_responses', true), FILTER_VALIDATE_BOOLEAN),
+            'fast_mode' => filter_var(config('ai.fast_mode', true), FILTER_VALIDATE_BOOLEAN),
             'runtime' => [
                 'status' => $health['status'],
                 'available' => $health['available'],
@@ -154,6 +156,79 @@ class AiAssistantController extends Controller
         }
 
         return response()->json($result);
+    }
+
+    public function chatStream(Request $request)
+    {
+        $this->rejectImageContent($request);
+
+        $data = $request->validate([
+            'context' => 'nullable|string|in:products,reports,report_builder,general,erp',
+            'workspace_id' => 'nullable|string|max:40|in:'.implode(',', config('ai.workspace_ids')),
+            'pathname' => 'nullable|string|max:300',
+            'page_context' => 'nullable|array',
+            'page_context.screen_key' => 'nullable|string|max:80',
+            'page_context.title' => 'nullable|string|max:200',
+            'page_context.pathname' => 'nullable|string|max:300',
+            'page_context.entity' => 'nullable|string|max:64',
+            'page_context.entity_id' => 'nullable|string|max:64',
+            'page_context.branch_id' => 'nullable',
+            'page_context.filters' => 'nullable|array',
+            'page_context.summary' => 'nullable|array',
+            'page_context.rows' => 'nullable|array|max:80',
+            'message' => ['required', 'string', 'max:4000', 'not_regex:/data:image\//i'],
+            'conversation_id' => 'nullable|uuid',
+            'history' => 'nullable|array|max:16',
+            'history.*.role' => 'required_with:history|in:user,assistant',
+            'history.*.content' => 'required_with:history|string|max:8000',
+            'pending_action' => 'nullable|array',
+            'pending_action.type' => 'required_with:pending_action|string|max:64',
+            'pending_action.summary' => 'nullable|string|max:500',
+            'pending_action.params' => 'nullable|array',
+            'form_values' => 'nullable|array',
+            'confirm_action' => 'nullable|boolean',
+            'entity_refs' => 'nullable|array|max:40',
+            'entity_refs.*.type' => 'required_with:entity_refs|string|in:product,supplier,customer,employee,user,branch',
+            'entity_refs.*.id' => 'nullable|string|max:64',
+            'entity_refs.*.code' => 'nullable|string|max:64',
+            'entity_refs.*.label' => 'nullable|string|max:200',
+        ]);
+
+        if (! empty($data['form_values']) && ! empty($data['pending_action'])) {
+            $data['pending_action']['params'] = array_merge(
+                $data['pending_action']['params'] ?? [],
+                $this->normalizeFormValues($data['form_values']),
+            );
+        }
+
+        $user = $request->user();
+        $service = $this->ai;
+
+        return response()->stream(function () use ($service, $user, $data) {
+            foreach ($service->chatStream(
+                $user,
+                $data['message'],
+                $data['history'] ?? [],
+                $data['pending_action'] ?? null,
+                (bool) ($data['confirm_action'] ?? false),
+                $data['workspace_id'] ?? null,
+                $data['pathname'] ?? null,
+                $data['conversation_id'] ?? null,
+                $data['page_context'] ?? null,
+                $data['entity_refs'] ?? null,
+            ) as $event) {
+                echo 'data: '.json_encode($event, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)."\n\n";
+                if (ob_get_level() > 0) {
+                    ob_flush();
+                }
+                flush();
+            }
+        }, 200, [
+            'Content-Type' => 'text/event-stream; charset=UTF-8',
+            'Cache-Control' => 'no-cache, no-transform',
+            'Connection' => 'keep-alive',
+            'X-Accel-Buffering' => 'no',
+        ]);
     }
 
     public function teach(Request $request)

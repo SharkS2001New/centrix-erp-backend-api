@@ -347,6 +347,63 @@ class PlatformAiTrainingController extends Controller
         return response()->json(null, 204);
     }
 
+    public function listKnowledgeDuplicates(Request $request)
+    {
+        $data = $request->validate([
+            'workspace_id' => 'nullable|string|max:40|in:'.implode(',', config('ai.workspace_ids')),
+            'threshold' => 'nullable|numeric|min:50|max:100',
+        ]);
+
+        $result = $this->knowledge->findDuplicateClusters(
+            $data['workspace_id'] ?? null,
+            (float) ($data['threshold'] ?? 85),
+        );
+
+        return response()->json([
+            'scope' => 'platform',
+            ...$result,
+        ]);
+    }
+
+    public function mergeKnowledge(Request $request)
+    {
+        $data = $request->validate([
+            'keep_id' => 'required|integer|min:1',
+            'merge_ids' => 'required|array|min:1|max:50',
+            'merge_ids.*' => 'integer|min:1',
+            'topic' => 'nullable|string|max:200',
+            'content' => 'nullable|string|max:8000',
+        ]);
+
+        $merged = $this->knowledge->mergeGlobal(
+            $request->user(),
+            (int) $data['keep_id'],
+            $data['merge_ids'],
+            $data['topic'] ?? null,
+            $data['content'] ?? null,
+        );
+
+        if (! $merged) {
+            abort(404);
+        }
+
+        return response()->json($merged);
+    }
+
+    public function bulkDeleteKnowledge(Request $request)
+    {
+        $data = $request->validate([
+            'entry_ids' => 'required|array|min:1|max:100',
+            'entry_ids.*' => 'integer|min:1',
+        ]);
+
+        $deleted = $this->knowledge->deleteGlobalBulk($data['entry_ids']);
+
+        return response()->json([
+            'deleted' => $deleted,
+        ]);
+    }
+
     public function chat(Request $request)
     {
         $this->rejectImageContent($request);

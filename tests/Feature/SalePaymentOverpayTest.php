@@ -200,4 +200,55 @@ class SalePaymentOverpayTest extends TestCase
         $this->postJson("/api/v1/sales/{$sale->id}/convert-to-unpaid")
             ->assertForbidden();
     }
+
+    public function test_mobile_queue_viewer_can_index_sale_payments_without_payments_view(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        PermissionMatrixService::ensure();
+
+        $role = Role::create([
+            'role_name' => 'Mobile Queue Viewer',
+            'scope' => 'branch',
+            'is_active' => true,
+        ]);
+
+        $queueViewId = (int) Permission::where('permission_code', 'sales.order_queue_mobile.view')->value('id');
+        $this->assertNotNull($queueViewId);
+
+        DB::table('role_permissions')->insert([
+            'role_id' => $role->id,
+            'permission_id' => $queueViewId,
+        ]);
+
+        $viewer = User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $role->id,
+            'username' => 'mobile_queue_viewer',
+            'password' => Hash::make('password'),
+            'full_name' => 'Mobile Queue Viewer',
+            'access_scope' => 'branch',
+            'is_active' => true,
+        ]);
+
+        Sanctum::actingAs($viewer);
+
+        $sale = Sale::create([
+            'order_num' => 880005,
+            'branch_id' => $viewer->branch_id,
+            'organization_id' => $viewer->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $viewer->id,
+            'status' => 'booked',
+            'total_vat' => 0,
+            'order_total' => 5000,
+            'payment_status' => 'unpaid',
+            'amount_paid' => 0,
+            'is_credit_sale' => 1,
+            'stock_balanced' => 1,
+        ]);
+
+        $this->getJson("/api/v1/sale-payments?sale_ids={$sale->id}")
+            ->assertOk();
+    }
 }

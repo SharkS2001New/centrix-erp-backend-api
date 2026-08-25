@@ -5,6 +5,7 @@ namespace App\Services\Ai\Tools;
 use App\Models\Organization;
 use App\Models\Product;
 use App\Models\User;
+use App\Services\Ai\AiNearMissHelper;
 use App\Services\Ai\AiQtyLabelEnricher;
 use App\Services\Ai\AiSalesDateResolver;
 use App\Services\Ai\Tools\Concerns\ResolvesAiToolOrganization;
@@ -113,12 +114,62 @@ class GetSalesByProductTool implements AiToolInterface
         $orgId = (int) $organization->id;
         [$from, $to] = AiSalesDateResolver::resolve($arguments, $organization);
         $codes = $this->resolveProductCodes($orgId, $arguments);
+        $requestedNames = array_values(array_filter(array_map(
+            fn ($n) => trim((string) $n),
+            (array) ($arguments['product_names'] ?? []),
+        )));
         $limit = max(1, min(50, (int) ($arguments['limit'] ?? ($codes === [] ? 25 : 50))));
+
+        if ($requestedNames !== [] && $codes === []) {
+            $suggestions = $this->suggestClosestProducts($orgId, implode(' ', $requestedNames));
+
+            return array_merge(
+                AiNearMissHelper::noExact(
+                    implode(', ', $requestedNames),
+                    $suggestions['closest'],
+                    $suggestions['alternatives'],
+                    $this->screens(),
+                    'Widen the date range or confirm the product SKU in Products.',
+                ),
+                [
+                    'from_date' => $from,
+                    'to_date' => $to,
+                    'screens' => $this->screens(),
+                ],
+            );
+        }
 
         $rows = $this->querySales($orgId, $from, $to, $codes, $limit);
         $rows = $this->qtyLabels->enrichProductRows($orgId, $rows);
 
         $totalAmount = round(array_sum(array_map(fn ($r) => (float) ($r['amount'] ?? 0), $rows)), 2);
+
+        if ($rows === [] && $codes !== []) {
+            $label = implode(', ', $codes);
+
+            return [
+                'from_date' => $from,
+                'to_date' => $to,
+                'currency' => 'KES',
+                'filtered_product_codes' => $codes,
+                'products' => [],
+                'summary' => [
+                    'product_count' => 0,
+                    'total_amount' => 0,
+                ],
+                'near_miss' => true,
+                'searched_for' => $label,
+                'match_type' => 'no_sales_in_period',
+                'message' => AiNearMissHelper::formatNoExact(
+                    $label,
+                    null,
+                    [],
+                    "No sales were recorded for these products between {$from} and {$to}. Try a wider date range.",
+                ),
+                'screens' => $this->screens(),
+                'tip' => 'Explain no sales in the period, suggest widening dates, and link /reports/sales-by-product.',
+            ];
+        }
 
         return [
             'from_date' => $from,
@@ -177,6 +228,50 @@ class GetSalesByProductTool implements AiToolInterface
         }
 
         return array_values($codes);
+    }
+
+    /**
+     * @return array{closest: ?array<string, mixed>, alternatives: list<array<string, mixed>>}
+     */
+    protected function suggestClosestProducts(int $organizationId, string $searched): array
+    {
+        if (! Schema::hasTable('products')) {
+            return ['closest' => null, 'alternatives' => []];
+        }
+
+        $tokens = AiNearMissHelper::tokens($searched);
+        if ($tokens === []) {
+            return ['closest' => null, 'alternatives' => []];
+        }
+
+        $rows = Product::query()
+            ->where('organization_id', $organizationId)
+            ->whereNull('deleted_at')
+            ->where(function ($q) use ($tokens) {
+                foreach ($tokens as $token) {
+                    if (mb_strlen($token) < 2) {
+                        continue;
+                    }
+                    $like = '%'.$token.'%';
+                    $q->orWhere('product_code', 'like', $like)
+                        ->orWhere('product_name', 'like', $like);
+                }
+            })
+            ->orderBy('product_name')
+            ->limit(10)
+            ->get(['product_code', 'product_name']);
+
+        $ranked = $rows->map(function (Product $p) use ($searched) {
+            $label = trim((string) $p->product_name).' ('.(string) $p->product_code.')';
+
+            return [
+                'label' => $label,
+                'reason' => AiNearMissHelper::matchReason($searched, (string) $p->product_name),
+                'score' => AiNearMissHelper::scoreNameMatch($searched, (string) $p->product_name),
+            ];
+        })->sortByDesc('score')->values()->all();
+
+        return AiNearMissHelper::splitRankedMatches($ranked);
     }
 
     /**

@@ -245,6 +245,194 @@ class AiKnowledgeService
             ->delete();
     }
 
+    /**
+     * Find clusters of platform notes with similar topics.
+     *
+     * @return array{threshold: float, cluster_count: int, duplicate_entry_count: int, clusters: list<array{similarity: float, entries: list<array<string, mixed>>}>}
+     */
+    public function findDuplicateClusters(?string $workspaceId = null, float $threshold = 85.0): array
+    {
+        $threshold = max(50.0, min(100.0, $threshold));
+        $entries = $this->globalEntryQuery($workspaceId)
+            ->orderByDesc('updated_at')
+            ->limit(500)
+            ->get()
+            ->map(fn (AiKnowledgeEntry $row) => $this->formatEntry($row))
+            ->all();
+
+        $n = count($entries);
+        $parent = range(0, max(0, $n - 1));
+
+        $find = function (int $i) use (&$parent, &$find): int {
+            if ($parent[$i] !== $i) {
+                $parent[$i] = $find($parent[$i]);
+            }
+
+            return $parent[$i];
+        };
+
+        $union = function (int $a, int $b) use (&$parent, $find): void {
+            $ra = $find($a);
+            $rb = $find($b);
+            if ($ra !== $rb) {
+                $parent[$rb] = $ra;
+            }
+        };
+
+        $pairScores = [];
+        for ($i = 0; $i < $n; $i++) {
+            for ($j = $i + 1; $j < $n; $j++) {
+                $score = $this->topicSimilarity(
+                    (string) ($entries[$i]['topic'] ?? ''),
+                    (string) ($entries[$j]['topic'] ?? ''),
+                );
+                if ($score >= $threshold) {
+                    $union($i, $j);
+                    $pairScores["{$i}:{$j}"] = $score;
+                }
+            }
+        }
+
+        $groups = [];
+        for ($i = 0; $i < $n; $i++) {
+            $root = $find($i);
+            $groups[$root][] = $i;
+        }
+
+        $clusters = [];
+        foreach ($groups as $indices) {
+            if (count($indices) < 2) {
+                continue;
+            }
+            $clusterEntries = array_map(fn (int $idx) => $entries[$idx], $indices);
+            usort($clusterEntries, fn ($a, $b) => strcmp((string) ($b['updated_at'] ?? ''), (string) ($a['updated_at'] ?? '')));
+
+            $maxSim = 100.0;
+            if (count($indices) >= 2) {
+                $maxSim = 0.0;
+                for ($a = 0; $a < count($indices); $a++) {
+                    for ($b = $a + 1; $b < count($indices); $b++) {
+                        $key = "{$indices[$a]}:{$indices[$b]}";
+                        $keyRev = "{$indices[$b]}:{$indices[$a]}";
+                        $sim = $pairScores[$key] ?? $pairScores[$keyRev] ?? $this->topicSimilarity(
+                            (string) ($entries[$indices[$a]]['topic'] ?? ''),
+                            (string) ($entries[$indices[$b]]['topic'] ?? ''),
+                        );
+                        $maxSim = max($maxSim, $sim);
+                    }
+                }
+            }
+
+            $clusters[] = [
+                'similarity' => round($maxSim, 1),
+                'entries' => $clusterEntries,
+            ];
+        }
+
+        usort($clusters, fn ($a, $b) => ($b['similarity'] <=> $a['similarity']) ?: (count($b['entries']) <=> count($a['entries'])));
+
+        $duplicateCount = array_sum(array_map(fn ($c) => count($c['entries']) - 1, $clusters));
+
+        return [
+            'threshold' => $threshold,
+            'cluster_count' => count($clusters),
+            'duplicate_entry_count' => $duplicateCount,
+            'clusters' => $clusters,
+        ];
+    }
+
+    /**
+     * Merge duplicate notes into one kept entry; deletes the rest.
+     *
+     * @param  list<int>  $mergeIds
+     * @return array<string, mixed>|null
+     */
+    public function mergeGlobal(
+        User $user,
+        int $keepId,
+        array $mergeIds,
+        ?string $topic = null,
+        ?string $content = null,
+    ): ?array {
+        $keep = $this->findGlobalEntry($keepId);
+        if (! $keep) {
+            return null;
+        }
+
+        $mergeIds = array_values(array_unique(array_filter(
+            array_map('intval', $mergeIds),
+            fn (int $id) => $id > 0 && $id !== $keepId,
+        )));
+
+        $mergedContent = trim($content ?? '');
+        if ($mergedContent === '') {
+            $parts = [trim((string) $keep->content)];
+            foreach ($mergeIds as $id) {
+                $other = $this->findGlobalEntry($id);
+                if ($other && trim((string) $other->content) !== '') {
+                    $parts[] = trim((string) $other->content);
+                }
+            }
+            $mergedContent = implode("\n\n", array_unique(array_filter($parts)));
+        }
+
+        $keep->update([
+            'topic' => trim($topic ?? '') !== '' ? trim($topic) : $keep->topic,
+            'content' => $mergedContent !== '' ? $mergedContent : $keep->content,
+            'confirmed' => true,
+            'confirmed_at' => $keep->confirmed_at ?? now(),
+            'confirmed_by' => $keep->confirmed_by ?? $user->id,
+        ]);
+
+        if ($mergeIds !== []) {
+            AiKnowledgeEntry::query()
+                ->whereNull('organization_id')
+                ->whereIn('id', $mergeIds)
+                ->delete();
+        }
+
+        return $this->formatEntry($keep->fresh());
+    }
+
+    /** @param  list<int>  $entryIds */
+    public function deleteGlobalBulk(array $entryIds): int
+    {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $entryIds), fn ($id) => $id > 0)));
+        if ($ids === []) {
+            return 0;
+        }
+
+        return AiKnowledgeEntry::query()
+            ->whereNull('organization_id')
+            ->whereIn('id', $ids)
+            ->delete();
+    }
+
+    protected function normalizeTopic(string $topic): string
+    {
+        $t = mb_strtolower(trim($topic));
+        $t = preg_replace('/^(?:q|question)\s*[:\-]\s*/iu', '', $t) ?? $t;
+        $t = preg_replace('/[^\p{L}\p{N}\s]/u', ' ', $t) ?? $t;
+        $t = preg_replace('/\s+/u', ' ', $t) ?? $t;
+
+        return trim($t);
+    }
+
+    protected function topicSimilarity(string $a, string $b): float
+    {
+        $na = $this->normalizeTopic($a);
+        $nb = $this->normalizeTopic($b);
+        if ($na === '' || $nb === '') {
+            return 0.0;
+        }
+        if ($na === $nb) {
+            return 100.0;
+        }
+        similar_text($na, $nb, $pct);
+
+        return round((float) $pct, 1);
+    }
+
     /** @deprecated Use teachGlobal — tenant users cannot add org-scoped knowledge. */
     public function teach(User $user, string $topic, string $content, ?string $path = null, ?string $workspaceId = null): array
     {

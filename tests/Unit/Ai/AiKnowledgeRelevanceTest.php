@@ -65,4 +65,23 @@ class AiKnowledgeRelevanceTest extends TestCase
         $this->assertSame(1, $result['created']);
         $this->assertSame('Where is GRN?', $result['entries'][0]['topic']);
     }
+
+    public function test_find_duplicate_clusters_and_merge(): void
+    {
+        $user = User::where('username', 'admin')->firstOrFail();
+        $service = app(AiKnowledgeService::class);
+
+        $keep = $service->teachGlobal($user, 'Where is GRN?', 'Open /inventory/receipts.');
+        $dup = $service->teachGlobal($user, 'Where is GRN', 'Goods received at /inventory/receipts.');
+        $service->teachGlobal($user, 'How to add a product', 'Use /inventory/products.');
+
+        $scan = $service->findDuplicateClusters(null, 85.0);
+        $this->assertSame(1, $scan['cluster_count']);
+        $this->assertSame(1, $scan['duplicate_entry_count']);
+
+        $merged = $service->mergeGlobal($user, (int) $keep['id'], [(int) $dup['id']]);
+        $this->assertNotNull($merged);
+        $this->assertDatabaseMissing('ai_knowledge_entries', ['id' => $dup['id']]);
+        $this->assertStringContainsString('/inventory/receipts', (string) $merged['content']);
+    }
 }

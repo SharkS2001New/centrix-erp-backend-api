@@ -15,6 +15,7 @@ class AiAssistantService
     public function __construct(
         protected AiSystemContextBuilder $contextBuilder,
         protected AiTopicGuard $topicGuard,
+        protected AiLanguageGuard $languageGuard,
         protected AiWorkspaceScope $workspaceScope,
         protected AiActionExecutor $actionExecutor,
         protected AiFormSpecBuilder $formSpecBuilder,
@@ -70,7 +71,11 @@ class AiAssistantService
             return $this->executeConfirmedAction($user, $pendingAction, $workspaceId, $pathname);
         }
 
-        if ($pendingAction && $this->actionExecutor->isConfirmation($message)) {
+        if ($pendingAction && $this->actionExecutor->wantsFormUi($message)) {
+            $pendingAction['show_form'] = true;
+        }
+
+        if ($pendingAction && $this->shouldExecuteConfirmedAction($pendingAction, $message)) {
             return $this->executeConfirmedAction($user, $pendingAction, $workspaceId, $pathname);
         }
 
@@ -100,7 +105,7 @@ class AiAssistantService
                 $pageContext,
                 $normalizedRefs,
             );
-            if (! empty($toolResult['success']) || ! empty($toolResult['declined_off_topic'])) {
+            if (! empty($toolResult['success']) || ! empty($toolResult['declined_off_topic']) || ! empty($toolResult['declined_language'])) {
                 return $toolResult;
             }
 
@@ -112,6 +117,14 @@ class AiAssistantService
 
         $gate = $this->contextBuilder->gateForUser($user);
         $scope = $this->workspaceScope->resolve($user, $gate, $workspaceId, $pathname);
+
+        if (! $this->languageGuard->isEnglishQuery($message)) {
+            return [
+                'reply' => $this->languageGuard->englishOnlyMessage(),
+                'tools_used' => [],
+                'declined_language' => true,
+            ];
+        }
 
         if (! $this->topicGuard->isErpRelated($message)) {
             return [
@@ -213,7 +226,9 @@ class AiAssistantService
                 if ($inferred) {
                     $pending = $inferred;
                     if ($this->looksLikeFetchingReply($reply)) {
-                        $result['reply'] = 'Use the form below to complete the details. Options are loaded from your organization data.';
+                        $result['reply'] = $this->isConversationalCreateAction($inferred)
+                            ? 'Share the details in chat, or reply **show form** if you prefer a form.'
+                            : 'Use the form below to complete the details. Options are loaded from your organization data.';
                         $result['message'] = $result['reply'];
                     }
                 }
@@ -224,20 +239,11 @@ class AiAssistantService
                 if ($actionType !== '' && ! in_array($actionType, $scope['action_types'] ?? [], true)) {
                     $result['reply'] = $this->workspaceScope->declineMessage($scope);
                     $result['message'] = $result['reply'];
-                    unset($pending);
                 } elseif ($actionType !== '' && ! $this->actionExecutor->canExecute($user, $actionType)) {
                     $result['reply'] = $this->actionExecutor->permissionDeclineMessage($actionType);
                     $result['message'] = $result['reply'];
-                    unset($pending);
                 } else {
-                    $result['pending_action'] = $pending;
-                    $result['form_spec'] = $this->formSpecBuilder->forAction($user, $pending, $pathname);
-                    if (empty(trim($result['reply'] ?? ''))) {
-                        $result['reply'] = $actionType === 'record_customer_payment'
-                            ? 'Fill in the form below, then click Confirm & record payment.'
-                            : 'Fill in the form below, then click Confirm & create.';
-                        $result['message'] = $result['reply'];
-                    }
+                    $result = $this->attachPendingAction($user, $result, $pending, $message, $pathname, $scope);
                 }
             }
 
@@ -331,6 +337,15 @@ class AiAssistantService
         $gate = (new CapabilityGate)->forOrganization($organization);
         $scope = $this->workspaceScope->resolve($user, $gate, $workspaceId, $pathname);
 
+        if (! $this->languageGuard->isEnglishQuery($message)) {
+            return [
+                'reply' => $this->languageGuard->englishOnlyMessage(),
+                'tools_used' => [],
+                'declined_language' => true,
+                'training_mode' => $trainingMode,
+            ];
+        }
+
         if (! $this->topicGuard->isErpRelated($message)) {
             return [
                 'reply' => $this->topicGuard->declineMessage(),
@@ -420,7 +435,9 @@ class AiAssistantService
                 if ($inferred) {
                     $pending = $inferred;
                     if ($this->looksLikeFetchingReply($reply)) {
-                        $result['reply'] = 'Use the form below to preview the fields. Confirm is disabled in training mode.';
+                        $result['reply'] = $this->isConversationalCreateAction($inferred)
+                            ? 'Share the details in chat, or reply **show form** to preview fields (training mode).'
+                            : 'Use the form below to preview the fields. Confirm is disabled in training mode.';
                         $result['message'] = $result['reply'];
                     }
                 }
@@ -435,12 +452,16 @@ class AiAssistantService
                     $contextUser = clone $user;
                     $contextUser->organization_id = $organization->id;
                     $contextUser->is_admin = true;
-                    $result['pending_action'] = $pending;
-                    $result['form_spec'] = $this->formSpecBuilder->forAction($contextUser, $pending, $pathname);
-                    if (empty(trim($result['reply'] ?? ''))) {
-                        $result['reply'] = 'Preview the form below. Training mode does not execute actions against tenant data.';
-                        $result['message'] = $result['reply'];
-                    }
+                    $result = $this->attachPendingAction(
+                        $user,
+                        $result,
+                        $pending,
+                        $message,
+                        $pathname,
+                        $scope,
+                        $contextUser,
+                        $trainingMode,
+                    );
                 }
             }
 
@@ -726,14 +747,15 @@ RULES:
 9. People: use username and full name — never numeric user id or employee id.
 10. Formulas: plain text with real field names (Stock Value = Cost Price × Stock on Hand). Never LaTeX.
 11. Markdown headings (# ## ###) are fine; the UI renders them as real headings.
-12. Custom report builder: ask what to name the report, then emit create_report_template with name + instruction (or wait for confirmation). After save, give /reports/custom/{id}.
-13. Focus on the user's meaning, not punctuation or stray symbols (trailing ?, /, !, …). "…create an lpo for me /" means the same as with "?".
+12. Always reply in English. If a user writes in another language (e.g. Swahili), do not answer the ERP question — tell them Centrix AI expects questions in English only.
+13. Custom report builder: ask what to name the report, then emit create_report_template with name + instruction (or wait for confirmation). After save, give /reports/custom/{id}.
+14. Focus on the user's meaning, not punctuation or stray symbols (trailing ?, /, !, …). "…create an lpo for me /" means the same as with "?".
 
 ```action
 {"type":"create_product","summary":"New product Widget","params":{"product_name":"Widget","unit_price":150}}
 ```
 
-Tell users to fill the form and confirm, or reply "confirm" when params are complete.
+For all create / write actions (product, supplier, customer, LPO, sales order, employee, payment, etc.): ask for required details in chat first. Do NOT mention or show an inline form until the user replies **show form** (or similar). Offer the form as an option — never show both a field checklist and the form on the same turn. Reply **confirm** or **create it** when chat params are complete.
 PROMPT;
     }
 
@@ -749,9 +771,116 @@ PROMPT;
         }
 
         return (bool) preg_match(
-            '/\b(subcategory|supplier|unit|price|sku|barcode|vat|reorder|product\s+name|named|called)\b/i',
+            '/\b(subcategory|supplier|customer|employee|unit|price|sku|barcode|vat|reorder|product\s+name|named|called|line\s*items?|ordered_qty|qty|quantity|cost\s*price|due\s*date|delivery|reference|terms|order_num|lpo|purchase\s+order|first\s+name|last\s+name|contact|phone|email|payment|amount|report\s+name)\b/i',
             $message,
         );
+    }
+
+    /** @param  array<string, mixed>  $pending */
+    protected function isConversationalCreateAction(array $pending): bool
+    {
+        $type = (string) ($pending['type'] ?? '');
+        if ($type === '') {
+            return false;
+        }
+
+        if (in_array($type, config('ai.immediate_form_create_actions', []), true)) {
+            return false;
+        }
+
+        return str_starts_with($type, 'create_') || $type === 'record_customer_payment';
+    }
+
+    /** @param  array<string, mixed>  $pending */
+    protected function shouldExecuteConfirmedAction(array $pending, string $message): bool
+    {
+        if (! $this->actionExecutor->isConfirmation($message)) {
+            return false;
+        }
+
+        if ($this->isConversationalCreateAction($pending)
+            && preg_match('/^(yes|yeah|yep|ok|okay)\s*[.!]?$/i', trim($message))) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /** @param  array<string, mixed>  $pending */
+    protected function shouldAttachFormSpec(array $pending, string $message): bool
+    {
+        if (! $this->isConversationalCreateAction($pending)) {
+            return true;
+        }
+
+        return ! empty($pending['show_form']) || $this->actionExecutor->wantsFormUi($message);
+    }
+
+    protected function defaultReplyForPendingAction(string $actionType, bool $hasForm, bool $trainingMode = false): string
+    {
+        if ($hasForm) {
+            if ($trainingMode) {
+                return 'Preview the form below. Training mode does not execute actions against tenant data.';
+            }
+
+            return match ($actionType) {
+                'record_customer_payment' => 'Fill in the form below, then click Confirm & record payment.',
+                'create_lpo' => 'Fill in the form below, then click Confirm & create LPO.',
+                default => 'Fill in the form below, then click Confirm & create.',
+            };
+        }
+
+        return match ($actionType) {
+            'create_lpo' => 'Share the supplier and line items here in chat. Reply **show form** if you prefer a form instead.',
+            'create_product' => 'Share the product name and any other details here in chat. Reply **show form** if you prefer a form instead.',
+            'create_supplier' => 'Share the supplier name and contact details here in chat. Reply **show form** if you prefer a form instead.',
+            'create_customer' => 'Share the customer details here in chat. Reply **show form** if you prefer a form instead.',
+            'create_employee' => 'Share the employee details here in chat. Reply **show form** if you prefer a form instead.',
+            'create_sales_order', 'create_held_order' => 'Share the customer and line items here in chat. Reply **show form** if you prefer a form instead.',
+            'record_customer_payment' => 'Share the order and payment details here in chat. Reply **show form** if you prefer a form instead.',
+            'create_report_template' => 'Share the report name and what it should show here in chat. Reply **show form** if you prefer a form instead.',
+            default => 'Share the details here in chat, or reply **show form** if you prefer a form.',
+        };
+    }
+
+    /**
+     * @param  array<string, mixed>  $result
+     * @param  array<string, mixed>  $pending
+     * @param  array<string, mixed>  $scope
+     * @return array<string, mixed>
+     */
+    protected function attachPendingAction(
+        User $user,
+        array $result,
+        array $pending,
+        string $message,
+        ?string $pathname,
+        array $scope,
+        ?User $formUser = null,
+        bool $trainingMode = false,
+    ): array {
+        if ($this->actionExecutor->wantsFormUi($message)) {
+            $pending['show_form'] = true;
+        }
+
+        $result['pending_action'] = $pending;
+
+        if ($this->shouldAttachFormSpec($pending, $message)) {
+            $result['form_spec'] = $this->formSpecBuilder->forAction($formUser ?? $user, $pending, $pathname);
+        } else {
+            $result['form_spec'] = null;
+        }
+
+        if (empty(trim((string) ($result['reply'] ?? '')))) {
+            $result['reply'] = $this->defaultReplyForPendingAction(
+                (string) ($pending['type'] ?? ''),
+                ! empty($result['form_spec']),
+                $trainingMode,
+            );
+            $result['message'] = $result['reply'];
+        }
+
+        return $result;
     }
 
     /**
@@ -776,5 +905,98 @@ PROMPT;
             'summary' => is_array($pageContext['summary'] ?? null) ? $pageContext['summary'] : null,
             'rows' => $rows !== [] ? $rows : null,
         ], fn ($v) => $v !== null && $v !== '' && $v !== []);
+    }
+
+    /**
+     * @param  array<int, array{role: string, content: string}>  $history
+     * @param  array<string, mixed>|null  $pendingAction
+     * @return \Generator<int, array<string, mixed>>
+     */
+    public function chatStream(
+        User $user,
+        string $message,
+        array $history = [],
+        ?array $pendingAction = null,
+        bool $confirmAction = false,
+        ?string $workspaceId = null,
+        ?string $pathname = null,
+        ?string $conversationId = null,
+        ?array $pageContext = null,
+        ?array $entityRefs = null,
+    ): \Generator {
+        $teachResult = $this->tryCaptureUserTeaching($user, $message);
+        if ($teachResult) {
+            $content = (string) ($teachResult['reply'] ?? $teachResult['message'] ?? '');
+            if ($content !== '') {
+                yield ['event' => 'delta', 'content' => $content];
+            }
+            yield ['event' => 'done'] + $teachResult;
+
+            return;
+        }
+
+        if ($confirmAction || $pendingAction) {
+            $result = $this->chat(
+                $user,
+                $message,
+                $history,
+                $pendingAction,
+                $confirmAction,
+                $workspaceId,
+                $pathname,
+                $conversationId,
+                $pageContext,
+                $entityRefs,
+            );
+            $content = (string) ($result['message'] ?? $result['reply'] ?? '');
+            if ($content !== '') {
+                yield ['event' => 'delta', 'content' => $content];
+            }
+            yield ['event' => 'done'] + $result;
+
+            return;
+        }
+
+        $normalizedRefs = \App\Support\EntityMentionRefs::normalize($entityRefs);
+        $inferredCreate = $this->intentResolver->inferCreateAction($message, $history, $pathname);
+        $runtime = AiSettingsResolver::resolveRuntime($user);
+        $provider = strtolower((string) ($runtime['provider'] ?? config('ai.provider', 'openai')));
+        $preferToolChat = ! $inferredCreate && (
+            $provider === 'gemini'
+            || ($provider === 'openai' && filter_var(config('ai.use_tool_chat', false), FILTER_VALIDATE_BOOLEAN))
+        );
+
+        if ($preferToolChat) {
+            yield from $this->toolChat->chatStream(
+                $user,
+                $message,
+                $conversationId,
+                $history,
+                $workspaceId,
+                $pathname,
+                $pageContext,
+                $normalizedRefs,
+            );
+
+            return;
+        }
+
+        $result = $this->chat(
+            $user,
+            $message,
+            $history,
+            null,
+            false,
+            $workspaceId,
+            $pathname,
+            $conversationId,
+            $pageContext,
+            $entityRefs,
+        );
+        $content = (string) ($result['message'] ?? $result['reply'] ?? '');
+        if ($content !== '') {
+            yield ['event' => 'delta', 'content' => $content];
+        }
+        yield ['event' => 'done'] + $result;
     }
 }

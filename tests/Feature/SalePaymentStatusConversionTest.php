@@ -39,6 +39,16 @@ class SalePaymentStatusConversionTest extends TestCase
 
     public function test_convert_to_paid_and_back_to_unpaid(): void
     {
+        $customerNum = random_int(410000000, 419999999);
+        \App\Models\Customer::query()->create([
+            'organization_id' => $this->user->organization_id,
+            'branch_id' => $this->user->branch_id,
+            'customer_num' => $customerNum,
+            'customer_name' => 'Convert Roundtrip '.$customerNum,
+            'customer_type' => 'regular',
+            'created_by' => $this->user->id,
+        ]);
+
         $cartId = $this->postJson('/api/v1/sales/carts', [
             'channel' => 'backend',
             'branch_id' => $this->user->branch_id,
@@ -52,6 +62,7 @@ class SalePaymentStatusConversionTest extends TestCase
         $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
             'save_only' => true,
             'pay_now' => 0,
+            'customer_num' => $customerNum,
         ])->assertCreated()->json();
 
         $this->assertSame('unpaid', $sale['payment_status'] ?? null);
@@ -73,6 +84,44 @@ class SalePaymentStatusConversionTest extends TestCase
 
         $this->assertSame('unpaid', $unpaid['payment_status'] ?? null);
         $this->assertEqualsWithDelta(0.0, (float) ($unpaid['amount_paid'] ?? 0), 0.01);
+        $this->assertTrue((bool) ($unpaid['is_credit_sale'] ?? false));
+    }
+
+    public function test_convert_to_unpaid_rejects_walk_in_orders(): void
+    {
+        $sale = \App\Models\Sale::query()->create([
+            'order_num' => random_int(420000000, 429999999),
+            'branch_id' => $this->user->branch_id,
+            'organization_id' => $this->user->organization_id,
+            'cashier_id' => $this->user->id,
+            'channel' => 'pos',
+            'order_source' => 'pos',
+            'customer_num' => null,
+            'customer_name_override' => 'Walk-in',
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'payment_method_code' => 'CASH',
+            'is_credit_sale' => 0,
+            'order_total' => 900,
+            'amount_paid' => 900,
+            'total_vat' => 0,
+            'archived' => 0,
+            'created_at' => now(),
+        ]);
+
+        $this->postJson("/api/v1/sales/{$sale->id}/convert-to-unpaid")
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['customer_num']);
+
+        $from = now()->subDay()->toDateString();
+        $to = now()->toDateString();
+        $paidIds = collect(
+            $this->getJson(
+                "/api/v1/sales?shop_debtors=1&filter[payment_status]=paid&from_date={$from}&to_date={$to}&per_page=200",
+            )->assertOk()->json('data')
+        )->pluck('id')->map(fn ($id) => (int) $id)->all();
+
+        $this->assertNotContains((int) $sale->id, $paidIds);
     }
 
     public function test_convert_to_unpaid_marks_customer_sale_as_credit(): void

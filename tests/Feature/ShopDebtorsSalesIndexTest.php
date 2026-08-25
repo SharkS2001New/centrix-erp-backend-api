@@ -644,4 +644,76 @@ class ShopDebtorsSalesIndexTest extends TestCase
             $this->assertContains($shopId, $unpaidIds);
         }
     }
+
+    public function test_shop_paid_debtors_excludes_walk_in_and_soft_deleted_customers(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $suffix = random_int(600000000, 699999999);
+        $liveNum = $suffix;
+        $deletedNum = $suffix + 1;
+
+        Customer::query()->create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'customer_num' => $liveNum,
+            'customer_name' => 'Live Debtor '.$suffix,
+            'customer_type' => 'debtor',
+            'created_by' => $admin->id,
+        ]);
+        $deleted = Customer::query()->create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'customer_num' => $deletedNum,
+            'customer_name' => 'Deleted Debtor '.$suffix,
+            'customer_type' => 'debtor',
+            'created_by' => $admin->id,
+        ]);
+        $deleted->delete();
+
+        $base = [
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'cashier_id' => $admin->id,
+            'channel' => 'pos',
+            'order_source' => 'pos',
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'payment_method_code' => 'CASH',
+            'is_credit_sale' => 0,
+            'order_total' => 750,
+            'amount_paid' => 750,
+            'total_vat' => 0,
+            'archived' => 0,
+            'created_at' => now(),
+        ];
+
+        $livePaid = Sale::query()->create(array_merge($base, [
+            'order_num' => $suffix,
+            'customer_num' => $liveNum,
+        ]));
+        $walkInPaid = Sale::query()->create(array_merge($base, [
+            'order_num' => $suffix + 1,
+            'customer_num' => null,
+            'customer_name_override' => 'Walk-in Customer',
+        ]));
+        $deletedCustomerPaid = Sale::query()->create(array_merge($base, [
+            'order_num' => $suffix + 2,
+            'customer_num' => $deletedNum,
+            'customer_name_override' => 'Walk-in',
+        ]));
+
+        $from = now()->subDay()->toDateString();
+        $to = now()->toDateString();
+        $paidIds = collect(
+            $this->getJson(
+                "/api/v1/sales?shop_debtors=1&filter[payment_status]=paid&from_date={$from}&to_date={$to}&per_page=200",
+            )->assertOk()->json('data')
+        )->pluck('id')->map(fn ($id) => (int) $id)->all();
+
+        $this->assertContains($livePaid->id, $paidIds);
+        $this->assertNotContains($walkInPaid->id, $paidIds);
+        $this->assertNotContains($deletedCustomerPaid->id, $paidIds);
+    }
 }

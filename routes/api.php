@@ -590,6 +590,9 @@ Route::prefix('v1')->group(function () {
                 Route::patch('settings', [PlatformAiTrainingController::class, 'updateSettings']);
                 Route::post('test-credentials', [PlatformAiTrainingController::class, 'testCredentials']);
                 Route::get('knowledge', [PlatformAiTrainingController::class, 'listKnowledge']);
+                Route::get('knowledge/duplicates', [PlatformAiTrainingController::class, 'listKnowledgeDuplicates']);
+                Route::post('knowledge/merge', [PlatformAiTrainingController::class, 'mergeKnowledge']);
+                Route::post('knowledge/bulk-delete', [PlatformAiTrainingController::class, 'bulkDeleteKnowledge']);
                 Route::post('knowledge', [PlatformAiTrainingController::class, 'teach']);
                 Route::post('knowledge/bulk', [PlatformAiTrainingController::class, 'teachBulk']);
                 Route::post('knowledge/install-foundation', [PlatformAiTrainingController::class, 'installFoundation']);
@@ -1088,7 +1091,7 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware(['erp.module:payments,accounting'])->group(function () {
             Route::apiResource('sale-payments', SalePaymentController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:payments.view'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:payments.view|sales.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:payments.manage']);
             Route::apiResource('customer-invoices', CustomerInvoiceController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:payments.view|accounting.view'])

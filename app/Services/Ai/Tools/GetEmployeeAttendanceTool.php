@@ -7,6 +7,7 @@ use App\Models\EmployeeAttendance;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\Ai\AiSalesDateResolver;
+use App\Services\Ai\Tools\Concerns\ResolvesAiEmployees;
 use App\Services\Ai\Tools\Concerns\ResolvesAiToolOrganization;
 use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserPermissionService;
@@ -18,6 +19,7 @@ use Illuminate\Validation\ValidationException;
  */
 class GetEmployeeAttendanceTool implements AiToolInterface
 {
+    use ResolvesAiEmployees;
     use ResolvesAiToolOrganization;
 
     public function __construct(
@@ -106,7 +108,7 @@ class GetEmployeeAttendanceTool implements AiToolInterface
         $needle = trim((string) ($arguments['employee_name'] ?? ''));
 
         if ($needle !== '') {
-            $resolved = $this->resolveEmployee((int) $organization->id, $needle);
+            $resolved = $this->resolveEmployeeByName((int) $organization->id, $needle);
             if (($resolved['error'] ?? false) === true) {
                 return array_merge($resolved, [
                     'from_date' => $from,
@@ -140,47 +142,6 @@ class GetEmployeeAttendanceTool implements AiToolInterface
             'sample' => array_slice($days, 0, 15),
             'screens' => $this->screens(),
             'tip' => 'This is an org snapshot. If the user named a person, call this tool again with employee_name.',
-        ];
-    }
-
-    /**
-     * @return array{error?: bool, message?: string, candidates?: list<array<string, mixed>>, employee?: Employee}
-     */
-    protected function resolveEmployee(int $organizationId, string $name): array
-    {
-        $needle = mb_strtolower($name);
-        $matches = Employee::query()
-            ->with(['user:id,username,full_name'])
-            ->where('organization_id', $organizationId)
-            ->where(function ($query) use ($needle) {
-                $query->whereRaw('LOWER(full_name) LIKE ?', ['%'.$needle.'%'])
-                    ->orWhereRaw('LOWER(first_name) LIKE ?', ['%'.$needle.'%'])
-                    ->orWhereRaw('LOWER(last_name) LIKE ?', ['%'.$needle.'%'])
-                    ->orWhereRaw('LOWER(employee_code) LIKE ?', ['%'.$needle.'%'])
-                    ->orWhereHas('user', function ($userQuery) use ($needle) {
-                        $userQuery->whereRaw('LOWER(username) LIKE ?', ['%'.$needle.'%'])
-                            ->orWhereRaw('LOWER(full_name) LIKE ?', ['%'.$needle.'%']);
-                    });
-            })
-            ->orderBy('full_name')
-            ->limit(10)
-            ->get();
-
-        if ($matches->isEmpty()) {
-            return [
-                'error' => true,
-                'message' => "No employee matched \"{$name}\" in this organization.",
-            ];
-        }
-
-        if ($matches->count() === 1) {
-            return ['employee' => $matches->first()];
-        }
-
-        return [
-            'error' => true,
-            'message' => "Multiple employees matched \"{$name}\". Ask the user to pick one by name, employee code, or username.",
-            'candidates' => $matches->map(fn (Employee $row) => $this->presentEmployee($row))->all(),
         ];
     }
 

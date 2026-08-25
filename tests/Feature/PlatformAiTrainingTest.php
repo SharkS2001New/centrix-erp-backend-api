@@ -209,4 +209,74 @@ class PlatformAiTrainingTest extends TestCase
             ->getJson('/api/v1/admin/ai-training/knowledge')
             ->assertForbidden();
     }
+
+    public function test_super_admin_can_find_merge_and_bulk_delete_duplicate_knowledge(): void
+    {
+        $first = AiKnowledgeEntry::create([
+            'organization_id' => null,
+            'source' => 'platform_training',
+            'topic' => 'Where is GRN?',
+            'content' => 'Open /inventory/receipts.',
+            'confirmed' => true,
+            'confirmed_at' => now(),
+        ]);
+        $second = AiKnowledgeEntry::create([
+            'organization_id' => null,
+            'source' => 'platform_training',
+            'topic' => 'Where is GRN',
+            'content' => 'Goods received at /inventory/receipts.',
+            'confirmed' => true,
+            'confirmed_at' => now()->subMinute(),
+        ]);
+        $third = AiKnowledgeEntry::create([
+            'organization_id' => null,
+            'source' => 'platform_training',
+            'topic' => 'How to add a product',
+            'content' => 'Use /inventory/products.',
+            'confirmed' => true,
+            'confirmed_at' => now(),
+        ]);
+
+        $this->actingAs($this->superAdmin, 'sanctum')
+            ->getJson('/api/v1/admin/ai-training/knowledge/duplicates?threshold=85')
+            ->assertOk()
+            ->assertJsonPath('scope', 'platform')
+            ->assertJsonPath('cluster_count', 1)
+            ->assertJsonPath('duplicate_entry_count', 1);
+
+        $this->actingAs($this->superAdmin, 'sanctum')
+            ->postJson('/api/v1/admin/ai-training/knowledge/merge', [
+                'keep_id' => $first->id,
+                'merge_ids' => [$second->id],
+            ])
+            ->assertOk()
+            ->assertJsonPath('id', $first->id);
+
+        $this->assertDatabaseMissing('ai_knowledge_entries', ['id' => $second->id]);
+        $this->assertDatabaseHas('ai_knowledge_entries', ['id' => $first->id]);
+
+        $this->actingAs($this->superAdmin, 'sanctum')
+            ->postJson('/api/v1/admin/ai-training/knowledge/bulk-delete', [
+                'entry_ids' => [$third->id],
+            ])
+            ->assertOk()
+            ->assertJsonPath('deleted', 1);
+
+        $this->assertDatabaseMissing('ai_knowledge_entries', ['id' => $third->id]);
+    }
+
+    public function test_training_chat_declines_swahili_questions(): void
+    {
+        $this->actingAs($this->superAdmin, 'sanctum')
+            ->postJson('/api/v1/admin/ai-training/chat', [
+                'preview_organization_id' => $this->tenant->id,
+                'workspace_id' => 'backoffice',
+                'message' => 'nipe mauzo ya leo',
+            ])
+            ->assertOk()
+            ->assertJsonPath('declined_language', true)
+            ->assertJsonFragment(['reply' => app(\App\Services\Ai\AiLanguageGuard::class)->englishOnlyMessage()]);
+
+        Http::assertNothingSent();
+    }
 }

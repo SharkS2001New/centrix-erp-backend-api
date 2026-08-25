@@ -4,6 +4,7 @@ namespace App\Services\Ai;
 
 use App\Models\Organization;
 use App\Models\User;
+use App\Services\Ai\Concerns\BuildsBiToolSlices;
 use App\Services\Ai\Concerns\BuildsExtendedInsightSlices;
 use App\Services\Auth\UserAccessService;
 use App\Services\Inventory\LowStockReportService;
@@ -17,6 +18,7 @@ use Illuminate\Support\Facades\Schema;
  */
 class AiInsightDataBuilder
 {
+    use BuildsBiToolSlices;
     use BuildsExtendedInsightSlices;
 
     public const MAX_REPORT_ROWS = 80;
@@ -334,10 +336,52 @@ class AiInsightDataBuilder
             ->get(['id', 'full_name', 'username']);
 
         if ($matches->isEmpty()) {
-            return [
-                'error' => true,
-                'message' => "No cashier matched the name \"{$name}\" in this organization.",
-            ];
+            $relaxed = User::query()
+                ->where('organization_id', $organizationId)
+                ->where(function ($query) use ($name) {
+                    foreach (AiNearMissHelper::tokens($name) as $token) {
+                        if (mb_strlen($token) < 3) {
+                            continue;
+                        }
+                        $like = '%'.$token.'%';
+                        $query->orWhereRaw('LOWER(full_name) LIKE ?', [$like])
+                            ->orWhereRaw('LOWER(username) LIKE ?', [$like]);
+                    }
+                })
+                ->orderBy('full_name')
+                ->limit(10)
+                ->get(['id', 'full_name', 'username']);
+
+            if ($relaxed->isEmpty()) {
+                return AiNearMissHelper::noExact(
+                    $name,
+                    null,
+                    [],
+                    [['label' => 'Sales by user', 'path' => '/reports/sales-by-user']],
+                    'Check the cashier username or full name in Users.',
+                );
+            }
+
+            $ranked = $relaxed->map(function (User $row) use ($name) {
+                $label = trim((string) ($row->full_name ?: $row->username));
+
+                return [
+                    'label' => $label,
+                    'reason' => AiNearMissHelper::matchReason($name, $label),
+                    'score' => AiNearMissHelper::scoreNameMatch($name, $label),
+                    'username' => (string) $row->username,
+                ];
+            })->sortByDesc('score')->values()->all();
+
+            ['closest' => $closest, 'alternatives' => $alternatives] = AiNearMissHelper::splitRankedMatches($ranked);
+
+            return AiNearMissHelper::noExact(
+                $name,
+                $closest,
+                $alternatives,
+                [['label' => 'Sales by user', 'path' => '/reports/sales-by-user']],
+                'Reply with the exact username or full name.',
+            );
         }
 
         if ($matches->count() === 1) {
@@ -349,14 +393,15 @@ class AiInsightDataBuilder
             ];
         }
 
-        return [
-            'error' => true,
-            'message' => "Multiple cashiers matched \"{$name}\". Ask the user to pick one by username or full name.",
-            'candidates' => $matches->map(fn (User $row) => array_filter([
+        return AiNearMissHelper::ambiguous(
+            $name,
+            $matches->map(fn (User $row) => [
+                'label' => trim((string) ($row->full_name ?: $row->username)),
                 'username' => (string) $row->username,
                 'cashier_name' => trim((string) ($row->full_name ?: $row->username)),
-            ], fn ($v) => $v !== null && $v !== ''))->all(),
-        ];
+            ])->all(),
+            'cashier',
+        );
     }
 
     /** @return array<string, mixed> */

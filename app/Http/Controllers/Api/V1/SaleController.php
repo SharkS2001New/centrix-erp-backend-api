@@ -375,7 +375,8 @@ class SaleController extends BaseResourceController
             );
             $sale->setAttribute(
                 'can_convert_to_unpaid',
-                $workflow->canConvertToUnpaidForOrder($status, $channel, (string) ($sale->payment_status ?? '')),
+                $workflow->canConvertToUnpaidForOrder($status, $channel, (string) ($sale->payment_status ?? ''))
+                    && (int) ($sale->customer_num ?? 0) > 0,
             );
             $sale->setAttribute('order_connectivity', $sale->mobileOrderConnectivity());
             $sale->setAttribute('is_offline_order', $sale->isOfflineMobileOrder());
@@ -543,7 +544,7 @@ class SaleController extends BaseResourceController
                 $status,
                 $channel,
                 (string) ($sale->payment_status ?? ''),
-            ),
+            ) && (int) ($sale->customer_num ?? 0) > 0,
             'order_connectivity' => $sale->mobileOrderConnectivity(),
             'is_offline_order' => $sale->isOfflineMobileOrder(),
         ]);
