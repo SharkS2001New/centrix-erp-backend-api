@@ -100,6 +100,7 @@ return [
                 'purchasing',
                 'accounting',
                 'payments',
+                'investors',
                 'reports',
                 'ai',
             ],
@@ -112,6 +113,7 @@ return [
                 'accounting' => ['expenses'],
                 'payments' => ['sale_payments'],
                 'customers' => ['customers', 'statements'],
+                'investors' => ['investors', 'reports'],
                 'reports' => [
                     'hub',
                     'builder',

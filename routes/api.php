@@ -46,6 +46,7 @@ use App\Http\Controllers\Api\V1\EmployeeOvertimeController;
 use App\Http\Controllers\Api\V1\ErpCapabilitiesController;
 use App\Http\Controllers\Api\V1\ErpSettingsController;
 use App\Http\Controllers\Api\V1\ExpenseController;
+use App\Http\Controllers\Api\V1\InvestorController;
 use App\Http\Controllers\Api\V1\ExpenseGroupController;
 use App\Http\Controllers\Api\V1\InAppNotificationController;
 use App\Http\Controllers\Api\V1\InventoryTransactionController;
@@ -1108,6 +1109,43 @@ Route::prefix('v1')->group(function () {
             Route::apiResource('expenses', ExpenseController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:accounting.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:accounting.manage']);
+        });
+
+        Route::middleware(['erp.module:investors'])->prefix('investors')->group(function () {
+            Route::get('/', [InvestorController::class, 'index'])
+                ->middleware('erp.permission:investors.investors.view');
+            Route::post('/', [InvestorController::class, 'store'])
+                ->middleware('erp.permission:investors.investors.create|investors.investors.edit');
+            Route::get('{id}', [InvestorController::class, 'show'])
+                ->middleware('erp.permission:investors.investors.view')
+                ->whereNumber('id');
+            Route::patch('{id}', [InvestorController::class, 'update'])
+                ->middleware('erp.permission:investors.investors.edit')
+                ->whereNumber('id');
+            Route::delete('{id}', [InvestorController::class, 'destroy'])
+                ->middleware('erp.permission:investors.investors.delete|investors.investors.edit')
+                ->whereNumber('id');
+            Route::post('{id}/contributions', [InvestorController::class, 'storeContribution'])
+                ->middleware('erp.permission:investors.investors.create|investors.investors.edit')
+                ->whereNumber('id');
+            Route::post('{id}/contributions/{contributionId}/link', [InvestorController::class, 'linkContribution'])
+                ->middleware('erp.permission:investors.investors.edit')
+                ->whereNumber(['id', 'contributionId']);
+            Route::post('{id}/contributions/{contributionId}/allocate', [InvestorController::class, 'allocateProducts'])
+                ->middleware('erp.permission:investors.investors.edit')
+                ->whereNumber(['id', 'contributionId']);
+            Route::post('{id}/spends', [InvestorController::class, 'storeSpend'])
+                ->middleware('erp.permission:investors.investors.edit')
+                ->whereNumber('id');
+            Route::get('{id}/reports/sales', [InvestorController::class, 'salesReport'])
+                ->middleware('erp.permission:investors.reports.view|investors.investors.view')
+                ->whereNumber('id');
+            Route::get('{id}/reports/stock', [InvestorController::class, 'stockReport'])
+                ->middleware('erp.permission:investors.reports.view|investors.investors.view')
+                ->whereNumber('id');
+            Route::get('{id}/reports/money-flow', [InvestorController::class, 'moneyFlowReport'])
+                ->middleware('erp.permission:investors.reports.view|investors.investors.view')
+                ->whereNumber('id');
         });
 
         // Accounting — read vs manage

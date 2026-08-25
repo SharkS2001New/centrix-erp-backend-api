@@ -400,6 +400,16 @@ class CapabilityGate
         return (bool) ($whatsapp['enable_whatsapp_orders'] ?? false);
     }
 
+    public function investorsPlatformEnabled(): bool
+    {
+        if ($this->enabled('investors')) {
+            return true;
+        }
+        $investors = $this->moduleSettings('investors');
+
+        return (bool) ($investors['enable_investors'] ?? false);
+    }
+
     public function advancedDataImportPlatformEnabled(): bool
     {
         $admin = $this->moduleSettings('admin');
@@ -701,6 +711,7 @@ class CapabilityGate
             'platform_kra_integration_enabled' => $this->kraIntegrationPlatformEnabled(),
             'platform_ai_enabled' => $this->aiPlatformEnabled(),
             'platform_whatsapp_enabled' => $this->whatsappPlatformEnabled(),
+            'platform_investors_enabled' => $this->investorsPlatformEnabled(),
             'platform_advanced_data_import_enabled' => $this->advancedDataImportPlatformEnabled(),
             'platform_tab_workspace_enabled' => $this->tabWorkspacePlatformEnabled(),
             'advanced_data_import_pages' => $this->advancedDataImportPagesEnabled(),

@@ -202,6 +202,13 @@ return [
                 'settings' => ['label' => 'Accounting settings', 'actions' => ['view', 'edit']],
             ],
         ],
+        'investors' => [
+            'label' => 'Investors',
+            'features' => [
+                'investors' => ['label' => 'Investors & capital', 'actions' => ['view', 'create', 'edit', 'delete']],
+                'reports' => ['label' => 'Investor reports', 'actions' => ['view']],
+            ],
+        ],
         'reports' => [
             'label' => 'Reports',
             'features' => [

@@ -156,6 +156,19 @@ return [
         'children' => [],
     ],
 
+    'investors' => [
+        'label' => 'Investors',
+        'nav_group' => 'Investors',
+        'kind' => 'domain',
+        'children' => ['investors.reports'],
+    ],
+    'investors.reports' => [
+        'label' => 'Investor reports',
+        'nav_group' => 'Investors',
+        'parent' => 'investors',
+        'kind' => 'reports',
+    ],
+
     'hospitality' => [
         'label' => 'Hospitality',
         'nav_group' => 'Hospitality',

@@ -37,6 +37,7 @@ return [
     'purchasing' => ['customers_suppliers'],
     'fulfillment' => ['distribution'],
     'accounting' => ['accounting', 'payments'],
+    'investors' => ['investors'],
     'reports' => [
         'sales.reports',
         'inventory.reports',

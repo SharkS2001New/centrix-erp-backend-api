@@ -44,6 +44,12 @@ class OrganizationPlatformConfigService
     }
 
     /** @return list<string> */
+    public function platformControlledInvestorsKeys(): array
+    {
+        return config('erp.platform_controlled.investors', []);
+    }
+
+    /** @return list<string> */
     public function platformControlledInventoryKeys(): array
     {
         return config('erp.platform_controlled.inventory', []);
@@ -407,6 +413,14 @@ class OrganizationPlatformConfigService
         }
         $moduleSettings['whatsapp'] = $currentWhatsapp;
 
+        $currentInvestors = is_array($moduleSettings['investors'] ?? null) ? $moduleSettings['investors'] : [];
+        foreach ($this->platformControlledInvestorsKeys() as $key) {
+            if (array_key_exists($key, $salesPlatform)) {
+                $currentInvestors[$key] = (bool) $salesPlatform[$key];
+            }
+        }
+        $moduleSettings['investors'] = $currentInvestors;
+
         $currentAdmin = is_array($moduleSettings['admin'] ?? null) ? $moduleSettings['admin'] : [];
         foreach ($this->platformControlledAdminKeys() as $key) {
             if (! array_key_exists($key, $salesPlatform)) {
@@ -463,7 +477,15 @@ class OrganizationPlatformConfigService
             );
         }
 
-        $org->forceFill(['module_settings' => $moduleSettings])->save();
+        $updates = ['module_settings' => $moduleSettings];
+        if (array_key_exists('enable_investors', $salesPlatform)) {
+            $modules = is_array($org->enabled_modules) ? $org->enabled_modules : [];
+            $modules['investors'] = (bool) $salesPlatform['enable_investors'];
+            $modules['investors.reports'] = (bool) $salesPlatform['enable_investors'];
+            $updates['enabled_modules'] = $modules;
+        }
+
+        $org->forceFill($updates)->save();
 
         app(\App\Services\Erp\ErpContext::class)->forgetOrganizationCache((int) $org->id);
 
@@ -549,6 +571,7 @@ class OrganizationPlatformConfigService
             'enable_ai' => true,
             'use_platform_gemini' => false,
             'enable_whatsapp_orders' => false,
+            'enable_investors' => false,
             'enable_advanced_data_import' => false,
             'advanced_data_import_pages' => AdvancedDataImportPageRegistry::defaultEnabledMap(),
             'stock_deduct_on' => [
@@ -636,6 +659,8 @@ class OrganizationPlatformConfigService
             'enable_ai' => (bool) ($ai['enable_ai'] ?? true),
             'use_platform_gemini' => (bool) ($ai['use_platform_gemini'] ?? false),
             'enable_whatsapp_orders' => (bool) ($whatsapp['enable_whatsapp_orders'] ?? false),
+            'enable_investors' => (bool) (($gate->moduleSettings('investors')['enable_investors'] ?? false)
+                || ($org->enabled_modules['investors'] ?? false)),
             'enable_advanced_data_import' => (bool) ($admin['enable_advanced_data_import'] ?? false),
             'advanced_data_import_pages' => $importPages,
             'stock_deduct_on' => $this->normalizeStockDeductOn(

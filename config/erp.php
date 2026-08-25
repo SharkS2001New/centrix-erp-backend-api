@@ -270,6 +270,9 @@ return [
         'whatsapp' => [
             'enable_whatsapp_orders',
         ],
+        'investors' => [
+            'enable_investors',
+        ],
         'admin' => [
             'enable_advanced_data_import',
             'advanced_data_import_pages',
@@ -860,6 +863,9 @@ return [
             'enable_whatsapp_orders' => false,
             'enabled' => false,
             'agent_name' => '',
+        ],
+        'investors' => [
+            'enable_investors' => false,
         ],
         'admin' => [
             'enable_advanced_data_import' => false,
