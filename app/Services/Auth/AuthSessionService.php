@@ -444,6 +444,8 @@ class AuthSessionService
             'user_membership_id' => $account->membership?->id,
             'login_channel' => $loginChannel,
             'active_workspace_id' => $activeWorkspaceId,
+            // Mark issued immediately so exclusivity does not depend on a follow-up API hit.
+            'last_used_at' => now(),
         ])->save();
 
         $memberships = $this->resolver->membershipsForCanonicalUser($account->canonicalUserId());
@@ -471,30 +473,41 @@ class AuthSessionService
 
     protected function pruneStaleTokens(User $authUser): void
     {
-        $idleMinutes = $this->resolveIdleMinutesForUser($authUser);
-        $idleCutoff = now()->subMinutes($idleMinutes);
-        // Tokens that were issued but never used (e.g. cookie auth handoff failed).
-        $abandonedMinutes = min(2, $idleMinutes);
-        $abandonedCutoff = now()->subMinutes($abandonedMinutes);
-
+        // Expired tokens are never valid sessions.
         $authUser->tokens()
             ->where('name', 'not like', \App\Support\AttendanceAgentToken::NAME_PREFIX.'%')
-            ->where(function ($query) use ($idleCutoff, $abandonedCutoff) {
-                $query
-                    ->where(function ($q) use ($idleCutoff) {
-                        $q->whereNotNull('last_used_at')
-                            ->where('last_used_at', '<', $idleCutoff);
-                    })
-                    ->orWhere(function ($q) use ($idleCutoff) {
-                        $q->whereNull('last_used_at')
-                            ->where('created_at', '<', $idleCutoff);
-                    })
-                    ->orWhere(function ($q) use ($abandonedCutoff) {
-                        $q->whereNull('last_used_at')
-                            ->where('created_at', '<', $abandonedCutoff);
-                    });
-            })
+            ->whereNotNull('expires_at')
+            ->where('expires_at', '<=', now())
             ->delete();
+
+        // Failed login handoffs (issued, never authenticated) — short window only.
+        // Do NOT prune merely-idle tokens here: idle ≠ free slot for another PC.
+        // Server-side idle revoke (AUTH_SERVER_IDLE_REVOKE) handles that separately.
+        $abandonedCutoff = now()->subMinutes(2);
+        $authUser->tokens()
+            ->where('name', 'not like', \App\Support\AttendanceAgentToken::NAME_PREFIX.'%')
+            ->whereNull('last_used_at')
+            ->where('created_at', '<', $abandonedCutoff)
+            ->delete();
+
+        if (config('security.revoke_idle_tokens', false)) {
+            $idleMinutes = $this->resolveIdleMinutesForUser($authUser);
+            $idleCutoff = now()->subMinutes($idleMinutes);
+            $authUser->tokens()
+                ->where('name', 'not like', \App\Support\AttendanceAgentToken::NAME_PREFIX.'%')
+                ->where(function ($query) use ($idleCutoff) {
+                    $query
+                        ->where(function ($q) use ($idleCutoff) {
+                            $q->whereNotNull('last_used_at')
+                                ->where('last_used_at', '<', $idleCutoff);
+                        })
+                        ->orWhere(function ($q) use ($idleCutoff) {
+                            $q->whereNull('last_used_at')
+                                ->where('created_at', '<', $idleCutoff);
+                        });
+                })
+                ->delete();
+        }
     }
 
     protected function revokeAbandonedTokensElsewhere(User $authUser, string $clientId): void
@@ -507,26 +520,24 @@ class AuthSessionService
             ->delete();
     }
 
+    /**
+     * One interactive session per login_channel per user.
+     * ERP web (backoffice) on PC-A blocks ERP web on PC-B until logout or force_logout.
+     * Manager / mobile / POS use other channels and may coexist with ERP.
+     * Exclusivity follows token lifetime (expires_at), not screen-idle — an open but
+     * idle ERP tab still owns the channel.
+     */
     protected function assertNoActiveSessionElsewhere(
         User $authUser,
         string $clientId,
         string $loginChannel,
     ): void {
-        $idleMinutes = $this->resolveIdleMinutesForUser($authUser);
-        $handshakeMinutes = 2;
-
         $activeTokenExists = $authUser->tokens()
             ->where('name', '!=', $clientId)
             ->where('login_channel', $loginChannel)
-            ->where(function ($query) use ($idleMinutes, $handshakeMinutes) {
-                $query->where(function ($q) use ($idleMinutes) {
-                    $q->whereNotNull('last_used_at')
-                        ->where('last_used_at', '>=', now()->subMinutes($idleMinutes));
-                })->orWhere(function ($q) use ($handshakeMinutes) {
-                    // Short grace for a login still completing on another device.
-                    $q->whereNull('last_used_at')
-                        ->where('created_at', '>=', now()->subMinutes($handshakeMinutes));
-                });
+            ->where(function ($query) {
+                $query->whereNull('expires_at')
+                    ->orWhere('expires_at', '>', now());
             })
             ->exists();
 

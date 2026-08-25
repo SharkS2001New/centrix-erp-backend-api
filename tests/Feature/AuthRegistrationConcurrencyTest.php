@@ -317,36 +317,42 @@ class AuthRegistrationConcurrencyTest extends TestCase
         ])->assertOk()->assertJsonStructure(['token', 'user']);
     }
 
+    protected function makeDemoConcurrencyUser(string $usernamePrefix): User
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+
+        return User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $admin->role_id,
+            'username' => $usernamePrefix.'_'.uniqid(),
+            'password' => Hash::make('secret123'),
+            'full_name' => 'Concurrency Test User',
+            'is_active' => true,
+            'is_admin' => true,
+            'access_scope' => 'branch',
+            'login_channels' => ['backoffice', 'mobile', 'manager', 'pos'],
+        ]);
+    }
+
     public function test_login_blocks_second_device_while_first_is_active(): void
     {
-        $org = \App\Models\Organization::create([
-            'company_code' => 'TESTCONC',
-            'org_name' => 'Testing Concurrency',
-            'org_email' => 'test@conc.com',
-            'primary_tel' => '999',
-            'org_address' => 'Addr',
-        ]);
-        $user = User::create([
-            'organization_id' => $org->id,
-            'role_id' => 1,
-            'username' => 'cashier_user',
-            'password' => Hash::make('secret123'),
-            'full_name' => 'Cashier User',
-            'is_active' => true,
-        ]);
+        $user = $this->makeDemoConcurrencyUser('conc_cashier');
 
         $this->postJson('/api/v1/auth/login', [
-            'company_code' => 'TESTCONC',
-            'username' => 'cashier_user',
+            'company_code' => 'DEMO',
+            'username' => $user->username,
             'password' => 'secret123',
             'client_id' => 'PC1',
+            'login_channel' => 'backoffice',
         ])->assertOk();
 
         $this->postJson('/api/v1/auth/login', [
-            'company_code' => 'TESTCONC',
-            'username' => 'cashier_user',
+            'company_code' => 'DEMO',
+            'username' => $user->username,
             'password' => 'secret123',
             'client_id' => 'PC2',
+            'login_channel' => 'backoffice',
         ])->assertStatus(403)
             ->assertJsonFragment([
                 'message' => 'This user is already logged in on another device.',
@@ -354,10 +360,56 @@ class AuthRegistrationConcurrencyTest extends TestCase
             ]);
 
         $this->postJson('/api/v1/auth/login', [
-            'company_code' => 'TESTCONC',
-            'username' => 'cashier_user',
+            'company_code' => 'DEMO',
+            'username' => $user->username,
             'password' => 'secret123',
             'client_id' => 'PC2',
+            'login_channel' => 'backoffice',
+            'force_logout' => true,
+        ])->assertOk();
+    }
+
+    public function test_login_blocks_second_device_even_when_first_session_is_idle(): void
+    {
+        config(['erp.session_idle_minutes' => 15]);
+
+        $user = $this->makeDemoConcurrencyUser('idle_user');
+
+        $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'DEMO',
+            'username' => $user->username,
+            'password' => 'secret123',
+            'client_id' => 'PC1',
+            'login_channel' => 'backoffice',
+        ])->assertOk();
+
+        // Simulate an open ERP tab that has been idle longer than session_idle_minutes.
+        \Illuminate\Support\Facades\DB::table('personal_access_tokens')
+            ->where('tokenable_id', $user->id)
+            ->where('name', 'PC1')
+            ->update([
+                'last_used_at' => now()->subMinutes(45),
+                'login_channel' => 'backoffice',
+            ]);
+
+        $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'DEMO',
+            'username' => $user->username,
+            'password' => 'secret123',
+            'client_id' => 'PC2',
+            'login_channel' => 'backoffice',
+        ])->assertStatus(403)
+            ->assertJsonFragment([
+                'message' => 'This user is already logged in on another device.',
+                'code' => 'session_active_elsewhere',
+            ]);
+
+        $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'DEMO',
+            'username' => $user->username,
+            'password' => 'secret123',
+            'client_id' => 'PC2',
+            'login_channel' => 'backoffice',
             'force_logout' => true,
         ])->assertOk();
     }
@@ -366,32 +418,23 @@ class AuthRegistrationConcurrencyTest extends TestCase
     {
         config(['erp.session_idle_minutes' => 15]);
 
-        $org = \App\Models\Organization::create([
-            'company_code' => 'TESTABN',
-            'org_name' => 'Abandoned Token Org',
-            'org_email' => 'abn@test.com',
-            'primary_tel' => '999',
-            'org_address' => 'Addr',
-        ]);
-        $user = User::create([
-            'organization_id' => $org->id,
-            'role_id' => 1,
-            'username' => 'solo_user',
-            'password' => Hash::make('secret123'),
-            'full_name' => 'Solo User',
-            'is_active' => true,
-        ]);
+        $user = $this->makeDemoConcurrencyUser('solo_user');
 
         $token = $user->createToken('OLD_BROWSER');
         \Illuminate\Support\Facades\DB::table('personal_access_tokens')
             ->where('id', $token->accessToken->id)
-            ->update(['created_at' => now()->subMinutes(6), 'last_used_at' => null]);
+            ->update([
+                'created_at' => now()->subMinutes(6),
+                'last_used_at' => null,
+                'login_channel' => 'backoffice',
+            ]);
 
         $this->postJson('/api/v1/auth/login', [
-            'company_code' => 'TESTABN',
-            'username' => 'solo_user',
+            'company_code' => 'DEMO',
+            'username' => $user->username,
             'password' => 'secret123',
             'client_id' => 'NEW_BROWSER',
+            'login_channel' => 'backoffice',
         ])->assertOk();
     }
 
