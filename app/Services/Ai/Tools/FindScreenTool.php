@@ -30,6 +30,7 @@ class FindScreenTool implements AiToolInterface
         return 'Find Centrix ERP screens and paths for a topic (where to go / how to open a feature). '
             .'Use for questions like "where are suppliers?", "how do I receive stock?", "open GRN", '
             .'"roles and permissions", or when the user does not know which menu to use. '
+            .'For VAT / tax amounts ("how much VAT this month"), do NOT use this tool alone — call get_vat_collected. '
             .'Returns matching labels and clickable paths the user can open.';
     }
 

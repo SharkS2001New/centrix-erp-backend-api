@@ -23,6 +23,7 @@ use App\Services\Ai\Tools\GetSalesByProductTool;
 use App\Services\Ai\Tools\GetSalesSummaryTool;
 use App\Services\Ai\Tools\GetStockSummaryTool;
 use App\Services\Ai\Tools\GetTillHealthTool;
+use App\Services\Ai\Tools\GetVatCollectedTool;
 use InvalidArgumentException;
 
 class AiToolRegistry
@@ -32,6 +33,7 @@ class AiToolRegistry
 
     public function __construct(
         protected GetSalesSummaryTool $getSalesSummary,
+        protected GetVatCollectedTool $getVatCollected,
         protected GetSalesByCashierTool $getSalesByCashier,
         protected GetSalesByProductTool $getSalesByProduct,
         protected GetSalesBriefTool $getSalesBrief,
@@ -158,6 +160,7 @@ class AiToolRegistry
         $registered = [
             $this->findScreen,
             $this->getSalesSummary,
+            $this->getVatCollected,
             $this->getSalesByCashier,
             $this->getSalesByProduct,
             $this->getSalesBrief,

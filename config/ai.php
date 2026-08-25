@@ -75,6 +75,7 @@ return [
     'tools' => [
         'find_screen' => true,
         'get_sales_summary' => true,
+        'get_vat_collected' => true,
         'get_sales_by_cashier' => true,
         'get_sales_by_product' => true,
         'get_sales_brief' => true,

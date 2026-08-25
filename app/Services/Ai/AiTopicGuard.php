@@ -10,7 +10,10 @@ class AiTopicGuard
         '/\b(recipe|cook(ing)?|bake|ingredient)\b/i',
         '/\b(poem|joke|story|song lyrics|write me a)\b/i',
         '/\b(homework|essay|translate (this|to)|grammar check)\b/i',
-        '/\b(capital of|who (is|was|won)|celebrity|movie|football score)\b/i',
+        // Trivia / celebrity — avoid matching ERP phrasing like "who is unpaid"
+        '/\bwho (is|was) (the |a )?(president|prime minister|ceo of|capital of|author of)\b/i',
+        '/\b(who won|celebrity|movie star|football score|world cup)\b/i',
+        '/\bcapital of\b/i',
         '/\b(stock market|crypto|bitcoin|forex trading)\b/i',
         '/\b(medical advice|diagnose|symptoms|prescription)\b/i',
         '/\b(legal advice|lawyer|sue|court case)\b/i',
@@ -19,9 +22,12 @@ class AiTopicGuard
 
     /** @var list<string> */
     protected const ERP_SIGNALS = [
-        '/\b(order|sale|invoice|customer|product|catalog|catalogue|category|stock|inventory|sku|grn|lpo|supplier|purchase|expense|account|journal|dispatch|trip|route|driver|vehicle|pos|till|voucher|credit note|attendance|leave|department|shift|branch|employee|payroll|kpi|report|builder|settings|admin|module|screen|page|navigate|where (is|do)|how (do|can) i)\b/i',
-        '/\b(create|add|new|hold|save|build|generate|show me|find|list|summarize|reorder|low stock|outstanding|receivable|debtor|checkout|cart|receive|transfer|adjust)\b/i',
-        '/\b(kes|erp|pos|grn|nssf|paye|kra|mpesa|vat|uom|wholesale|retail)\b/i',
+        '/\b(order|sale|invoice|customer|supplier|product|catalog|catalogue|category|stock|inventory|sku|grn|lpo|purchase|expense|account|journal|dispatch|trip|route|driver|vehicle|pos|till|voucher|credit note|attendance|leave|department|shift|branch|employee|payroll|kpi|report|builder|settings|admin|module|screen|page|navigate|where (is|do)|how (do|can) i)\b/i',
+        '/\b(create|add|new|hold|save|build|generate|show me|find|list|check|look up|search|summarize|reorder|low stock|outstanding|overdue|unpaid|owing|arrears|balance|statement|receivable|payable|debtor|creditor|checkout|cart|receive|transfer|adjust|payment|paid)\b/i',
+        '/\b(kes|erp|pos|grn|nssf|paye|kra|mpesa|vat|uom|wholesale|retail|investor|hospitality|room|guest)\b/i',
+        // Mentions (@Customer) or common credit/collections phrasing
+        '/@[A-Za-z]/',
+        '/\b(who.*(owe|owes|unpaid|overdue|balance)|unpaid|not paid|still owing)\b/i',
     ];
 
     public function isErpRelated(string $message): bool
@@ -47,6 +53,7 @@ class AiTopicGuard
             return true;
         }
 
+        // Short in-app questions are usually ERP (names, codes, follow-ups).
         return strlen($text) <= 400 || preg_match('/\b(help|system|app|this|erp|pos)\b/i', $text);
     }
 

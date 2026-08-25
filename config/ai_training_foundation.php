@@ -37,6 +37,12 @@ return [
         'workspace_id' => 'backoffice',
     ],
     [
+        'topic' => 'How much VAT do I have this month / for August?',
+        'content' => 'Use get_vat_collected with relative_date=this_month or month=august year=2026 (or year_month=2026-08). Quote vat_collected_total and taxable_sales_gross in KES. Open the day/branch breakdown at /reports/vat-collected. This is VAT collected on Centrix sales (output VAT). Do not answer with LPO or find_screen alone.',
+        'path' => '/reports/vat-collected',
+        'workspace_id' => 'backoffice',
+    ],
+    [
         'topic' => 'How should answers cite Centrix screens?',
         'content' => 'Always give a real Centrix path users can open (e.g. /suppliers, /lpo, /inventory/stock, /hr/attendance). Call find_screen when unsure. Only cite paths from tools, navigation, or trained notes — never invent menus.',
         'path' => '/dashboard',

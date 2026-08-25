@@ -163,6 +163,7 @@ return [
                 ['label' => 'Report builder', 'path' => '/reports/builder', 'module' => 'reports', 'permission' => 'reports.builder.view'],
                 ['label' => 'Sales by user', 'path' => '/reports/sales-by-user', 'module' => 'reports', 'permission' => 'reports.sales_by_user.view'],
                 ['label' => 'Daily sales', 'path' => '/reports/daily-sales', 'module' => 'reports', 'permission' => 'reports.daily_sales.view'],
+                ['label' => 'VAT collected', 'path' => '/reports/vat-collected', 'module' => 'reports', 'permission' => 'reports.vat_collected.view'],
                 ['label' => 'Low stock', 'path' => '/reports/low-stock', 'module' => 'inventory', 'permission' => 'reports.low_stock.view'],
                 ['label' => 'Attendance register', 'path' => '/reports/attendance-register', 'module' => 'hr_payroll.reports', 'permission' => 'hr.attendance.view'],
                 ['label' => 'Items currently in stock', 'path' => '/inventory/stock', 'module' => 'inventory', 'permission' => 'inventory.stock.view'],
