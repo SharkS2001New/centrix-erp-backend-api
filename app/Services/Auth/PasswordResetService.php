@@ -105,7 +105,7 @@ class PasswordResetService
 
         $user->forceFill(['password' => Hash::make($password)])->save();
         app(PasswordExpiryService::class)->markPasswordChanged($user);
-        $user->tokens()->delete();
+        \App\Support\AttendanceAgentToken::excludeFromQuery($user->tokens())->delete();
 
         UserPasswordReset::query()
             ->where('user_id', $user->id)

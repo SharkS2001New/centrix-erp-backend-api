@@ -25,6 +25,12 @@ class EnsureSessionNotIdle
             return $next($request);
         }
 
+        // Machine tokens for CentrixAttendanceAgent — must survive overnight PC sleep
+        // and must not be treated as interactive browser sessions.
+        if (\App\Support\AttendanceAgentToken::isAgentTokenName($accessToken->name ?? null)) {
+            return $next($request);
+        }
+
         $idleMinutes = \App\Services\Auth\SecuritySettingsResolver::sessionIdleMinutesForOrganizationId(
             (int) ($accessToken->organization_id ?? 0) ?: null,
         );

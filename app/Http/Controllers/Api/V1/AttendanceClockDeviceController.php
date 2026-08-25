@@ -120,7 +120,13 @@ class AttendanceClockDeviceController extends HrOrgResourceController
 
         $tokenName = \App\Support\AttendanceAgentToken::nameForDevice((string) $device->device_no);
         $user->tokens()->where('name', $tokenName)->delete();
-        $token = $user->createToken($tokenName, ['*'], now()->addYears(5));
+        // Null expires_at = never expire. Global Sanctum TTL is bypassed for these tokens
+        // in AppServiceProvider so the office agent keeps checking in unattended.
+        $token = $user->createToken($tokenName, ['*'], null);
+        $token->accessToken->forceFill([
+            'organization_id' => (int) $device->organization_id,
+            'expires_at' => null,
+        ])->save();
 
         $apiUrl = filled($data['centrix_api_url'] ?? null)
             ? rtrim((string) $data['centrix_api_url'], '/')

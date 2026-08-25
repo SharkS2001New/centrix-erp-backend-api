@@ -19,6 +19,7 @@ class AiToolRegistryTest extends TestCase
             'find_screen',
             'get_sales_summary',
             'get_sales_by_cashier',
+            'get_sales_by_product',
             'get_sales_brief',
             'get_stock_summary',
             'get_product_details',

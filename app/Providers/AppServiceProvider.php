@@ -24,6 +24,20 @@ class AppServiceProvider extends ServiceProvider
     {
         Sanctum::usePersonalAccessTokenModel(PersonalAccessToken::class);
 
+        // CentrixAttendanceAgent tokens must never die from the global Sanctum
+        // created_at TTL (browser sessions). Only an explicit expires_at (or revoke) ends them.
+        Sanctum::authenticateAccessTokensUsing(function ($accessToken, bool $isValid) {
+            if (! \App\Support\AttendanceAgentToken::isAgentTokenName($accessToken->name ?? null)) {
+                return $isValid;
+            }
+
+            if ($accessToken->expires_at && $accessToken->expires_at->isPast()) {
+                return false;
+            }
+
+            return $accessToken->tokenable !== null;
+        });
+
         Organization::observe(OrganizationObserver::class);
         Sale::observe(SaleObserver::class);
 

@@ -19,6 +19,7 @@ use App\Services\Ai\Tools\GetPurchasingOverviewTool;
 use App\Services\Ai\Tools\GetRouteOrdersTool;
 use App\Services\Ai\Tools\GetSalesBriefTool;
 use App\Services\Ai\Tools\GetSalesByCashierTool;
+use App\Services\Ai\Tools\GetSalesByProductTool;
 use App\Services\Ai\Tools\GetSalesSummaryTool;
 use App\Services\Ai\Tools\GetStockSummaryTool;
 use App\Services\Ai\Tools\GetTillHealthTool;
@@ -32,6 +33,7 @@ class AiToolRegistry
     public function __construct(
         protected GetSalesSummaryTool $getSalesSummary,
         protected GetSalesByCashierTool $getSalesByCashier,
+        protected GetSalesByProductTool $getSalesByProduct,
         protected GetSalesBriefTool $getSalesBrief,
         protected FindScreenTool $findScreen,
         protected GetStockSummaryTool $getStockSummary,
@@ -157,6 +159,7 @@ class AiToolRegistry
             $this->findScreen,
             $this->getSalesSummary,
             $this->getSalesByCashier,
+            $this->getSalesByProduct,
             $this->getSalesBrief,
             $this->getStockSummary,
             $this->getProductDetails,

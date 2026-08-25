@@ -76,6 +76,7 @@ return [
         'find_screen' => true,
         'get_sales_summary' => true,
         'get_sales_by_cashier' => true,
+        'get_sales_by_product' => true,
         'get_sales_brief' => true,
         'get_stock_summary' => true,
         'get_product_details' => true,

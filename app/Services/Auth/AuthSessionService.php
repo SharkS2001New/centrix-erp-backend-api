@@ -422,9 +422,7 @@ class AuthSessionService
         }
 
         if ($forceLogout) {
-            $authUser->tokens()
-                ->where('name', 'not like', \App\Support\AttendanceAgentToken::NAME_PREFIX.'%')
-                ->delete();
+            \App\Support\AttendanceAgentToken::excludeFromQuery($authUser->tokens())->delete();
         } else {
             $this->pruneStaleTokens($authUser);
             $authUser->tokens()->where('name', $clientId)->delete();
@@ -480,6 +478,7 @@ class AuthSessionService
         $abandonedCutoff = now()->subMinutes($abandonedMinutes);
 
         $authUser->tokens()
+            ->where('name', 'not like', \App\Support\AttendanceAgentToken::NAME_PREFIX.'%')
             ->where(function ($query) use ($idleCutoff, $abandonedCutoff) {
                 $query
                     ->where(function ($q) use ($idleCutoff) {
@@ -502,6 +501,7 @@ class AuthSessionService
     {
         $authUser->tokens()
             ->where('name', '!=', $clientId)
+            ->where('name', 'not like', \App\Support\AttendanceAgentToken::NAME_PREFIX.'%')
             ->whereNull('last_used_at')
             ->where('created_at', '<', now()->subMinutes(2))
             ->delete();

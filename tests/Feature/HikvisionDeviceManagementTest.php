@@ -100,6 +100,86 @@ class HikvisionDeviceManagementTest extends TestCase
         $this->assertSame($commandsBefore, HikvisionAgentCommand::query()->count());
     }
 
+    public function test_admin_login_does_not_revoke_stale_attendance_agent_token(): void
+    {
+        $device = AttendanceClockDevice::create([
+            'organization_id' => $this->org->id,
+            'device_no' => 'T001-AGENT-KEEP',
+            'is_active' => true,
+            'provider' => 'hikvision',
+            'host' => '192.168.100.215',
+            'port' => 80,
+            'username' => 'admin',
+        ]);
+        $device->setPlainPassword('secret');
+        $device->save();
+
+        $tokenName = \App\Support\AttendanceAgentToken::nameForDevice((string) $device->device_no);
+        $issued = $this->admin->createToken($tokenName, ['*'], null);
+        $issued->accessToken->forceFill([
+            'organization_id' => $this->org->id,
+            'expires_at' => null,
+            'last_used_at' => now()->subHours(14),
+            'created_at' => now()->subDays(30),
+            'updated_at' => now()->subHours(14),
+        ])->save();
+        $agentPlain = $issued->plainTextToken;
+
+        $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'DEMO',
+            'username' => 'admin',
+            'password' => 'password',
+            'client_id' => 'web-office-pc',
+            'login_channel' => 'backoffice',
+            'force_logout' => true,
+        ])->assertOk()->assertJsonStructure(['token']);
+
+        $this->assertDatabaseHas('personal_access_tokens', [
+            'tokenable_id' => $this->admin->id,
+            'name' => $tokenName,
+        ]);
+        $this->assertNull(
+            \App\Models\PersonalAccessToken::query()->where('name', $tokenName)->value('expires_at')
+        );
+
+        // Older than SANCTUM_TOKEN_EXPIRATION_MINUTES (1440) — must still authenticate.
+        $this->withToken($agentPlain)
+            ->postJson("/api/v1/attendance-clock-devices/{$device->id}/hikvision/agent/heartbeat", [
+                'agent_version' => '3.3.2',
+            ])
+            ->assertOk()
+            ->assertJsonPath('ok', true)
+            ->assertJsonPath('agent.online', true);
+    }
+
+    public function test_agent_package_token_never_expires(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $device = AttendanceClockDevice::create([
+            'organization_id' => $this->org->id,
+            'device_no' => 'T001-NEVER-EXP',
+            'is_active' => true,
+            'provider' => 'hikvision',
+            'host' => '192.168.100.215',
+            'port' => 80,
+            'username' => 'admin',
+        ]);
+        $device->setPlainPassword('secret');
+        $device->save();
+
+        $res = $this->postJson("/api/v1/attendance-clock-devices/{$device->id}/agent-package", [
+            'centrix_api_url' => 'https://example.test/api/v1',
+        ]);
+        $res->assertOk();
+        $this->assertNull($res->json('expires_at'));
+
+        $tokenName = \App\Support\AttendanceAgentToken::nameForDevice((string) $device->device_no);
+        $this->assertNull(
+            \App\Models\PersonalAccessToken::query()->where('name', $tokenName)->value('expires_at')
+        );
+    }
+
     public function test_test_connection_after_overnight_pc_off_does_not_force_redownload(): void
     {
         Sanctum::actingAs($this->admin);
