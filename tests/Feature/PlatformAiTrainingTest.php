@@ -265,6 +265,52 @@ class PlatformAiTrainingTest extends TestCase
         $this->assertDatabaseMissing('ai_knowledge_entries', ['id' => $third->id]);
     }
 
+    public function test_delete_all_knowledge_requires_confirm_and_wipes_platform_notes(): void
+    {
+        $keepWorkspace = AiKnowledgeEntry::create([
+            'organization_id' => null,
+            'source' => 'platform_training',
+            'topic' => 'HR leave',
+            'content' => 'Open /hr/leave',
+            'workspace_id' => 'hr',
+            'confirmed' => true,
+            'confirmed_at' => now(),
+        ]);
+        $wipe = AiKnowledgeEntry::create([
+            'organization_id' => null,
+            'source' => 'platform_training',
+            'topic' => 'Where is GRN',
+            'content' => 'Open /inventory/receipts',
+            'confirmed' => true,
+            'confirmed_at' => now(),
+        ]);
+
+        $this->actingAs($this->superAdmin, 'sanctum')
+            ->postJson('/api/v1/admin/ai-training/knowledge/delete-all', [])
+            ->assertStatus(422);
+
+        $this->actingAs($this->superAdmin, 'sanctum')
+            ->postJson('/api/v1/admin/ai-training/knowledge/delete-all', [
+                'confirm' => true,
+                'workspace_id' => 'hr',
+            ])
+            ->assertOk()
+            ->assertJsonPath('deleted', 1)
+            ->assertJsonPath('scope', 'workspace');
+
+        $this->assertDatabaseMissing('ai_knowledge_entries', ['id' => $keepWorkspace->id]);
+        $this->assertDatabaseHas('ai_knowledge_entries', ['id' => $wipe->id]);
+
+        $this->actingAs($this->superAdmin, 'sanctum')
+            ->postJson('/api/v1/admin/ai-training/knowledge/delete-all', [
+                'confirm' => true,
+            ])
+            ->assertOk()
+            ->assertJsonPath('deleted', 1);
+
+        $this->assertDatabaseMissing('ai_knowledge_entries', ['id' => $wipe->id]);
+    }
+
     public function test_training_chat_declines_swahili_questions(): void
     {
         $this->actingAs($this->superAdmin, 'sanctum')

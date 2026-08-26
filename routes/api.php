@@ -593,6 +593,7 @@ Route::prefix('v1')->group(function () {
                 Route::get('knowledge/duplicates', [PlatformAiTrainingController::class, 'listKnowledgeDuplicates']);
                 Route::post('knowledge/merge', [PlatformAiTrainingController::class, 'mergeKnowledge']);
                 Route::post('knowledge/bulk-delete', [PlatformAiTrainingController::class, 'bulkDeleteKnowledge']);
+                Route::post('knowledge/delete-all', [PlatformAiTrainingController::class, 'deleteAllKnowledge']);
                 Route::post('knowledge', [PlatformAiTrainingController::class, 'teach']);
                 Route::post('knowledge/bulk', [PlatformAiTrainingController::class, 'teachBulk']);
                 Route::post('knowledge/install-foundation', [PlatformAiTrainingController::class, 'installFoundation']);

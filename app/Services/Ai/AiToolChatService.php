@@ -715,7 +715,7 @@ class AiToolChatService
         $fastMode = filter_var(config('ai.fast_mode', true), FILTER_VALIDATE_BOOLEAN);
         $docsCap = $fastMode ? 9000 : 14000;
         if ($docsJson === false || strlen($docsJson) > $docsCap) {
-            $docs['platform_knowledge'] = array_slice($docs['platform_knowledge'] ?? [], 0, $fastMode ? 6 : 8);
+            $docs['platform_knowledge'] = array_slice($docs['platform_knowledge'] ?? [], 0, $fastMode ? 10 : 8);
             $docs['navigation'] = array_slice($docs['navigation'] ?? [], 0, $fastMode ? 30 : 40);
             $docsJson = json_encode($docs, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?: '{}';
         }
@@ -797,8 +797,9 @@ Tools:
 - calculate_scenario — what-if (price_increase, sales_increase, supplier_cost_increase, discount_reduction) with percent_change; label results as illustrative estimates
 
 Rules:
+- Platform training is authoritative. Notes in CENTRIX_DOCUMENTATION.platform_knowledge (and results from search_training_notes) are written by Centrix platform admins for every organization. When they match the question, follow them over your own assumptions — same wording for procedures, labels, and screen paths when given.
 - For "where is / how do I / which menu" questions, call find_screen (or use CENTRIX_DOCUMENTATION) and answer with the path.
-- For how Centrix works / FAQs / trained procedures, prefer platform_knowledge in context and call search_training_notes when more depth is needed.
+- For how Centrix works / FAQs / trained procedures: first use matching platform_knowledge in context; if none fit or you need more, call search_training_notes before inventing an answer.
 - When page context is present, prefer answering about that screen/filters before asking the user to clarify.
 - Customer statements / what a customer bought / their balance: call get_customer_statement. Return balance plus markdown tables of purchases_by_product (and line_items if useful). Never claim you lack line-item access when the tool returns purchases.
 - Supplier statements / what we bought from a supplier / their balance: call get_supplier_statement. Return balance plus markdown tables of LPOs and purchases_by_product. Never claim you lack line-item access when the tool returns line_items.

@@ -305,7 +305,7 @@ class AiSystemContextBuilder
         $fastMode = filter_var(config('ai.fast_mode', true), FILTER_VALIDATE_BOOLEAN);
         $navLimit = $fastMode ? 40 : 80;
         $workflowLimit = $fastMode ? 12 : 20;
-        $knowledgeLimit = $fastMode ? 8 : 24;
+        $knowledgeLimit = $fastMode ? 12 : 24;
         $modulePathLimit = $fastMode ? 4 : 6;
         $moduleTaskLimit = $fastMode ? 3 : 5;
 

@@ -105,11 +105,11 @@ class AiKnowledgeService
     }
 
     /** @return list<array<string, mixed>> */
-    public function listGlobal(?string $workspaceId = null, int $limit = 100): array
+    public function listGlobal(?string $workspaceId = null, int $limit = 2000): array
     {
         return $this->globalEntryQuery($workspaceId)
             ->orderByDesc('updated_at')
-            ->limit($limit)
+            ->limit(max(1, min(5000, $limit)))
             ->get()
             ->map(fn (AiKnowledgeEntry $row) => $this->formatEntry($row))
             ->all();
@@ -406,6 +406,14 @@ class AiKnowledgeService
             ->whereNull('organization_id')
             ->whereIn('id', $ids)
             ->delete();
+    }
+
+    /**
+     * Delete all platform-wide training notes (optionally scoped to a workspace).
+     */
+    public function deleteGlobalAll(?string $workspaceId = null): int
+    {
+        return $this->globalEntryQuery($workspaceId)->delete();
     }
 
     protected function normalizeTopic(string $topic): string

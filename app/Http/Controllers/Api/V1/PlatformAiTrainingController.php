@@ -253,11 +253,15 @@ class PlatformAiTrainingController extends Controller
     {
         $data = $request->validate([
             'workspace_id' => 'nullable|string|max:40|in:'.implode(',', config('ai.workspace_ids')),
+            'limit' => 'nullable|integer|min:1|max:5000',
         ]);
 
         return response()->json([
             'scope' => 'platform',
-            'data' => $this->knowledge->listGlobal($data['workspace_id'] ?? null),
+            'data' => $this->knowledge->listGlobal(
+                $data['workspace_id'] ?? null,
+                (int) ($data['limit'] ?? 2000),
+            ),
         ]);
     }
 
@@ -297,7 +301,7 @@ class PlatformAiTrainingController extends Controller
     public function teachBulk(Request $request)
     {
         $data = $request->validate([
-            'notes' => 'required|array|min:1|max:200',
+            'notes' => 'required|array|min:1|max:500',
             'notes.*.topic' => 'nullable|string|max:200',
             'notes.*.question' => 'nullable|string|max:200',
             'notes.*.content' => 'nullable|string|max:8000',
@@ -401,6 +405,25 @@ class PlatformAiTrainingController extends Controller
 
         return response()->json([
             'deleted' => $deleted,
+        ]);
+    }
+
+    /**
+     * Wipe platform training notes (all, or one workspace). Requires confirm=true.
+     */
+    public function deleteAllKnowledge(Request $request)
+    {
+        $data = $request->validate([
+            'confirm' => 'accepted',
+            'workspace_id' => 'nullable|string|max:40|in:'.implode(',', config('ai.workspace_ids')),
+        ]);
+
+        $deleted = $this->knowledge->deleteGlobalAll($data['workspace_id'] ?? null);
+
+        return response()->json([
+            'deleted' => $deleted,
+            'scope' => ($data['workspace_id'] ?? null) ? 'workspace' : 'platform',
+            'workspace_id' => $data['workspace_id'] ?? null,
         ]);
     }
 
