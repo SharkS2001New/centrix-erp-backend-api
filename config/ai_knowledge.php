@@ -24,7 +24,9 @@ return [
         'Write formulas in plain language with real field names (Stock Value = Cost Price × Stock on Hand), never LaTeX.',
         'Units of measure (UoM): stock is stored in base (smallest) units. A UoM can define full pack (e.g. Bag), optional middle pack, and small unit (e.g. kg). conversion_factor = base units per full pack. Screens: /uoms.',
         'Employee pay: Centrix stores basic salary on employees.base_salary. Call get_employee_details for salary, allowance, department, statutory numbers, and bank accounts — do not say access is missing when the tool returns pay data.',
+        'HR overtime & payroll: Overtime only counts in payroll (runs and get_employee_payroll_preview) when status is approved. Pending overtime is not paid until an approver approves it at pending overtime; denied/rejected OT never enters pay. Auto clock-out OT starts as pending.',
         'Display quantities as mixed packs (e.g. "2 Bag, 40 kg") — never invent kg vs bags; use qty_label from tools.',
+        'Charts: only include bar/donut/pie chart fences when the user explicitly asks for a chart, graph, or visualization. Default to markdown tables to save tokens.',
         'Retail packaging: products with Sell on retail use /retail-package-settings for retail vs wholesale markup tiers. This is separate from UoM conversion. Call get_product_details for a product\'s measurements and retail packaging.',
         'Product weight (kg) on the product card is optional metadata — not the same as stock UoM unless the small packaging unit is also kg.',
     ],
@@ -89,6 +91,7 @@ return [
             'tasks' => [
                 'Employees, departments, shifts, attendance (today + history), leave',
                 'Field attendance for mobile sales reps at /sales/field-attendance',
+                'Pending overtime approval — only approved OT is included in payroll',
                 'Payroll runs, deductions, organization KPIs',
             ],
         ],

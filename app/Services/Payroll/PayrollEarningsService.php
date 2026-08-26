@@ -425,11 +425,15 @@ class PayrollEarningsService
         ];
     }
 
+    /**
+     * Only approved overtime enters payroll. Pending OT must be approved first;
+     * rejected/paid rows are excluded.
+     */
     public function approvedOvertimeInPeriod(int $employeeId, string $start, string $end): float
     {
         return round((float) EmployeeOvertime::query()
             ->where('employee_id', $employeeId)
-            ->whereIn('status', ['approved', 'pending'])
+            ->where('status', 'approved')
             ->whereNull('pay_period_id')
             ->whereNull('payroll_run_id')
             ->whereDate('work_date', '>=', $start)

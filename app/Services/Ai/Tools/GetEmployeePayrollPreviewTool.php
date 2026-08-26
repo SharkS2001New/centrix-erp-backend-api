@@ -43,8 +43,9 @@ class GetEmployeePayrollPreviewTool implements AiToolInterface
     public function description(): string
     {
         return 'Preview Centrix payroll for one employee for a month/period using their assigned shift, '
-            .'base salary, attendance proration, lateness, allowances, overtime, and Kenya statutory '
+            .'base salary, attendance proration, lateness, allowances, approved overtime only, and Kenya statutory '
             .'(NSSF, SHIF/SHA when pays_sha is on, housing levy, PAYE). '
+            .'Overtime with status pending is excluded until approved — do not tell users pending OT will appear in pay. '
             .'Use when the user asks how much someone would earn, salary for a month, payslip preview, '
             .'or whether SHA/PAYE apply. Never invent formulas or assume 22 days / 8 hours — always call this tool. '
             .'Pass employee_name or employee_id, plus relative_date=this_month/last_month or year_month=YYYY-MM '
@@ -262,6 +263,7 @@ class GetEmployeePayrollPreviewTool implements AiToolInterface
                 'period_basic' => (float) ($meta['period_basic'] ?? $built['basic_salary'] ?? 0),
                 'allowances_period' => (float) ($built['allowances'] ?? 0),
                 'overtime' => (float) ($meta['overtime'] ?? 0),
+                'overtime_note' => 'Only approved overtime is included; pending OT is excluded until approved.',
                 'period_gross' => $periodGross,
                 'other_deductions' => $other,
                 'daily_rate' => (float) ($meta['daily_rate'] ?? 0),

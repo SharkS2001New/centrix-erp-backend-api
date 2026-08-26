@@ -83,9 +83,10 @@ class PayrollCycleSettlementService
             }
 
             if ($includeOvertime) {
+                // Settle approved OT only — pending stays open until HR approves it.
                 $overtimeRows = EmployeeOvertime::query()
                     ->whereIn('employee_id', $employeeIds)
-                    ->whereIn('status', ['approved', 'pending'])
+                    ->where('status', 'approved')
                     ->whereNull('payroll_run_id')
                     ->whereDate('work_date', '>=', $start)
                     ->whereDate('work_date', '<=', $end)
