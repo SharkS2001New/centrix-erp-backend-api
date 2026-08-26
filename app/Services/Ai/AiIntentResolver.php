@@ -72,6 +72,10 @@ class AiIntentResolver
             ];
         }
 
+        if ($workflow = $this->inferLpoWorkflowAction($message, $history)) {
+            return $workflow;
+        }
+
         if ($this->matchesLpoCreate($text)) {
             return [
                 'type' => 'create_lpo',
@@ -101,11 +105,109 @@ class AiIntentResolver
         }
 
         if ($this->matchesOpenLpo($text)) {
+            $lpoNo = $this->extractLpoNumber($message, $history);
+
             return [
                 'type' => 'open_lpo',
-                'summary' => 'Open purchase orders (LPO)',
-                'params' => ['href' => '/lpo'],
+                'summary' => $lpoNo
+                    ? "Open purchase order (LPO) {$lpoNo}"
+                    : 'Open purchase orders (LPO)',
+                'params' => array_filter([
+                    'href' => $lpoNo ? '/lpo/'.$lpoNo : '/lpo',
+                    'lpo_no' => $lpoNo,
+                ]),
             ];
+        }
+
+        return null;
+    }
+
+    /**
+     * Submit / approve / send / receive an existing LPO from chat.
+     *
+     * @param  array<int, array{role?: string, content?: string}>  $history
+     * @return array<string, mixed>|null
+     */
+    protected function inferLpoWorkflowAction(string $message, array $history = []): ?array
+    {
+        $text = $this->normalizeForIntent($message);
+        if (! preg_match('/\b(lpo|purchase\s+orders?|grn|goods\s+received)\b/', $text)
+            && ! preg_match('/\breceive\b.{0,30}\b(stock|goods|delivery)\b/', $text)) {
+            return null;
+        }
+
+        if ($this->matchesLpoCreate($text)) {
+            return null;
+        }
+
+        $lpoNo = $this->extractLpoNumber($message, $history);
+        $params = array_filter(['lpo_no' => $lpoNo]);
+
+        if (preg_match('/\b(submit|send)\b.{0,40}\b(for\s+)?approv/i', $text)
+            || preg_match('/\bapprov(?:al|e)\s+request\b/i', $text)) {
+            return [
+                'type' => 'submit_lpo_for_approval',
+                'summary' => $lpoNo
+                    ? "Submit LPO {$lpoNo} for approval"
+                    : 'Submit LPO for approval',
+                'params' => $params,
+            ];
+        }
+
+        if (preg_match('/\bapprove\b.{0,40}\b(lpo|purchase\s+order)\b/i', $text)
+            || preg_match('/\b(lpo|purchase\s+order)\b.{0,40}\bapprove\b/i', $text)) {
+            return [
+                'type' => 'approve_lpo',
+                'summary' => $lpoNo ? "Approve LPO {$lpoNo}" : 'Approve LPO',
+                'params' => $params,
+            ];
+        }
+
+        if (preg_match('/\b(mark\s+)?sent\b.{0,40}\b(lpo|purchase\s+order|supplier)\b/i', $text)
+            || preg_match('/\b(lpo|purchase\s+order)\b.{0,40}\b(mark\s+)?sent\b/i', $text)
+            || preg_match('/\bsend\b.{0,40}\b(lpo|purchase\s+order)\b.{0,20}\b(to\s+)?supplier\b/i', $text)) {
+            return [
+                'type' => 'mark_lpo_sent',
+                'summary' => $lpoNo ? "Mark LPO {$lpoNo} as sent" : 'Mark LPO as sent',
+                'params' => $params,
+            ];
+        }
+
+        if (preg_match('/\breceive\b.{0,50}\b(lpo|purchase\s+order|goods|stock|delivery|grn)\b/i', $text)
+            || preg_match('/\b(lpo|purchase\s+order|grn)\b.{0,40}\breceive\b/i', $text)
+            || preg_match('/\bgoods\s+received\b/i', $text)) {
+            $params['receive_all'] = true;
+
+            return [
+                'type' => 'receive_lpo_goods',
+                'summary' => $lpoNo
+                    ? "Receive goods for LPO {$lpoNo}"
+                    : 'Receive LPO goods into stock',
+                'params' => $params,
+            ];
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  array<int, array{role?: string, content?: string}>  $history
+     */
+    protected function extractLpoNumber(string $message, array $history = []): ?int
+    {
+        $sources = [$message];
+        foreach (array_reverse($history) as $turn) {
+            if (($turn['role'] ?? '') === 'user') {
+                $sources[] = (string) ($turn['content'] ?? '');
+            }
+        }
+        $blob = implode("\n", $sources);
+
+        if (preg_match('/\b(?:lpo|po|purchase\s+order)\s*[#:]?\s*(\d{1,12})\b/i', $blob, $m)) {
+            return (int) $m[1];
+        }
+        if (preg_match('/\b(?:number|no\.?|#)\s*(\d{1,12})\b/i', $blob, $m)) {
+            return (int) $m[1];
         }
 
         return null;

@@ -10,6 +10,7 @@ use App\Models\Product;
 use App\Models\Supplier;
 use App\Services\Erp\ErpContext;
 use App\Services\LpoModuleService;
+use App\Services\Purchasing\LpoDocumentPdfService;
 use App\Services\Purchasing\LpoNumberAllocator;
 use App\Services\Purchasing\LpoWorkflowService;
 use App\Services\Purchasing\ProcurementSettingsResolver;
@@ -129,6 +130,23 @@ class LpoMstController extends BaseResourceController
         $orgId = (int) ($request->user()?->organization_id ?? 0);
 
         return response()->json($this->lpoModule->summary((int) $lpoNo, $orgId, $request->user()));
+    }
+
+    public function pdf(Request $request, string $lpoNo)
+    {
+        $orgId = (int) ($request->user()?->organization_id ?? 0);
+        $this->baseQuery($request)->where($this->routeKeyColumn(), $lpoNo)->firstOrFail();
+
+        $built = app(LpoDocumentPdfService::class)->buildForLpo(
+            (int) $lpoNo,
+            $orgId,
+            $request->user(),
+        );
+
+        return response($built['binary'], 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'attachment; filename="'.$built['filename'].'"',
+        ]);
     }
 
     public function show(Request $request, string $id)

@@ -27,6 +27,7 @@ class AiToolRegistryTest extends TestCase
             'get_product_price_history',
             'search_training_notes',
             'get_purchasing_overview',
+            'get_lpo_details',
             'get_debtors_summary',
             'get_customer_statement',
             'get_customer_returns',

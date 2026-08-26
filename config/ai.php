@@ -96,6 +96,7 @@ return [
         'get_product_price_history' => true,
         'search_training_notes' => true,
         'get_purchasing_overview' => true,
+        'get_lpo_details' => true,
         'get_debtors_summary' => true,
         'get_customer_statement' => true,
         'get_supplier_statement' => true,

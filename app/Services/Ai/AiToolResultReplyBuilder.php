@@ -61,6 +61,7 @@ class AiToolResultReplyBuilder
                 'get_route_details' => $this->formatRouteDetails($result),
                 'search_training_notes' => $this->formatTrainingNotes($result),
                 'find_screen' => $this->formatFindScreen($result),
+                'get_lpo_details' => $this->formatLpoDetails($result),
                 default => null,
             };
 
@@ -995,6 +996,45 @@ class AiToolResultReplyBuilder
         }
         $lines[] = '';
         $lines[] = 'Ask a specific follow-up (or name a person/product) and I will pull live Centrix data.';
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * @param  array<string, mixed>  $result
+     */
+    protected function formatLpoDetails(array $result): ?string
+    {
+        $lpoNo = (int) ($result['lpo_no'] ?? 0);
+        if ($lpoNo <= 0) {
+            return null;
+        }
+
+        $po = (string) ($result['po_number'] ?? $lpoNo);
+        $supplier = (string) ($result['supplier_name'] ?? 'Supplier');
+        $status = (string) ($result['status_name'] ?? '');
+        $total = number_format((float) ($result['total_amount'] ?? 0), 2);
+        $path = (string) ($result['path'] ?? '/lpo/'.$lpoNo);
+
+        $lines = [
+            "Purchase order **{$po}** for **{$supplier}**.",
+            "Status: {$status}. Total: KES {$total}.",
+            '',
+            "Open: [{$path}]({$path})",
+            "Print: [/lpo/{$lpoNo}/print](/lpo/{$lpoNo}/print)",
+        ];
+
+        $next = is_array($result['next_steps'] ?? null) ? $result['next_steps'] : [];
+        if ($next !== []) {
+            $lines[] = '';
+            $lines[] = 'Next steps:';
+            foreach (array_slice($next, 0, 4) as $step) {
+                $lines[] = '- '.(string) $step;
+            }
+        }
+
+        $lines[] = '';
+        $lines[] = 'Use **Download PDF** in the chat panel, or ask me to submit for approval, approve, mark sent, or receive goods.';
 
         return implode("\n", $lines);
     }

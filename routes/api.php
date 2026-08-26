@@ -922,6 +922,8 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:purchasing.manage');
             Route::get('lpo-mst/{lpoNo}/summary', [LpoMstController::class, 'summary'])
                 ->middleware('erp.permission:purchasing.view');
+            Route::get('lpo-mst/{lpoNo}/pdf', [LpoMstController::class, 'pdf'])
+                ->middleware('erp.permission:purchasing.view');
             Route::apiResource('lpo-mst', LpoMstController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:purchasing.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:purchasing.manage']);

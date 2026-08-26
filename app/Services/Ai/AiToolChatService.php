@@ -369,6 +369,7 @@ class AiToolChatService
                 'conversation_id' => $conversation->id,
                 'tools_used' => array_values(array_unique($toolsUsed)),
                 'usage' => $usageTotal,
+                'document_links' => $this->extractDocumentLinks($lastToolResults),
             ]);
         } catch (AiProviderException $e) {
             $this->logUsage(
@@ -567,11 +568,28 @@ class AiToolChatService
             'get_expense_summary' => 'Loading expenses…',
             'get_stock_summary', 'get_product_details', 'get_product_price_history' => 'Checking inventory…',
             'get_debtors_summary', 'get_customer_statement' => 'Loading customer accounts…',
-            'get_supplier_statement', 'get_purchasing_overview' => 'Loading supplier data…',
+            'get_supplier_statement', 'get_purchasing_overview', 'get_lpo_details' => 'Loading purchase order…',
             'get_employee_attendance', 'get_employee_details', 'get_employee_payroll_preview' => 'Loading HR records…',
             'search_training_notes' => 'Searching Centrix guides…',
             default => 'Fetching Centrix data…',
         };
+    }
+
+    /**
+     * @param  list<array{id?: string, name?: string, result?: array<string, mixed>}>  $toolResults
+     * @return list<array<string, mixed>>
+     */
+    protected function extractDocumentLinks(array $toolResults): array
+    {
+        foreach (array_reverse($toolResults) as $row) {
+            $result = is_array($row['result'] ?? null) ? $row['result'] : [];
+            $links = $result['document_links'] ?? null;
+            if (is_array($links) && $links !== []) {
+                return array_values($links);
+            }
+        }
+
+        return [];
     }
 
     /**
@@ -764,6 +782,7 @@ class AiToolChatService
                 'model' => $modelUsed,
                 'pending_action' => null,
                 'form_spec' => null,
+                'document_links' => $this->extractDocumentLinks($lastToolResults),
             ];
         } catch (AiProviderException $e) {
             $this->logUsage(
@@ -911,6 +930,7 @@ Tools:
 - get_product_details — product UoM measurements (kg/bags/packs), stock qty_label, sell-on-retail + retail packaging tiers; use for "is it kg or bags?" / packaging questions
 - get_product_price_history — formal Centrix price-change ledger (/price-history): unit price, cost, discount %, who changed it, when. Use for "price history" / "when did the price change". Never say Centrix lacks price history.
 - get_purchasing_overview — supplier count + recent LPOs; point to /suppliers and /lpo
+- get_lpo_details — retrieve one LPO by number/reference: status, lines, next workflow steps, PDF/print/open links (document_links). Use for "show LPO", "download LPO PDF", "what is the status of PO …"
 - get_debtors_summary — unpaid / AR / who to call
 - get_customer_statement — one customer's balance + period purchases with product line items (qty_label); use for statements, "what did they buy", and pronoun follow-ups about the focused customer
 - get_supplier_statement — one supplier's AP balance + period LPOs/payments with product line items (qty_label); use for supplier statements and "what did we buy from them"

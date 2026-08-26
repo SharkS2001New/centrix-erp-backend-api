@@ -14,6 +14,8 @@ use App\Http\Controllers\Api\V1\SupplierController;
 use App\Http\Requests\Sales\AddCartLineRequest;
 use App\Http\Requests\Sales\CheckoutRequest;
 use App\Http\Requests\Sales\StoreCartRequest;
+use App\Models\LpoMst;
+use App\Models\Organization;
 use App\Models\CustomReportTemplate;
 use App\Models\Customer;
 use App\Models\Employee;
@@ -23,9 +25,13 @@ use App\Models\Sale;
 use App\Models\Supplier;
 use App\Models\User;
 use App\Services\Auth\UserPermissionService;
-use Illuminate\Support\Facades\DB;
 use App\Services\Erp\ErpContext;
+use App\Services\Inventory\StockReceiveService;
+use App\Services\LpoModuleService;
+use App\Services\Purchasing\LpoAiDocumentLinks;
+use App\Services\Purchasing\LpoWorkflowService;
 use App\Services\Reports\ReportBuilderService;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
@@ -52,6 +58,10 @@ class AiActionExecutor
             'create_product' => $this->createProduct($user, $params),
             'create_supplier' => $this->createSupplier($user, $params),
             'create_lpo' => $this->createLpo($user, $params),
+            'submit_lpo_for_approval' => $this->lpoWorkflow($user, $params, 'submit_for_approval'),
+            'approve_lpo' => $this->lpoWorkflow($user, $params, 'approve'),
+            'mark_lpo_sent' => $this->lpoWorkflow($user, $params, 'mark_sent'),
+            'receive_lpo_goods' => $this->receiveLpoGoods($user, $params),
             'create_customer' => $this->createCustomer($user, $params),
             'create_employee' => $this->createEmployee($user, $params),
             'create_report_template' => $this->createReportTemplate($user, $params),
@@ -75,7 +85,9 @@ class AiActionExecutor
         $href = trim((string) ($params['href'] ?? ''));
         if ($href === '' || ! str_starts_with($href, '/')) {
             $href = match ($type) {
-                'open_lpo' => '/lpo',
+                'open_lpo' => ! empty($params['lpo_no'])
+                    ? '/lpo/'.rawurlencode((string) $params['lpo_no'])
+                    : '/lpo',
                 'open_customer_collections' => ! empty($params['customer_num'])
                     ? '/customers/'.rawurlencode((string) $params['customer_num'])
                     : '/reports/ar-aging',
@@ -471,11 +483,12 @@ class AiActionExecutor
 
         $data = app(LpoMstController::class)->storeFull($req)->getData(true);
         $lpoNo = $data['lpo_no'] ?? $data['lpo']['lpo_no'] ?? null;
+        $documentLinks = $lpoNo ? LpoAiDocumentLinks::forLpo((int) $lpoNo) : [];
 
         return [
             'success' => true,
             'message' => $lpoNo
-                ? "Purchase order (LPO) {$lpoNo} created."
+                ? "Purchase order (LPO) {$lpoNo} created. You can download the PDF, submit it for approval, or open it to continue."
                 : 'Purchase order (LPO) created.',
             'result' => [
                 'lpo_no' => $lpoNo,
@@ -483,8 +496,234 @@ class AiActionExecutor
                 'line_count' => count($normalized),
                 'from_sale_id' => $fromSale?->id,
                 'path' => $lpoNo ? '/lpo/'.$lpoNo : '/lpo',
+                'document_links' => $documentLinks,
+                'next_steps' => [
+                    'Download or print the LPO PDF to share with the supplier.',
+                    'Reply “submit LPO for approval” when ready for manager approval.',
+                    'After approval, mark as sent, then receive goods when they arrive.',
+                ],
             ],
         ];
+    }
+
+    /**
+     * Apply an LPO workflow transition (submit / approve / mark sent).
+     *
+     * @param  array<string, mixed>  $params
+     */
+    protected function lpoWorkflow(User $user, array $params, string $workflowAction): array
+    {
+        $this->assertModule($user, 'customers_suppliers');
+
+        $permission = match ($workflowAction) {
+            'approve' => 'purchasing.lpo.approve',
+            'mark_sent' => 'purchasing.lpo.edit',
+            default => 'purchasing.lpo.create',
+        };
+        // Approve also accepts managers with purchasing.manage via LpoApprovalService;
+        // still gate AI entry with approve or manage.
+        if ($workflowAction === 'approve') {
+            $gate = $this->erp->gateForUser($user);
+            $ok = $this->permissions->hasPermission($user, 'purchasing.lpo.approve', $gate)
+                || $this->permissions->hasPermission($user, 'purchasing.manage', $gate)
+                || $user->is_admin;
+            if (! $ok) {
+                throw ValidationException::withMessages([
+                    'action' => ['You do not have permission to approve purchase orders.'],
+                ]);
+            }
+        } elseif ($workflowAction === 'mark_sent') {
+            $gate = $this->erp->gateForUser($user);
+            $ok = $this->permissions->hasPermission($user, 'purchasing.lpo.edit', $gate)
+                || $this->permissions->hasPermission($user, 'purchasing.manage', $gate)
+                || $this->permissions->hasPermission($user, 'purchasing.lpo.create', $gate);
+            if (! $ok) {
+                throw ValidationException::withMessages([
+                    'action' => ['You do not have permission to mark purchase orders as sent.'],
+                ]);
+            }
+        } else {
+            $this->assertPermission($user, $permission);
+        }
+
+        $lpo = $this->resolveLpoForUser($user, $params);
+        $org = Organization::query()->findOrFail((int) $user->organization_id);
+        $updated = app(LpoWorkflowService::class)->applyAction($lpo, $workflowAction, $user, $org);
+        $summary = app(LpoModuleService::class)->summary((int) $updated->lpo_no, (int) $org->id, $user);
+        $header = is_array($summary['lpo'] ?? null) ? $summary['lpo'] : [];
+        $statusName = (string) ($header['status_name'] ?? LpoModuleService::statusLabel((int) $updated->lpo_status_code));
+
+        $verb = match ($workflowAction) {
+            'submit_for_approval' => 'submitted for approval',
+            'approve' => 'approved',
+            'mark_sent' => 'marked as sent',
+            default => 'updated',
+        };
+
+        return [
+            'success' => true,
+            'message' => "LPO {$updated->lpo_no} {$verb}. Status: {$statusName}.",
+            'result' => [
+                'lpo_no' => (int) $updated->lpo_no,
+                'lpo_status_code' => (int) $updated->lpo_status_code,
+                'status_name' => $statusName,
+                'workflow_action' => $workflowAction,
+                'path' => '/lpo/'.$updated->lpo_no,
+                'document_links' => LpoAiDocumentLinks::forLpo((int) $updated->lpo_no),
+                'next_steps' => $header['workflow_actions'] ?? [],
+            ],
+        ];
+    }
+
+    /**
+     * Receive remaining (or specified) quantities against an LPO into stock.
+     *
+     * @param  array<string, mixed>  $params
+     */
+    protected function receiveLpoGoods(User $user, array $params): array
+    {
+        $this->assertModule($user, 'inventory');
+        $this->assertPermission($user, 'inventory.manage');
+
+        $lpo = $this->resolveLpoForUser($user, $params);
+        $summary = app(LpoModuleService::class)->summary(
+            (int) $lpo->lpo_no,
+            (int) $user->organization_id,
+            $user,
+        );
+        $header = is_array($summary['lpo'] ?? null) ? $summary['lpo'] : [];
+        $lines = is_array($summary['lines'] ?? null) ? $summary['lines'] : [];
+
+        if (empty($header['can_receive'])) {
+            throw ValidationException::withMessages([
+                'lpo_no' => ['This LPO cannot be received in its current status. Mark it as sent first if needed.'],
+            ]);
+        }
+
+        $productCode = trim((string) ($params['product_code'] ?? ''));
+        $receiveAll = filter_var($params['receive_all'] ?? ($productCode === ''), FILTER_VALIDATE_BOOLEAN);
+        $branchId = (int) ($params['branch_id'] ?? $lpo->branch_id ?? $user->branch_id);
+        if ($branchId <= 0) {
+            throw ValidationException::withMessages([
+                'branch_id' => ['A branch is required to receive stock.'],
+            ]);
+        }
+
+        $stockLocation = (string) ($params['stock_location'] ?? $header['default_receive_location'] ?? 'store');
+        if (! in_array($stockLocation, ['shop', 'store'], true)) {
+            $stockLocation = 'store';
+        }
+
+        $targets = [];
+        foreach ($lines as $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+            $code = trim((string) ($line['product_code'] ?? ''));
+            $remaining = (float) ($line['remaining_qty'] ?? 0);
+            $txnId = (int) ($line['id'] ?? 0);
+            if ($code === '' || $txnId <= 0 || $remaining <= 0.0001) {
+                continue;
+            }
+            if ($productCode !== '' && strcasecmp($code, $productCode) !== 0) {
+                continue;
+            }
+
+            $qty = $receiveAll
+                ? $remaining
+                : (float) ($params['units_received'] ?? $params['qty'] ?? $remaining);
+            if ($qty <= 0) {
+                continue;
+            }
+            $targets[] = [
+                'product_code' => $code,
+                'product_name' => $line['product_name'] ?? $code,
+                'lpo_txn_id' => $txnId,
+                'units_received' => min($qty, $remaining),
+                'cost_price' => $line['cost_price'] ?? null,
+            ];
+        }
+
+        if ($targets === []) {
+            throw ValidationException::withMessages([
+                'lines' => ['There is nothing left to receive on this LPO'
+                    .($productCode !== '' ? " for product {$productCode}." : '.')],
+            ]);
+        }
+
+        $receipts = [];
+        $receiver = app(StockReceiveService::class);
+        foreach ($targets as $target) {
+            $receipt = $receiver->receive([
+                'product_code' => $target['product_code'],
+                'branch_id' => $branchId,
+                'units_received' => $target['units_received'],
+                'stock_location' => $stockLocation,
+                'cost_price' => $target['cost_price'],
+                'lpo_no' => (int) $lpo->lpo_no,
+                'lpo_txn_id' => $target['lpo_txn_id'],
+                'invoice_number' => $params['invoice_number'] ?? null,
+            ], $user);
+            $receipts[] = [
+                'receipt_id' => $receipt->id,
+                'product_name' => $target['product_name'],
+                'units_received' => (float) $receipt->units_received,
+            ];
+        }
+
+        $fresh = app(LpoModuleService::class)->summary(
+            (int) $lpo->lpo_no,
+            (int) $user->organization_id,
+            $user,
+        );
+        $freshHeader = is_array($fresh['lpo'] ?? null) ? $fresh['lpo'] : [];
+
+        return [
+            'success' => true,
+            'message' => 'Received '.count($receipts).' line(s) against LPO '.$lpo->lpo_no
+                .'. Status: '.($freshHeader['status_name'] ?? 'updated').'.',
+            'result' => [
+                'lpo_no' => (int) $lpo->lpo_no,
+                'receipts' => $receipts,
+                'status_name' => $freshHeader['status_name'] ?? null,
+                'path' => '/lpo/'.$lpo->lpo_no,
+                'document_links' => LpoAiDocumentLinks::forLpo((int) $lpo->lpo_no),
+            ],
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $params
+     */
+    protected function resolveLpoForUser(User $user, array $params): LpoMst
+    {
+        $lpoNo = (int) ($params['lpo_no'] ?? $params['lpo'] ?? 0);
+        if ($lpoNo <= 0) {
+            $raw = trim((string) ($params['query'] ?? $params['reference'] ?? ''));
+            if (preg_match('/\b(\d{1,12})\b/', $raw, $m)) {
+                $lpoNo = (int) $m[1];
+            }
+        }
+
+        if ($lpoNo <= 0) {
+            throw ValidationException::withMessages([
+                'lpo_no' => ['Provide the LPO number to continue.'],
+            ]);
+        }
+
+        $lpo = LpoMst::query()
+            ->where('organization_id', $user->organization_id)
+            ->where('lpo_no', $lpoNo)
+            ->whereNull('deleted_at')
+            ->first();
+
+        if (! $lpo) {
+            throw ValidationException::withMessages([
+                'lpo_no' => ["Purchase order {$lpoNo} was not found in your organization."],
+            ]);
+        }
+
+        return $lpo;
     }
 
     /**
@@ -865,7 +1104,25 @@ class AiActionExecutor
     /** Write/create actions that may use an inline form or Confirm. */
     public function isWriteAction(string $type): bool
     {
-        return str_starts_with($type, 'create_') || $type === 'record_customer_payment';
+        return str_starts_with($type, 'create_')
+            || $type === 'record_customer_payment'
+            || in_array($type, [
+                'submit_lpo_for_approval',
+                'approve_lpo',
+                'mark_lpo_sent',
+                'receive_lpo_goods',
+            ], true);
+    }
+
+    /** @return list<string> */
+    public static function lpoWorkflowActionTypes(): array
+    {
+        return [
+            'submit_lpo_for_approval',
+            'approve_lpo',
+            'mark_lpo_sent',
+            'receive_lpo_goods',
+        ];
     }
 
     /** User explicitly wants the inline confirmation form (not chat-only collection). */

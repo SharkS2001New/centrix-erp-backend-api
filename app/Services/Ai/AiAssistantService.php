@@ -531,7 +531,11 @@ class AiAssistantService
             $result = $outcome['result'] ?? [];
             $path = $result['path'] ?? null;
             $linkHint = $path ? " Open: {$path}" : '';
-            $reply = $this->replyFormatter->format(($outcome['message'] ?? 'Done.').$linkHint);
+            $docHint = '';
+            if (! empty($result['document_links']) && is_array($result['document_links'])) {
+                $docHint = ' Use Download PDF / Print in the chat panel when available.';
+            }
+            $reply = $this->replyFormatter->format(($outcome['message'] ?? 'Done.').$linkHint.$docHint);
 
             return [
                 'reply' => $reply,
@@ -539,6 +543,7 @@ class AiAssistantService
                 'action_result' => $outcome,
                 'pending_action' => null,
                 'form_spec' => null,
+                'document_links' => is_array($result['document_links'] ?? null) ? $result['document_links'] : [],
             ];
         } catch (ValidationException $e) {
             $msg = collect($e->errors())->flatten()->first() ?? 'Action could not be completed.';
@@ -761,7 +766,8 @@ RULES:
 {"type":"create_product","summary":"New product Widget","params":{"product_name":"Widget","unit_price":150}}
 ```
 
-For all create / write actions (product, supplier, customer, LPO, sales order, employee, payment, etc.): ask for required details in chat first. Do NOT mention or show an inline form until the user replies **show form** (or similar). Offer the form as an option — never show both a field checklist and the form on the same turn. Reply **confirm** or **create it** when chat params are complete.
+For all create / write actions (product, supplier, customer, LPO, sales order, employee, payment, LPO approve/send/receive, etc.): ask for required details in chat first. Do NOT mention or show an inline form until the user replies **show form** (or similar). Offer the form as an option — never show both a field checklist and the form on the same turn. Reply **confirm** or **create it** when chat params are complete.
+16. LPO documents: after create or when retrieving an LPO, call get_lpo_details and share open/print/PDF links from document_links. Guide the lifecycle: create → submit for approval → approve → mark sent → receive goods.
 PROMPT;
     }
 
@@ -794,7 +800,9 @@ PROMPT;
             return false;
         }
 
-        return str_starts_with($type, 'create_') || $type === 'record_customer_payment';
+        return str_starts_with($type, 'create_')
+            || $type === 'record_customer_payment'
+            || in_array($type, AiActionExecutor::lpoWorkflowActionTypes(), true);
     }
 
     /** @param  array<string, mixed>  $pending */
@@ -871,6 +879,10 @@ PROMPT;
             return match ($actionType) {
                 'record_customer_payment' => 'Fill in the form below, then click Confirm & record payment.',
                 'create_lpo' => 'Fill in the form below, then click Confirm & create LPO.',
+                'submit_lpo_for_approval' => 'Confirm below to submit this LPO for approval.',
+                'approve_lpo' => 'Confirm below to approve this LPO.',
+                'mark_lpo_sent' => 'Confirm below to mark this LPO as sent.',
+                'receive_lpo_goods' => 'Confirm below to receive goods against this LPO.',
                 default => 'Fill in the form below, then click Confirm & create.',
             };
         }
@@ -884,6 +896,10 @@ PROMPT;
             'create_sales_order', 'create_held_order' => 'Share the customer and line items here in chat. Reply **show form** if you prefer a form instead.',
             'record_customer_payment' => 'Share the order and payment details here in chat. Reply **show form** if you prefer a form instead.',
             'create_report_template' => 'Share the report name and what it should show here in chat. Reply **show form** if you prefer a form instead.',
+            'submit_lpo_for_approval' => 'Share the LPO number if needed, then reply **confirm** to submit it for approval.',
+            'approve_lpo' => 'Share the LPO number if needed, then reply **confirm** to approve it.',
+            'mark_lpo_sent' => 'Share the LPO number if needed, then reply **confirm** to mark it as sent. You can also download the PDF to share with the supplier.',
+            'receive_lpo_goods' => 'Share the LPO number if needed, then reply **confirm** to receive remaining quantities into stock.',
             default => 'Share the details here in chat, or reply **show form** if you prefer a form.',
         };
     }
