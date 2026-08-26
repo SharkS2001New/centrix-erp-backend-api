@@ -332,12 +332,30 @@ trait BuildsBiToolSlices
             $topProducts = $this->withQtyLabels($orgId, $topProducts, 'quantity');
         }
 
+        $branchName = null;
+        $branchCount = 1;
+        if (Schema::hasTable('branches')) {
+            $branchCount = (int) DB::table('branches')
+                ->where('organization_id', $orgId)
+                ->when(Schema::hasColumn('branches', 'deleted_at'), fn ($q) => $q->whereNull('deleted_at'))
+                ->count();
+            if ($branchId !== null) {
+                $branchName = DB::table('branches')
+                    ->where('organization_id', $orgId)
+                    ->where('id', $branchId)
+                    ->value('branch_name');
+            }
+        }
+
         return [
             'type' => 'inventory_valuation',
             'organization' => $organization->org_name ?? $organization->name,
-            'branch_id' => $branchId,
+            'branch_name' => $branchName ? (string) $branchName : null,
+            'multi_branch' => $branchCount > 1,
             'summary' => $summary,
             'top_products_by_cost_value' => $topProducts,
+            'answer_tip' => 'Mention branch_name only when multi_branch is true. Never show branch_id. '
+                .'For "items in stock" questions prefer get_stock_summary.in_stock_items, not valuation alone.',
             'actions_hint' => [
                 ['label' => 'Stock valuation', 'href' => '/reports/stock-valuation'],
                 ['label' => 'Stock on hand', 'href' => '/reports/stock-on-hand'],

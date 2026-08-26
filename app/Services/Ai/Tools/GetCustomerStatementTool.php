@@ -37,9 +37,11 @@ class GetCustomerStatementTool implements AiToolInterface
     {
         return 'Get a Centrix customer statement for a named customer: current balance due, period invoices/orders, '
             .'payments, and what they bought (product line items with qty_label, unit price, and amounts). '
-            .'Use for "customer statement", "what did they buy", "balance for @Customer", or month statements '
-            .'(pass month=august and year=2026, or year_month=2026-08, or from_date/to_date). '
-            .'Never say you lack line-item access — this tool returns purchases. Always call it for statement questions.';
+            .'Use for "customer statement", "what did they buy", "what has she/he been buying", "balance for @Customer", '
+            .'or pronoun follow-ups about the customer already in conversation focus (pass that customer_num). '
+            .'Pass month=august and year=2026, or year_month=2026-08, or from_date/to_date, or relative_date=last_7_days. '
+            .'Never say you lack line-item access — this tool returns purchases. Always call it for statement / buying questions. '
+            .'Do not use run_insight for purchase mix.';
     }
 
     public function parametersSchema(): array

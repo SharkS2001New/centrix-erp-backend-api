@@ -161,4 +161,172 @@ class WorkShift extends Model
         return $this->alternate_lunch_minutes !== null
             || $this->alternate_lunch_required !== null;
     }
+
+    /**
+     * Human-readable roster for Centrix AI (weekday + Saturday/Sunday alternate hours).
+     *
+     * @return array<string, mixed>
+     */
+    public function presentForAi(): array
+    {
+        $weekdayLabels = $this->weekdayLabels();
+        $weekdayHours = $this->formatHoursBlock(
+            $this->start_time,
+            $this->end_time,
+            (int) ($this->lunch_minutes ?? 0),
+            (bool) ($this->lunch_required ?? false),
+            (bool) ($this->crosses_midnight ?? false),
+        );
+
+        $usesAlternate = (bool) ($this->use_alternate_hours ?? false)
+            && $this->alternate_start_time
+            && $this->alternate_end_time;
+
+        $alternateHours = $usesAlternate
+            ? $this->formatHoursBlock(
+                $this->alternate_start_time,
+                $this->alternate_end_time,
+                (int) ($this->alternate_lunch_minutes ?? 0),
+                $this->alternate_lunch_required !== null
+                    ? (bool) $this->alternate_lunch_required
+                    : (bool) ($this->lunch_required ?? false),
+                (bool) ($this->alternate_crosses_midnight ?? false),
+            )
+            : null;
+
+        $worksSaturday = $this->worksOnWeekday(\Carbon\Carbon::SATURDAY);
+        $worksSunday = $this->worksOnWeekday(\Carbon\Carbon::SUNDAY);
+
+        $byDay = [];
+        foreach ([1, 2, 3, 4, 5, 6, 0] as $dow) {
+            if (! $this->worksOnWeekday($dow)) {
+                continue;
+            }
+            $isWeekend = $dow === \Carbon\Carbon::SATURDAY || $dow === \Carbon\Carbon::SUNDAY;
+            $hours = ($usesAlternate && $isWeekend) ? $alternateHours : $weekdayHours;
+            $byDay[] = [
+                'day' => $this->dayName($dow),
+                'day_of_week' => $dow,
+                'start_time' => $hours['start_time'] ?? null,
+                'end_time' => $hours['end_time'] ?? null,
+                'lunch_minutes' => $hours['lunch_minutes'] ?? 0,
+                'label' => $hours['label'] ?? null,
+                'is_alternate_hours' => (bool) ($usesAlternate && $isWeekend),
+                'note' => ($usesAlternate && $isWeekend)
+                    ? 'Scheduled shorter weekend shift — this is a full roster day for this shift, not a half-day absence.'
+                    : null,
+            ];
+        }
+
+        return [
+            'name' => (string) ($this->shift_name ?? ''),
+            'code' => $this->shift_code ? (string) $this->shift_code : null,
+            'weekday_days' => $weekdayLabels,
+            'weekday_hours' => $weekdayHours,
+            'works_saturday' => $worksSaturday,
+            'works_sunday' => $worksSunday,
+            'works_public_holidays' => (bool) ($this->works_public_holidays ?? false),
+            'use_alternate_hours' => $usesAlternate,
+            'saturday_sunday_holiday_hours' => $usesAlternate ? $alternateHours : null,
+            'schedule_by_day' => $byDay,
+            'answer_tip' => $usesAlternate
+                ? 'When attendance on Saturday/Sunday is shorter than Mon–Fri, that matches alternate weekend hours on this shift. '
+                    .'Do NOT call those days "half-days" — they are fully scheduled weekend days. Quote schedule_by_day times.'
+                : 'Quote schedule_by_day / weekday_hours. Only call a day a half-day if attendance hours are below that day\'s scheduled span.',
+        ];
+    }
+
+    public function worksOnWeekday(int $dayOfWeek): bool
+    {
+        $days = $this->scheduledWeekdays();
+        if ($days !== null) {
+            return in_array($dayOfWeek, $days, true);
+        }
+
+        if ($dayOfWeek === \Carbon\Carbon::SATURDAY) {
+            return (bool) ($this->works_saturday ?? false);
+        }
+        if ($dayOfWeek === \Carbon\Carbon::SUNDAY) {
+            return (bool) ($this->works_sunday ?? false);
+        }
+
+        // Legacy: Mon–Fri when work_weekdays is null.
+        return $dayOfWeek >= \Carbon\Carbon::MONDAY && $dayOfWeek <= \Carbon\Carbon::FRIDAY;
+    }
+
+    /**
+     * @return list<string>
+     */
+    protected function weekdayLabels(): array
+    {
+        $labels = [];
+        foreach ([1, 2, 3, 4, 5, 6, 0] as $dow) {
+            if ($this->worksOnWeekday($dow)) {
+                $labels[] = $this->dayName($dow);
+            }
+        }
+
+        return $labels;
+    }
+
+    protected function dayName(int $dayOfWeek): string
+    {
+        return match ($dayOfWeek) {
+            0 => 'Sunday',
+            1 => 'Monday',
+            2 => 'Tuesday',
+            3 => 'Wednesday',
+            4 => 'Thursday',
+            5 => 'Friday',
+            6 => 'Saturday',
+            default => 'Day '.$dayOfWeek,
+        };
+    }
+
+    /**
+     * @return array{start_time: ?string, end_time: ?string, lunch_minutes: int, lunch_required: bool, crosses_midnight: bool, label: string}
+     */
+    protected function formatHoursBlock(
+        mixed $start,
+        mixed $end,
+        int $lunchMinutes,
+        bool $lunchRequired,
+        bool $crossesMidnight,
+    ): array {
+        $startClock = $this->formatClockValue($start);
+        $endClock = $this->formatClockValue($end);
+        $lunch = $lunchRequired ? max(0, $lunchMinutes) : 0;
+        $parts = [];
+        if ($startClock && $endClock) {
+            $parts[] = "{$startClock}–{$endClock}";
+        }
+        if ($lunch > 0) {
+            $parts[] = "{$lunch}-min lunch";
+        }
+        if ($crossesMidnight) {
+            $parts[] = 'crosses midnight';
+        }
+
+        return [
+            'start_time' => $startClock,
+            'end_time' => $endClock,
+            'lunch_minutes' => $lunch,
+            'lunch_required' => $lunch > 0,
+            'crosses_midnight' => $crossesMidnight,
+            'label' => $parts !== [] ? implode(', ', $parts) : 'Hours not set',
+        ];
+    }
+
+    protected function formatClockValue(mixed $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        $raw = (string) $value;
+        if (preg_match('/^(\d{1,2}:\d{2})/', $raw, $m)) {
+            return $m[1];
+        }
+
+        return $raw;
+    }
 }

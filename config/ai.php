@@ -63,7 +63,8 @@ return [
     'max_concurrent_requests' => (int) env('AI_MAX_CONCURRENT_REQUESTS', 32),
 
     'tool_chat' => [
-        'max_output_tokens' => (int) env('AI_TOOL_CHAT_MAX_OUTPUT_TOKENS', env('AI_MAX_OUTPUT_TOKENS', 1024)),
+        // Product/table answers need headroom; 1024 commonly cut mid-sentence (finish_reason=length).
+        'max_output_tokens' => (int) env('AI_TOOL_CHAT_MAX_OUTPUT_TOKENS', env('AI_MAX_OUTPUT_TOKENS', 4096)),
     ],
 
     /**
@@ -89,6 +90,7 @@ return [
         'get_sales_brief' => true,
         'get_stock_summary' => true,
         'get_product_details' => true,
+        'get_product_price_history' => true,
         'search_training_notes' => true,
         'get_purchasing_overview' => true,
         'get_debtors_summary' => true,

@@ -21,6 +21,7 @@ use App\Services\Ai\Tools\GetProfitLossTool;
 use App\Services\Ai\Tools\GetSupplierStatementTool;
 use App\Services\Ai\Tools\SearchTrainingNotesTool;
 use App\Services\Ai\Tools\GetProductDetailsTool;
+use App\Services\Ai\Tools\GetProductPriceHistoryTool;
 use App\Services\Ai\Tools\GetPurchasingOverviewTool;
 use App\Services\Ai\Tools\GetRouteDetailsTool;
 use App\Services\Ai\Tools\GetRouteOrdersTool;
@@ -49,6 +50,7 @@ class AiToolRegistry
         protected FindScreenTool $findScreen,
         protected GetStockSummaryTool $getStockSummary,
         protected GetProductDetailsTool $getProductDetails,
+        protected GetProductPriceHistoryTool $getProductPriceHistory,
         protected SearchTrainingNotesTool $searchTrainingNotes,
         protected GetPurchasingOverviewTool $getPurchasingOverview,
         protected GetDebtorsSummaryTool $getDebtorsSummary,
@@ -184,6 +186,7 @@ class AiToolRegistry
             $this->getSalesBrief,
             $this->getStockSummary,
             $this->getProductDetails,
+            $this->getProductPriceHistory,
             $this->searchTrainingNotes,
             $this->getPurchasingOverview,
             $this->getDebtorsSummary,

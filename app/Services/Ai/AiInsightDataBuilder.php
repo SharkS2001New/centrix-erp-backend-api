@@ -86,18 +86,63 @@ class AiInsightDataBuilder
         $to = now()->toDateString();
         $movers = $this->topProductSales($orgId, $from, $to, 20);
 
+        $inStockQuery = DB::table('products')
+            ->where('organization_id', $orgId)
+            ->whereNull('deleted_at')
+            ->whereRaw('(COALESCE(stock_in_shop,0) + COALESCE(stock_in_store,0)) > 0')
+            ->orderByDesc(DB::raw('COALESCE(stock_in_shop,0) + COALESCE(stock_in_store,0)'))
+            ->limit(40);
+
+        $inStockRows = $inStockQuery
+            ->get(['product_code', 'product_name', 'stock_in_shop', 'stock_in_store', 'unit_price', 'last_cost_price'])
+            ->map(fn ($p) => [
+                'product_code' => $p->product_code,
+                'product_name' => $p->product_name,
+                'stock_in_shop' => (float) $p->stock_in_shop,
+                'stock_in_store' => (float) $p->stock_in_store,
+                'stock_on_hand' => (float) $p->stock_in_shop + (float) $p->stock_in_store,
+                'qty' => (float) $p->stock_in_shop + (float) $p->stock_in_store,
+                'unit_price' => (float) ($p->unit_price ?? 0),
+                'last_cost_price' => (float) ($p->last_cost_price ?? 0),
+            ])
+            ->all();
+        $inStockRows = $this->qtyLabels->enrichProductRows($orgId, $inStockRows);
+
+        $branchName = null;
+        if ($branchId > 0 && Schema::hasTable('branches')) {
+            $branchName = DB::table('branches')
+                ->where('organization_id', $orgId)
+                ->where('id', $branchId)
+                ->value('branch_name');
+        }
+        $branchCount = Schema::hasTable('branches')
+            ? (int) DB::table('branches')
+                ->where('organization_id', $orgId)
+                ->when(Schema::hasColumn('branches', 'deleted_at'), fn ($q) => $q->whereNull('deleted_at'))
+                ->count()
+            : 1;
+
         return [
             'type' => 'stock_pulse',
             'organization' => $organization->org_name ?? $organization->name,
+            'branch_name' => $branchName ? (string) $branchName : null,
+            'multi_branch' => $branchCount > 1,
             'lookback_days' => $lookbackDays,
             'from_date' => $from,
             'to_date' => $to,
+            'in_stock_count' => count($inStockRows),
+            'in_stock_items' => $inStockRows,
+            'answer_tip' => 'For "which items are in stock / still have stock / what\'s on the shelf": '
+                .'answer from in_stock_items with a Product | Qty markdown table using product_name + qty_label (or stock_on_hand_label). '
+                .'Do NOT list low_stock_items as the answer to "in stock" — those are zero/reorder alerts. '
+                .'Mention branch_name only when multi_branch is true; never show branch_id.',
             'low_stock_count' => (int) ($lowStock['meta']['total'] ?? count($lowRows)),
             'low_stock_items' => $lowRows,
             'fast_movers' => $movers,
             'actions_hint' => [
-                ['label' => 'Open low stock report', 'href' => '/reports/low-stock'],
+                ['label' => 'Open current stock', 'href' => '/inventory/stock'],
                 ['label' => 'Open stock on hand', 'href' => '/reports/stock-on-hand'],
+                ['label' => 'Open low stock report', 'href' => '/reports/low-stock'],
             ],
         ];
     }

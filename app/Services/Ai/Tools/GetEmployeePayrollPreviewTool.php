@@ -364,22 +364,7 @@ class GetEmployeePayrollPreviewTool implements AiToolInterface
      */
     protected function presentShift(WorkShift $shift): array
     {
-        return [
-            'name' => (string) ($shift->shift_name ?? ''),
-            'code' => $shift->shift_code ? (string) $shift->shift_code : null,
-            'start_time' => $this->formatClock($shift->start_time),
-            'end_time' => $this->formatClock($shift->end_time),
-            'lunch_minutes' => (int) ($shift->lunch_minutes ?? 0),
-            'lunch_required' => (bool) ($shift->lunch_required ?? false),
-            'crosses_midnight' => (bool) ($shift->crosses_midnight ?? false),
-            'work_weekdays' => $shift->scheduledWeekdays(),
-            'works_saturday' => (bool) ($shift->works_saturday ?? false),
-            'works_sunday' => (bool) ($shift->works_sunday ?? false),
-            'works_public_holidays' => (bool) ($shift->works_public_holidays ?? false),
-            'use_alternate_hours' => (bool) ($shift->use_alternate_hours ?? false),
-            'alternate_start_time' => $this->formatClock($shift->alternate_start_time),
-            'alternate_end_time' => $this->formatClock($shift->alternate_end_time),
-        ];
+        return $shift->presentForAi();
     }
 
     protected function formatClock(mixed $value): ?string

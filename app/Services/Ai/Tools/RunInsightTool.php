@@ -95,9 +95,22 @@ class RunInsightTool implements AiToolInterface
 
         $type = str_replace('-', '_', trim((string) ($arguments['insight_type'] ?? '')));
         if (! AiInsightCatalog::isKnown($type) || $type === 'explain_screen') {
+            $valid = implode(', ', array_values(array_filter(
+                AiInsightCatalog::allTypes(),
+                fn (string $t) => $t !== 'explain_screen',
+            )));
+
             return [
                 'error' => true,
-                'message' => 'Unknown or unsupported insight type.',
+                'message' => 'Unknown or unsupported insight type'
+                    .($type !== '' ? " \"{$type}\"" : '')
+                    .'. Valid insight_type values: '.$valid
+                    .'. For what a customer has been buying / purchase mix, call get_customer_statement instead (not run_insight).',
+                'suggest_tool' => 'get_customer_statement',
+                'valid_insight_types' => array_values(array_filter(
+                    AiInsightCatalog::allTypes(),
+                    fn (string $t) => $t !== 'explain_screen',
+                )),
             ];
         }
 

@@ -26,18 +26,20 @@ return [
         'Employee pay: Centrix stores basic salary on employees.base_salary. Call get_employee_details for salary, allowance, department, statutory numbers, and bank accounts — do not say access is missing when the tool returns pay data.',
         'HR overtime & payroll: Overtime only counts in payroll (runs and get_employee_payroll_preview) when status is approved. Pending overtime is not paid until an approver approves it at pending overtime; denied/rejected OT never enters pay. Auto clock-out OT starts as pending.',
         'Display quantities as mixed packs (e.g. "2 Bag, 40 kg") — never invent kg vs bags; use qty_label from tools.',
-        'Charts: only include bar/donut/pie chart fences when the user explicitly asks for a chart, graph, or visualization. Default to markdown tables to save tokens.',
+        'Charts: only include bar/donut/pie chart fences when the user explicitly asks for a chart, graph, or visualization. Match type to their words (pie/donut/bar). Default to markdown tables to save tokens. items must be [{label,value},…] — never one object with repeated keys.',
         'Retail packaging: products with Sell on retail use /retail-package-settings for retail vs wholesale markup tiers. This is separate from UoM conversion. Call get_product_details for a product\'s measurements and retail packaging.',
+        'Price history: Centrix stores a formal price-change ledger at /price-history (unit price, cost price, discount %, who changed it, when). Call get_product_price_history for "price history" questions — never say Centrix lacks a price-change log, and do not substitute sales averages.',
         'Product weight (kg) on the product card is optional metadata — not the same as stock UoM unless the small packaging unit is also kg.',
     ],
     'modules' => [
         [
             'key' => 'catalogue',
             'label' => 'Product catalog',
-            'paths' => ['/products', '/categories', '/uoms', '/retail-package-settings'],
+            'paths' => ['/products', '/categories', '/uoms', '/retail-package-settings', '/price-history', '/vats'],
             'tasks' => [
                 'Create and edit products (code, name, price, VAT, reorder point)',
                 'Manage categories and subcategories',
+                'View formal selling/cost price change history',
                 'Configure units of measure (full / middle / small packaging) at /uoms',
                 'Configure retail packaging / sell-on-retail tiers at /retail-package-settings',
                 'Register products with KRA device when fiscal module is enabled',

@@ -193,6 +193,7 @@ class OpenAiProvider implements AiProviderInterface, AiStreamingProviderInterfac
         $toolCalls = [];
         $usage = ['input_tokens' => 0, 'output_tokens' => 0, 'total_tokens' => 0];
         $model = (string) ($payload['model'] ?? $this->model);
+        $finishReason = null;
 
         while (! $body->eof()) {
             $buffer .= $body->read(2048);
@@ -224,6 +225,10 @@ class OpenAiProvider implements AiProviderInterface, AiStreamingProviderInterfac
                 $choice = $json['choices'][0] ?? null;
                 if (! is_array($choice)) {
                     continue;
+                }
+
+                if (! empty($choice['finish_reason'])) {
+                    $finishReason = (string) $choice['finish_reason'];
                 }
 
                 $delta = $choice['delta'] ?? [];
@@ -287,6 +292,7 @@ class OpenAiProvider implements AiProviderInterface, AiStreamingProviderInterfac
             'tool_calls' => $parsedToolCalls,
             'usage' => $usage,
             'model' => $model,
+            'finish_reason' => $finishReason,
         ];
     }
 
@@ -383,10 +389,14 @@ class OpenAiProvider implements AiProviderInterface, AiStreamingProviderInterfac
         $usage = is_array($json['usage'] ?? null) ? $json['usage'] : [];
         $input = (int) ($usage['prompt_tokens'] ?? 0);
         $output = (int) ($usage['completion_tokens'] ?? 0);
+        $finishReason = isset($json['choices'][0]['finish_reason'])
+            ? (string) $json['choices'][0]['finish_reason']
+            : null;
 
         return [
             'text' => $text !== '' ? $text : null,
             'tool_calls' => $toolCalls,
+            'finish_reason' => $finishReason,
             'usage' => [
                 'input_tokens' => $input,
                 'output_tokens' => $output,

@@ -39,7 +39,8 @@ class GetProductDetailsTool implements AiToolInterface
         return 'Look up a Centrix product by SKU/code or name and return measurements (UoM hierarchy: '
             .'full pack / middle / small base units), current stock with qty_label, sell-on-retail flag, '
             .'and retail packaging / pricing tiers. Use for questions like "is this in kg or bags?", '
-            .'"how is retail packaging set?", "what is the conversion factor?", or product measurement explainers.';
+            .'"how is retail packaging set?", "what is the conversion factor?", or product measurement explainers. '
+            .'For formal price-change history (when unit/cost price changed), use get_product_price_history instead.';
     }
 
     public function parametersSchema(): array

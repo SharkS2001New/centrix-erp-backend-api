@@ -130,7 +130,9 @@ class GetEmployeeDetailsTool implements AiToolInterface
                 ...$this->screens(),
             ],
             'tip' => 'Answer with the employee\'s full name and username only — never numeric employee id or employee code. Use basic_salary / base_salary for pay questions. '
-                .'Include assigned shift times and pays_sha when relevant. When assigned_routes is present, list those route names for "which routes does X operate?" questions. '
+                .'Describe the shift from shift.schedule_by_day (Mon–Fri times and Saturday/Sunday alternate times when present). '
+                .'Shorter Saturday hours are the scheduled weekend shift — never call them half-days. Include pays_sha when relevant. '
+                .'When assigned_routes is present, list those route names for "which routes does X operate?" questions. '
                 .'Do not say you lack access when this tool returned data. '
                 .'For month salary / net pay with attendance, call get_employee_payroll_preview — do not invent 22-day formulas. '
                 .'For richer user/login/route assignment, also call get_user_details with the username.',
@@ -163,18 +165,7 @@ class GetEmployeeDetailsTool implements AiToolInterface
             'is_active' => (bool) $employee->is_active,
             'department' => $employee->department?->department_name,
             'position' => $employee->position?->position_title,
-            'shift' => $employee->shift
-                ? [
-                    'name' => (string) ($employee->shift->shift_name ?? ''),
-                    'code' => $employee->shift->shift_code ? (string) $employee->shift->shift_code : null,
-                    'start_time' => $this->formatClock($employee->shift->start_time),
-                    'end_time' => $this->formatClock($employee->shift->end_time),
-                    'lunch_minutes' => (int) ($employee->shift->lunch_minutes ?? 0),
-                    'work_weekdays' => $employee->shift->scheduledWeekdays(),
-                    'works_saturday' => (bool) ($employee->shift->works_saturday ?? false),
-                    'works_sunday' => (bool) ($employee->shift->works_sunday ?? false),
-                ]
-                : null,
+            'shift' => $employee->shift ? $employee->shift->presentForAi() : null,
             'branch' => $employee->branch?->branch_name,
             'reports_to' => $employee->reportsTo
                 ? [
