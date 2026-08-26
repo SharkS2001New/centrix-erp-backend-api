@@ -29,6 +29,7 @@ class AiToolRegistryTest extends TestCase
             'get_purchasing_overview',
             'get_debtors_summary',
             'get_customer_statement',
+            'get_customer_returns',
             'get_supplier_statement',
             'get_till_health',
             'get_route_orders',

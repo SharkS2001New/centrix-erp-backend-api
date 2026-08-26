@@ -107,4 +107,51 @@ class AiToolResultReplyBuilderTest extends TestCase
         $this->assertStringNotContainsString('click Generate', $reply);
         $this->assertStringNotContainsString('do NOT paste', $reply);
     }
+
+    public function test_formats_cashier_sales_and_till_health_together(): void
+    {
+        $builder = new AiToolResultReplyBuilder;
+        $reply = $builder->build([
+            [
+                'name' => 'get_sales_by_cashier',
+                'result' => [
+                    'from_date' => '2026-08-26',
+                    'to_date' => '2026-08-26',
+                    'cashiers' => [
+                        [
+                            'cashier_name' => 'Jane Doe',
+                            'username' => 'jane',
+                            'gross_sales' => 125000.5,
+                            'transactions' => 18,
+                        ],
+                    ],
+                    'currency' => 'KES',
+                ],
+            ],
+            [
+                'name' => 'get_till_health',
+                'result' => [
+                    'type' => 'cash_till_health',
+                    'lookback_days' => 14,
+                    'blind_till_close' => false,
+                    'sessions' => [['till' => 'Till 1', 'cashier' => 'Jane Doe', 'variance' => 0]],
+                    'variance_outliers' => [],
+                    'payment_mix' => [
+                        'cash' => 40000,
+                        'mpesa' => 80000,
+                        'bank' => 5000,
+                        'order_total' => 125000,
+                    ],
+                    'screens' => [['label' => 'POS', 'path' => '/sales/pos']],
+                ],
+            ],
+        ], ['get_sales_by_cashier', 'get_till_health']);
+
+        $this->assertStringContainsString('Jane Doe', $reply);
+        $this->assertStringContainsString('125,000.50', $reply);
+        $this->assertStringContainsString('Cash & till health', $reply);
+        $this->assertStringContainsString('M-Pesa', $reply);
+        $this->assertStringNotContainsString('could not format a full answer', $reply);
+        $this->assertFalse($builder->isGenericFailureReply($reply));
+    }
 }

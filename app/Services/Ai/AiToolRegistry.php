@@ -10,6 +10,7 @@ use App\Services\Ai\Tools\CreateCustomReportTool;
 use App\Services\Ai\Tools\FindScreenTool;
 use App\Services\Ai\Tools\GetCashPositionTool;
 use App\Services\Ai\Tools\GetCustomerPortfolioTool;
+use App\Services\Ai\Tools\GetCustomerReturnsTool;
 use App\Services\Ai\Tools\GetCustomerStatementTool;
 use App\Services\Ai\Tools\GetDebtorsSummaryTool;
 use App\Services\Ai\Tools\GetEmployeeAttendanceTool;
@@ -55,6 +56,7 @@ class AiToolRegistry
         protected GetPurchasingOverviewTool $getPurchasingOverview,
         protected GetDebtorsSummaryTool $getDebtorsSummary,
         protected GetCustomerStatementTool $getCustomerStatement,
+        protected GetCustomerReturnsTool $getCustomerReturns,
         protected GetSupplierStatementTool $getSupplierStatement,
         protected GetTillHealthTool $getTillHealth,
         protected GetRouteOrdersTool $getRouteOrders,
@@ -191,6 +193,7 @@ class AiToolRegistry
             $this->getPurchasingOverview,
             $this->getDebtorsSummary,
             $this->getCustomerStatement,
+            $this->getCustomerReturns,
             $this->getSupplierStatement,
             $this->getTillHealth,
             $this->getRouteOrders,

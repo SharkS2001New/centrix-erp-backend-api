@@ -209,27 +209,40 @@ trait BuildsExtendedInsightSlices
     }
 
     /** @return array<string, mixed> */
-    public function routeMobileDebriefSlice(Organization $organization, User $user, int $lookbackDays = 1): array
-    {
+    public function routeMobileDebriefSlice(
+        Organization $organization,
+        User $user,
+        int $lookbackDays = 1,
+        ?string $fromDate = null,
+        ?string $toDate = null,
+        ?int $cashierId = null,
+    ): array {
         $lookbackDays = max(1, min(90, $lookbackDays));
         $orgId = (int) $organization->id;
-        $from = now()->subDays($lookbackDays)->toDateString();
-        $to = now()->toDateString();
+        $from = $fromDate ?: now()->subDays($lookbackDays - 1)->toDateString();
+        $to = $toDate ?: now()->toDateString();
 
         $base = DB::table('sales')
             ->where('organization_id', $orgId)
             ->where('channel', 'mobile')
             ->whereRaw('DATE(COALESCE(completed_at, created_at)) BETWEEN ? AND ?', [$from, $to]);
+        if ($cashierId !== null && $cashierId > 0) {
+            $base->where('cashier_id', $cashierId);
+        }
 
         $booked = (clone $base)->whereNotIn('status', ['cancelled', 'draft', 'expired'])->count();
         $delivered = (clone $base)->whereIn('status', ['delivered', 'completed', 'paid'])->count();
+        $gross = (clone $base)
+            ->whereNotIn('status', ['cancelled', 'draft', 'held', 'expired'])
+            ->selectRaw('ROUND(COALESCE(SUM(order_total), 0), 2) as total, COUNT(*) as c')
+            ->first();
         $unpaid = (clone $base)
             ->whereNotIn('status', ['cancelled', 'draft', 'held', 'expired'])
             ->whereRaw('(order_total - COALESCE(amount_paid, 0)) > 0.01')
             ->selectRaw('COUNT(*) as c, ROUND(SUM(GREATEST(order_total - COALESCE(amount_paid, 0), 0)), 2) as due')
             ->first();
 
-        $topSkus = DB::table('sale_items as si')
+        $topSkuQuery = DB::table('sale_items as si')
             ->join('sales as s', 's.id', '=', 'si.sale_id')
             ->leftJoin('products as p', function ($join) use ($orgId) {
                 $join->on('p.product_code', '=', 'si.product_code')
@@ -238,7 +251,12 @@ trait BuildsExtendedInsightSlices
             ->where('s.organization_id', $orgId)
             ->where('s.channel', 'mobile')
             ->whereNotIn('s.status', ['cancelled', 'draft', 'held', 'expired'])
-            ->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) BETWEEN ? AND ?', [$from, $to])
+            ->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) BETWEEN ? AND ?', [$from, $to]);
+        if ($cashierId !== null && $cashierId > 0) {
+            $topSkuQuery->where('s.cashier_id', $cashierId);
+        }
+
+        $topSkus = $topSkuQuery
             ->selectRaw('si.product_code, COALESCE(p.product_name, si.product_code) as product_name, SUM(si.quantity) as qty, ROUND(SUM(si.amount), 2) as amount')
             ->groupBy('si.product_code', 'p.product_name')
             ->orderByDesc('amount')
@@ -253,7 +271,7 @@ trait BuildsExtendedInsightSlices
             ->all();
         $topSkus = $this->withQtyLabels($orgId, $topSkus);
 
-        $stalled = DB::table('sales')
+        $stalledQuery = DB::table('sales')
             ->leftJoin('customers', function ($join) use ($orgId) {
                 $join->on('customers.customer_num', '=', 'sales.customer_num')
                     ->where('customers.organization_id', '=', $orgId);
@@ -261,7 +279,12 @@ trait BuildsExtendedInsightSlices
             ->where('sales.organization_id', $orgId)
             ->where('sales.channel', 'mobile')
             ->whereIn('sales.status', ['booked', 'pending', 'pending_payment', 'unpaid', 'processed'])
-            ->whereRaw('DATE(sales.created_at) BETWEEN ? AND ?', [$from, $to])
+            ->whereRaw('DATE(sales.created_at) BETWEEN ? AND ?', [$from, $to]);
+        if ($cashierId !== null && $cashierId > 0) {
+            $stalledQuery->where('sales.cashier_id', $cashierId);
+        }
+
+        $stalled = $stalledQuery
             ->orderBy('sales.created_at')
             ->limit(20)
             ->get([
@@ -293,8 +316,11 @@ trait BuildsExtendedInsightSlices
             'lookback_days' => $lookbackDays,
             'from_date' => $from,
             'to_date' => $to,
+            'cashier_id' => $cashierId,
             'booked_orders' => $booked,
             'delivered_or_completed' => $delivered,
+            'gross_sales_total' => (float) ($gross->total ?? 0),
+            'orders_count' => (int) ($gross->c ?? 0),
             'unpaid_on_route' => [
                 'count' => (int) ($unpaid->c ?? 0),
                 'balance_due' => (float) ($unpaid->due ?? 0),

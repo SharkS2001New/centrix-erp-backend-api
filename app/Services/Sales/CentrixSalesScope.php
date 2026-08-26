@@ -45,11 +45,15 @@ class CentrixSalesScope
 
     /**
      * Report date bucket: order placed / booked date.
-     * Use created_at (not completed_at) so pipeline orders stay on the day the
-     * salesperson placed them — matching the sales list "Placed date" filter.
+     * Prefer effective_sale_date (same as Sales Orders "Placed date" filter) when present;
+     * otherwise DATE(created_at). Never completed_at — completing later must not move the day.
      */
     public static function reportSaleDateSql(string $alias = 's'): string
     {
+        if (\App\Support\EffectiveSaleDate::columnExists()) {
+            return "{$alias}.effective_sale_date";
+        }
+
         return "DATE({$alias}.created_at)";
     }
 

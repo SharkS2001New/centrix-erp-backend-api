@@ -19,7 +19,7 @@ return [
         'HR: Employees, today\'s attendance (/hr/attendance), previous attendance (/hr/attendance/history), leave, and payroll under /hr/*. Field attendance for mobile reps: /sales/field-attendance.',
         'Admin: Users and roles/permissions under /admin/users and /admin/roles. Organization AI settings under Organization settings → AI.',
         'Reports hub: /reports — sales, stock, payroll, hospitality, and custom report builder at /reports/builder (saved reports open at /reports/custom/{id}).',
-        'Cashier sales targets/quotas are not stored as a Centrix AI metric — report actual sales with get_sales_by_cashier instead.',
+        'Cashier sales: get_sales_by_cashier matches Sales by User (placed date). Quote gross_sales and amount_collected — they differ when credit/unpaid. Prefer exact username match; never invent totals or use org-wide get_sales_summary for a named cashier.',
         'When talking about people, use username and full name — never numeric user ids.',
         'Write formulas in plain language with real field names (Stock Value = Cost Price × Stock on Hand), never LaTeX.',
         'Units of measure (UoM): stock is stored in base (smallest) units. A UoM can define full pack (e.g. Bag), optional middle pack, and small unit (e.g. kg). conversion_factor = base units per full pack. Screens: /uoms.',
@@ -29,6 +29,8 @@ return [
         'Charts: only include bar/donut/pie chart fences when the user explicitly asks for a chart, graph, or visualization. Match type to their words (pie/donut/bar). Default to markdown tables to save tokens. items must be [{label,value},…] — never one object with repeated keys.',
         'Retail packaging: products with Sell on retail use /retail-package-settings for retail vs wholesale markup tiers. This is separate from UoM conversion. Call get_product_details for a product\'s measurements and retail packaging.',
         'Price history: Centrix stores a formal price-change ledger at /price-history (unit price, cost price, discount %, who changed it, when). Call get_product_price_history for "price history" questions — never say Centrix lacks a price-change log, and do not substitute sales averages.',
+        'Multi-part questions: when the user asks several things at once (mobile sales + expenses + returns), call every needed tool in the same turn (get_route_orders, get_expense_summary, get_customer_returns) with the same period/user filters, then answer under clear headings.',
+        'Expenses & returns by person: Centrix attributes accounting expenses via recorded_by, mobile route expenses via user_id, and returns via returned_by. For "CHEGE\'s expenses/returns" always pass user_name to get_expense_summary / get_customer_returns — never say these are only organization-level.',
         'Product weight (kg) on the product card is optional metadata — not the same as stock UoM unless the small packaging unit is also kg.',
     ],
     'modules' => [

@@ -122,15 +122,16 @@ trait BuildsBiToolSlices
         string $from,
         string $to,
         ?int $branchId = null,
+        ?int $recordedByUserId = null,
     ): array {
         $orgId = (int) $organization->id;
-        $currentByCategory = $this->expensesByCategory($orgId, $branchId, $from, $to);
+        $currentByCategory = $this->expensesByCategory($orgId, $branchId, $from, $to, $recordedByUserId);
         $currentTotal = round(array_sum(array_column($currentByCategory, 'amount')), 2);
 
         $days = max(1, Carbon::parse($from)->diffInDays(Carbon::parse($to)) + 1);
         $prevTo = Carbon::parse($from)->subDay()->toDateString();
         $prevFrom = Carbon::parse($prevTo)->subDays($days - 1)->toDateString();
-        $previousByCategory = $this->expensesByCategory($orgId, $branchId, $prevFrom, $prevTo);
+        $previousByCategory = $this->expensesByCategory($orgId, $branchId, $prevFrom, $prevTo, $recordedByUserId);
         $previousTotal = round(array_sum(array_column($previousByCategory, 'amount')), 2);
 
         $increases = [];
@@ -150,11 +151,28 @@ trait BuildsBiToolSlices
         }
         usort($increases, fn ($a, $b) => $b['increase'] <=> $a['increase']);
 
+        $lines = [];
+        if ($recordedByUserId !== null && Schema::hasTable('expenses') && Schema::hasColumn('expenses', 'recorded_by')) {
+            $lines = $this->expenseLinesForUser($orgId, $branchId, $from, $to, $recordedByUserId);
+        }
+
+        $mobileRoute = $this->mobileRouteExpensesForUser($orgId, $from, $to, $recordedByUserId);
+        $mobileTotal = round(array_sum(array_column($mobileRoute, 'amount')), 2);
+
         return [
             'type' => 'expense_summary',
             'organization' => $organization->org_name ?? $organization->name,
             'period' => ['from_date' => $from, 'to_date' => $to],
             'branch_id' => $branchId,
+            'recorded_by_user_id' => $recordedByUserId,
+            'attribution' => $recordedByUserId !== null
+                ? 'filtered_by_user'
+                : 'organization_wide',
+            'how_centrix_works' => [
+                'Accounting expenses store who entered them in expenses.recorded_by.',
+                'Mobile route expenses (when enabled) store the rep in mobile_route_expenses.user_id.',
+                'Never claim Centrix cannot show a person\'s expenses — filter by user_name / username on this tool.',
+            ],
             'total_expenses' => $currentTotal,
             'previous_period_total' => $previousTotal,
             'change_pct' => $previousTotal > 0
@@ -163,8 +181,18 @@ trait BuildsBiToolSlices
             'by_category' => $currentByCategory,
             'previous_by_category' => $previousByCategory,
             'largest_increases' => array_slice($increases, 0, 10),
+            'expense_lines' => $lines,
+            'mobile_route_expenses' => [
+                'total' => $mobileTotal,
+                'count' => count($mobileRoute),
+                'lines' => $mobileRoute,
+            ],
+            'combined_user_total' => $recordedByUserId !== null
+                ? round($currentTotal + $mobileTotal, 2)
+                : null,
             'actions_hint' => [
                 ['label' => 'Expenses', 'href' => '/expenses'],
+                ['label' => 'Mobile orders', 'href' => '/sales/orders/queues/mobile'],
                 ['label' => 'Profit & loss', 'href' => '/reports/profit-loss'],
             ],
         ];
@@ -670,8 +698,13 @@ trait BuildsBiToolSlices
     }
 
     /** @return list<array<string, mixed>> */
-    protected function expensesByCategory(int $orgId, ?int $branchId, string $from, string $to): array
-    {
+    protected function expensesByCategory(
+        int $orgId,
+        ?int $branchId,
+        string $from,
+        string $to,
+        ?int $recordedByUserId = null,
+    ): array {
         if (! Schema::hasTable('expenses')) {
             return [];
         }
@@ -688,6 +721,9 @@ trait BuildsBiToolSlices
         if ($branchId !== null && Schema::hasColumn('expenses', 'branch_id')) {
             $query->where('e.branch_id', $branchId);
         }
+        if ($recordedByUserId !== null && Schema::hasColumn('expenses', 'recorded_by')) {
+            $query->where('e.recorded_by', $recordedByUserId);
+        }
 
         return $query
             ->selectRaw('COALESCE(g.group_name, "Uncategorized") as category, ROUND(SUM(e.expense_amount), 2) as amount, COUNT(*) as expense_count')
@@ -698,6 +734,91 @@ trait BuildsBiToolSlices
                 'category' => $r->category,
                 'amount' => (float) $r->amount,
                 'expense_count' => (int) $r->expense_count,
+            ])
+            ->all();
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    protected function expenseLinesForUser(
+        int $orgId,
+        ?int $branchId,
+        string $from,
+        string $to,
+        int $recordedByUserId,
+    ): array {
+        if (! Schema::hasTable('expenses') || ! Schema::hasColumn('expenses', 'recorded_by')) {
+            return [];
+        }
+
+        $query = DB::table('expenses as e')
+            ->leftJoin('expense_groups as g', 'g.id', '=', 'e.expense_group_id')
+            ->whereNull('e.deleted_at')
+            ->where('e.recorded_by', $recordedByUserId)
+            ->whereDate('e.expense_date', '>=', $from)
+            ->whereDate('e.expense_date', '<=', $to);
+
+        if ($orgId && Schema::hasColumn('expenses', 'organization_id')) {
+            $query->where('e.organization_id', $orgId);
+        }
+        if ($branchId !== null && Schema::hasColumn('expenses', 'branch_id')) {
+            $query->where('e.branch_id', $branchId);
+        }
+
+        return $query
+            ->orderByDesc('e.expense_date')
+            ->limit(40)
+            ->get([
+                'e.expense_date',
+                'e.description',
+                'e.expense_amount',
+                'g.group_name',
+            ])
+            ->map(fn ($r) => [
+                'expense_date' => (string) $r->expense_date,
+                'category' => (string) ($r->group_name ?: 'Uncategorized'),
+                'description' => (string) ($r->description ?: '—'),
+                'amount' => round((float) $r->expense_amount, 2),
+            ])
+            ->all();
+    }
+
+    /**
+     * Mobile-rep expenses attributed to a user (mobile_route_expenses.user_id).
+     *
+     * @return list<array<string, mixed>>
+     */
+    protected function mobileRouteExpensesForUser(
+        int $orgId,
+        string $from,
+        string $to,
+        ?int $userId,
+    ): array {
+        if ($userId === null || $userId < 1 || ! Schema::hasTable('mobile_route_expenses')) {
+            return [];
+        }
+
+        return DB::table('mobile_route_expenses')
+            ->where('organization_id', $orgId)
+            ->where('user_id', $userId)
+            ->whereDate('expense_date', '>=', $from)
+            ->whereDate('expense_date', '<=', $to)
+            ->orderByDesc('expense_date')
+            ->orderByDesc('id')
+            ->limit(40)
+            ->get([
+                'expense_date',
+                'description',
+                'expense_amount',
+                'status',
+            ])
+            ->map(fn ($r) => [
+                'expense_date' => (string) $r->expense_date,
+                'description' => (string) ($r->description ?: '—'),
+                'amount' => round((float) $r->expense_amount, 2),
+                'status' => (string) ($r->status ?: '—'),
+                'source' => 'mobile_route_expense',
             ])
             ->all();
     }

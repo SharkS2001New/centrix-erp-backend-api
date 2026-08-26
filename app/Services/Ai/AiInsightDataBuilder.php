@@ -8,7 +8,9 @@ use App\Services\Ai\Concerns\BuildsBiToolSlices;
 use App\Services\Ai\Concerns\BuildsExtendedInsightSlices;
 use App\Services\Auth\UserAccessService;
 use App\Services\Inventory\LowStockReportService;
+use App\Services\Pos\TillReportMetrics;
 use App\Services\Sales\CentrixSalesScope;
+use App\Support\EffectiveSaleDate;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -226,37 +228,11 @@ class AiInsightDataBuilder
 
         $resolvedCashierId = $cashierFilter['cashier_id'] ?? null;
         $cashiers = [];
+        $saleDateSql = CentrixSalesScope::reportSaleDateSql('s');
+        $tillMetrics = app(TillReportMetrics::class);
+        $fullyPaidSql = $tillMetrics->collectedSalesSql('s.');
 
-        if ($this->viewExists('v_sales_by_user')) {
-            $query = DB::table('v_sales_by_user')
-                ->where('organization_id', $orgId)
-                ->whereBetween('sale_date', [$from, $to]);
-            if ($branchId !== null) {
-                $query->where('branch_id', $branchId);
-            }
-            if ($resolvedCashierId !== null) {
-                $query->where('cashier_id', $resolvedCashierId);
-            }
-
-            $cashiers = $query
-                ->selectRaw(
-                    'cashier_id, salesperson as cashier_name, '
-                    .'ROUND(COALESCE(SUM(gross_sales), 0), 2) as gross_sales, '
-                    .'COALESCE(SUM(order_count), 0) as transactions'
-                )
-                ->groupBy('cashier_id', 'salesperson')
-                ->orderByDesc('gross_sales')
-                ->limit(50)
-                ->get()
-                ->map(fn ($row) => [
-                    'cashier_id' => $row->cashier_id !== null ? (int) $row->cashier_id : null,
-                    'cashier_name' => (string) $row->cashier_name,
-                    'gross_sales' => round((float) $row->gross_sales, 2),
-                    'transactions' => (int) $row->transactions,
-                ])
-                ->all();
-        } elseif (Schema::hasTable('sales')) {
-            $saleDateSql = CentrixSalesScope::reportSaleDateSql('s');
+        if (Schema::hasTable('sales')) {
             $query = DB::table('sales as s')
                 ->leftJoin('users as u', 'u.id', '=', 's.cashier_id')
                 ->where('s.organization_id', $orgId)
@@ -277,7 +253,12 @@ class AiInsightDataBuilder
                     's.cashier_id, '
                     ."COALESCE(u.full_name, u.username, CONCAT('User #', s.cashier_id)) as cashier_name, "
                     .'ROUND(COALESCE(SUM(s.order_total), 0), 2) as gross_sales, '
-                    .'COUNT(DISTINCT s.id) as transactions'
+                    .'ROUND(COALESCE(SUM(s.order_total - s.total_vat), 0), 2) as net_sales, '
+                    .'ROUND(COALESCE(SUM(s.total_vat), 0), 2) as total_vat, '
+                    .'ROUND(COALESCE(SUM(s.amount_paid), 0), 2) as amount_collected, '
+                    ."ROUND(COALESCE(SUM(CASE WHEN {$fullyPaidSql} THEN s.order_total ELSE 0 END), 0), 2) as fully_paid_sales, "
+                    .'COUNT(DISTINCT s.id) as transactions, '
+                    ."COALESCE(SUM(CASE WHEN {$fullyPaidSql} THEN 1 ELSE 0 END), 0) as fully_paid_transactions"
                 )
                 ->groupBy('s.cashier_id', 'u.full_name', 'u.username')
                 ->orderByDesc('gross_sales')
@@ -287,21 +268,72 @@ class AiInsightDataBuilder
                     'cashier_id' => $row->cashier_id !== null ? (int) $row->cashier_id : null,
                     'cashier_name' => (string) $row->cashier_name,
                     'gross_sales' => round((float) $row->gross_sales, 2),
+                    'net_sales' => round((float) $row->net_sales, 2),
+                    'total_vat' => round((float) $row->total_vat, 2),
+                    'amount_collected' => round((float) $row->amount_collected, 2),
+                    'fully_paid_sales' => round((float) $row->fully_paid_sales, 2),
+                    'transactions' => (int) $row->transactions,
+                    'fully_paid_transactions' => (int) $row->fully_paid_transactions,
+                ])
+                ->all();
+        }
+
+        $channelBreakdown = [];
+        if ($resolvedCashierId !== null && Schema::hasTable('sales')) {
+            $channelQuery = DB::table('sales as s')
+                ->where('s.organization_id', $orgId)
+                ->whereRaw(CentrixSalesScope::reportPipelineStatusSql('s.status'))
+                ->where('s.archived', 0)
+                ->where('s.cashier_id', $resolvedCashierId)
+                ->whereRaw("{$saleDateSql} BETWEEN ? AND ?", [$from, $to])
+                ->whereRaw(CentrixSalesScope::legacyExcludeSql('s'));
+            if ($branchId !== null) {
+                $channelQuery->where('s.branch_id', $branchId);
+            }
+            $channelBreakdown = $channelQuery
+                ->selectRaw(
+                    's.channel, '
+                    .'ROUND(COALESCE(SUM(s.order_total), 0), 2) as gross_sales, '
+                    .'ROUND(COALESCE(SUM(s.amount_paid), 0), 2) as amount_collected, '
+                    ."ROUND(COALESCE(SUM(CASE WHEN {$fullyPaidSql} THEN s.order_total ELSE 0 END), 0), 2) as fully_paid_sales, "
+                    .'COUNT(DISTINCT s.id) as transactions'
+                )
+                ->groupBy('s.channel')
+                ->orderByDesc('gross_sales')
+                ->get()
+                ->map(fn ($row) => [
+                    'channel' => (string) ($row->channel ?? ''),
+                    'gross_sales' => round((float) $row->gross_sales, 2),
+                    'amount_collected' => round((float) $row->amount_collected, 2),
+                    'fully_paid_sales' => round((float) $row->fully_paid_sales, 2),
                     'transactions' => (int) $row->transactions,
                 ])
                 ->all();
+        }
+
+        $matchedUsername = null;
+        if ($resolvedCashierId !== null) {
+            $matchedUsername = User::query()->where('id', $resolvedCashierId)->value('username');
         }
 
         return [
             'from_date' => $from,
             'to_date' => $to,
             'cashiers' => $this->presentCashiersForAi($cashiers),
+            'channels' => $channelBreakdown,
             'currency' => 'KES',
             'date_basis' => 'placed_date',
+            'date_field' => EffectiveSaleDate::columnExists() ? 'effective_sale_date' : 'DATE(created_at)',
             'cashier_filter' => $cashierFilter['label'] ?? null,
-            'note' => 'Actual recorded sales by cashier (placed date, same as Sales by User report). '
-                .'This is not a sales target / expected quota unless your org defines targets separately. '
-                .'Identify cashiers by username and name — never by numeric user id.',
+            'matched_username' => $matchedUsername !== null && $matchedUsername !== ''
+                ? (string) $matchedUsername
+                : null,
+            'branch_scope' => $branchId !== null ? 'askers_branch_only' : 'all_branches',
+            'note' => 'Same placed-date basis as Sales by User and Sales Orders (effective_sale_date / created_at). '
+                .'gross_sales = all pipeline order totals (incl. unpaid/credit). '
+                .'amount_collected = sum of amount_paid. '
+                .'fully_paid_sales = order totals only where amount_paid covers the order (closer to till X/Z ORDTTL). '
+                .'Quote these from the tool — never invent. Identify cashiers by username/name only.',
         ];
     }
 
@@ -336,7 +368,12 @@ class AiInsightDataBuilder
                 'username' => $username !== null && $username !== '' ? (string) $username : null,
                 'cashier_name' => $name !== '' ? $name : null,
                 'gross_sales' => $row['gross_sales'] ?? null,
+                'net_sales' => $row['net_sales'] ?? null,
+                'total_vat' => $row['total_vat'] ?? null,
+                'amount_collected' => $row['amount_collected'] ?? null,
+                'fully_paid_sales' => $row['fully_paid_sales'] ?? null,
                 'transactions' => $row['transactions'] ?? null,
+                'fully_paid_transactions' => $row['fully_paid_transactions'] ?? null,
             ], fn ($v) => $v !== null && $v !== '');
         })->values()->all();
     }
@@ -360,7 +397,7 @@ class AiInsightDataBuilder
 
             return [
                 'cashier_id' => $cashierId,
-                'label' => trim((string) ($user->full_name ?: $user->username)),
+                'label' => trim((string) ($user->full_name ?: $user->username)).' (@'.$user->username.')',
             ];
         }
 
@@ -370,6 +407,38 @@ class AiInsightDataBuilder
         }
 
         $needle = mb_strtolower($name);
+
+        // Prefer exact username / full name so "CHEGE" does not pick a longer LIKE match.
+        $exact = User::query()
+            ->where('organization_id', $organizationId)
+            ->where(function ($query) use ($needle) {
+                $query->whereRaw('LOWER(username) = ?', [$needle])
+                    ->orWhereRaw('LOWER(full_name) = ?', [$needle]);
+            })
+            ->orderBy('username')
+            ->limit(5)
+            ->get(['id', 'full_name', 'username']);
+
+        if ($exact->count() === 1) {
+            $match = $exact->first();
+
+            return [
+                'cashier_id' => (int) $match->id,
+                'label' => trim((string) ($match->full_name ?: $match->username)).' (@'.$match->username.')',
+            ];
+        }
+        if ($exact->count() > 1) {
+            return AiNearMissHelper::ambiguous(
+                $name,
+                $exact->map(fn (User $row) => [
+                    'label' => trim((string) ($row->full_name ?: $row->username)),
+                    'username' => (string) $row->username,
+                    'cashier_name' => trim((string) ($row->full_name ?: $row->username)),
+                ])->all(),
+                'cashier',
+            );
+        }
+
         $matches = User::query()
             ->where('organization_id', $organizationId)
             ->where(function ($query) use ($needle) {
@@ -379,6 +448,19 @@ class AiInsightDataBuilder
             ->orderBy('full_name')
             ->limit(10)
             ->get(['id', 'full_name', 'username']);
+
+        // Among fuzzy matches, prefer a username that equals the needle when unique.
+        $usernameExactAmongLike = $matches->filter(
+            fn (User $row) => mb_strtolower((string) $row->username) === $needle
+        );
+        if ($usernameExactAmongLike->count() === 1) {
+            $match = $usernameExactAmongLike->first();
+
+            return [
+                'cashier_id' => (int) $match->id,
+                'label' => trim((string) ($match->full_name ?: $match->username)).' (@'.$match->username.')',
+            ];
+        }
 
         if ($matches->isEmpty()) {
             $relaxed = User::query()
@@ -434,7 +516,7 @@ class AiInsightDataBuilder
 
             return [
                 'cashier_id' => (int) $match->id,
-                'label' => trim((string) ($match->full_name ?: $match->username)),
+                'label' => trim((string) ($match->full_name ?: $match->username)).' (@'.$match->username.')',
             ];
         }
 

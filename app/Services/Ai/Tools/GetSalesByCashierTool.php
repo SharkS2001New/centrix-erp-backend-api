@@ -28,10 +28,11 @@ class GetSalesByCashierTool implements AiToolInterface
 
     public function description(): string
     {
-        return 'Get Centrix sales totals grouped by cashier for a date or date range '
-            .'(placed date — same as Sales by User report). Use relative_date=yesterday or today '
-            .'for calendar questions. Pass cashier_name or username when asking about one person. '
-            .'In replies, use username and full name — never numeric user ids.';
+        return 'Get Centrix sales totals for cashiers (same as Sales by User report). '
+            .'Returns gross_sales (order totals, incl. credit/unpaid), amount_collected (amount paid), '
+            .'orders, and channel breakdown for one person. Use relative_date=yesterday or today. '
+            .'Pass cashier_name or username (exact username preferred). '
+            .'In replies quote tool numbers only — show both Gross and Collected; never invent; never numeric user ids.';
     }
 
     public function parametersSchema(): array

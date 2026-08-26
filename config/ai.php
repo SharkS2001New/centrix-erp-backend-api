@@ -49,12 +49,15 @@ return [
     'use_tool_chat' => filter_var(env('AI_USE_TOOL_CHAT', true), FILTER_VALIDATE_BOOLEAN),
 
     'request_timeout' => (int) env('AI_REQUEST_TIMEOUT', 60),
-    'max_tool_rounds' => (int) env('AI_MAX_TOOL_ROUNDS', 1),
+    // Allow a follow-up tool round for multi-part questions (sales + expenses + returns).
+    'max_tool_rounds' => (int) env('AI_MAX_TOOL_ROUNDS', 3),
 
     /**
      * Trim prompts, history, and tool loops for lower latency (recommended for production chat).
+     * Fast mode still allows 2 tool rounds so compound questions can call several tools.
      */
     'fast_mode' => filter_var(env('AI_FAST_MODE', true), FILTER_VALIDATE_BOOLEAN),
+    'fast_mode_max_tool_rounds' => (int) env('AI_FAST_MODE_MAX_TOOL_ROUNDS', 2),
 
     /** Stream token deltas to the web assistant via POST /ai/chat/stream (OpenAI-compatible providers). */
     'stream_responses' => filter_var(env('AI_STREAM_RESPONSES', true), FILTER_VALIDATE_BOOLEAN),
@@ -98,6 +101,7 @@ return [
         'get_supplier_statement' => true,
         'get_till_health' => true,
         'get_route_orders' => true,
+        'get_customer_returns' => true,
         'get_route_details' => true,
         'get_user_details' => true,
         'get_employee_attendance' => true,

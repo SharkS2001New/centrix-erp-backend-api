@@ -14,7 +14,9 @@ class AiToolResultReplyBuilder
      */
     public function build(array $toolResults, array $toolsUsed = []): string
     {
-        foreach (array_reverse($toolResults) as $row) {
+        $parts = [];
+
+        foreach ($toolResults as $row) {
             $name = (string) ($row['name'] ?? '');
             $result = is_array($row['result'] ?? null) ? $row['result'] : [];
             if ($result === []) {
@@ -30,13 +32,16 @@ class AiToolResultReplyBuilder
 
             if (! empty($result['error'])) {
                 if (! empty($result['message'])) {
-                    return AiNearMissHelper::appendScreens(
+                    $parts[] = AiNearMissHelper::appendScreens(
                         (string) $result['message'],
                         is_array($result['screens'] ?? null) ? $result['screens'] : null,
                     );
-                }
 
-                return 'I could not load that Centrix data with your current permissions.';
+                    continue;
+                }
+                $parts[] = 'I could not load that Centrix data with your current permissions.';
+
+                continue;
             }
 
             $formatted = match ($name) {
@@ -45,6 +50,11 @@ class AiToolResultReplyBuilder
                 'get_customer_statement' => $this->formatCustomerStatement($result),
                 'get_supplier_statement' => $this->formatSupplierStatement($result),
                 'get_sales_by_product' => $this->formatSalesByProduct($result),
+                'get_sales_by_cashier' => $this->formatSalesByCashier($result),
+                'get_till_health' => $this->formatTillHealth($result),
+                'get_route_orders' => $this->formatRouteOrders($result),
+                'get_expense_summary' => $this->formatExpenseSummary($result),
+                'get_customer_returns' => $this->formatCustomerReturns($result),
                 'get_product_price_history' => $this->formatProductPriceHistory($result),
                 'get_vat_collected' => $this->formatVatCollected($result),
                 'get_user_details' => $this->formatUserDetails($result),
@@ -55,17 +65,26 @@ class AiToolResultReplyBuilder
             };
 
             if (is_string($formatted) && trim($formatted) !== '') {
-                return $this->appendPrimaryScreen($formatted, $result);
+                $parts[] = $this->appendPrimaryScreen($formatted, $result);
+
+                continue;
             }
 
             // Prefer an explicit user message over tip/hint (model instructions).
             if (! empty($result['message']) && is_string($result['message']) && ! $this->looksLikeModelInstruction((string) $result['message'])) {
-                return $this->appendPrimaryScreen(trim((string) $result['message']), $result);
+                $parts[] = $this->appendPrimaryScreen(trim((string) $result['message']), $result);
+
+                continue;
             }
 
             if (! empty($result['path']) && is_string($result['path'])) {
-                return 'Open ['.($result['path']).']('.($result['path']).').';
+                $parts[] = 'Open ['.($result['path']).']('.($result['path']).').';
             }
+        }
+
+        $parts = array_values(array_filter(array_map('trim', $parts), fn ($p) => $p !== ''));
+        if ($parts !== []) {
+            return implode("\n\n", $parts);
         }
 
         if ($toolsUsed !== []) {
@@ -74,6 +93,13 @@ class AiToolResultReplyBuilder
         }
 
         return 'I could not generate a response from Centrix data. Please try rephrasing your question.';
+    }
+
+    /** True when the built reply is the last-resort generic failure (not real data). */
+    public function isGenericFailureReply(string $reply): bool
+    {
+        return str_contains($reply, 'could not format a full answer')
+            || str_contains($reply, 'could not generate a response from Centrix data');
     }
 
     /**
@@ -93,7 +119,9 @@ class AiToolResultReplyBuilder
             .'do not paste|do NOT paste|treat each note as an exemplar|'
             .'answer with the (customer|employee|supplier|user)|'
             .'name the person; never|finalize at \/hr\/payroll|'
-            .'copy the thinking\/approach'
+            .'copy the thinking\/approach|'
+            .'not per salesperson|organization level \(by category\)|aren\'?t attributed|'
+            .'no .*expenses.*figure|expenses like utilities aren\'?t'
             .')\b/i',
             $trimmed,
         );
@@ -362,6 +390,385 @@ class AiToolResultReplyBuilder
             '',
             'Balance due: **KES '.$this->money((float) ($summary['balance_due'] ?? $supplier['balance_due'] ?? 0)).'**',
         ];
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * @param  array<string, mixed>  $result
+     */
+    protected function formatSalesByCashier(array $result): ?string
+    {
+        $cashiers = is_array($result['cashiers'] ?? null) ? $result['cashiers'] : [];
+        $from = (string) ($result['from_date'] ?? '');
+        $to = (string) ($result['to_date'] ?? '');
+        $period = ($from !== '' && $to !== '')
+            ? ($from === $to ? $from : "{$from} – {$to}")
+            : '';
+
+        if (! empty($result['error']) && ! empty($result['message'])) {
+            return (string) $result['message'];
+        }
+
+        $filter = trim((string) ($result['cashier_filter'] ?? ''));
+        $lines = [
+            '### Sales by cashier'.($period !== '' ? " ({$period})" : ''),
+            '',
+        ];
+        if ($filter !== '') {
+            $lines[] = "Filter: {$filter}";
+            $lines[] = '';
+        }
+
+        if ($cashiers === []) {
+            $lines[] = 'No cashier sales recorded for this period.';
+
+            return implode("\n", $lines);
+        }
+
+        $lines[] = '| Cashier | Username | Orders | Gross | Collected | Fully paid |';
+        $lines[] = '| --- | --- | ---: | ---: | ---: | ---: |';
+        $totalSales = 0.0;
+        $totalCollected = 0.0;
+        $totalFullyPaid = 0.0;
+        $totalTx = 0;
+        foreach (array_slice($cashiers, 0, 40) as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $sales = (float) ($row['gross_sales'] ?? 0);
+            $collected = (float) ($row['amount_collected'] ?? 0);
+            $fullyPaid = (float) ($row['fully_paid_sales'] ?? 0);
+            $tx = (int) ($row['transactions'] ?? 0);
+            $totalSales += $sales;
+            $totalCollected += $collected;
+            $totalFullyPaid += $fullyPaid;
+            $totalTx += $tx;
+            $name = trim((string) ($row['cashier_name'] ?? '—'));
+            $username = trim((string) ($row['username'] ?? '—'));
+            $lines[] = sprintf(
+                '| %s | %s | %d | %s | %s | %s |',
+                $this->cell($name !== '' ? $name : '—'),
+                $this->cell($username !== '' ? $username : '—'),
+                $tx,
+                $this->money($sales),
+                $this->money($collected),
+                $this->money($fullyPaid),
+            );
+        }
+        $lines[] = '';
+        $lines[] = '**Gross (Sales by User):** KES '.$this->money($totalSales)
+            .' · **Collected:** KES '.$this->money($totalCollected)
+            .' · **Fully paid orders:** KES '.$this->money($totalFullyPaid)
+            .' · **Orders:** '.$totalTx.'.';
+        $lines[] = 'Gross includes unpaid/credit pipeline. Collected is amount paid. Fully paid is closer to till X/Z sales.';
+        $matched = trim((string) ($result['matched_username'] ?? ''));
+        if ($matched !== '') {
+            $lines[] = 'Matched username: **'.$matched.'**.';
+        }
+        $scope = (string) ($result['branch_scope'] ?? '');
+        if ($scope === 'askers_branch_only') {
+            $lines[] = 'Branch scope: your branch only.';
+        }
+        $lines[] = '';
+        $lines[] = 'Verify on [Sales by user](/reports/sales-by-user) for the same date, or All Orders filtered by cashier.';
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * @param  array<string, mixed>  $result
+     */
+    protected function formatTillHealth(array $result): ?string
+    {
+        if (($result['type'] ?? '') !== 'cash_till_health' && empty($result['sessions']) && empty($result['payment_mix'])) {
+            return null;
+        }
+
+        $lookback = (int) ($result['lookback_days'] ?? 14);
+        $mix = is_array($result['payment_mix'] ?? null) ? $result['payment_mix'] : [];
+        $outliers = is_array($result['variance_outliers'] ?? null) ? $result['variance_outliers'] : [];
+        $sessions = is_array($result['sessions'] ?? null) ? $result['sessions'] : [];
+
+        $lines = [
+            "### Cash & till health (last {$lookback} days)",
+            '',
+            '| Payment mix | Amount (KES) |',
+            '| --- | ---: |',
+            '| Cash | '.$this->money((float) ($mix['cash'] ?? 0)).' |',
+            '| M-Pesa | '.$this->money((float) ($mix['mpesa'] ?? 0)).' |',
+            '| Bank | '.$this->money((float) ($mix['bank'] ?? 0)).' |',
+            '| Orders total | '.$this->money((float) ($mix['order_total'] ?? 0)).' |',
+            '',
+        ];
+
+        if (! empty($result['blind_till_close'])) {
+            $lines[] = 'Blind till close is **on** for this organization.';
+            $lines[] = '';
+        }
+
+        if ($outliers !== []) {
+            $lines[] = 'Variance outliers (|variance| ≥ KES 50):';
+            $lines[] = '';
+            $lines[] = '| Till | Cashier | Variance (KES) | Closed |';
+            $lines[] = '| --- | --- | ---: | --- |';
+            foreach (array_slice($outliers, 0, 15) as $row) {
+                if (! is_array($row)) {
+                    continue;
+                }
+                $cashier = trim((string) ($row['cashier'] ?? '—'));
+                if (preg_match('/^User #\d+$/', $cashier)) {
+                    $cashier = '—';
+                }
+                $lines[] = sprintf(
+                    '| %s | %s | %s | %s |',
+                    $this->cell((string) ($row['till'] ?? '—')),
+                    $this->cell($cashier !== '' ? $cashier : '—'),
+                    $this->money((float) ($row['variance'] ?? 0)),
+                    $this->cell((string) ($row['closed_at'] ?? '—')),
+                );
+            }
+            $lines[] = '';
+        } elseif ($sessions === []) {
+            $lines[] = 'No closed till sessions found in this lookback.';
+            $lines[] = '';
+        } else {
+            $lines[] = 'No large variance outliers in the closed sessions reviewed.';
+            $lines[] = '';
+        }
+
+        $lines[] = 'Open [Till management](/sales/till-management) or [Daily sales](/reports/daily-sales).';
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * @param  array<string, mixed>  $result
+     */
+    protected function formatRouteOrders(array $result): ?string
+    {
+        if (($result['type'] ?? '') !== 'route_mobile_debrief' && ! isset($result['booked_orders'])) {
+            return null;
+        }
+
+        $from = (string) ($result['from_date'] ?? '');
+        $to = (string) ($result['to_date'] ?? '');
+        $period = ($from !== '' && $to !== '')
+            ? ($from === $to ? $from : "{$from} – {$to}")
+            : '';
+        $user = trim((string) ($result['filtered_user'] ?? ''));
+
+        $lines = [
+            '### Mobile / route sales'.($period !== '' ? " ({$period})" : ''),
+            '',
+        ];
+        if ($user !== '') {
+            $lines[] = "Rep: **{$user}**";
+            $lines[] = '';
+        }
+        $lines[] = '| Metric | Value |';
+        $lines[] = '| --- | ---: |';
+        $lines[] = '| Orders | '.(int) ($result['orders_count'] ?? $result['booked_orders'] ?? 0).' |';
+        $lines[] = '| Booked | '.(int) ($result['booked_orders'] ?? 0).' |';
+        $lines[] = '| Delivered / completed | '.(int) ($result['delivered_or_completed'] ?? 0).' |';
+        $lines[] = '| Gross sales (KES) | '.$this->money((float) ($result['gross_sales_total'] ?? 0)).' |';
+        $unpaid = is_array($result['unpaid_on_route'] ?? null) ? $result['unpaid_on_route'] : [];
+        $lines[] = '| Unpaid orders | '.(int) ($unpaid['count'] ?? 0).' |';
+        $lines[] = '| Unpaid balance (KES) | '.$this->money((float) ($unpaid['balance_due'] ?? 0)).' |';
+
+        $skus = is_array($result['top_skus'] ?? null) ? $result['top_skus'] : [];
+        if ($skus !== []) {
+            $lines[] = '';
+            $lines[] = 'Top products:';
+            $lines[] = '';
+            $lines[] = '| Product | Qty | Amount (KES) |';
+            $lines[] = '| --- | --- | ---: |';
+            foreach (array_slice($skus, 0, 10) as $sku) {
+                if (! is_array($sku)) {
+                    continue;
+                }
+                $lines[] = sprintf(
+                    '| %s | %s | %s |',
+                    $this->cell((string) ($sku['product_name'] ?? '—')),
+                    $this->cell((string) ($sku['qty_label'] ?? $sku['qty'] ?? '—')),
+                    $this->money((float) ($sku['amount'] ?? 0)),
+                );
+            }
+        }
+
+        $lines[] = '';
+        $lines[] = 'Open [Mobile orders](/sales/orders/queues/mobile).';
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * @param  array<string, mixed>  $result
+     */
+    protected function formatExpenseSummary(array $result): ?string
+    {
+        if (($result['type'] ?? '') !== 'expense_summary' && ! isset($result['total_expenses'])) {
+            return null;
+        }
+
+        $period = is_array($result['period'] ?? null) ? $result['period'] : [];
+        $from = (string) ($period['from_date'] ?? '');
+        $to = (string) ($period['to_date'] ?? '');
+        $periodLabel = ($from !== '' && $to !== '')
+            ? ($from === $to ? $from : "{$from} – {$to}")
+            : '';
+        $user = trim((string) ($result['filtered_user'] ?? ''));
+
+        $lines = [
+            '### Expenses'.($periodLabel !== '' ? " ({$periodLabel})" : ''),
+            '',
+        ];
+        if ($user !== '') {
+            $lines[] = "Recorded by: **{$user}**";
+            $lines[] = '';
+        }
+        $lines[] = 'Total: **KES '.$this->money((float) ($result['total_expenses'] ?? 0)).'**';
+        if (isset($result['previous_period_total'])) {
+            $lines[] = 'Prior period: KES '.$this->money((float) $result['previous_period_total'])
+                .(isset($result['change_pct']) ? ' ('.$result['change_pct'].'%)' : '');
+        }
+
+        $mobile = is_array($result['mobile_route_expenses'] ?? null) ? $result['mobile_route_expenses'] : [];
+        $mobileLines = is_array($mobile['lines'] ?? null) ? $mobile['lines'] : [];
+        if ($user !== '' && isset($result['combined_user_total'])) {
+            $lines[] = 'Combined (accounting + mobile route): **KES '.$this->money((float) $result['combined_user_total']).'**';
+        }
+        if ($mobileLines !== [] || (float) ($mobile['total'] ?? 0) > 0) {
+            $lines[] = 'Mobile route expenses: **KES '.$this->money((float) ($mobile['total'] ?? 0)).'** ('
+                .(int) ($mobile['count'] ?? count($mobileLines)).' entries)';
+        }
+
+        $byCat = is_array($result['by_category'] ?? null) ? $result['by_category'] : [];
+        if ($byCat !== []) {
+            $lines[] = '';
+            $lines[] = $user !== '' ? 'Accounting expenses recorded by this user:' : 'By category:';
+            $lines[] = '';
+            $lines[] = '| Category | Amount (KES) | Count |';
+            $lines[] = '| --- | ---: | ---: |';
+            foreach (array_slice($byCat, 0, 20) as $row) {
+                if (! is_array($row)) {
+                    continue;
+                }
+                $lines[] = sprintf(
+                    '| %s | %s | %d |',
+                    $this->cell((string) ($row['category'] ?? '—')),
+                    $this->money((float) ($row['amount'] ?? 0)),
+                    (int) ($row['expense_count'] ?? 0),
+                );
+            }
+        }
+
+        $detail = is_array($result['expense_lines'] ?? null) ? $result['expense_lines'] : [];
+        if ($detail !== []) {
+            $lines[] = '';
+            $lines[] = 'Accounting expense lines:';
+            $lines[] = '';
+            $lines[] = '| Date | Category | Description | Amount (KES) |';
+            $lines[] = '| --- | --- | --- | ---: |';
+            foreach (array_slice($detail, 0, 25) as $row) {
+                if (! is_array($row)) {
+                    continue;
+                }
+                $lines[] = sprintf(
+                    '| %s | %s | %s | %s |',
+                    $this->cell((string) ($row['expense_date'] ?? '—')),
+                    $this->cell((string) ($row['category'] ?? '—')),
+                    $this->cell((string) ($row['description'] ?? '—')),
+                    $this->money((float) ($row['amount'] ?? 0)),
+                );
+            }
+        }
+
+        if ($mobileLines !== []) {
+            $lines[] = '';
+            $lines[] = 'Mobile route expense lines:';
+            $lines[] = '';
+            $lines[] = '| Date | Description | Status | Amount (KES) |';
+            $lines[] = '| --- | --- | --- | ---: |';
+            foreach (array_slice($mobileLines, 0, 25) as $row) {
+                if (! is_array($row)) {
+                    continue;
+                }
+                $lines[] = sprintf(
+                    '| %s | %s | %s | %s |',
+                    $this->cell((string) ($row['expense_date'] ?? '—')),
+                    $this->cell((string) ($row['description'] ?? '—')),
+                    $this->cell((string) ($row['status'] ?? '—')),
+                    $this->money((float) ($row['amount'] ?? 0)),
+                );
+            }
+        }
+
+        if ($user !== '' && $byCat === [] && $detail === [] && $mobileLines === []) {
+            $lines[] = '';
+            $lines[] = "No expenses found for **{$user}** in this period (checked accounting recorded_by and mobile route expenses).";
+        }
+
+        $lines[] = '';
+        $lines[] = 'Open [/expenses](/expenses) or [Mobile orders](/sales/orders/queues/mobile).';
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * @param  array<string, mixed>  $result
+     */
+    protected function formatCustomerReturns(array $result): ?string
+    {
+        $summary = is_array($result['summary'] ?? null) ? $result['summary'] : [];
+        $returns = is_array($result['returns'] ?? null) ? $result['returns'] : [];
+        $period = is_array($result['period'] ?? null) ? $result['period'] : [];
+        if ($summary === [] && $returns === []) {
+            return null;
+        }
+
+        $from = (string) ($period['from_date'] ?? '');
+        $to = (string) ($period['to_date'] ?? '');
+        $periodLabel = ($from !== '' && $to !== '')
+            ? ($from === $to ? $from : "{$from} – {$to}")
+            : '';
+        $user = trim((string) ($result['filtered_user'] ?? ''));
+
+        $lines = [
+            '### Customer returns'.($periodLabel !== '' ? " ({$periodLabel})" : ''),
+            '',
+        ];
+        if ($user !== '') {
+            $lines[] = "Returned by: **{$user}**";
+            $lines[] = '';
+        }
+        $lines[] = 'Count: **'.(int) ($summary['returns_count'] ?? count($returns)).'**';
+        $lines[] = 'Total amount: **KES '.$this->money((float) ($summary['total_amount'] ?? 0)).'**';
+
+        if ($returns !== []) {
+            $lines[] = '';
+            $lines[] = '| Date | Return # | Status | Amount (KES) | Returned by |';
+            $lines[] = '| --- | --- | --- | ---: | --- |';
+            foreach (array_slice($returns, 0, 40) as $row) {
+                if (! is_array($row)) {
+                    continue;
+                }
+                $lines[] = sprintf(
+                    '| %s | %s | %s | %s | %s |',
+                    $this->cell((string) ($row['return_date'] ?? '—')),
+                    $this->cell((string) ($row['return_no'] ?? '—')),
+                    $this->cell((string) ($row['status'] ?? '—')),
+                    $this->money((float) ($row['total_amount'] ?? 0)),
+                    $this->cell((string) ($row['returned_by_name'] ?? '—')),
+                );
+            }
+        } else {
+            $lines[] = '';
+            $lines[] = 'No returns found for this filter.';
+        }
+
+        $lines[] = '';
+        $lines[] = 'Open [/sales/returns](/sales/returns).';
 
         return implode("\n", $lines);
     }

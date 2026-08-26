@@ -231,9 +231,14 @@ class AiToolChatService
         $modelUsed = (string) ($runtime['model'] ?? '');
         $toolDeclarations = $this->tools->declarations($organization);
         $maxOutputTokens = (int) config('ai.tool_chat.max_output_tokens', 4096);
-        $maxLoops = max(1, (int) config('ai.max_tool_rounds', 1));
+        $maxLoops = max(1, (int) config('ai.max_tool_rounds', 3));
         if (filter_var(config('ai.fast_mode', true), FILTER_VALIDATE_BOOLEAN)) {
-            $maxLoops = min($maxLoops, 1);
+            $fastCap = max(1, (int) config('ai.fast_mode_max_tool_rounds', 2));
+            $maxLoops = min($maxLoops, $fastCap);
+        }
+        // Compound questions often need several tools in one or two rounds.
+        if ($this->looksLikeMultiPartQuestion($message)) {
+            $maxLoops = max($maxLoops, min(3, (int) config('ai.max_tool_rounds', 3)));
         }
 
         $canStream = filter_var(config('ai.stream_responses', true), FILTER_VALIDATE_BOOLEAN);
@@ -326,20 +331,10 @@ class AiToolChatService
                 }
             }
 
-            $reply = trim((string) ($turn['text'] ?? ''));
-            if (
-                $reply === ''
-                || $this->toolResultReplyBuilder->looksLikeModelInstruction($reply)
-                || $this->toolResultReplyBuilder->looksLikeEchoedToolTip($reply, $lastToolResults)
-            ) {
-                $fallback = $this->fallbackReplyFromToolResults($lastToolResults, $toolsUsed);
-                if ($fallback !== '') {
-                    // done.reply replaces any tip-like streamed deltas in the UI.
-                    $reply = $fallback;
-                }
-            }
-            $reply = $this->appendTruncationNoticeIfNeeded(
-                $this->replyFormatter->format($reply),
+            [$reply] = $this->resolveReplyAfterTools(
+                (string) ($turn['text'] ?? ''),
+                $lastToolResults,
+                $toolsUsed,
                 $turn['finish_reason'] ?? null,
             );
 
@@ -461,6 +456,7 @@ class AiToolChatService
 
     /**
      * When the model hits the output token cap, answers stop mid-sentence (e.g. "124 K").
+     * Prefer a complete tool-built reply over a truncated stub + "ask me to continue".
      */
     protected function appendTruncationNoticeIfNeeded(string $reply, mixed $finishReason): string
     {
@@ -469,12 +465,87 @@ class AiToolChatService
             return $reply;
         }
 
+        // Tool-built replies are complete — do not ask the user to continue.
+        if (! $this->toolResultReplyBuilder->isGenericFailureReply($reply)
+            && ! str_contains($reply, 'cut short by the model output limit')) {
+            // If we already replaced truncated model text with structured tool data, skip the notice.
+            if (str_contains($reply, '### ') || str_contains($reply, '| ---')) {
+                return $reply;
+            }
+        }
+
         $notice = '_(Answer was cut short by the model output limit — ask me to continue.)_';
         if (str_contains($reply, 'cut short by the model output limit')) {
             return $reply;
         }
 
         return rtrim($reply)."\n\n".$notice;
+    }
+
+    protected function isOutputTruncated(mixed $finishReason): bool
+    {
+        $reason = strtoupper(trim((string) ($finishReason ?? '')));
+
+        return in_array($reason, ['LENGTH', 'MAX_TOKENS'], true);
+    }
+
+    /**
+     * Detect compound asks (sales + expenses + returns, "and also", numbered lists, etc.).
+     */
+    protected function looksLikeMultiPartQuestion(string $message): bool
+    {
+        $text = mb_strtolower($message);
+        $topicHits = 0;
+        foreach (['mobile', 'route', 'sales', 'expense', 'return', 'refund', 'credit note', 'till', 'attendance', 'payroll', 'stock', 'vat', 'cashier'] as $topic) {
+            if (str_contains($text, $topic)) {
+                $topicHits++;
+            }
+        }
+        if ($topicHits >= 2) {
+            return true;
+        }
+
+        return (bool) preg_match(
+            '/\b(and also|as well as|plus|in addition|another|then tell me|also (show|tell|give)|both .+ and)\b/i',
+            $message,
+        ) || (bool) preg_match('/(?:^|\n)\s*([0-9]+[\).\]]|[-*•])\s+\S+/u', $message);
+    }
+
+    /**
+     * @param  list<array{id?: string, name?: string, result?: array<string, mixed>}>  $toolResults
+     * @param  list<string>  $toolsUsed
+     * @return array{0: string, 1: bool} [reply, usedCompleteToolFallback]
+     */
+    protected function resolveReplyAfterTools(
+        string $modelText,
+        array $toolResults,
+        array $toolsUsed,
+        mixed $finishReason,
+    ): array {
+        $reply = trim($modelText);
+        $truncated = $this->isOutputTruncated($finishReason);
+        $needsFallback = $reply === ''
+            || $this->toolResultReplyBuilder->looksLikeModelInstruction($reply)
+            || $this->toolResultReplyBuilder->looksLikeEchoedToolTip($reply, $toolResults)
+            || ($truncated && $toolResults !== []);
+
+        $usedCompleteToolFallback = false;
+        if ($needsFallback && $toolResults !== []) {
+            $fallback = $this->fallbackReplyFromToolResults($toolResults, $toolsUsed);
+            if ($fallback !== '' && ! $this->toolResultReplyBuilder->isGenericFailureReply($fallback)) {
+                $reply = $fallback;
+                $usedCompleteToolFallback = true;
+            } elseif ($fallback !== '' && $reply === '') {
+                $reply = $fallback;
+            }
+        }
+
+        $reply = $this->replyFormatter->format($reply);
+        if ($truncated && ! $usedCompleteToolFallback) {
+            $reply = $this->appendTruncationNoticeIfNeeded($reply, $finishReason);
+        }
+
+        return [$reply, $usedCompleteToolFallback];
     }
 
     /** @return array<string, mixed> */
@@ -491,6 +562,9 @@ class AiToolChatService
             'get_sales_by_product' => 'Loading product sales…',
             'get_sales_by_cashier' => 'Loading cashier sales…',
             'get_vat_collected' => 'Calculating VAT…',
+            'get_route_orders' => 'Loading mobile orders…',
+            'get_customer_returns' => 'Loading returns…',
+            'get_expense_summary' => 'Loading expenses…',
             'get_stock_summary', 'get_product_details', 'get_product_price_history' => 'Checking inventory…',
             'get_debtors_summary', 'get_customer_statement' => 'Loading customer accounts…',
             'get_supplier_statement', 'get_purchasing_overview' => 'Loading supplier data…',
@@ -589,9 +663,14 @@ class AiToolChatService
         $modelUsed = (string) ($runtime['model'] ?? '');
         $toolDeclarations = $this->tools->declarations($organization);
         $maxOutputTokens = (int) config('ai.tool_chat.max_output_tokens', 4096);
-        $maxLoops = max(1, (int) config('ai.max_tool_rounds', 1));
+        $maxLoops = max(1, (int) config('ai.max_tool_rounds', 3));
         if (filter_var(config('ai.fast_mode', true), FILTER_VALIDATE_BOOLEAN)) {
-            $maxLoops = min($maxLoops, 1);
+            $fastCap = max(1, (int) config('ai.fast_mode_max_tool_rounds', 2));
+            $maxLoops = min($maxLoops, $fastCap);
+        }
+        // Compound questions often need several tools in one or two rounds.
+        if ($this->looksLikeMultiPartQuestion($message)) {
+            $maxLoops = max($maxLoops, min(3, (int) config('ai.max_tool_rounds', 3)));
         }
 
         try {
@@ -643,19 +722,10 @@ class AiToolChatService
                 $modelUsed = (string) ($turn['model'] ?? $modelUsed);
             }
 
-            $reply = trim((string) ($turn['text'] ?? ''));
-            if (
-                $reply === ''
-                || $this->toolResultReplyBuilder->looksLikeModelInstruction($reply)
-                || $this->toolResultReplyBuilder->looksLikeEchoedToolTip($reply, $lastToolResults)
-            ) {
-                $fallback = $this->fallbackReplyFromToolResults($lastToolResults, $toolsUsed);
-                if ($fallback !== '') {
-                    $reply = $fallback;
-                }
-            }
-            $reply = $this->appendTruncationNoticeIfNeeded(
-                $this->replyFormatter->format($reply),
+            [$reply] = $this->resolveReplyAfterTools(
+                (string) ($turn['text'] ?? ''),
+                $lastToolResults,
+                $toolsUsed,
                 $turn['finish_reason'] ?? null,
             );
 
@@ -823,7 +893,7 @@ Always prefer a concrete screen path (e.g. /suppliers) over vague advice.
 For "today", "yesterday", or "last 7 days", pass relative_date on sales/attendance tools — do not guess dates.
 For a calendar month, pass relative_date=this_month/last_month, year_month=YYYY-MM (e.g. 2026-08), or month=august with year=2026.
 For VAT / "VAT sales" / "VAT I need to pay" for a month, call get_vat_collected with that period — return vat_collected_total in KES and link /reports/vat-collected. Do not answer VAT amount questions with find_screen only.
-For one cashier/user, pass cashier_name or username to get_sales_by_cashier (never numeric user ids in the reply).
+For one cashier/user, pass cashier_name or username to get_sales_by_cashier (never numeric user ids in the reply). Quote tool fields exactly: gross_sales, amount_collected, and fully_paid_sales (till-style). Say which username was matched and branch_scope. Do not use get_sales_summary for a named cashier — that is org-wide. If the user means till X/Z, prefer fully_paid_sales and say so.
 For one customer statement or "what did they buy" / "what has she been buying", call get_customer_statement with customer_num from Conversation focus, @Customer, or customer_name — never invent an insight_type.
 For one supplier statement or "what did we buy from them", call get_supplier_statement with supplier_id from Conversation focus, @Supplier, or supplier_name and the period.
 For sales by product / "@Product sales report", call get_sales_by_product with product_codes from the resolved @Product mentions (and a date range). Do not invent totals.
@@ -845,7 +915,8 @@ Tools:
 - get_customer_statement — one customer's balance + period purchases with product line items (qty_label); use for statements, "what did they buy", and pronoun follow-ups about the focused customer
 - get_supplier_statement — one supplier's AP balance + period LPOs/payments with product line items (qty_label); use for supplier statements and "what did we buy from them"
 - get_till_health — till variance and payment mix
-- get_route_orders — mobile/route order debrief
+- get_route_orders — mobile/route order debrief for a period (relative_date=yesterday/today) and optional user/cashier; use for mobile sales
+- get_customer_returns — customer/product returns (credit returns) by period and optional returned_by user; use for "returns done by X"
 - get_route_details — one route by name/id: assigned users (who operates it), drivers, customers, recent orders
 - get_user_details — one user by name/username: role, branch, assigned sales routes (user_assigned_routes), linked employee/driver
 - get_employee_attendance — live HR attendance (clock in/out, late, absent) by employee name/code/username; supports this_month / year_month
@@ -854,7 +925,7 @@ Tools:
 - create_custom_report — build a report-builder report; ask for a name first if missing, then create and return /reports/custom/{id}
 - run_insight — AI insight data slices: anomaly_detection, forecast_light, margin_discount_watchdog, exception_radar, customer_360 (needs customer_num), procurement_companion, collections_playbook, branch_till_benchmarks, product_demand, etc.
 - get_profit_loss — gross/net profit, margins, COGS, expenses, prior-period comparison, top products by gross profit; use for P&L and profitability questions
-- get_expense_summary — expenses by category with MoM comparison; use for "why expenses up"
+- get_expense_summary — expenses by person (recorded_by) and/or org category; also mobile_route_expenses for a rep. For "CHEGE's expenses" ALWAYS pass user_name. Never say expenses are not per user.
 - get_customer_portfolio — inactive, declining, top customers, high credit utilization lists
 - get_inventory_valuation — stock cost/retail value, cash tied in inventory
 - get_cash_position — till float, payment mix, GL cash/bank, AR, estimated AP
@@ -865,6 +936,8 @@ Rules:
 - For "where is / how do I / which menu" questions, call find_screen (or use CENTRIX_DOCUMENTATION) and answer with the path.
 - For how Centrix works / FAQs / trained procedures: use matching platform_knowledge as guidance for approach; if none fit or you need more depth, call search_training_notes. Still answer in your own words.
 - When page context is present, prefer answering about that screen/filters before asking the user to clarify.
+- Multi-part questions (e.g. "mobile sales yesterday AND expenses AND returns by Jane"): call EVERY needed tool in the SAME turn when possible — get_route_orders + get_expense_summary + get_customer_returns (with the same relative_date / user_name). Do not answer only the first part. Structure the reply with clear headings for each part.
+- Expenses / returns for a named person (CHEGE, Jane, @User): Centrix stores who did them — expenses.recorded_by, mobile_route_expenses.user_id, customer_returns.returned_by. ALWAYS call get_expense_summary / get_customer_returns with user_name (or username). NEVER say expenses/returns are only org-level or cannot be attributed to a salesperson. If the filtered tool returns zero rows, say that person has no expenses/returns in the period — do not invent an org-wide utilities total as theirs.
 - Pronouns (he/she/him/her/his/they/them/their/this customer): resolve to Conversation focus / resolved entities. Do not ask which customer when focus is set. For "what has she been buying" / top products for that customer, call get_customer_statement with that customer_num — do NOT call run_insight with an invented insight_type.
 - Customer statements / what a customer bought / their balance: call get_customer_statement. Return balance plus markdown tables of purchases_by_product (and line_items if useful). Never claim you lack line-item access when the tool returns purchases.
 - Supplier statements / what we bought from a supplier / their balance: call get_supplier_statement. Return balance plus markdown tables of LPOs and purchases_by_product. Never claim you lack line-item access when the tool returns line_items.
