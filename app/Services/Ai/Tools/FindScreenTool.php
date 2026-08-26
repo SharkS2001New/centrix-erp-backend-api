@@ -141,6 +141,10 @@ class FindScreenTool implements AiToolInterface
                 'topic' => $entry['topic'] ?? null,
                 'content' => $entry['content'] ?? null,
                 'path' => $entry['path'] ?? null,
+                'usage' => $entry['usage'] ?? 'exemplar',
+                'sample_question' => $entry['sample_question'] ?? null,
+                'sample_answer_style' => $entry['sample_answer_style'] ?? null,
+                'how_to_use' => $entry['how_to_use'] ?? null,
             ];
         }
 
@@ -152,7 +156,8 @@ class FindScreenTool implements AiToolInterface
             'platform_knowledge' => array_slice($knowledge, 0, 5),
             'tip' => $screens === []
                 ? 'No exact screen match. Suggest the closest module from module_catalog in the system context, or ask the user to clarify.'
-                : 'Reply with the best path as a clickable Centrix link (e.g. /suppliers). Explain briefly what the screen is for.',
+                : 'Reply with the best path as a clickable Centrix link (e.g. /suppliers). Explain briefly what the screen is for. '
+                    .'If platform_knowledge notes are present, treat them as answer-style exemplars — do not paste them verbatim.',
             ...($screens === [] ? $this->nearMissWhenNoScreens($query, $modules, $workflows, $knowledge) : []),
         ];
     }

@@ -22,6 +22,7 @@ use App\Services\Ai\Tools\GetSupplierStatementTool;
 use App\Services\Ai\Tools\SearchTrainingNotesTool;
 use App\Services\Ai\Tools\GetProductDetailsTool;
 use App\Services\Ai\Tools\GetPurchasingOverviewTool;
+use App\Services\Ai\Tools\GetRouteDetailsTool;
 use App\Services\Ai\Tools\GetRouteOrdersTool;
 use App\Services\Ai\Tools\GetSalesBriefTool;
 use App\Services\Ai\Tools\GetSalesByCashierTool;
@@ -29,6 +30,7 @@ use App\Services\Ai\Tools\GetSalesByProductTool;
 use App\Services\Ai\Tools\GetSalesSummaryTool;
 use App\Services\Ai\Tools\GetStockSummaryTool;
 use App\Services\Ai\Tools\GetTillHealthTool;
+use App\Services\Ai\Tools\GetUserDetailsTool;
 use App\Services\Ai\Tools\GetVatCollectedTool;
 use App\Services\Ai\Tools\RunInsightTool;
 use InvalidArgumentException;
@@ -54,6 +56,8 @@ class AiToolRegistry
         protected GetSupplierStatementTool $getSupplierStatement,
         protected GetTillHealthTool $getTillHealth,
         protected GetRouteOrdersTool $getRouteOrders,
+        protected GetRouteDetailsTool $getRouteDetails,
+        protected GetUserDetailsTool $getUserDetails,
         protected GetEmployeeAttendanceTool $getEmployeeAttendance,
         protected GetEmployeeDetailsTool $getEmployeeDetails,
         protected GetEmployeePayrollPreviewTool $getEmployeePayrollPreview,
@@ -187,6 +191,8 @@ class AiToolRegistry
             $this->getSupplierStatement,
             $this->getTillHealth,
             $this->getRouteOrders,
+            $this->getRouteDetails,
+            $this->getUserDetails,
             $this->getEmployeeAttendance,
             $this->getEmployeeDetails,
             $this->getEmployeePayrollPreview,

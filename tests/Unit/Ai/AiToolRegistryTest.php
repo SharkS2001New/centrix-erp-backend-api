@@ -31,6 +31,8 @@ class AiToolRegistryTest extends TestCase
             'get_supplier_statement',
             'get_till_health',
             'get_route_orders',
+            'get_route_details',
+            'get_user_details',
             'get_employee_attendance',
             'get_employee_details',
             'get_employee_payroll_preview',

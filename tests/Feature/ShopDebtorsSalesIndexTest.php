@@ -209,6 +209,24 @@ class ShopDebtorsSalesIndexTest extends TestCase
             'archived' => 0,
             'created_at' => now(),
         ]);
+        $creditThenPaid = Sale::query()->create([
+            'order_num' => $suffix + 2,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'cashier_id' => $admin->id,
+            'channel' => 'pos',
+            'order_source' => 'pos',
+            'customer_num' => $suffix,
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'payment_method_code' => 'CASH',
+            'is_credit_sale' => 1,
+            'order_total' => 800,
+            'amount_paid' => 800,
+            'total_vat' => 0,
+            'archived' => 0,
+            'created_at' => now(),
+        ]);
 
         $from = now()->subDay()->toDateString();
         $to = now()->toDateString();
@@ -226,7 +244,10 @@ class ShopDebtorsSalesIndexTest extends TestCase
                 "/api/v1/sales?shop_debtors=1&filter[payment_status]=paid&from_date={$from}&to_date={$to}&per_page=200",
             )->assertOk()->json('data')
         )->pluck('id')->map(fn ($id) => (int) $id)->all();
-        $this->assertContains($cashToDebtor->id, $paidIds);
+        // Cash POS sales were never unpaid — must not appear on Paid Debtors.
+        $this->assertNotContains($cashToDebtor->id, $paidIds);
+        // Settled credit/AR for a saved regular customer belongs on Paid Debtors.
+        $this->assertContains($creditThenPaid->id, $paidIds);
         $this->assertNotContains($posCredit->id, $paidIds);
     }
 
@@ -692,6 +713,8 @@ class ShopDebtorsSalesIndexTest extends TestCase
         $livePaid = Sale::query()->create(array_merge($base, [
             'order_num' => $suffix,
             'customer_num' => $liveNum,
+            'is_credit_sale' => 1,
+            'payment_method_code' => 'CREDIT',
         ]));
         $walkInPaid = Sale::query()->create(array_merge($base, [
             'order_num' => $suffix + 1,
@@ -702,6 +725,12 @@ class ShopDebtorsSalesIndexTest extends TestCase
             'order_num' => $suffix + 2,
             'customer_num' => $deletedNum,
             'customer_name_override' => 'Walk-in',
+        ]));
+        $cashRegisteredPaid = Sale::query()->create(array_merge($base, [
+            'order_num' => $suffix + 3,
+            'customer_num' => $liveNum,
+            'is_credit_sale' => 0,
+            'payment_method_code' => 'CASH',
         ]));
 
         $from = now()->subDay()->toDateString();
@@ -715,5 +744,6 @@ class ShopDebtorsSalesIndexTest extends TestCase
         $this->assertContains($livePaid->id, $paidIds);
         $this->assertNotContains($walkInPaid->id, $paidIds);
         $this->assertNotContains($deletedCustomerPaid->id, $paidIds);
+        $this->assertNotContains($cashRegisteredPaid->id, $paidIds);
     }
 }

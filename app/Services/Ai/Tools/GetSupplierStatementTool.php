@@ -200,8 +200,8 @@ class GetSupplierStatementTool implements AiToolInterface
             'purchases_by_product' => $purchasesByProduct,
             'line_items' => $lineItems,
             'screens' => $this->screens((int) $supplier->id),
-            'tip' => 'Answer with balance due, then markdown tables of purchases (LPOs) and purchases_by_product '
-                .'(what was bought: product, qty_label, amount). Never claim you lack line-item access when line_items is present. '
+            'tip' => 'Answer with the supplier name and balance due, then markdown tables of purchases (LPOs) and purchases_by_product '
+                .'(product name, qty_label, amount — never supplier id/code or product_code columns). Never claim you lack line-item access when line_items is present. '
                 .'Quote amounts in KES exactly as returned.',
         ];
     }

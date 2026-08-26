@@ -29,6 +29,8 @@ class AiKnowledgeRelevanceTest extends TestCase
         $hits = $service->searchRelevant('is sugar sold in kg or bags?', 5);
 
         $this->assertNotEmpty($hits);
+        $this->assertSame('exemplar', $hits[0]['usage'] ?? null);
+        $this->assertArrayHasKey('sample_answer_style', $hits[0]);
         $this->assertStringContainsStringIgnoringCase('kg', (string) ($hits[0]['topic'].' '.$hits[0]['content']));
     }
 

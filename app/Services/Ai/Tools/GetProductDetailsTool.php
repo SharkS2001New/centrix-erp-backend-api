@@ -233,7 +233,9 @@ class GetProductDetailsTool implements AiToolInterface
             ->get(['product_code', 'product_name']);
 
         $ranked = $rows->map(function (Product $p) use ($searched) {
-            $label = trim((string) $p->product_name).' ('.(string) $p->product_code.')';
+            $label = trim((string) $p->product_name) !== ''
+                ? trim((string) $p->product_name)
+                : (string) $p->product_code;
 
             return [
                 'label' => $label,

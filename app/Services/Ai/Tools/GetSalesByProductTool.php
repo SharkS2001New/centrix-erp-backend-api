@@ -184,7 +184,7 @@ class GetSalesByProductTool implements AiToolInterface
             'screens' => $this->screens(),
             'tip' => $rows === []
                 ? 'No sales for these products in the period. Suggest widening dates or open /reports/sales-by-product.'
-                : 'Present a markdown table: Product | Code | Qty (qty_label) | Amount (KES). Use the @mentioned product names. Period: from_date–to_date.',
+                : 'Present a markdown table: Product | Qty (qty_label) | Amount (KES). Use product names only — never include product_code / Code columns. Period: from_date–to_date.',
         ];
     }
 
@@ -262,7 +262,9 @@ class GetSalesByProductTool implements AiToolInterface
             ->get(['product_code', 'product_name']);
 
         $ranked = $rows->map(function (Product $p) use ($searched) {
-            $label = trim((string) $p->product_name).' ('.(string) $p->product_code.')';
+            $label = trim((string) $p->product_name) !== ''
+                ? trim((string) $p->product_name)
+                : (string) $p->product_code;
 
             return [
                 'label' => $label,

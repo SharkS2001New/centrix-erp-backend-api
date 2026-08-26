@@ -298,12 +298,15 @@ class SaleController extends BaseResourceController
             }
         }
 
-        if ($shopDebtors) {
-            RouteOrderScope::applyShopDebtors($query);
-        }
-
         $paymentStatusFilter = data_get($request->input('filter', []), 'payment_status');
         $hasPaymentStatusFilter = is_string($paymentStatusFilter) && trim($paymentStatusFilter) !== '';
+
+        if ($shopDebtors) {
+            RouteOrderScope::applyShopDebtors(
+                $query,
+                $hasPaymentStatusFilter ? (string) $paymentStatusFilter : null,
+            );
+        }
 
         // Outstanding balance only when requested — do not force it for shop_debtors
         // alone so Paid Debtors can list fully settled shop credit orders.

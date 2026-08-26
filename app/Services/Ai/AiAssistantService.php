@@ -242,9 +242,12 @@ class AiAssistantService
                 } elseif ($actionType !== '' && ! $this->actionExecutor->canExecute($user, $actionType)) {
                     $result['reply'] = $this->actionExecutor->permissionDeclineMessage($actionType);
                     $result['message'] = $result['reply'];
-                } else {
+                } elseif ($this->actionExecutor->isNavigationAction($actionType)) {
+                    $result = $this->resolveNavigationAction($user, $result, $pending, $pathname);
+                } elseif ($this->actionExecutor->isWriteAction($actionType)) {
                     $result = $this->attachPendingAction($user, $result, $pending, $message, $pathname, $scope);
                 }
+                // Unknown action types: reply only — never show a Confirm strip.
             }
 
             return $result;
@@ -448,7 +451,9 @@ class AiAssistantService
                 if ($actionType !== '' && ! in_array($actionType, $scope['action_types'] ?? [], true)) {
                     $result['reply'] = $this->workspaceScope->declineMessage($scope);
                     $result['message'] = $result['reply'];
-                } else {
+                } elseif ($this->actionExecutor->isNavigationAction($actionType)) {
+                    $result = $this->resolveNavigationAction($user, $result, $pending, $pathname);
+                } elseif ($this->actionExecutor->isWriteAction($actionType)) {
                     $contextUser = clone $user;
                     $contextUser->organization_id = $organization->id;
                     $contextUser->is_admin = true;
@@ -725,7 +730,7 @@ When guiding to another module, give the Centrix path (e.g. /hr/employees) — c
 Do not invent numbers for other modules — for live sales/stock/purchasing data, tell them to ask again after switching workspace if create-actions are scoped here.
 
 Use entity_schemas in context — it lists every field, which are required, auto-generated, important, and FK relations (e.g. unit_id → uoms).
-Use platform_knowledge for ERP-wide facts trained by platform administrators — they apply to every organization. When a trained note matches the user's question, follow it over your own assumptions (procedures, labels, and screen paths).
+Use platform_knowledge as SAMPLE Q&A from platform admins (usage=exemplar). Each note shows the kind of thinking and reply shape to use for similar questions — NOT a canned answer to paste. Keep procedures, labels, and screen paths; write a fresh answer for THIS user; call live tools for current org data.
 Use navigation, module_catalog, and available_actions to act as Centrix documentation.
 
 INTERACTIVE FORMS: Select options are ALREADY in entity_detail / entity_schemas — never say you are fetching or ask the user to wait.
@@ -737,19 +742,20 @@ RULES:
 2. Navigation/help across modules is allowed. Decline only WRITE/create actions outside {$label} available_actions — suggest switching workspace.
 3. Use entity_schemas.field metadata: skip auto-generated fields unless user provides a value; use select options for FK fields.
 4. Normal orders = create_sales_order; held/save-only = create_held_order only when explicitly requested.
-5. Platform administrators train ERP-wide notes under Platform → AI training; they apply to all tenants.
+5. Platform administrators train ERP-wide sample Q&A under Platform → AI training; use them as exemplars of how to respond (not verbatim quotes).
 6. PERMISSIONS — read user_access in context:
    - user.is_admin=true or user_access.has_full_permissions=true → user has ALL permissions; never say they lack access.
    - Answer read-only questions using *_summary data in context when present.
    - Only decline WRITE actions not listed in available_actions.
 7. Always include clickable Centrix paths like /inventory/stock when telling users where to go.
 8. Only cite paths from navigation / workflows / find_screen — never invent menu paths.
-9. People: use username and full name — never numeric user id or employee id.
+9. Names only in replies: product_name (never product_code/SKU), customer_name (never customer_num), supplier_name (never id/code), people by full name and username (never numeric user/employee id).
 10. Formulas: plain text with real field names (Stock Value = Cost Price × Stock on Hand). Never LaTeX.
 11. Markdown headings (# ## ###) are fine; the UI renders them as real headings.
 12. Always reply in English. If a user writes in another language (e.g. Swahili), do not answer the ERP question — tell them Centrix AI expects questions in English only.
 13. Custom report builder: ask what to name the report, then emit create_report_template with name + instruction (or wait for confirmation). After save, give /reports/custom/{id}.
 14. Focus on the user's meaning, not punctuation or stray symbols (trailing ?, /, !, …). "…create an lpo for me /" means the same as with "?".
+15. Product/sales tables: Product | Qty | Amount — no Code column.
 
 ```action
 {"type":"create_product","summary":"New product Widget","params":{"product_name":"Widget","unit_price":150}}
@@ -809,11 +815,50 @@ PROMPT;
     /** @param  array<string, mixed>  $pending */
     protected function shouldAttachFormSpec(array $pending, string $message): bool
     {
+        if (! $this->actionExecutor->isWriteAction((string) ($pending['type'] ?? ''))) {
+            return false;
+        }
+
         if (! $this->isConversationalCreateAction($pending)) {
             return true;
         }
 
         return ! empty($pending['show_form']) || $this->actionExecutor->wantsFormUi($message);
+    }
+
+    /**
+     * Navigation deep links open immediately — no Confirm / Ready to create UI.
+     *
+     * @param  array<string, mixed>  $result
+     * @param  array<string, mixed>  $pending
+     * @return array<string, mixed>
+     */
+    protected function resolveNavigationAction(
+        User $user,
+        array $result,
+        array $pending,
+        ?string $pathname = null,
+    ): array {
+        $outcome = $this->actionExecutor->execute($user, $pending);
+        $nav = is_array($outcome['result'] ?? null) ? $outcome['result'] : [];
+        $path = (string) ($nav['path'] ?? $nav['href'] ?? '');
+
+        $result['pending_action'] = null;
+        $result['form_spec'] = null;
+        $result['action_result'] = $outcome;
+
+        if ($path !== '') {
+            $reply = trim((string) ($result['reply'] ?? ''));
+            $linkLine = "Open: {$path}";
+            if ($reply === '' || ! str_contains($reply, $path)) {
+                $result['reply'] = $reply !== ''
+                    ? rtrim($reply)."\n\n{$linkLine}"
+                    : ($outcome['message'] ?? $linkLine);
+                $result['message'] = $result['reply'];
+            }
+        }
+
+        return $result;
     }
 
     protected function defaultReplyForPendingAction(string $actionType, bool $hasForm, bool $trainingMode = false): string

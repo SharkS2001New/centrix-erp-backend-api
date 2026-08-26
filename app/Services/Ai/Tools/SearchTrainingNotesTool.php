@@ -30,9 +30,10 @@ class SearchTrainingNotesTool implements AiToolInterface
 
     public function description(): string
     {
-        return 'Search platform-trained Centrix knowledge notes (Q&A and how-to facts saved under Platform → AI training). '
-            .'Use when the user asks how Centrix works, standard procedures, terminology, or a trained FAQ — '
-            .'especially if the answer may already be in training notes. Returns topic, content, and path.';
+        return 'Search platform-trained Centrix knowledge notes (sample Q&A saved under Platform → AI training). '
+            .'These are EXEMPLARS of how to answer similar questions — not canned replies to paste. '
+            .'Use them for approach, structure, procedures, terminology, and screen paths; then write a fresh answer '
+            .'for the current user and call live tools for tenant numbers.';
     }
 
     public function parametersSchema(): array
@@ -94,7 +95,9 @@ class SearchTrainingNotesTool implements AiToolInterface
             'notes' => $notes,
             'hint' => $notes === []
                 ? 'No matching platform training notes. Answer from tools/documentation, or ask a platform admin to add a note under Platform → AI training.'
-                : 'Prefer these trained answers when they match. Still use live tools for tenant numbers (sales, stock, attendance).',
+                : 'Treat each note as an EXEMPLAR (usage=exemplar): copy the thinking/approach and screen paths, '
+                    .'but write a fresh answer for this user. Do NOT paste sample_answer_style / content verbatim. '
+                    .'Still use live tools for tenant numbers (sales, stock, attendance, routes).',
         ];
     }
 }

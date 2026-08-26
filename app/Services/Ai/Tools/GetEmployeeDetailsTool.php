@@ -129,9 +129,11 @@ class GetEmployeeDetailsTool implements AiToolInterface
                 ],
                 ...$this->screens(),
             ],
-            'tip' => 'Answer with the employee\'s name and username. Use basic_salary / base_salary for pay questions. '
-                .'Include assigned shift times and pays_sha when relevant. Do not say you lack access when this tool returned data. '
-                .'For month salary / net pay with attendance, call get_employee_payroll_preview — do not invent 22-day formulas.',
+            'tip' => 'Answer with the employee\'s full name and username only — never numeric employee id or employee code. Use basic_salary / base_salary for pay questions. '
+                .'Include assigned shift times and pays_sha when relevant. When assigned_routes is present, list those route names for "which routes does X operate?" questions. '
+                .'Do not say you lack access when this tool returned data. '
+                .'For month salary / net pay with attendance, call get_employee_payroll_preview — do not invent 22-day formulas. '
+                .'For richer user/login/route assignment, also call get_user_details with the username.',
         ];
     }
 
@@ -143,10 +145,13 @@ class GetEmployeeDetailsTool implements AiToolInterface
         $name = (string) ($employee->full_name ?: trim($employee->first_name.' '.$employee->last_name));
         $baseSalary = $employee->base_salary !== null ? (float) $employee->base_salary : null;
         $allowance = $employee->monthly_allowance !== null ? (float) $employee->monthly_allowance : null;
+        $assignedRoutes = $this->assignedRoutesForLinkedUser($employee);
 
         return [
             'name' => $name,
             'username' => $employee->user?->username,
+            'assigned_routes' => $assignedRoutes,
+            'assigned_route_count' => count($assignedRoutes),
             'employee_code' => $employee->employee_code ? (string) $employee->employee_code : null,
             'payroll_number' => $employee->payroll_number ? (string) $employee->payroll_number : null,
             'first_name' => $employee->first_name,
@@ -239,6 +244,46 @@ class GetEmployeeDetailsTool implements AiToolInterface
                 : [],
             'profile_path' => '/hr/employees/'.$employee->id,
         ];
+    }
+
+    /**
+     * Sales routes assigned to the employee's linked login user.
+     *
+     * @return list<array<string, mixed>>
+     */
+    protected function assignedRoutesForLinkedUser(Employee $employee): array
+    {
+        $user = $employee->user;
+        if (! $user) {
+            return [];
+        }
+
+        $byId = [];
+        if ($user->relationLoaded('assignedRoutes')) {
+            foreach ($user->assignedRoutes as $route) {
+                $byId[(int) $route->id] = [
+                    'id' => (int) $route->id,
+                    'route_name' => (string) ($route->route_name ?? ''),
+                    'direction' => $route->direction ? (string) $route->direction : null,
+                    'is_active' => (bool) ($route->is_active ?? true),
+                ];
+            }
+        }
+
+        $legacyId = (int) ($user->assigned_route_id ?? 0);
+        if ($legacyId > 0 && ! isset($byId[$legacyId])) {
+            $legacy = \App\Models\RouteModel::query()->find($legacyId);
+            if ($legacy) {
+                $byId[$legacyId] = [
+                    'id' => $legacyId,
+                    'route_name' => (string) ($legacy->route_name ?? ''),
+                    'direction' => $legacy->direction ? (string) $legacy->direction : null,
+                    'is_active' => (bool) ($legacy->is_active ?? true),
+                ];
+            }
+        }
+
+        return array_values($byId);
     }
 
     protected function formatClock(mixed $value): ?string

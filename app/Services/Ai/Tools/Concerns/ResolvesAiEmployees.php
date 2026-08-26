@@ -59,7 +59,8 @@ trait ResolvesAiEmployees
         $query = Employee::query()->where('organization_id', $organizationId);
         if ($withRelations) {
             $query->with([
-                'user:id,username,full_name',
+                'user:id,username,full_name,assigned_route_id',
+                'user.assignedRoutes:id,organization_id,branch_id,route_name,direction,is_active',
                 'department:id,department_name',
                 'position:id,position_title',
                 'shift:id,shift_name,shift_code,start_time,end_time,lunch_minutes,lunch_required,crosses_midnight,work_weekdays,works_saturday,works_sunday,works_public_holidays,use_alternate_hours,alternate_start_time,alternate_end_time',
@@ -69,7 +70,10 @@ trait ResolvesAiEmployees
                 'deductions',
             ]);
         } else {
-            $query->with(['user:id,username,full_name']);
+            $query->with([
+                'user:id,username,full_name,assigned_route_id',
+                'user.assignedRoutes:id,organization_id,branch_id,route_name,direction,is_active',
+            ]);
         }
 
         return $query
@@ -100,7 +104,10 @@ trait ResolvesAiEmployees
 
         $query = Employee::query()->where('organization_id', $organizationId);
         if ($withRelations) {
-            $query->with(['user:id,username,full_name']);
+            $query->with([
+                'user:id,username,full_name,assigned_route_id',
+                'user.assignedRoutes:id,organization_id,branch_id,route_name,direction,is_active',
+            ]);
         }
 
         return $query
@@ -130,7 +137,8 @@ trait ResolvesAiEmployees
 
         if ($withRelations) {
             $query->with([
-                'user:id,username,full_name',
+                'user:id,username,full_name,assigned_route_id',
+                'user.assignedRoutes:id,organization_id,branch_id,route_name,direction,is_active',
                 'department:id,department_name',
                 'position:id,position_title',
                 'shift:id,shift_name,shift_code,start_time,end_time,lunch_minutes,lunch_required,crosses_midnight,work_weekdays,works_saturday,works_sunday,works_public_holidays,use_alternate_hours,alternate_start_time,alternate_end_time',

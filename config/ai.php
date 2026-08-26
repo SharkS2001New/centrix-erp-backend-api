@@ -96,6 +96,8 @@ return [
         'get_supplier_statement' => true,
         'get_till_health' => true,
         'get_route_orders' => true,
+        'get_route_details' => true,
+        'get_user_details' => true,
         'get_employee_attendance' => true,
         'get_employee_details' => true,
         'get_employee_payroll_preview' => true,

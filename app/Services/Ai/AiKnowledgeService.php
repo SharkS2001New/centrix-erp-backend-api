@@ -495,12 +495,22 @@ class AiKnowledgeService
     /** @return array<string, mixed> */
     protected function formatEntry(AiKnowledgeEntry $entry): array
     {
+        $topic = (string) $entry->topic;
+        $content = (string) $entry->content;
+
         return [
             'id' => $entry->id,
-            'topic' => $entry->topic,
+            'topic' => $topic,
             'path' => $entry->path,
             'workspace_id' => $entry->workspace_id,
-            'content' => $entry->content,
+            'content' => $content,
+            // Explicit exemplar fields so the model does not treat Q/A as a canned reply.
+            'usage' => 'exemplar',
+            'sample_question' => $this->stripQaPrefix($topic),
+            'sample_answer_style' => $this->stripQaPrefix($content),
+            'how_to_use' => 'This is a SAMPLE of how to think and structure a reply for similar questions — '
+                .'not a canned answer to paste. Keep the same approach, facts pattern, and screen paths, '
+                .'but write a fresh answer for THIS user\'s question; call live tools for current org data.',
             'source' => $entry->source,
             'scope' => $entry->organization_id === null ? 'platform' : 'organization',
             'confirmed' => $entry->confirmed,
@@ -508,6 +518,15 @@ class AiKnowledgeService
             'created_at' => $entry->created_at?->toIso8601String(),
             'updated_at' => $entry->updated_at?->toIso8601String(),
         ];
+    }
+
+    /** Strip leading "Q:" / "A:" labels often used when saving training pairs. */
+    protected function stripQaPrefix(string $text): string
+    {
+        $trimmed = trim($text);
+        $trimmed = preg_replace('/^(?:q|question|a|answer)\s*[:\-]\s*/iu', '', $trimmed) ?? $trimmed;
+
+        return trim($trimmed);
     }
 
     protected function findGlobalEntry(int $entryId): ?AiKnowledgeEntry

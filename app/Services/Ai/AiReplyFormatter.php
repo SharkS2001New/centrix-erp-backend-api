@@ -41,8 +41,157 @@ class AiReplyFormatter
     public function format(string $text): string
     {
         $text = $this->latexToPlain($text);
+        $text = $this->stripRedundantIdentityColumns($text);
 
         return $this->canonicalizePaths($text);
+    }
+
+    /**
+     * Drop Code / SKU / Id columns from markdown tables when a name column is present.
+     * Centrix AI shows product/customer/supplier/employee names only.
+     */
+    public function stripRedundantIdentityColumns(string $text): string
+    {
+        $lines = preg_split("/\r\n|\n|\r/", $text);
+        if ($lines === false || count($lines) < 2) {
+            return $text;
+        }
+
+        $out = [];
+        $i = 0;
+        $n = count($lines);
+
+        while ($i < $n) {
+            $headerCells = $this->splitMarkdownRow($lines[$i]);
+            $nextIsSeparator = ($i + 1) < $n && $this->isMarkdownSeparatorRow($lines[$i + 1]);
+
+            if ($headerCells === [] || ! $nextIsSeparator) {
+                $out[] = $lines[$i];
+                $i++;
+
+                continue;
+            }
+
+            $dropIndexes = $this->identityColumnIndexesToDrop($headerCells);
+            if ($dropIndexes === []) {
+                $out[] = $lines[$i];
+                $i++;
+
+                continue;
+            }
+
+            // Header + separator + following data rows.
+            while ($i < $n) {
+                $cells = $this->splitMarkdownRow($lines[$i]);
+                if ($cells === [] && trim($lines[$i]) !== '') {
+                    break;
+                }
+                if ($cells === []) {
+                    $out[] = $lines[$i];
+                    $i++;
+                    break;
+                }
+                if (count($cells) !== count($headerCells) && ! $this->isMarkdownSeparatorRow($lines[$i])) {
+                    // Different table / prose — stop.
+                    if ($i > 0 && isset($out[count($out) - 1]) === false) {
+                        // no-op
+                    }
+                    break;
+                }
+
+                $kept = [];
+                foreach ($cells as $col => $cell) {
+                    if (! isset($dropIndexes[$col])) {
+                        $kept[] = $cell;
+                    }
+                }
+                if ($kept !== []) {
+                    $out[] = '| '.implode(' | ', $kept).' |';
+                }
+                $i++;
+
+                // After separator, keep consuming rows that look like table rows with same width.
+                if ($i < $n && ! $this->isMarkdownSeparatorRow($lines[$i - 1])) {
+                    // already advanced; continue while next line is a same-width table row
+                }
+                if ($i >= $n) {
+                    break;
+                }
+                $peek = $this->splitMarkdownRow($lines[$i]);
+                if ($peek === [] || (count($peek) !== count($headerCells) && ! $this->isMarkdownSeparatorRow($lines[$i]))) {
+                    break;
+                }
+            }
+        }
+
+        return implode("\n", $out);
+    }
+
+    /**
+     * @param  list<string>  $headerCells
+     * @return array<int, true>
+     */
+    protected function identityColumnIndexesToDrop(array $headerCells): array
+    {
+        $hasNameColumn = false;
+        foreach ($headerCells as $header) {
+            $h = mb_strtolower(trim($header));
+            if ($h === '' || $h === '#') {
+                continue;
+            }
+            if (preg_match('/\b(product|customer|supplier|employee|cashier|user|name)\b/u', $h)
+                && ! preg_match('/\b(code|sku|id|num|number)\b/u', $h)) {
+                $hasNameColumn = true;
+                break;
+            }
+        }
+        if (! $hasNameColumn) {
+            return [];
+        }
+
+        $dropIndexes = [];
+        foreach ($headerCells as $i => $header) {
+            $h = mb_strtolower(trim($header));
+            if ($h === '') {
+                continue;
+            }
+            if (preg_match('/^(code|sku|product\s*code|item\s*code|barcode)$/u', $h)
+                || preg_match('/^(id|user\s*id|employee\s*id|employee\s*code|supplier\s*id|supplier\s*code|customer\s*(#|num|number|id))$/u', $h)
+                || preg_match('/\b(product\s*code|sku)\b/u', $h)) {
+                $dropIndexes[$i] = true;
+            }
+        }
+
+        return $dropIndexes;
+    }
+
+    protected function isMarkdownSeparatorRow(string $line): bool
+    {
+        $line = trim($line);
+        if ($line === '' || ! str_contains($line, '|')) {
+            return false;
+        }
+
+        return (bool) preg_match('/^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/u', $line);
+    }
+
+    /** @return list<string> */
+    protected function splitMarkdownRow(string $line): array
+    {
+        $line = trim($line);
+        if ($line === '' || ! str_contains($line, '|')) {
+            return [];
+        }
+        if ($this->isMarkdownSeparatorRow($line)) {
+            $line = trim($line, '|');
+            $parts = explode('|', $line);
+
+            return array_map(static fn ($p) => trim((string) $p), $parts);
+        }
+        $line = trim($line, '|');
+        $parts = explode('|', $line);
+
+        return array_map(static fn ($p) => trim((string) $p), $parts);
     }
 
     public function latexToPlain(string $text): string

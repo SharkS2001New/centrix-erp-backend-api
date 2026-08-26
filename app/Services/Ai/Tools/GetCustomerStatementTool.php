@@ -176,7 +176,7 @@ class GetCustomerStatementTool implements AiToolInterface
             'invoices' => $invoices,
             'payments' => $payments,
             'screens' => $this->screens($customerNum),
-            'tip' => 'Answer with balance, then a markdown table of what they bought (product, qty_label, amount). '
+            'tip' => 'Answer with the customer name and balance, then a markdown table of what they bought (product name, qty_label, amount) — never customer_num or product_code columns. '
                 .'Do not claim you lack line-item access — purchases_by_product and line_items are the statement detail. '
                 .'Quote amounts in KES exactly as returned.',
         ];

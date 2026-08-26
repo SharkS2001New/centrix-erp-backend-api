@@ -851,6 +851,23 @@ class AiActionExecutor
         return (bool) preg_match('/^(yes|yeah|yep|confirm|proceed|go ahead|do it|create it|ok|okay)\b/i', trim($message));
     }
 
+    /** Read-only deep links — never require a Confirm button. */
+    public function isNavigationAction(string $type): bool
+    {
+        return in_array($type, [
+            'navigate_orders',
+            'open_lpo',
+            'open_customer_collections',
+            'open_product',
+        ], true);
+    }
+
+    /** Write/create actions that may use an inline form or Confirm. */
+    public function isWriteAction(string $type): bool
+    {
+        return str_starts_with($type, 'create_') || $type === 'record_customer_payment';
+    }
+
     /** User explicitly wants the inline confirmation form (not chat-only collection). */
     public function wantsFormUi(string $message): bool
     {

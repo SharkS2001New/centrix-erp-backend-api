@@ -155,13 +155,17 @@ class RouteOrderScope
     }
 
     /**
-     * Shop Debtors: same sales list as Unpaid / Partial / Paid Orders, scoped to
-     * saved regular & debtor customers only (never walk-in / route / deleted).
-     * Payment bucket is applied separately.
+     * Shop Debtors: unpaid / partial / paid queues for saved regular & debtor customers
+     * only (never walk-in / route / soft-deleted).
+     *
+     * Paid bucket is settled credit/AR only (is_credit_sale) — ordinary cash sales to a
+     * registered customer or walk-in POS tickets must not appear on Paid Debtors.
+     *
+     * @param  string|null  $paymentBucket  unpaid|partial|paid when known
      */
-    public static function applyShopDebtors(Builder $query): Builder
+    public static function applyShopDebtors(Builder $query, ?string $paymentBucket = null): Builder
     {
-        return $query
+        $query
             ->whereNotNull('sales.customer_num')
             ->where('sales.customer_num', '>', 0)
             ->whereExists(function ($sub) {
@@ -172,6 +176,14 @@ class RouteOrderScope
                     ->whereNull('customers.deleted_at')
                     ->whereIn('customers.customer_type', ['regular', 'debtor']);
             });
+
+        if ($paymentBucket !== null
+            && \App\Support\SalePaymentStatus::normalizeLabel($paymentBucket) === \App\Support\SalePaymentStatus::PAID
+        ) {
+            $query->where('sales.is_credit_sale', 1);
+        }
+
+        return $query;
     }
 
     /**
