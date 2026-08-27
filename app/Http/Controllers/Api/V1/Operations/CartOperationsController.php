@@ -2154,9 +2154,11 @@ class CartOperationsController extends Controller
     }
 
     /**
-     * When cash rounding is enabled and the client did not send an authoritative
-     * amount (mobile historically omitted it), round the server-computed line
-     * total the same way External POS does.
+     * When cash rounding is enabled, round the line total the same way External POS
+     * does (Light Stores last-digit rules). Idempotent for already-rounded totals
+     * (they always end in 0 or 5). Mobile historically posted raw unit×qty amounts
+     * that skipped this path when `amount` was present — always round here so
+     * stored line amounts match the cart footer.
      *
      * @param  array<string, mixed>  $line
      * @param  array<string, mixed>  $salesSettings
@@ -2168,19 +2170,17 @@ class CartOperationsController extends Controller
         array $line,
         float $amount,
     ): float {
-        if (array_key_exists('amount', $line) && $line['amount'] !== null && $line['amount'] !== '') {
-            return round(max(0.0, $amount), 2);
-        }
+        $amount = max(0.0, (float) $amount);
 
         if (! in_array((string) $cart->channel, ['pos', 'backend', 'mobile'], true)) {
-            return round(max(0.0, $amount), 2);
+            return round($amount, 2);
         }
 
         $customSales = is_array($gate->organization()?->module_settings['sales'] ?? null)
             ? $gate->organization()->module_settings['sales']
             : [];
         if (! \App\Services\Sales\PosCashRoundingSettings::enabled($salesSettings, $customSales)) {
-            return round(max(0.0, $amount), 2);
+            return round($amount, 2);
         }
 
         return \App\Services\Sales\PosCashRounding::roundLightStoresAmount($amount);
