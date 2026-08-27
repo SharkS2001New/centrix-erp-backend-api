@@ -288,6 +288,9 @@ class SupplierModuleService
         if ($supplierId = $request->input('supplier_id') ?? $request->input('filter.supplier_id')) {
             $query->where('supplier_id', (int) $supplierId);
         }
+        if ($lpoNo = $request->input('lpo_no') ?? $request->input('filter.lpo_no')) {
+            $query->where('lpo_no', (int) $lpoNo);
+        }
         if ($from = $request->input('date_from') ?? $request->input('filter.date_from')) {
             $query->whereDate('date_paid', '>=', $from);
         }

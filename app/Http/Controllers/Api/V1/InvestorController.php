@@ -99,6 +99,7 @@ class InvestorController extends Controller
             'contributions.batches',
             'batches',
             'spendLinks' => fn ($q) => $q->orderByDesc('spend_date')->orderByDesc('id'),
+            'spendLinks.supplier:id,supplier_name,supplier_code',
         ]);
 
         return response()->json([
@@ -214,6 +215,8 @@ class InvestorController extends Controller
             ])],
             'reference_id' => ['nullable', 'integer'],
             'reference_label' => ['nullable', 'string', 'max:255'],
+            'supplier_id' => ['nullable', 'integer'],
+            'lpo_no' => ['nullable', 'integer'],
             'amount' => ['nullable', 'numeric', 'gt:0'],
             'spend_date' => ['required', 'date'],
             'contribution_id' => ['nullable', 'integer'],

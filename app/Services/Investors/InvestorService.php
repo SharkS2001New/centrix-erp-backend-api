@@ -7,10 +7,12 @@ use App\Models\Investor;
 use App\Models\InvestorContribution;
 use App\Models\InvestorProductBatch;
 use App\Models\InvestorSpendLink;
+use App\Models\LpoMst;
 use App\Models\LpoTxn;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\SaleItem;
+use App\Models\Supplier;
 use App\Models\SupplierPayment;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -241,50 +243,125 @@ class InvestorService
     public function recordSpend(Investor $investor, array $data, ?int $userId = null): InvestorSpendLink
     {
         $type = strtolower(trim((string) ($data['spend_type'] ?? InvestorSpendLink::TYPE_OTHER)));
-        $amount = round((float) ($data['amount'] ?? 0), 2);
+        $hasExplicitAmount = array_key_exists('amount', $data)
+            && $data['amount'] !== null
+            && $data['amount'] !== '';
+        $amount = $hasExplicitAmount ? round((float) $data['amount'], 2) : 0.0;
+
+        $label = $data['reference_label'] ?? null;
+        $referenceId = isset($data['reference_id']) ? (int) $data['reference_id'] : null;
+        $supplierId = isset($data['supplier_id']) ? (int) $data['supplier_id'] : null;
+        $lpoNo = isset($data['lpo_no']) ? (int) $data['lpo_no'] : null;
+        $orgId = (int) $investor->organization_id;
+
+        if ($type === InvestorSpendLink::TYPE_SUPPLIER_PAYMENT && $referenceId) {
+            $payment = SupplierPayment::query()
+                ->with('supplier:id,supplier_name,supplier_code')
+                ->where('organization_id', $orgId)
+                ->where('id', $referenceId)
+                ->firstOrFail();
+            $supplierId = (int) $payment->supplier_id;
+            $lpoNo = $payment->lpo_no ? (int) $payment->lpo_no : null;
+            $label = $label ?: $this->supplierPaymentSpendLabel($payment);
+            if (! $hasExplicitAmount) {
+                $amount = round((float) $payment->amount_paid, 2);
+            }
+        }
+
+        if ($type === InvestorSpendLink::TYPE_SUPPLIER_PAYMENT && ! $referenceId) {
+            if ($lpoNo) {
+                $lpo = LpoMst::query()
+                    ->with('supplier:id,supplier_name,supplier_code')
+                    ->where('organization_id', $orgId)
+                    ->where('lpo_no', $lpoNo)
+                    ->first();
+                if (! $lpo) {
+                    throw ValidationException::withMessages([
+                        'lpo_no' => ['The selected LPO was not found for this organization.'],
+                    ]);
+                }
+                $supplierId = (int) ($lpo->supplier_id ?: $supplierId);
+                if (! $label) {
+                    $supplierName = $lpo->supplier?->supplier_name;
+                    $label = 'LPO #'.$lpoNo.($supplierName ? ' · '.$supplierName : '');
+                }
+            } elseif ($supplierId) {
+                $supplier = Supplier::query()
+                    ->where('organization_id', $orgId)
+                    ->where('id', $supplierId)
+                    ->first();
+                if (! $supplier) {
+                    throw ValidationException::withMessages([
+                        'supplier_id' => ['The selected supplier was not found for this organization.'],
+                    ]);
+                }
+                $label = $label ?: ('Supplier payment · '.$supplier->supplier_name);
+            } else {
+                throw ValidationException::withMessages([
+                    'lpo_no' => ['Choose an LPO or a supplier so this spend can be traced across payments.'],
+                ]);
+            }
+        }
+
+        if ($supplierId && $type === InvestorSpendLink::TYPE_SUPPLIER_PAYMENT && ! $referenceId) {
+            $supplierOk = Supplier::query()
+                ->where('organization_id', $orgId)
+                ->where('id', $supplierId)
+                ->exists();
+            if (! $supplierOk) {
+                throw ValidationException::withMessages([
+                    'supplier_id' => ['The selected supplier was not found for this organization.'],
+                ]);
+            }
+        }
+
+        if ($type === InvestorSpendLink::TYPE_EXPENSE && $referenceId) {
+            $expense = Expense::query()
+                ->where('organization_id', $orgId)
+                ->where('id', $referenceId)
+                ->firstOrFail();
+            $label = $label ?: ('Expense: '.($expense->description ?: '#'.$expense->id));
+            if (! $hasExplicitAmount) {
+                $amount = round((float) $expense->expense_amount, 2);
+            }
+        }
+
         if ($amount <= 0) {
             throw ValidationException::withMessages([
                 'amount' => ['Spend amount must be greater than zero.'],
             ]);
         }
 
-        $label = $data['reference_label'] ?? null;
-        $referenceId = isset($data['reference_id']) ? (int) $data['reference_id'] : null;
-
-        if ($type === InvestorSpendLink::TYPE_SUPPLIER_PAYMENT && $referenceId) {
-            $payment = SupplierPayment::query()
-                ->where('organization_id', $investor->organization_id)
-                ->where('id', $referenceId)
-                ->firstOrFail();
-            $label = $label ?: ('Supplier payment #'.$payment->id.($payment->reference_number ? ' / '.$payment->reference_number : ''));
-            if (! isset($data['amount'])) {
-                $amount = (float) $payment->amount_paid;
-            }
-        }
-
-        if ($type === InvestorSpendLink::TYPE_EXPENSE && $referenceId) {
-            $expense = Expense::query()
-                ->where('organization_id', $investor->organization_id)
-                ->where('id', $referenceId)
-                ->firstOrFail();
-            $label = $label ?: ('Expense: '.($expense->description ?: '#'.$expense->id));
-            if (! isset($data['amount'])) {
-                $amount = (float) $expense->expense_amount;
-            }
-        }
-
         return InvestorSpendLink::query()->create([
-            'organization_id' => (int) $investor->organization_id,
+            'organization_id' => $orgId,
             'investor_id' => (int) $investor->id,
             'contribution_id' => $data['contribution_id'] ?? null,
             'spend_type' => $type,
             'reference_id' => $referenceId,
             'reference_label' => $label,
+            'supplier_id' => $supplierId,
+            'lpo_no' => $lpoNo,
             'amount' => $amount,
             'spend_date' => $data['spend_date'] ?? now()->toDateString(),
             'notes' => $data['notes'] ?? null,
             'created_by' => $userId,
-        ]);
+        ])->load(['supplier:id,supplier_name,supplier_code']);
+    }
+
+    protected function supplierPaymentSpendLabel(SupplierPayment $payment): string
+    {
+        $parts = ['Supplier payment #'.$payment->id];
+        if ($payment->reference_number) {
+            $parts[] = (string) $payment->reference_number;
+        }
+        if ($payment->lpo_no) {
+            $parts[] = 'LPO #'.$payment->lpo_no;
+        }
+        if ($payment->supplier?->supplier_name) {
+            $parts[] = $payment->supplier->supplier_name;
+        }
+
+        return implode(' · ', $parts);
     }
 
     /**

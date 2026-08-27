@@ -6,7 +6,11 @@ use App\Http\Middleware\EnsureOrganizationLicenseActive;
 use App\Models\Investor;
 use App\Models\InvestorContribution;
 use App\Models\InvestorProductBatch;
+use App\Models\InvestorSpendLink;
+use App\Models\LpoMst;
 use App\Models\Organization;
+use App\Models\Supplier;
+use App\Models\SupplierPayment;
 use App\Models\User;
 use App\Services\Erp\PermissionMatrixService;
 use Laravel\Sanctum\Sanctum;
@@ -103,6 +107,74 @@ class InvestorFlowTest extends TestCase
         $this->assertSame(1, Investor::query()->where('id', $investorId)->count());
         $this->assertSame(2, InvestorContribution::query()->where('investor_id', $investorId)->count());
         $this->assertSame(1, InvestorProductBatch::query()->where('investor_id', $investorId)->count());
+    }
+
+    public function test_link_supplier_payment_spend_against_lpo_or_supplier(): void
+    {
+        $investorId = (int) $this->postJson('/api/v1/investors', [
+            'investor_name' => 'Spend Trace Investor',
+        ])->assertCreated()->json('id');
+
+        $supplier = Supplier::where('supplier_code', 'SUP-001')->firstOrFail();
+        $lpo = LpoMst::query()
+            ->where('organization_id', $this->user->organization_id)
+            ->whereNotNull('supplier_id')
+            ->orderByDesc('lpo_no')
+            ->first();
+
+        if ($lpo) {
+            $this->postJson("/api/v1/investors/{$investorId}/spends", [
+                'spend_type' => 'supplier_payment',
+                'spend_date' => now()->toDateString(),
+                'amount' => 750,
+                'lpo_no' => $lpo->lpo_no,
+            ])
+                ->assertCreated()
+                ->assertJsonPath('lpo_no', $lpo->lpo_no)
+                ->assertJsonPath('supplier_id', (int) $lpo->supplier_id)
+                ->assertJsonPath('amount', 750);
+        }
+
+        $this->postJson("/api/v1/investors/{$investorId}/spends", [
+            'spend_type' => 'supplier_payment',
+            'spend_date' => now()->toDateString(),
+            'amount' => 120,
+            'supplier_id' => $supplier->id,
+        ])
+            ->assertCreated()
+            ->assertJsonPath('supplier_id', $supplier->id)
+            ->assertJsonPath('lpo_no', null);
+
+        $this->assertDatabaseHas('investor_spend_links', [
+            'investor_id' => $investorId,
+            'spend_type' => InvestorSpendLink::TYPE_SUPPLIER_PAYMENT,
+            'supplier_id' => $supplier->id,
+            'amount' => 120,
+        ]);
+
+        $payment = SupplierPayment::query()
+            ->where('organization_id', $this->user->organization_id)
+            ->where('supplier_id', $supplier->id)
+            ->orderByDesc('id')
+            ->first();
+
+        if ($payment) {
+            $this->postJson("/api/v1/investors/{$investorId}/spends", [
+                'spend_type' => 'supplier_payment',
+                'spend_date' => now()->toDateString(),
+                'reference_id' => $payment->id,
+            ])
+                ->assertCreated()
+                ->assertJsonPath('reference_id', $payment->id)
+                ->assertJsonPath('supplier_id', (int) $payment->supplier_id)
+                ->assertJsonPath('amount', (float) $payment->amount_paid);
+        }
+
+        $this->postJson("/api/v1/investors/{$investorId}/spends", [
+            'spend_type' => 'supplier_payment',
+            'spend_date' => now()->toDateString(),
+            'amount' => 100,
+        ])->assertStatus(422);
     }
 
     public function test_module_disabled_blocks_access(): void

@@ -20,6 +20,8 @@ class InvestorSpendLink extends Model
         'spend_type',
         'reference_id',
         'reference_label',
+        'supplier_id',
+        'lpo_no',
         'amount',
         'spend_date',
         'notes',
@@ -29,6 +31,8 @@ class InvestorSpendLink extends Model
     protected $casts = [
         'amount' => 'float',
         'spend_date' => 'date',
+        'supplier_id' => 'integer',
+        'lpo_no' => 'integer',
     ];
 
     public function investor(): BelongsTo
@@ -39,5 +43,10 @@ class InvestorSpendLink extends Model
     public function contribution(): BelongsTo
     {
         return $this->belongsTo(InvestorContribution::class, 'contribution_id');
+    }
+
+    public function supplier(): BelongsTo
+    {
+        return $this->belongsTo(Supplier::class);
     }
 }
