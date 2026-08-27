@@ -150,12 +150,14 @@ class AiAssistantService
 
         $normalizedRefs = \App\Support\EntityMentionRefs::normalize($entityRefs);
 
-        // Create / write intents stay on the classic assistant (forms + confirm).
-        // Tool chat is used for Gemini data Q&A (and OpenAI when AI_USE_TOOL_CHAT=true),
-        // with automatic fallback to classic Gemini/OpenAI if the tool path fails.
+        // Create / write intents stay on the classic assistant (forms + confirm + POST).
+        // Tool chat is for data Q&A — never use it while a pending write is being collected,
+        // or "confirm" will get a chat reply instead of executing create_lpo / etc.
         $inferredCreate = $this->intentResolver->inferCreateAction($message, $history, $pathname);
+        $pendingWrite = is_array($pendingAction)
+            && $this->actionExecutor->isWriteAction((string) ($pendingAction['type'] ?? ''));
         $provider = strtolower((string) ($runtime['provider'] ?? config('ai.provider', 'openai')));
-        $preferToolChat = ! $inferredCreate && (
+        $preferToolChat = ! $inferredCreate && ! $pendingWrite && (
             $provider === 'gemini'
             || ($provider === 'openai' && filter_var(config('ai.use_tool_chat', false), FILTER_VALIDATE_BOOLEAN))
         );
@@ -286,8 +288,22 @@ class AiAssistantService
                 $pending = [
                     'type' => $parsedAction['type'] ?? null,
                     'summary' => $parsedAction['summary'] ?? ($parsedAction['label'] ?? 'Proposed action'),
-                    'params' => $parsedAction['params'] ?? [],
+                    'params' => is_array($parsedAction['params'] ?? null) ? $parsedAction['params'] : [],
                 ];
+                // Keep previously collected fields when the model re-emits the same action type.
+                if (
+                    is_array($pendingAction)
+                    && (string) ($pendingAction['type'] ?? '') !== ''
+                    && (string) ($pendingAction['type'] ?? '') === (string) ($pending['type'] ?? '')
+                ) {
+                    $pending['params'] = array_merge(
+                        is_array($pendingAction['params'] ?? null) ? $pendingAction['params'] : [],
+                        $pending['params'],
+                    );
+                    if (empty($pending['summary']) && ! empty($pendingAction['summary'])) {
+                        $pending['summary'] = $pendingAction['summary'];
+                    }
+                }
             } elseif ($pendingAction && $this->shouldContinuePendingAction($message, $history, $pathname)) {
                 $pending = $pendingAction;
             } else {
@@ -304,6 +320,7 @@ class AiAssistantService
             }
 
             if ($pending) {
+                $pending = $this->enrichPendingActionFromEntityRefs($pending, $normalizedRefs);
                 $actionType = (string) ($pending['type'] ?? '');
                 $allowedInWorkspace = $actionType !== '' && in_array($actionType, $scope['action_types'] ?? [], true);
                 $alwaysAllowed = $this->isAlwaysAllowedWriteAction($actionType);
@@ -322,6 +339,13 @@ class AiAssistantService
                             ? $this->defaultReplyForPendingAction($actionType, false)
                             : 'Use the form below to complete the details. Options are loaded from your organization data.';
                         $result['message'] = $result['reply'];
+                    }
+                    // When ready and the user just confirmed, execute immediately (POST) instead of only echoing a draft.
+                    if (
+                        $this->actionExecutor->isConfirmation($message)
+                        && $this->actionExecutor->isReadyToConfirm($pending)
+                    ) {
+                        return $this->executeConfirmedAction($user, $pending, $workspaceId, $pathname);
                     }
                     $result = $this->attachPendingAction($user, $result, $pending, $message, $pathname, $scope);
                 }
@@ -809,17 +833,25 @@ class AiAssistantService
         return (bool) preg_match('/\b(fetch|hold on|please wait|moment|loading|retrieve|look up)\b/i', $reply);
     }
 
-    /** Model wrongly refuses a write action the product supports (e.g. create LPO). */
+    /** Model wrongly refuses a write action the product supports (e.g. create LPO / product). */
     protected function looksLikeWriteRefusal(string $reply): bool
     {
-        return (bool) preg_match(
+        if (preg_match(
             '/\b('
             .'can(?:not|\'t)|unable|not able|won\'t|will not|do not|don\'t|refuse|refusing|'
             .'not (?:allowed|supported|available)|outside (?:this|my) (?:scope|workspace)|'
             .'switch workspace|only help with'
-            .')\b.{0,80}\b('
-            .'creat|save|draft|make|raise|lpo|purchase order|write action|perform that'
+            .')\b.{0,120}\b('
+            .'creat|save|draft|make|raise|lpo|purchase order|product|write|perform that'
             .')/i',
+            $reply,
+        )) {
+            return true;
+        }
+
+        // "I can't write products directly… Open /products"
+        return (bool) preg_match(
+            '/\b(open|go to|use|visit)\b.{0,40}\/(products|lpo|suppliers|customers)\b.{0,80}\b(save|enter|type|fill)\b/i',
             $reply,
         );
     }
@@ -865,7 +897,7 @@ Image uploads are NOT supported — never ask for photos or images.
 
 RULES:
 1. Off-topic only for weather, recipes, trivia, unrelated coding → reply with DECLINE_OFF_TOPIC on its own line.
-2. Navigation/help across modules is allowed. For most WRITE/create actions outside {$label} available_actions, suggest switching workspace — EXCEPT purchase orders: you CAN and SHOULD create/save LPOs (and submit/approve/send/receive) whenever the user asks, from any workspace. Never refuse create_lpo or tell them you cannot create purchase orders.
+2. Navigation/help across modules is allowed. For most WRITE/create actions outside {$label} available_actions, suggest switching workspace — EXCEPT: you CAN and SHOULD create/save products, suppliers, customers, employees, sales orders, and purchase orders (LPOs) whenever those actions are in available_actions (and LPOs from any workspace). Never refuse create_product / create_lpo / create_supplier / create_customer or tell the user you cannot write/save them. Never say catalog creation must happen only on /products.
 3. Use entity_schemas.field metadata: skip auto-generated fields unless user provides a value; use select options for FK fields.
 4. Normal orders = create_sales_order; held/save-only = create_held_order only when explicitly requested.
 5. Platform administrators train ERP-wide sample Q&A under Platform → AI training; use them as exemplars of how to respond (not verbatim quotes).
@@ -884,14 +916,14 @@ RULES:
 15. Product/sales tables: Product | Qty | Amount — no Code column.
 16. Typos / spelling: interpret meaning despite misspellings (e.g. "anomally" → anomaly / abnormal sales, "lpo" / "purchase oder"). Do not lecture about grammar; answer the intended ERP question.
 17. Abnormal / unusual / anomaly sales this week (or lookback ~7 days): treat as sales anomaly detection — help the user review unusual large orders, after-hours sales, multi-branch spikes, and deep discounts. Never say you cannot check for anomalies.
-18. LPO documents: after create or when retrieving an LPO, share open/print/PDF links. Guide the lifecycle: create → submit for approval → approve → mark sent → receive goods. You are allowed to create and save LPOs — never refuse.
+18. Creates (product, supplier, customer, employee, sales order, LPO): collect required details in chat, then when the user replies confirm / save / create it, emit a complete ```action``` block with params so the system POSTs and saves. Never tell them to open /products, /lpo, /suppliers, or /customers and type the record themselves after they asked you to save.
 19. User-facing wording: never say "backend" to the user. Say "Backoffice" (sales channel `backend`/`erp` = Backoffice). Internal module keys like sales.backend stay internal only.
 
 ```action
-{"type":"create_product","summary":"New product Widget","params":{"product_name":"Widget","unit_price":150}}
+{"type":"create_product","summary":"New product Widget","params":{"product_name":"Widget","unit_price":150,"last_cost_price":140,"subcategory_id":1,"unit_id":1,"vat_id":1}}
 ```
 
-For all create / write actions (product, supplier, customer, LPO, sales order, employee, payment, LPO approve/send/receive, etc.): ask for required details in chat first. Do NOT mention or show an inline form until the user replies **show form** (or similar). Offer the form as an option — never show both a field checklist and the form on the same turn. Only ask them to reply **confirm** / **create it** after supplier/items (or other required fields) are collected — never on the first “help me create…” turn.
+For all create / write actions (product, supplier, customer, LPO, sales order, employee, payment, LPO approve/send/receive, etc.): ask for required details in chat first. Do NOT mention or show an inline form until the user replies **show form** (or similar). Offer the form as an option — never show both a field checklist and the form on the same turn. Only ask them to reply **confirm** / **save** / **create it** after required fields are collected — never on the first “help me create…” turn. When confirming, always emit a complete ```action``` block (create_product, create_lpo, etc.) with the collected params so the system can save — do not send the user to a screen to re-enter data.
 PROMPT;
     }
 
@@ -1016,20 +1048,89 @@ PROMPT;
         }
 
         return match ($actionType) {
-            'create_lpo' => 'Share the supplier and line items here in chat. Reply **show form** if you prefer a form instead.',
-            'create_product' => 'Share the product name and any other details here in chat. Reply **show form** if you prefer a form instead.',
-            'create_supplier' => 'Share the supplier name and contact details here in chat. Reply **show form** if you prefer a form instead.',
-            'create_customer' => 'Share the customer details here in chat. Reply **show form** if you prefer a form instead.',
-            'create_employee' => 'Share the employee details here in chat. Reply **show form** if you prefer a form instead.',
-            'create_sales_order', 'create_held_order' => 'Share the customer and line items here in chat. Reply **show form** if you prefer a form instead.',
-            'record_customer_payment' => 'Share the order and payment details here in chat. Reply **show form** if you prefer a form instead.',
-            'create_report_template' => 'Share the report name and what it should show here in chat. Reply **show form** if you prefer a form instead.',
+            'create_product' => 'Share the product name (and subcategory / UoM / VAT / prices if you have them). Reply **confirm** or **save** when ready — I will create it. Or reply **show form** for a form.',
+            'create_supplier' => 'Share the supplier name and contact details here in chat. Reply **confirm** or **save** when ready, or **show form** for a form.',
+            'create_customer' => 'Share the customer details here in chat. Reply **confirm** or **save** when ready, or **show form** for a form.',
+            'create_employee' => 'Share the employee details here in chat. Reply **confirm** or **save** when ready, or **show form** for a form.',
+            'create_sales_order', 'create_held_order' => 'Share the customer and line items here in chat. Reply **confirm** or **save** when ready, or **show form** for a form.',
+            'record_customer_payment' => 'Share the order and payment details here in chat. Reply **confirm** or **save** when ready, or **show form** for a form.',
+            'create_report_template' => 'Share the report name and what it should show here in chat. Reply **confirm** or **save** when ready, or **show form** for a form.',
+            'create_lpo' => 'Share the supplier and line items here in chat. Reply **confirm** or **save** when ready — I will create the LPO. Or reply **show form** for a form.',
             'submit_lpo_for_approval' => 'Share the LPO number if needed, then reply **confirm** to submit it for approval.',
             'approve_lpo' => 'Share the LPO number if needed, then reply **confirm** to approve it.',
             'mark_lpo_sent' => 'Share the LPO number if needed, then reply **confirm** to mark it as sent. You can also download the PDF to share with the supplier.',
             'receive_lpo_goods' => 'Share the LPO number if needed, then reply **confirm** to receive remaining quantities into stock.',
             default => 'Share the details here in chat, or reply **show form** if you prefer a form.',
         };
+    }
+
+    /**
+     * Fold @-mention refs into pending write params (supplier / product lines for LPO, etc.).
+     *
+     * @param  array<string, mixed>  $pending
+     * @param  list<array{type: string, id: ?string, code: ?string, label: string}>  $refs
+     * @return array<string, mixed>
+     */
+    protected function enrichPendingActionFromEntityRefs(array $pending, array $refs): array
+    {
+        if ($refs === []) {
+            return $pending;
+        }
+
+        $type = (string) ($pending['type'] ?? '');
+        $params = is_array($pending['params'] ?? null) ? $pending['params'] : [];
+
+        if ($type === 'create_lpo') {
+            $supplierIds = \App\Support\EntityMentionRefs::supplierIds($refs);
+            if ((int) ($params['supplier_id'] ?? 0) <= 0 && $supplierIds !== []) {
+                $params['supplier_id'] = (int) $supplierIds[0];
+            }
+
+            $productCodes = \App\Support\EntityMentionRefs::productCodes($refs);
+            $lines = is_array($params['lines'] ?? null) ? $params['lines'] : [];
+            $existingCodes = [];
+            foreach ($lines as $line) {
+                if (is_array($line) && trim((string) ($line['product_code'] ?? '')) !== '') {
+                    $existingCodes[strtoupper(trim((string) $line['product_code']))] = true;
+                }
+            }
+            foreach ($productCodes as $code) {
+                $key = strtoupper(trim((string) $code));
+                if ($key === '' || isset($existingCodes[$key])) {
+                    continue;
+                }
+                $lines[] = [
+                    'product_code' => $code,
+                    'ordered_qty' => 1,
+                ];
+                $existingCodes[$key] = true;
+            }
+            if ($lines !== []) {
+                $params['lines'] = $lines;
+            }
+        }
+
+        if (in_array($type, ['create_supplier'], true)) {
+            foreach ($refs as $ref) {
+                if (($ref['type'] ?? '') === 'supplier' && trim((string) ($params['supplier_name'] ?? '')) === '') {
+                    $params['supplier_name'] = (string) ($ref['label'] ?? '');
+                    break;
+                }
+            }
+        }
+
+        if (in_array($type, ['create_customer'], true)) {
+            foreach ($refs as $ref) {
+                if (($ref['type'] ?? '') === 'customer' && trim((string) ($params['customer_name'] ?? '')) === '') {
+                    $params['customer_name'] = (string) ($ref['label'] ?? '');
+                    break;
+                }
+            }
+        }
+
+        $pending['params'] = $params;
+
+        return $pending;
     }
 
     /**

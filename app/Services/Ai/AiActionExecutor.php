@@ -1087,7 +1087,22 @@ class AiActionExecutor
 
     public function isConfirmation(string $message): bool
     {
-        return (bool) preg_match('/^(yes|yeah|yep|confirm|proceed|go ahead|do it|create it|ok|okay)\b/i', trim($message));
+        // Strip markdown emphasis (**confirm**) and punctuation so chat replies match.
+        $text = strtolower(trim($message));
+        $text = preg_replace('/\*+/', ' ', $text) ?? $text;
+        $text = preg_replace('/[_`]+/', ' ', $text) ?? $text;
+        $text = preg_replace('/\s+/', ' ', $text) ?? $text;
+        $text = trim($text, " \t\n\r\0\x0B.,!;:");
+
+        if (preg_match('/^(yes|yeah|yep|confirm|proceed|go ahead|do it|create it|ok|okay)\b/i', $text)) {
+            return true;
+        }
+
+        // "save" / "save it" / "save the product" / "save this LPO"
+        return (bool) preg_match(
+            '/^(?:please\s+)?save(?:\s+(?:it|this|the))?(?:\s+(?:product|supplier|customer|employee|lpo|order|purchase\s+order|draft))?\s*$/i',
+            $text,
+        );
     }
 
     /** Read-only deep links — never require a Confirm button. */

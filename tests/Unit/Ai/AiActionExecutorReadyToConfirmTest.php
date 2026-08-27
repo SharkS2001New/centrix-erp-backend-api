@@ -63,4 +63,19 @@ class AiActionExecutorReadyToConfirmTest extends TestCase
         $this->assertStringContainsString('supplier', strtolower($message));
         $this->assertStringContainsString('confirm', strtolower($message));
     }
+
+    public function test_confirmation_matches_markdown_confirm(): void
+    {
+        $executor = app(AiActionExecutor::class);
+
+        $this->assertTrue($executor->isConfirmation('confirm'));
+        $this->assertTrue($executor->isConfirmation('**confirm**'));
+        $this->assertTrue($executor->isConfirmation('Confirm.'));
+        $this->assertTrue($executor->isConfirmation('create it'));
+        $this->assertTrue($executor->isConfirmation('save'));
+        $this->assertTrue($executor->isConfirmation('save the product'));
+        $this->assertTrue($executor->isConfirmation('save this LPO'));
+        $this->assertFalse($executor->isConfirmation('please confirm tomorrow'));
+        $this->assertFalse($executor->isConfirmation('save a copy for later review'));
+    }
 }
