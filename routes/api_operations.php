@@ -367,6 +367,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('erp.permission:hr.manage')->group(function () {
             Route::post('runs/{runId}/process', [PayrollOperationsController::class, 'processRun']);
             Route::post('runs/{runId}/process-auto', [PayrollOperationsController::class, 'processAuto']);
+            Route::post('runs/{runId}/exclude-lines', [PayrollOperationsController::class, 'excludeLines']);
             Route::post('runs/{runId}/approve', [PayrollOperationsController::class, 'approveRun']);
             Route::post('runs/{runId}/reject', [PayrollOperationsController::class, 'rejectRun']);
             Route::post('runs/{runId}/mark-paid', [PayrollOperationsController::class, 'markPaidRun']);

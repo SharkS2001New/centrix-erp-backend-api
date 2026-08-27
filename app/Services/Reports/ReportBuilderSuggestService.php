@@ -75,7 +75,13 @@ class ReportBuilderSuggestService
 
         if ($runtime) {
             try {
-                $draft = $this->askModel($runtime, $instruction, $this->compactSchema($schema), $refs);
+                $draft = $this->askModel(
+                    $runtime,
+                    $instruction,
+                    $this->compactSchema($schema),
+                    $refs,
+                    $workspaceId,
+                );
                 $normalized = $this->normalizeDraft($draft, $schema, $workspaceId);
                 $normalized['mode'] = 'ai';
                 $normalized['provider'] = (string) ($runtime['provider'] ?? 'openai');
@@ -252,8 +258,15 @@ class ReportBuilderSuggestService
         $sources = array_slice(array_keys($sourceScores), 0, $maxSources);
 
         if ($sources === []) {
-            // Sensible workspace defaults.
-            foreach (['sales', 'sale_items', 'products', 'customers', 'employees'] as $fallback) {
+            // Prefer the first available source in this workspace’s schema — never invent cross-module keys.
+            $fallbackOrder = match ((string) ($schema['workspace_id'] ?? '')) {
+                'hr' => ['employees', 'attendance', 'payroll_lines', 'employee_kpis'],
+                'accounting' => ['expenses', 'journal_entries', 'journal_lines', 'chart_of_accounts'],
+                'hospitality_backoffice' => ['hospitality_checks', 'hospitality_folios', 'stock', 'lpo'],
+                'distribution' => ['sales', 'sale_items', 'dispatch_trips'],
+                default => ['sales', 'sale_items', 'products', 'customers', 'employees'],
+            };
+            foreach ($fallbackOrder as $fallback) {
                 if (collect($schema['sources'] ?? [])->contains(fn ($s) => ($s['key'] ?? null) === $fallback)) {
                     $sources = [$fallback];
                     break;
@@ -527,11 +540,28 @@ class ReportBuilderSuggestService
      * @param  list<array{type: string, id: ?string, code: ?string, label: string}>  $entityRefs
      * @return array<string, mixed>
      */
-    protected function askModel(array $runtime, string $instruction, array $compactSchema, array $entityRefs = []): array
-    {
-        $system = <<<'PROMPT'
+    protected function askModel(
+        array $runtime,
+        string $instruction,
+        array $compactSchema,
+        array $entityRefs = [],
+        ?string $workspaceId = null,
+    ): array {
+        $moduleList = collect($compactSchema['sources'] ?? [])
+            ->pluck('module')
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+        $modulesLabel = $moduleList === []
+            ? 'the provided schema only'
+            : implode(', ', $moduleList);
+        $workspaceHint = $this->workspaceSuggestRules($workspaceId, $moduleList);
+
+        $system = <<<PROMPT
 You are Centrix Report Builder assistant. Pick the best data sources and columns for the user's report request.
-Use ONLY keys from the provided schema JSON. Do not invent source or field keys.
+This request is scoped to workspace "{$workspaceId}" with modules: {$modulesLabel}.
+Use ONLY keys from the provided schema JSON. Do not invent source or field keys. Never suggest sources outside this schema (do not mix other ERP modules).
 Respond with a single JSON object only (no markdown):
 {
   "name": "short report title",
@@ -547,16 +577,14 @@ Respond with a single JSON object only (no markdown):
 }
 Rules:
 - Prefer 1 source unless the request clearly needs related tables.
-- For product sales / items sold, prefer sale_items (+ products if needed) with product_name, quantity/qty, and line revenue totals.
-- For suppliers / purchases / LPO, prefer lpo or purchasing sources with supplier_name.
-- For debtors / unpaid customers, prefer sales or customer_invoices with customer_name and balances.
+{$workspaceHint}
 - Prefer label fields (names, dates, status) plus the key numeric totals the user asked for.
 - Use aggregate only when summarizing (sum/avg/count/max/min) and only if that field lists it in aggregates.
 - group_by: string field keys for a single source, or {source, field} objects for multi-source; omit when not needed.
 - blend_by: only a blend dimension key when comparing unrelated sources side-by-side; otherwise null.
 - relative_date: "yesterday", "today", or "last_7_days" when the user mentions those; otherwise null.
-- product_queries / customer_queries / supplier_queries: short name fragments to filter; empty arrays if none.
-- When RESOLVED_ENTITIES are provided, prefer those exact product codes / customer nums / supplier ids and do not invent alternate names.
+- product_queries / customer_queries / supplier_queries: short name fragments to filter; empty arrays if none or if those entities are not relevant to this workspace.
+- When RESOLVED_ENTITIES are provided, prefer those exact product codes / customer nums / supplier ids / employee ids and do not invent alternate names.
 - Keep columns focused (typically 4–10). Never exceed max_sources / max_columns from the schema.
 PROMPT;
 
@@ -607,6 +635,50 @@ PROMPT;
         }
 
         return $parsed;
+    }
+
+    /**
+     * Module-specific guidance so suggestions stay inside the active workspace.
+     *
+     * @param  list<string>  $modules
+     */
+    protected function workspaceSuggestRules(?string $workspaceId, array $modules): string
+    {
+        return match ((string) $workspaceId) {
+            'hr' => <<<'RULES'
+- Stay in HR / payroll sources only (employees, attendance, leave, payroll, overtime, etc.).
+- For headcount / staff lists, prefer employees with department, branch, and status fields.
+- For attendance / clocking, prefer attendance with employee_name, date, and late/absent metrics.
+- For payroll / payslips, prefer payroll sources with totals and period fields.
+- Do not suggest sales, inventory, purchasing, or debtors sources.
+RULES,
+            'accounting' => <<<'RULES'
+- Stay in accounting / payments sources only.
+- For expenses, prefer expense sources with account and amount fields.
+- For receipts / payments, prefer payments sources with customer/supplier and amounts.
+- Do not suggest HR, inventory, or POS sales item sources unless they appear in the schema.
+RULES,
+            'hospitality_backoffice' => <<<'RULES'
+- Prefer hospitality sources (folios, rooms, checks) when the ask is about occupancy or F&B.
+- Inventory / purchasing sources are allowed only when present in the schema and clearly needed.
+- Do not invent sales/debtors/HR sources that are not in the schema.
+RULES,
+            'distribution' => <<<'RULES'
+- Prefer sales / logistics sources (orders, deliveries, routes) from the schema.
+- For product sales, prefer sale_items (+ products if needed) when those keys exist in the schema.
+- Do not suggest HR or accounting sources unless they appear in the schema.
+RULES,
+            default => in_array('HR', $modules, true) && count($modules) === 1
+                ? <<<'RULES'
+- Stay within the HR module sources in the schema only.
+- Prefer employees, attendance, leave, or payroll sources matching the request.
+RULES
+                : <<<'RULES'
+- For product sales / items sold, prefer sale_items (+ products if needed) with product_name, quantity/qty, and line revenue totals — only when those keys exist in the schema.
+- For suppliers / purchases / LPO, prefer lpo or purchasing sources with supplier_name when present.
+- For debtors / unpaid customers, prefer sales or customer_invoices with customer_name and balances when present.
+RULES,
+        };
     }
 
     /** @return array<string, mixed>|null */

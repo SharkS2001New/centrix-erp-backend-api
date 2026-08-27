@@ -16,6 +16,7 @@ class PayrollAutoProcessService
     /**
      * @param  array{
      *   department_id?: int|null,
+     *   exclude_employee_ids?: list<int>,
      *   include_allowances?: bool,
      *   include_other_deductions?: bool,
      *   include_deductions?: bool,
@@ -44,10 +45,15 @@ class PayrollAutoProcessService
         ];
 
         $departmentId = $options['department_id'] ?? null;
+        $excludeIds = array_values(array_unique(array_filter(array_map(
+            'intval',
+            is_array($options['exclude_employee_ids'] ?? null) ? $options['exclude_employee_ids'] : [],
+        ))));
 
         $employees = Employee::query()
             ->when($orgId, fn ($q) => $q->where('organization_id', $orgId))
             ->when($departmentId, fn ($q) => $q->where('department_id', $departmentId))
+            ->when($excludeIds !== [], fn ($q) => $q->whereNotIn('id', $excludeIds))
             ->where('employment_status', 'active')
             ->where('is_active', true)
             ->where('base_salary', '>', 0)

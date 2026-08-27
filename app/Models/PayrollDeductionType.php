@@ -40,6 +40,11 @@ class PayrollDeductionType extends Model
         return ($this->frequency ?? self::FREQUENCY_PER_CYCLE) === self::FREQUENCY_ONE_TIME;
     }
 
+    public function employeeDeductions()
+    {
+        return $this->hasMany(EmployeeDeduction::class, 'deduction_type_id');
+    }
+
     /**
      * Org-wide other deduction for one payroll run (same rules as EmployeeDeduction).
      */

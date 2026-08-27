@@ -279,6 +279,126 @@ class PayrollCycleSettlementService
         });
     }
 
+    /**
+     * Reopen HR items for specific employees removed from a payroll run (exclude from pay).
+     *
+     * @param  list<int>  $employeeIds
+     * @return array<string, int>
+     */
+    public function restoreForEmployees(PayrollRun $run, array $employeeIds): array
+    {
+        $employeeIds = array_values(array_unique(array_filter(array_map('intval', $employeeIds))));
+        if ($employeeIds === []) {
+            return [
+                'attendance' => 0,
+                'overtime' => 0,
+                'cash_advance' => 0,
+                'employee_deduction' => 0,
+                'leave_day' => 0,
+            ];
+        }
+
+        return DB::transaction(function () use ($run, $employeeIds) {
+            $counts = [
+                'attendance' => 0,
+                'overtime' => 0,
+                'cash_advance' => 0,
+                'employee_deduction' => 0,
+                'leave_day' => 0,
+            ];
+
+            $attendanceIds = EmployeeAttendance::query()
+                ->where('payroll_run_id', $run->id)
+                ->whereIn('employee_id', $employeeIds)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+            $leaveIds = EmployeeLeaveDay::query()
+                ->where('payroll_run_id', $run->id)
+                ->whereIn('employee_id', $employeeIds)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+            $overtimeIds = EmployeeOvertime::query()
+                ->where('payroll_run_id', $run->id)
+                ->whereIn('employee_id', $employeeIds)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+            $advanceIds = EmployeeCashAdvance::query()
+                ->whereIn('employee_id', $employeeIds)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+            $deductionIds = EmployeeDeduction::query()
+                ->whereIn('employee_id', $employeeIds)
+                ->where('payroll_run_id', $run->id)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+
+            $settlements = PayrollRunSettlement::query()
+                ->where('payroll_run_id', $run->id)
+                ->orderByDesc('id')
+                ->get()
+                ->filter(function (PayrollRunSettlement $settlement) use (
+                    $attendanceIds,
+                    $leaveIds,
+                    $overtimeIds,
+                    $advanceIds,
+                    $deductionIds,
+                    $employeeIds,
+                ) {
+                    $itemId = (int) $settlement->item_id;
+                    $snapshotEmployee = (int) ($settlement->snapshot['employee_id'] ?? 0);
+
+                    return match ($settlement->item_type) {
+                        PayrollRunSettlement::TYPE_ATTENDANCE => in_array($itemId, $attendanceIds, true),
+                        PayrollRunSettlement::TYPE_LEAVE_DAY => in_array($itemId, $leaveIds, true),
+                        PayrollRunSettlement::TYPE_OVERTIME => in_array($itemId, $overtimeIds, true),
+                        PayrollRunSettlement::TYPE_CASH_ADVANCE => in_array($itemId, $advanceIds, true),
+                        PayrollRunSettlement::TYPE_EMPLOYEE_DEDUCTION => in_array($itemId, $deductionIds, true)
+                            || in_array($snapshotEmployee, $employeeIds, true),
+                        default => false,
+                    };
+                });
+
+            foreach ($settlements as $settlement) {
+                $snapshot = $settlement->snapshot ?? [];
+
+                match ($settlement->item_type) {
+                    PayrollRunSettlement::TYPE_ATTENDANCE => $this->restoreAttendance((int) $settlement->item_id, $snapshot, $counts),
+                    PayrollRunSettlement::TYPE_LEAVE_DAY => $this->restoreLeaveDay((int) $settlement->item_id, $snapshot, $counts),
+                    PayrollRunSettlement::TYPE_OVERTIME => $this->restoreOvertime((int) $settlement->item_id, $snapshot, $counts),
+                    PayrollRunSettlement::TYPE_CASH_ADVANCE => $this->restoreCashAdvance((int) $settlement->item_id, $snapshot, $counts),
+                    PayrollRunSettlement::TYPE_EMPLOYEE_DEDUCTION => $this->restoreEmployeeDeduction((int) $settlement->item_id, $snapshot, $counts),
+                    default => null,
+                };
+
+                $settlement->delete();
+            }
+
+            EmployeeAttendance::query()
+                ->where('payroll_run_id', $run->id)
+                ->whereIn('employee_id', $employeeIds)
+                ->update(['payroll_run_id' => null]);
+            EmployeeLeaveDay::query()
+                ->where('payroll_run_id', $run->id)
+                ->whereIn('employee_id', $employeeIds)
+                ->update(['payroll_run_id' => null]);
+            EmployeeOvertime::query()
+                ->where('payroll_run_id', $run->id)
+                ->whereIn('employee_id', $employeeIds)
+                ->update([
+                    'payroll_run_id' => null,
+                    'pay_period_id' => null,
+                    'status' => 'approved',
+                ]);
+
+            return $counts;
+        });
+    }
+
     public static function assertNotPayrollLocked(?int $payrollRunId, string $resourceLabel = 'record'): void
     {
         if ($payrollRunId) {

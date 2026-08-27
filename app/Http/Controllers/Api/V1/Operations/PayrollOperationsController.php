@@ -264,6 +264,8 @@ class PayrollOperationsController extends Controller
 
         $options = $request->validate([
             'department_id' => 'nullable|integer|exists:departments,id',
+            'exclude_employee_ids' => 'nullable|array|max:500',
+            'exclude_employee_ids.*' => 'integer|distinct',
             'include_allowances' => 'nullable|boolean',
             'include_other_deductions' => 'nullable|boolean',
             'include_deductions' => 'nullable|boolean',
@@ -406,6 +408,62 @@ class PayrollOperationsController extends Controller
         ]);
 
         return response()->json($run->fresh(['payPeriod', 'paidByUser', 'approvedByUser']));
+    }
+
+    /**
+     * POST /payroll/runs/{runId}/exclude-lines
+     * Remove selected employees from an unpaid payroll run and reopen their HR cycle items.
+     */
+    public function excludeLines(Request $request, string $runId)
+    {
+        $run = $this->findScopedPayrollRun($request, $runId, ['lines']);
+
+        if ($run->status === 'paid') {
+            return response()->json([
+                'message' => 'Paid payroll runs cannot be changed. Employees already paid cannot be excluded.',
+            ], 422);
+        }
+
+        $data = $request->validate([
+            'line_ids' => 'required|array|min:1|max:500',
+            'line_ids.*' => 'integer|distinct',
+        ]);
+
+        $lineIds = array_map('intval', $data['line_ids']);
+        $lines = PayrollLine::query()
+            ->where('payroll_run_id', $run->id)
+            ->whereIn('id', $lineIds)
+            ->get();
+
+        if ($lines->isEmpty()) {
+            return response()->json(['message' => 'No matching payroll lines found on this run.'], 422);
+        }
+
+        $employeeIds = $lines->pluck('employee_id')->map(fn ($id) => (int) $id)->unique()->values()->all();
+
+        return DB::transaction(function () use ($run, $lines, $employeeIds) {
+            $restored = app(PayrollCycleSettlementService::class)->restoreForEmployees($run, $employeeIds);
+            PayrollLine::query()
+                ->where('payroll_run_id', $run->id)
+                ->whereIn('id', $lines->pluck('id')->all())
+                ->delete();
+
+            $remaining = PayrollLine::query()->where('payroll_run_id', $run->id)->get();
+            $run->update([
+                'total_gross' => round((float) $remaining->sum('gross_pay'), 2),
+                'total_net' => round((float) $remaining->sum('net_pay'), 2),
+            ]);
+
+            return response()->json([
+                'message' => $lines->count() === 1
+                    ? 'Employee excluded from this payroll run.'
+                    : $lines->count().' employees excluded from this payroll run.',
+                'excluded_count' => $lines->count(),
+                'excluded_employee_ids' => $employeeIds,
+                'restored' => $restored,
+                'run' => $run->fresh('payPeriod')->loadCount('lines as employee_count'),
+            ]);
+        });
     }
 
     /** POST /payroll/runs/{runId}/email-receipts — email payslip PDF to each employee with an email */

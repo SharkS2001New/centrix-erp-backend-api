@@ -18,6 +18,57 @@ class PayrollDeductionTypeController extends HrOrgResourceController
         return PayrollDeductionType::class;
     }
 
+    public function index(Request $request)
+    {
+        $query = PayrollDeductionType::query()
+            ->with([
+                'employeeDeductions' => fn ($q) => $q
+                    ->with(['employee:id,first_name,middle_name,last_name,full_name,employee_code'])
+                    ->orderBy('id'),
+            ])
+            ->withCount('employeeDeductions');
+
+        $user = $request->user();
+        if ($user && $this->modelHasColumn('organization_id') && ! $this->shouldSkipOrganizationScope($user, $request)) {
+            $this->access()->scopeOrganization($query, $user, 'organization_id', $request);
+        }
+        if ($user && $this->modelHasColumn('branch_id')) {
+            $this->access()->applyBranchListFilter($query, $user, $request);
+        }
+
+        foreach ((array) $request->input('filter', []) as $col => $val) {
+            if ($col === 'branch_id') {
+                continue;
+            }
+            if (in_array($col, $this->filterableColumns(), true)) {
+                $query->where($col, $val);
+            }
+        }
+
+        if ($q = $request->input('q')) {
+            $this->applySearch($query, $q);
+        }
+
+        $perPage = min((int) $request->input('per_page', 25), 200);
+        $paginator = $query->orderByDesc('id')->paginate($perPage);
+        $paginator->getCollection()->transform(fn (PayrollDeductionType $type) => $this->typeWithAssignees($type));
+
+        return response()->json($paginator);
+    }
+
+    public function show(string $id)
+    {
+        $type = $this->findScoped($id);
+        $type->load([
+            'employeeDeductions' => fn ($q) => $q
+                ->with(['employee:id,first_name,middle_name,last_name,full_name,employee_code'])
+                ->orderBy('id'),
+        ]);
+        $type->loadCount('employeeDeductions');
+
+        return response()->json($this->typeWithAssignees($type));
+    }
+
     public function store(Request $request)
     {
         $data = $this->validated($request);
@@ -40,7 +91,7 @@ class PayrollDeductionTypeController extends HrOrgResourceController
         try {
             $model = DB::transaction(function () use ($request, $data, $employeeIds, &$assigned) {
                 $type = PayrollDeductionType::create($data);
-                $assigned = $this->assignToEmployees($request, $type, $employeeIds);
+                $assigned = $this->syncAssignees($request, $type, $employeeIds, replace: true);
 
                 return $type;
             });
@@ -50,7 +101,14 @@ class PayrollDeductionTypeController extends HrOrgResourceController
             ]);
         }
 
-        return response()->json(array_merge($model->toArray(), [
+        $model->load([
+            'employeeDeductions' => fn ($q) => $q
+                ->with(['employee:id,first_name,middle_name,last_name,full_name,employee_code'])
+                ->orderBy('id'),
+        ]);
+        $model->loadCount('employeeDeductions');
+
+        return response()->json(array_merge($this->typeWithAssignees($model)->toArray(), [
             'assigned_employee_count' => $assigned,
         ]), 201);
     }
@@ -78,7 +136,7 @@ class PayrollDeductionTypeController extends HrOrgResourceController
             DB::transaction(function () use ($request, $model, $data, $employeeIds, &$assigned) {
                 $model->update($data);
                 if (is_array($employeeIds)) {
-                    $assigned = $this->assignToEmployees($request, $model->fresh(), $employeeIds);
+                    $assigned = $this->syncAssignees($request, $model->fresh(), $employeeIds, replace: true);
                 }
             });
         } catch (UniqueConstraintViolationException $e) {
@@ -87,19 +145,93 @@ class PayrollDeductionTypeController extends HrOrgResourceController
             ]);
         }
 
-        return response()->json(array_merge($model->fresh()->toArray(), [
+        $fresh = $model->fresh();
+        $fresh->load([
+            'employeeDeductions' => fn ($q) => $q
+                ->with(['employee:id,first_name,middle_name,last_name,full_name,employee_code'])
+                ->orderBy('id'),
+        ]);
+        $fresh->loadCount('employeeDeductions');
+
+        return response()->json(array_merge($this->typeWithAssignees($fresh)->toArray(), [
             'assigned_employee_count' => $assigned,
         ]));
     }
 
     /**
-     * Create employee_deductions for the given employees (skip existing type links).
+     * Attach assignee summary fields for the list / show payload.
+     */
+    protected function typeWithAssignees(PayrollDeductionType $type): PayrollDeductionType
+    {
+        $assignees = [];
+        if (! $type->applies_to_all) {
+            foreach ($type->employeeDeductions ?? [] as $row) {
+                $employee = $row->employee;
+                if (! $employee) {
+                    continue;
+                }
+                $name = trim(implode(' ', array_filter([
+                    (string) ($employee->first_name ?? ''),
+                    (string) ($employee->middle_name ?? ''),
+                    (string) ($employee->last_name ?? ''),
+                ])));
+                if ($name === '') {
+                    $name = trim((string) ($employee->full_name ?? ''));
+                }
+                $assignees[] = [
+                    'id' => (int) $employee->id,
+                    'name' => $name !== '' ? $name : ('Employee #'.$employee->id),
+                    'employee_code' => $employee->employee_code ?? null,
+                ];
+            }
+        }
+
+        $type->setAttribute('assigned_employees', $assignees);
+        $type->setAttribute(
+            'assigned_employee_count',
+            $type->applies_to_all
+                ? null
+                : (int) ($type->employee_deductions_count ?? count($assignees)),
+        );
+        // Keep list payloads lean — nested deductions are only used to build the summary.
+        $type->unsetRelation('employeeDeductions');
+
+        return $type;
+    }
+
+    /**
+     * Create / keep employee_deductions for the given employees.
+     * When $replace is true, remove active assignments that are no longer selected
+     * (skip one-time rows already applied on a payroll run).
      *
      * @param  list<int>  $employeeIds
      */
-    protected function assignToEmployees(Request $request, PayrollDeductionType $type, array $employeeIds): int
-    {
+    protected function syncAssignees(
+        Request $request,
+        PayrollDeductionType $type,
+        array $employeeIds,
+        bool $replace = false,
+    ): int {
+        if ($type->applies_to_all) {
+            if ($replace) {
+                // Org-wide types don't need per-employee rows — drop open assignments.
+                EmployeeDeduction::query()
+                    ->where('deduction_type_id', $type->id)
+                    ->whereNull('payroll_run_id')
+                    ->delete();
+            }
+
+            return 0;
+        }
+
         if ($employeeIds === []) {
+            if ($replace) {
+                EmployeeDeduction::query()
+                    ->where('deduction_type_id', $type->id)
+                    ->whereNull('payroll_run_id')
+                    ->delete();
+            }
+
             return 0;
         }
 
@@ -115,14 +247,29 @@ class PayrollDeductionTypeController extends HrOrgResourceController
 
         $existing = EmployeeDeduction::query()
             ->where('deduction_type_id', $type->id)
-            ->whereIn('employee_id', $employeeIds)
-            ->pluck('employee_id')
-            ->all();
-        $existingSet = array_fill_keys(array_map('intval', $existing), true);
+            ->get()
+            ->keyBy(fn (EmployeeDeduction $row) => (int) $row->employee_id);
 
+        $keepIds = array_fill_keys($employeeIds, true);
         $created = 0;
+
         foreach ($employees as $employee) {
-            if (isset($existingSet[(int) $employee->id])) {
+            $employeeId = (int) $employee->id;
+            if ($existing->has($employeeId)) {
+                $row = $existing->get($employeeId);
+                // Refresh template fields on open assignments (not yet applied one-time).
+                if (! $row->payroll_run_id) {
+                    $row->update([
+                        'name' => $type->name,
+                        'calc_type' => $type->calc_type ?: 'fixed',
+                        'amount' => $type->calc_type === 'percentage' ? 0 : (float) $type->default_amount,
+                        'percentage' => $type->calc_type === 'percentage' ? (float) $type->default_percentage : null,
+                        'is_active' => (bool) $type->is_active,
+                        'frequency' => $type->isOneTime()
+                            ? EmployeeDeduction::FREQUENCY_ONE_TIME
+                            : EmployeeDeduction::FREQUENCY_PER_CYCLE,
+                    ]);
+                }
                 continue;
             }
 
@@ -142,7 +289,20 @@ class PayrollDeductionTypeController extends HrOrgResourceController
             $created++;
         }
 
-        return $created;
+        if ($replace) {
+            foreach ($existing as $employeeId => $row) {
+                if (isset($keepIds[$employeeId])) {
+                    continue;
+                }
+                // Never delete a one-time deduction already applied on a payroll run.
+                if ($row->payroll_run_id) {
+                    continue;
+                }
+                $row->delete();
+            }
+        }
+
+        return $created + count(array_intersect_key($keepIds, $existing->all()));
     }
 
     protected function validated(Request $request, bool $updating = false, ?PayrollDeductionType $existing = null): array

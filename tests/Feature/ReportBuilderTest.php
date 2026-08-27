@@ -672,6 +672,41 @@ class ReportBuilderTest extends TestCase
         \Illuminate\Support\Facades\Http::assertNothingSent();
     }
 
+    public function test_hr_local_suggest_stays_in_hr_sources(): void
+    {
+        if (! isset($this->reportSources()['employees'])) {
+            $this->markTestSkipped('employees source not configured');
+        }
+
+        $org = \App\Models\Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['ai'] = array_merge(is_array($settings['ai'] ?? null) ? $settings['ai'] : [], [
+            'enabled' => false,
+            'api_key' => '',
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        \Illuminate\Support\Facades\Http::fake();
+
+        $response = $this->postJson('/api/v1/reports/builder/suggest', [
+            'instruction' => 'Headcount by department',
+            'workspace_id' => 'hr',
+        ])->assertOk();
+
+        $response->assertJsonPath('mode', 'local');
+        $sources = $response->json('spec.sources') ?? [];
+        $this->assertNotEmpty($sources);
+
+        $allowed = $this->builder->allowedSourceKeys('hr');
+        foreach ($sources as $key) {
+            $this->assertContains($key, $allowed, "HR suggest returned non-HR source: {$key}");
+        }
+        $this->assertNotContains('sales', $sources);
+        $this->assertNotContains('sale_items', $sources);
+
+        \Illuminate\Support\Facades\Http::assertNothingSent();
+    }
+
     public function test_suggest_rejects_more_than_100_words(): void
     {
         $words = implode(' ', array_fill(0, 101, 'sales'));
