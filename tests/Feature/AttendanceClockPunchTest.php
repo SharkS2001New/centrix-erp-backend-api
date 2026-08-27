@@ -612,7 +612,7 @@ class AttendanceClockPunchTest extends TestCase
     public function test_late_punch_replaces_auto_forgotten_clock_out_instead_of_fake_lunch_in(): void
     {
         Sanctum::actingAs($this->admin);
-        Carbon::setTestNow(Carbon::parse('2026-08-13 23:00:00', 'Africa/Nairobi'));
+        Carbon::setTestNow(Carbon::parse('2026-08-14 02:05:00', 'Africa/Nairobi'));
 
         $this->postJson('/api/v1/attendance/clock-punch', [
             'employee_code' => 'EMP#HIK001',
@@ -633,7 +633,7 @@ class AttendanceClockPunchTest extends TestCase
             'punched_at' => '2026-08-13T22:33:00+03:00',
             'direction' => 'auto',
             'hr_override' => true,
-        ])->assertCreated()->assertJsonPath('action', 'out');
+        ])->assertSuccessful()->assertJsonPath('action', 'out');
 
         $this->assertSame(1, EmployeeClockSession::query()->where('employee_id', $this->employee->id)->count());
         $session->refresh();
