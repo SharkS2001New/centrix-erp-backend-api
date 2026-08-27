@@ -35,7 +35,8 @@ class RunInsightTool implements AiToolInterface
         return 'Run a Centrix AI Insight and return its data slice for analysis. Use for anomaly_detection, '
             .'forecast_light, margin_discount_watchdog, exception_radar, customer_360, procurement_companion, '
             .'collections_playbook, branch_till_benchmarks, product_demand, and other insight types. '
-            .'customer_360 requires customer_num. Prefer this over inventing anomaly/forecast/margin data.';
+            .'For abnormal/unusual/anomaly sales (typos like anomally) this week, use insight_type=anomaly_detection '
+            .'with lookback_days=7. customer_360 requires customer_num. Prefer this over inventing anomaly/forecast/margin data.';
     }
 
     public function parametersSchema(): array

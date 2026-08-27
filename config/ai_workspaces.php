@@ -21,7 +21,7 @@ return [
             '/\b(payroll|nssf|paye|leave request|attendance|department|shift)\b/i',
             '/\b(journal entry|chart of accounts|ledger|expense group|fiscal period)\b/i',
             '/\b(user role|permission|admin settings|register organization)\b/i',
-            '/\b(lpo|supplier payment|purchase order|grn|stock take)\b/i',
+            '/\b(supplier payment|grn|stock take)\b/i',
             '/\b(folio|room charge|night audit|housekeeping|reservation)\b/i',
         ],
     ],

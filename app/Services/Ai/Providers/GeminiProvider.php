@@ -270,7 +270,7 @@ class GeminiProvider implements AiProviderInterface
             if (trim($previewText) === '' && ! $hasToolCall) {
                 Log::warning('Gemini hit max tokens with empty output', ['model' => $model]);
                 throw new AiProviderException(
-                    'The AI response was cut off before any answer was returned. Try again, or raise the model output limit.',
+                    'I could not finish that answer. Please try asking again more simply.',
                     'max_tokens',
                     502,
                     true,

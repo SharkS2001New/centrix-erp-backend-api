@@ -1481,6 +1481,7 @@ class CartOperationsController extends Controller
                 $unitPrice,
                 $amount,
             );
+            $amount = $this->applyCashRoundingIfNeeded($cart, $gate, $salesSettings, $line, $amount);
 
             $grossForVat = max(0, $amount);
             $productVat = array_key_exists('product_vat', $line) && $line['product_vat'] !== null
@@ -1609,6 +1610,7 @@ class CartOperationsController extends Controller
             $unitPrice,
             $amount,
         );
+        $amount = $this->applyCashRoundingIfNeeded($cart, $gate, $salesSettings, $line, $amount);
 
         // Mobile never runs the POS client merge; POS normally PATCHes merges client-side.
         // Combine identical SKUs server-side for mobile and POS so duplicate POST races
@@ -1775,6 +1777,7 @@ class CartOperationsController extends Controller
             $unitPrice,
             $amount,
         );
+        $amount = $this->applyCashRoundingIfNeeded($cart, $gate, $salesSettings, $input, $amount);
 
         $settings = $gate->moduleSettings('inventory');
         $location = $this->resolveSaleLineStockLocation(
@@ -2148,6 +2151,39 @@ class CartOperationsController extends Controller
             $computedAmount,
             $conversionFactor,
         );
+    }
+
+    /**
+     * When cash rounding is enabled and the client did not send an authoritative
+     * amount (mobile historically omitted it), round the server-computed line
+     * total the same way External POS does.
+     *
+     * @param  array<string, mixed>  $line
+     * @param  array<string, mixed>  $salesSettings
+     */
+    protected function applyCashRoundingIfNeeded(
+        TemporaryCart $cart,
+        CapabilityGate $gate,
+        array $salesSettings,
+        array $line,
+        float $amount,
+    ): float {
+        if (array_key_exists('amount', $line) && $line['amount'] !== null && $line['amount'] !== '') {
+            return round(max(0.0, $amount), 2);
+        }
+
+        if (! in_array((string) $cart->channel, ['pos', 'backend', 'mobile'], true)) {
+            return round(max(0.0, $amount), 2);
+        }
+
+        $customSales = is_array($gate->organization()?->module_settings['sales'] ?? null)
+            ? $gate->organization()->module_settings['sales']
+            : [];
+        if (! \App\Services\Sales\PosCashRoundingSettings::enabled($salesSettings, $customSales)) {
+            return round(max(0.0, $amount), 2);
+        }
+
+        return \App\Services\Sales\PosCashRounding::roundLightStoresAmount($amount);
     }
 
     /**

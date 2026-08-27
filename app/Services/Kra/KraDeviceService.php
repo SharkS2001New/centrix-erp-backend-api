@@ -876,8 +876,15 @@ class KraDeviceService
         $url = $this->deviceBaseUrl . $path;
 
         try {
-            $response = Http::timeout(60)
-                ->retry(2, 200, throw: false)
+            // Connect fast-fail: a flapping device IP must not pin PHP workers for
+            // 60s × 3 attempts (~3 min) — that queues every other POS request
+            // (cart save, search, checkout) behind the dead fiscal call.
+            $response = Http::connectTimeout(5)
+                ->timeout(45)
+                ->retry(1, 250, function ($exception) {
+                    // Never retry connection refused / timeout / aborted — device is down.
+                    return ! ($exception instanceof \Illuminate\Http\Client\ConnectionException);
+                }, throw: false)
                 ->withHeaders([
                     'Content-Type' => 'application/json',
                     'Accept' => 'application/json',

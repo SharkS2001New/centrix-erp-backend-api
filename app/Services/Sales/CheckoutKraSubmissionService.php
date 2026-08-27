@@ -47,13 +47,35 @@ class CheckoutKraSubmissionService
         $invoiceNumber = 'POS-'.$sale->order_num;
         try {
             $service = KraDeviceService::fromSettings($finance);
-            $invoiceNumber = $service->traderInvoiceForSale($sale, $finance);
-            $result = $service->sendSale(
-                $orderItems,
-                (float) $sale->order_total,
-                $invoiceNumber,
-                $buyerPin,
-            );
+            // Cheap health probe first (8s, no retries). If Comstore/IP is flapping,
+            // soft-skip fiscalization instead of blocking checkout on a long POST.
+            $health = $service->checkHealth();
+            if (! ($health['success'] ?? false)) {
+                $healthMessage = trim((string) ($health['message'] ?? ''));
+                if ($healthMessage === '') {
+                    $healthMessage = 'KRA device is unreachable or disconnected.';
+                }
+                Log::warning('KRA soft-skip on checkout — device health failed before fiscalize', [
+                    'sale_id' => $sale->id,
+                    'message' => $healthMessage,
+                    'reachable' => $health['reachable'] ?? null,
+                    'device_connection' => $health['device_connection'] ?? null,
+                ]);
+                $result = [
+                    'success' => false,
+                    'message' => KraDeviceErrorTranslator::userMessage($healthMessage),
+                    'payload' => null,
+                    'response' => is_array($health['response'] ?? null) ? $health['response'] : null,
+                ];
+            } else {
+                $invoiceNumber = $service->traderInvoiceForSale($sale, $finance);
+                $result = $service->sendSale(
+                    $orderItems,
+                    (float) $sale->order_total,
+                    $invoiceNumber,
+                    $buyerPin,
+                );
+            }
         } catch (\Throwable $e) {
             Log::warning('KRA device call threw during checkout — sale kept without fiscalization', [
                 'sale_id' => $sale->id,

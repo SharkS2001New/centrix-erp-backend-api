@@ -31,12 +31,18 @@ class AiIntentResolver
 
     public function inferCreateAction(string $message, array $history = [], ?string $pathname = null): ?array
     {
-        if ($this->isDataQuestion($message) || $this->isCancelIntent($message)) {
+        if ($this->isCancelIntent($message)) {
             return null;
         }
 
         // Match on wording — ignore trailing punctuation / stray symbols (?, /, !, …).
         $text = $this->normalizeForIntent($message);
+
+        // Pure data questions skip create inference — but "create LPO from yesterday's sales"
+        // still has a create verb and must proceed.
+        if ($this->isDataQuestion($message) && ! $this->hasWriteVerb($text)) {
+            return null;
+        }
 
         $pathEntity = $this->entityFromPath($pathname);
 
@@ -266,7 +272,10 @@ class AiIntentResolver
 
     protected function matchesLpoCreate(string $text): bool
     {
-        if (preg_match('/\b(create|draft|make|raise|generate|issue|new)\b.{0,40}\b(lpo|purchase\s+orders?)\b/', $text)) {
+        if (preg_match('/\b(create|draft|make|raise|generate|issue|new|save|add|prepare)\b.{0,50}\b(lpo|purchase\s+orders?|po)\b/', $text)) {
+            return true;
+        }
+        if (preg_match('/\b(lpo|purchase\s+orders?|po)\b.{0,40}\b(create|draft|make|raise|generate|issue|save|add)\b/', $text)) {
             return true;
         }
         if (preg_match('/\b(lpo|purchase\s+order)\b.{0,40}\b(from|for)\b.{0,40}\b(order|sale|sales)\b/', $text)) {
@@ -275,11 +284,23 @@ class AiIntentResolver
         if (preg_match('/\b(gave|give|giving)\b.{0,30}\border\b.{0,40}\b(lpo|purchase\s+order)\b/', $text)) {
             return true;
         }
-        if (preg_match('/\bcan\s+you\s+create\b.{0,40}\b(lpo|purchase\s+order)\b/', $text)) {
+        if (preg_match('/\b(can\s+you|could\s+you|please|help\s+(me\s+)?(to\s+)?)\b.{0,40}\b(create|draft|make|raise|save)\b.{0,40}\b(lpo|purchase\s+order)\b/', $text)) {
+            return true;
+        }
+        if (preg_match('/\b(help|want|need)\b.{0,40}\b(create|creating|make|making|save|saving)\b.{0,40}\b(lpo|purchase\s+order)\b/', $text)) {
             return true;
         }
 
         return false;
+    }
+
+    /** True when the message looks like a create/write request (not a pure data question). */
+    protected function hasWriteVerb(string $text): bool
+    {
+        return (bool) preg_match(
+            '/\b(create|draft|make|raise|generate|issue|new|save|add|record|submit|approve|prepare)\b/i',
+            $text,
+        );
     }
 
     protected function matchesOpenLpo(string $text): bool

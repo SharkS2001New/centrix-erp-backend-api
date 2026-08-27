@@ -276,9 +276,25 @@ class CheckoutController extends Controller
             $orderDiscount = min(max(0, (float) ($cart->order_discount ?? 0)), $lineNet);
         }
 
+        $customSales = is_array($gate->organization()?->module_settings['sales'] ?? null)
+            ? $gate->organization()->module_settings['sales']
+            : [];
+        $cashRound = in_array((string) $cart->channel, ['pos', 'backend', 'mobile'], true)
+            && PosCashRoundingSettings::enabled($salesSettings, $customSales);
+        if ($cashRound) {
+            $lineNet = 0.0;
+            foreach ($prepared['lines'] as $line) {
+                $lineNet += PosCashRounding::roundLightStoresAmount((float) ($line->amount ?? 0));
+            }
+            $orderDiscount = min(max(0, (float) ($cart->order_discount ?? 0)), $lineNet);
+            $orderTotal = PosCashRounding::roundLightStoresAmount(max(0, $lineNet - $orderDiscount));
+        } else {
+            $orderTotal = max(0, round($lineNet - $orderDiscount, 2));
+        }
+
         return response()->json([
-            'order_total' => max(0, round($lineNet - $orderDiscount, 2)),
-            'line_total' => $lineNet,
+            'order_total' => $orderTotal,
+            'line_total' => $cashRound ? $lineNet : round($lineNet, 2),
             'order_discount' => $orderDiscount,
             'route_id' => $routeId,
             'route_markup_applied' => $prepared['meta'] !== null,

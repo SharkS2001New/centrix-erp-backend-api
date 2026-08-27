@@ -62,6 +62,7 @@ class AiToolResultReplyBuilder
                 'search_training_notes' => $this->formatTrainingNotes($result),
                 'find_screen' => $this->formatFindScreen($result),
                 'get_lpo_details' => $this->formatLpoDetails($result),
+                'run_insight' => $this->formatRunInsight($result),
                 default => null,
             };
 
@@ -996,6 +997,192 @@ class AiToolResultReplyBuilder
         }
         $lines[] = '';
         $lines[] = 'Ask a specific follow-up (or name a person/product) and I will pull live Centrix data.';
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * @param  array<string, mixed>  $result
+     */
+    protected function formatRunInsight(array $result): ?string
+    {
+        $type = (string) ($result['insight_type'] ?? $result['type'] ?? '');
+        if ($type === 'anomaly_detection' || isset($result['unusual_large_orders']) || isset($result['after_hours_sales'])) {
+            return $this->formatAnomalyDetection($result);
+        }
+
+        $label = trim((string) ($result['insight_label'] ?? $type));
+        if ($label === '') {
+            $label = 'AI Insight';
+        }
+
+        $lookback = (int) ($result['lookback_days'] ?? 0);
+        $lines = [
+            "### {$label}",
+            '',
+        ];
+        if ($lookback > 0) {
+            $lines[] = "Lookback: last **{$lookback}** day(s).";
+            $lines[] = '';
+        }
+
+        $summary = trim((string) ($result['summary'] ?? ''));
+        if ($summary !== '' && ! $this->looksLikeModelInstruction($summary)) {
+            $lines[] = $summary;
+            $lines[] = '';
+        }
+
+        $findings = is_array($result['findings'] ?? null) ? $result['findings'] : [];
+        if ($findings !== []) {
+            $lines[] = 'Findings:';
+            foreach (array_slice($findings, 0, 8) as $finding) {
+                if (is_string($finding) && trim($finding) !== '') {
+                    $lines[] = '- '.trim($finding);
+                } elseif (is_array($finding)) {
+                    $text = trim((string) ($finding['title'] ?? $finding['text'] ?? $finding['summary'] ?? ''));
+                    if ($text !== '') {
+                        $lines[] = '- '.$text;
+                    }
+                }
+            }
+            $lines[] = '';
+        }
+
+        // Generic slice: list a few top-level list keys so the user still gets data.
+        foreach ($result as $key => $value) {
+            if (! is_array($value) || $value === [] || ! array_is_list($value)) {
+                continue;
+            }
+            if (in_array($key, ['screens', 'actions_hint', 'findings', 'actions', 'valid_insight_types'], true)) {
+                continue;
+            }
+            $lines[] = '**'.str_replace('_', ' ', (string) $key).'** ('.count($value).'):';
+            foreach (array_slice($value, 0, 5) as $row) {
+                if (! is_array($row)) {
+                    $lines[] = '- '.(string) $row;
+
+                    continue;
+                }
+                $bits = [];
+                foreach (array_slice($row, 0, 4) as $k => $v) {
+                    if (is_scalar($v) && ! in_array((string) $k, ['href', 'id'], true)) {
+                        $bits[] = str_replace('_', ' ', (string) $k).': '.$v;
+                    }
+                }
+                if ($bits !== []) {
+                    $lines[] = '- '.implode(' · ', $bits);
+                }
+            }
+            $lines[] = '';
+            break;
+        }
+
+        $body = trim(implode("\n", $lines));
+        if ($body === '' || $body === "### {$label}") {
+            return null;
+        }
+
+        return $body;
+    }
+
+    /**
+     * @param  array<string, mixed>  $result
+     */
+    protected function formatAnomalyDetection(array $result): ?string
+    {
+        $lookback = (int) ($result['lookback_days'] ?? 7);
+        $avg = (float) ($result['avg_order_total'] ?? 0);
+        $threshold = (float) ($result['large_order_threshold'] ?? 0);
+        $large = is_array($result['unusual_large_orders'] ?? null) ? $result['unusual_large_orders'] : [];
+        $afterHours = is_array($result['after_hours_sales'] ?? null) ? $result['after_hours_sales'] : [];
+        $multi = is_array($result['multi_branch_customers'] ?? null) ? $result['multi_branch_customers'] : [];
+        $discounts = is_array($result['deep_discounts'] ?? null) ? $result['deep_discounts'] : [];
+
+        $lines = [
+            '### Sales anomalies (last '.$lookback.' day'.($lookback === 1 ? '' : 's').')',
+            '',
+            'Average order total: **KES '.$this->money($avg).'**. '
+                .'Large-order flag starts at **KES '.$this->money($threshold).'** (about 3× average, minimum 50,000).',
+            '',
+        ];
+
+        $flagCount = count($large) + count($afterHours) + count($multi) + count($discounts);
+        if ($flagCount === 0) {
+            $lines[] = 'No unusual large orders, after-hours sales, multi-branch customer spikes, or deep discounts were flagged in this window.';
+            $lines[] = '';
+            $lines[] = 'Open [/sales/orders](/sales/orders) to review orders manually.';
+
+            return implode("\n", $lines);
+        }
+
+        if ($large !== []) {
+            $lines[] = '#### Unusually large orders';
+            $lines[] = '| Order | Amount (KES) | Customer | Channel |';
+            $lines[] = '| --- | ---: | --- | --- |';
+            foreach (array_slice($large, 0, 10) as $row) {
+                if (! is_array($row)) {
+                    continue;
+                }
+                $lines[] = '| '.$this->cell((string) ($row['order_num'] ?? ''))
+                    .' | '.$this->money((float) ($row['order_total'] ?? 0))
+                    .' | '.$this->cell((string) ($row['customer'] ?? '—'))
+                    .' | '.$this->cell((string) ($row['channel'] ?? '—'))
+                    .' |';
+            }
+            $lines[] = '';
+        }
+
+        if ($afterHours !== []) {
+            $lines[] = '#### After-hours sales (outside 06:00–21:00)';
+            $lines[] = '| Order | Amount (KES) | When |';
+            $lines[] = '| --- | ---: | --- |';
+            foreach (array_slice($afterHours, 0, 10) as $row) {
+                if (! is_array($row)) {
+                    continue;
+                }
+                $lines[] = '| '.$this->cell((string) ($row['order_num'] ?? ''))
+                    .' | '.$this->money((float) ($row['order_total'] ?? 0))
+                    .' | '.$this->cell((string) ($row['at'] ?? '—'))
+                    .' |';
+            }
+            $lines[] = '';
+        }
+
+        if ($multi !== []) {
+            $lines[] = '#### Same customer across multiple branches';
+            $lines[] = '| Customer | Branches | Orders | Amount (KES) |';
+            $lines[] = '| --- | ---: | ---: | ---: |';
+            foreach (array_slice($multi, 0, 10) as $row) {
+                if (! is_array($row)) {
+                    continue;
+                }
+                $lines[] = '| '.$this->cell((string) ($row['customer_num'] ?? '—'))
+                    .' | '.(int) ($row['branches'] ?? 0)
+                    .' | '.(int) ($row['orders'] ?? 0)
+                    .' | '.$this->money((float) ($row['amount'] ?? 0))
+                    .' |';
+            }
+            $lines[] = '';
+        }
+
+        if ($discounts !== []) {
+            $lines[] = '#### Deep discounts (≥25% of line value)';
+            $lines[] = '| Order | Product | Discount (KES) | Line value (KES) |';
+            $lines[] = '| --- | --- | ---: | ---: |';
+            foreach (array_slice($discounts, 0, 10) as $row) {
+                if (! is_array($row)) {
+                    continue;
+                }
+                $lines[] = '| '.$this->cell((string) ($row['order_num'] ?? ''))
+                    .' | '.$this->cell((string) ($row['product_code'] ?? '—'))
+                    .' | '.$this->money((float) ($row['discount_given'] ?? 0))
+                    .' | '.$this->money((float) ($row['line_value'] ?? 0))
+                    .' |';
+            }
+            $lines[] = '';
+        }
+
+        $lines[] = 'Review flagged orders at [/sales/orders](/sales/orders).';
 
         return implode("\n", $lines);
     }

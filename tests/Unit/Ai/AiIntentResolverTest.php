@@ -69,6 +69,18 @@ class AiIntentResolverTest extends TestCase
             $this->resolver->inferCreateAction('Draft LPO from order ORD-1001', [], null)['type'] ?? null,
         );
         $this->assertSame(
+            'create_lpo',
+            $this->resolver->inferCreateAction('Save an LPO for supplier ABC', [], null)['type'] ?? null,
+        );
+        $this->assertSame(
+            'create_lpo',
+            $this->resolver->inferCreateAction('I need help creating an LPO', [], '/pos')['type'] ?? null,
+        );
+        $this->assertSame(
+            'create_lpo',
+            $this->resolver->inferCreateAction('Create LPO from yesterday sales order ORD-100', [], null)['type'] ?? null,
+        );
+        $this->assertSame(
             'open_lpo',
             $this->resolver->inferCreateAction('Open purchase orders', [], null)['type'] ?? null,
         );

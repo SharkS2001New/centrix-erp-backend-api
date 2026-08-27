@@ -28,8 +28,8 @@ return [
     'defaults' => [
         'model' => env('OPENAI_MODEL', 'gpt-4o-mini'),
         'base_url' => rtrim(env('OPENAI_BASE_URL', 'https://api.openai.com/v1'), '/'),
-        'max_tokens' => (int) env('OPENAI_MAX_TOKENS', 1200),
-        'max_output_tokens' => (int) env('AI_MAX_OUTPUT_TOKENS', env('OPENAI_MAX_TOKENS', 2048)),
+        'max_tokens' => (int) env('OPENAI_MAX_TOKENS', 2048),
+        'max_output_tokens' => (int) env('AI_MAX_OUTPUT_TOKENS', env('OPENAI_MAX_TOKENS', 8192)),
         'max_input_tokens' => (int) env('AI_MAX_INPUT_TOKENS', 32000),
     ],
 
@@ -66,8 +66,8 @@ return [
     'max_concurrent_requests' => (int) env('AI_MAX_CONCURRENT_REQUESTS', 32),
 
     'tool_chat' => [
-        // Product/table answers need headroom; 1024 commonly cut mid-sentence (finish_reason=length).
-        'max_output_tokens' => (int) env('AI_TOOL_CHAT_MAX_OUTPUT_TOKENS', env('AI_MAX_OUTPUT_TOKENS', 4096)),
+        // Product/table answers need headroom; keep high enough that Gemini thinking + tables finish.
+        'max_output_tokens' => (int) env('AI_TOOL_CHAT_MAX_OUTPUT_TOKENS', env('AI_MAX_OUTPUT_TOKENS', 8192)),
     ],
 
     /**

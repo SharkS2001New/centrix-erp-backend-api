@@ -154,4 +154,73 @@ class AiToolResultReplyBuilderTest extends TestCase
         $this->assertStringNotContainsString('could not format a full answer', $reply);
         $this->assertFalse($builder->isGenericFailureReply($reply));
     }
+
+    public function test_formats_run_insight_anomaly_detection(): void
+    {
+        $builder = new AiToolResultReplyBuilder;
+        $reply = $builder->build([
+            [
+                'name' => 'run_insight',
+                'result' => [
+                    'insight_type' => 'anomaly_detection',
+                    'insight_label' => 'Anomaly detection',
+                    'lookback_days' => 7,
+                    'avg_order_total' => 12000.5,
+                    'large_order_threshold' => 50000,
+                    'unusual_large_orders' => [
+                        [
+                            'order_num' => 501,
+                            'order_total' => 98000,
+                            'customer' => 'ACME Traders',
+                            'channel' => 'backend',
+                        ],
+                    ],
+                    'after_hours_sales' => [],
+                    'multi_branch_customers' => [],
+                    'deep_discounts' => [
+                        [
+                            'order_num' => 502,
+                            'product_code' => 'SUGAR',
+                            'discount_given' => 5000,
+                            'line_value' => 15000,
+                        ],
+                    ],
+                    'screens' => [
+                        ['label' => 'Sales orders', 'path' => '/sales/orders'],
+                    ],
+                ],
+            ],
+        ], ['run_insight']);
+
+        $this->assertStringContainsString('Sales anomalies', $reply);
+        $this->assertStringContainsString('ACME Traders', $reply);
+        $this->assertStringContainsString('98,000.00', $reply);
+        $this->assertStringContainsString('Deep discounts', $reply);
+        $this->assertStringContainsString('/sales/orders', $reply);
+        $this->assertStringNotContainsString('could not format a full answer', $reply);
+        $this->assertFalse($builder->isGenericFailureReply($reply));
+    }
+
+    public function test_formats_anomaly_detection_when_no_flags(): void
+    {
+        $builder = new AiToolResultReplyBuilder;
+        $reply = $builder->build([
+            [
+                'name' => 'run_insight',
+                'result' => [
+                    'insight_type' => 'anomaly_detection',
+                    'lookback_days' => 7,
+                    'avg_order_total' => 8000,
+                    'large_order_threshold' => 50000,
+                    'unusual_large_orders' => [],
+                    'after_hours_sales' => [],
+                    'multi_branch_customers' => [],
+                    'deep_discounts' => [],
+                ],
+            ],
+        ], ['run_insight']);
+
+        $this->assertStringContainsString('No unusual large orders', $reply);
+        $this->assertFalse($builder->isGenericFailureReply($reply));
+    }
 }

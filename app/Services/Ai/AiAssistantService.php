@@ -25,6 +25,7 @@ class AiAssistantService
         protected AiToolChatService $toolChat,
         protected AiProviderFactory $providers,
         protected AiReplyFormatter $replyFormatter,
+        protected AiAssistantHelpGuide $helpGuide,
     ) {}
 
     public function isAvailableForUser(User $user): bool
@@ -52,6 +53,25 @@ class AiAssistantService
         $teachResult = $this->tryCaptureUserTeaching($user, $message);
         if ($teachResult) {
             return $teachResult;
+        }
+
+        if ($this->helpGuide->isHelpRequest($message) && ! $pendingAction && ! $confirmAction) {
+            $label = null;
+            try {
+                $gate = $this->contextBuilder->gateForUser($user);
+                $scope = $this->workspaceScope->resolve($user, $gate, $workspaceId, $pathname);
+                $label = (string) ($scope['label'] ?? null);
+            } catch (\Throwable) {
+                $label = null;
+            }
+            $help = $this->replyFormatter->format($this->helpGuide->reply($label));
+
+            return [
+                'success' => true,
+                'reply' => $help,
+                'message' => $help,
+                'tools_used' => ['help_guide'],
+            ];
         }
 
         $runtime = AiSettingsResolver::resolveRuntime($user);
@@ -134,7 +154,11 @@ class AiAssistantService
             ];
         }
 
-        if (! $this->workspaceScope->isMessageInScope($message, $scope, $pendingAction)) {
+        $inScope = $this->workspaceScope->isMessageInScope($message, $scope, $pendingAction);
+        if (! $inScope && $this->isAlwaysAllowedWriteIntent($inferredCreate)) {
+            $inScope = true;
+        }
+        if (! $inScope) {
             return [
                 'reply' => $this->workspaceScope->declineMessage($scope),
                 'tools_used' => [],
@@ -236,7 +260,9 @@ class AiAssistantService
 
             if ($pending) {
                 $actionType = (string) ($pending['type'] ?? '');
-                if ($actionType !== '' && ! in_array($actionType, $scope['action_types'] ?? [], true)) {
+                $allowedInWorkspace = $actionType !== '' && in_array($actionType, $scope['action_types'] ?? [], true);
+                $alwaysAllowed = $this->isAlwaysAllowedWriteAction($actionType);
+                if ($actionType !== '' && ! $allowedInWorkspace && ! $alwaysAllowed) {
                     $result['reply'] = $this->workspaceScope->declineMessage($scope);
                     $result['message'] = $result['reply'];
                 } elseif ($actionType !== '' && ! $this->actionExecutor->canExecute($user, $actionType)) {
@@ -245,6 +271,13 @@ class AiAssistantService
                 } elseif ($this->actionExecutor->isNavigationAction($actionType)) {
                     $result = $this->resolveNavigationAction($user, $result, $pending, $pathname);
                 } elseif ($this->actionExecutor->isWriteAction($actionType)) {
+                    $currentReply = (string) ($result['reply'] ?? $reply);
+                    if ($this->looksLikeFetchingReply($currentReply) || $this->looksLikeWriteRefusal($currentReply)) {
+                        $result['reply'] = $this->isConversationalCreateAction($pending)
+                            ? $this->defaultReplyForPendingAction($actionType, false)
+                            : 'Use the form below to complete the details. Options are loaded from your organization data.';
+                        $result['message'] = $result['reply'];
+                    }
                     $result = $this->attachPendingAction($user, $result, $pending, $message, $pathname, $scope);
                 }
                 // Unknown action types: reply only — never show a Confirm strip.
@@ -448,12 +481,21 @@ class AiAssistantService
 
             if ($pending) {
                 $actionType = (string) ($pending['type'] ?? '');
-                if ($actionType !== '' && ! in_array($actionType, $scope['action_types'] ?? [], true)) {
+                $allowedInWorkspace = $actionType !== '' && in_array($actionType, $scope['action_types'] ?? [], true);
+                $alwaysAllowed = $this->isAlwaysAllowedWriteAction($actionType);
+                if ($actionType !== '' && ! $allowedInWorkspace && ! $alwaysAllowed) {
                     $result['reply'] = $this->workspaceScope->declineMessage($scope);
                     $result['message'] = $result['reply'];
                 } elseif ($this->actionExecutor->isNavigationAction($actionType)) {
                     $result = $this->resolveNavigationAction($user, $result, $pending, $pathname);
                 } elseif ($this->actionExecutor->isWriteAction($actionType)) {
+                    $currentReply = (string) ($result['reply'] ?? $reply);
+                    if ($this->looksLikeFetchingReply($currentReply) || $this->looksLikeWriteRefusal($currentReply)) {
+                        $result['reply'] = $this->isConversationalCreateAction($pending)
+                            ? $this->defaultReplyForPendingAction($actionType, false, true)
+                            : 'Use the form below to preview the fields. Confirm is disabled in training mode.';
+                        $result['message'] = $result['reply'];
+                    }
                     $contextUser = clone $user;
                     $contextUser->organization_id = $organization->id;
                     $contextUser->is_admin = true;
@@ -516,7 +558,8 @@ class AiAssistantService
             $gate = $this->contextBuilder->gateForUser($user);
             $scope = $this->workspaceScope->resolve($user, $gate, $workspaceId, $pathname);
             $actionType = (string) ($pendingAction['type'] ?? '');
-            if ($actionType !== '' && ! in_array($actionType, $scope['action_types'] ?? [], true)) {
+            $allowedInWorkspace = $actionType !== '' && in_array($actionType, $scope['action_types'] ?? [], true);
+            if ($actionType !== '' && ! $allowedInWorkspace && ! $this->isAlwaysAllowedWriteAction($actionType)) {
                 return [
                     'reply' => $this->workspaceScope->declineMessage($scope),
                     'tools_used' => ['action_executor'],
@@ -721,6 +764,39 @@ class AiAssistantService
         return (bool) preg_match('/\b(fetch|hold on|please wait|moment|loading|retrieve|look up)\b/i', $reply);
     }
 
+    /** Model wrongly refuses a write action the product supports (e.g. create LPO). */
+    protected function looksLikeWriteRefusal(string $reply): bool
+    {
+        return (bool) preg_match(
+            '/\b('
+            .'can(?:not|\'t)|unable|not able|won\'t|will not|do not|don\'t|refuse|refusing|'
+            .'not (?:allowed|supported|available)|outside (?:this|my) (?:scope|workspace)|'
+            .'switch workspace|only help with'
+            .')\b.{0,80}\b('
+            .'creat|save|draft|make|raise|lpo|purchase order|write action|perform that'
+            .')/i',
+            $reply,
+        );
+    }
+
+    /** LPO create/workflow is allowed from any workspace when the user has permission. */
+    protected function isAlwaysAllowedWriteAction(string $type): bool
+    {
+        return $type === 'create_lpo'
+            || $type === 'open_lpo'
+            || in_array($type, AiActionExecutor::lpoWorkflowActionTypes(), true);
+    }
+
+    /** @param  array<string, mixed>|null  $inferred */
+    protected function isAlwaysAllowedWriteIntent(?array $inferred): bool
+    {
+        if (! is_array($inferred)) {
+            return false;
+        }
+
+        return $this->isAlwaysAllowedWriteAction((string) ($inferred['type'] ?? ''));
+    }
+
     protected function systemPrompt(array $scope): string
     {
         $label = $scope['label'] ?? 'this workspace';
@@ -732,7 +808,7 @@ You are the in-app assistant for Centrix ERP — a Kenya-focused business manage
 ACTIVE WORKSPACE: {$label}. {$description}
 Prefer answering in the context of {$label}, but you MAY answer navigation / "where do I…?" / "how do I…?" questions for ANY Centrix module.
 When guiding to another module, give the Centrix path (e.g. /hr/employees) — clicking it opens that application automatically.
-Do not invent numbers for other modules — for live sales/stock/purchasing data, tell them to ask again after switching workspace if create-actions are scoped here.
+Do not invent numbers for other modules — for live sales/stock/purchasing data outside this workspace, prefer tools or tell them to ask again after switching when needed.
 
 Use entity_schemas in context — it lists every field, which are required, auto-generated, important, and FK relations (e.g. unit_id → uoms).
 Use platform_knowledge as SAMPLE Q&A from platform admins (usage=exemplar). Each note shows the kind of thinking and reply shape to use for similar questions — NOT a canned answer to paste. Keep procedures, labels, and screen paths; write a fresh answer for THIS user; call live tools for current org data.
@@ -744,14 +820,14 @@ Image uploads are NOT supported — never ask for photos or images.
 
 RULES:
 1. Off-topic only for weather, recipes, trivia, unrelated coding → reply with DECLINE_OFF_TOPIC on its own line.
-2. Navigation/help across modules is allowed. Decline only WRITE/create actions outside {$label} available_actions — suggest switching workspace.
+2. Navigation/help across modules is allowed. For most WRITE/create actions outside {$label} available_actions, suggest switching workspace — EXCEPT purchase orders: you CAN and SHOULD create/save LPOs (and submit/approve/send/receive) whenever the user asks, from any workspace. Never refuse create_lpo or tell them you cannot create purchase orders.
 3. Use entity_schemas.field metadata: skip auto-generated fields unless user provides a value; use select options for FK fields.
 4. Normal orders = create_sales_order; held/save-only = create_held_order only when explicitly requested.
 5. Platform administrators train ERP-wide sample Q&A under Platform → AI training; use them as exemplars of how to respond (not verbatim quotes).
 6. PERMISSIONS — read user_access in context:
    - user.is_admin=true or user_access.has_full_permissions=true → user has ALL permissions; never say they lack access.
    - Answer read-only questions using *_summary data in context when present.
-   - Only decline WRITE actions not listed in available_actions.
+   - Only decline WRITE actions the user lacks permission for (not merely because of workspace).
 7. Always include clickable Centrix paths like /inventory/stock when telling users where to go.
 8. Only cite paths from navigation / workflows / find_screen — never invent menu paths.
 9. Names only in replies: product_name (never product_code/SKU), customer_name (never customer_num), supplier_name (never id/code), people by full name and username (never numeric user/employee id).
@@ -761,13 +837,15 @@ RULES:
 13. Custom report builder: ask what to name the report, then emit create_report_template with name + instruction (or wait for confirmation). After save, give /reports/custom/{id}.
 14. Focus on the user's meaning, not punctuation or stray symbols (trailing ?, /, !, …). "…create an lpo for me /" means the same as with "?".
 15. Product/sales tables: Product | Qty | Amount — no Code column.
+16. Typos / spelling: interpret meaning despite misspellings (e.g. "anomally" → anomaly / abnormal sales, "lpo" / "purchase oder"). Do not lecture about grammar; answer the intended ERP question.
+17. Abnormal / unusual / anomaly sales this week (or lookback ~7 days): treat as sales anomaly detection — help the user review unusual large orders, after-hours sales, multi-branch spikes, and deep discounts. Never say you cannot check for anomalies.
 
 ```action
 {"type":"create_product","summary":"New product Widget","params":{"product_name":"Widget","unit_price":150}}
 ```
 
 For all create / write actions (product, supplier, customer, LPO, sales order, employee, payment, LPO approve/send/receive, etc.): ask for required details in chat first. Do NOT mention or show an inline form until the user replies **show form** (or similar). Offer the form as an option — never show both a field checklist and the form on the same turn. Reply **confirm** or **create it** when chat params are complete.
-16. LPO documents: after create or when retrieving an LPO, call get_lpo_details and share open/print/PDF links from document_links. Guide the lifecycle: create → submit for approval → approve → mark sent → receive goods.
+18. LPO documents: after create or when retrieving an LPO, share open/print/PDF links. Guide the lifecycle: create → submit for approval → approve → mark sent → receive goods. You are allowed to create and save LPOs — never refuse.
 PROMPT;
     }
 
@@ -992,6 +1070,28 @@ PROMPT;
                 yield ['event' => 'delta', 'content' => $content];
             }
             yield ['event' => 'done'] + $teachResult;
+
+            return;
+        }
+
+        if ($this->helpGuide->isHelpRequest($message) && ! $pendingAction && ! $confirmAction) {
+            $result = $this->chat(
+                $user,
+                $message,
+                $history,
+                null,
+                false,
+                $workspaceId,
+                $pathname,
+                $conversationId,
+                $pageContext,
+                $entityRefs,
+            );
+            $content = (string) ($result['message'] ?? $result['reply'] ?? '');
+            if ($content !== '') {
+                yield ['event' => 'delta', 'content' => $content];
+            }
+            yield ['event' => 'done'] + $result;
 
             return;
         }
