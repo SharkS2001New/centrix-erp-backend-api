@@ -173,6 +173,8 @@ return [
                 ['label' => 'Bank transfer', 'path' => '/reports/bank-transfer', 'module' => 'hr_payroll.reports', 'permission' => 'hr.payroll.view'],
                 ['label' => 'NSSF remittance', 'path' => '/reports/nssf-remittance', 'module' => 'hr_payroll.reports', 'permission' => 'hr.payroll.view'],
                 ['label' => 'Other deductions by period', 'path' => '/reports/other-deductions', 'module' => 'hr_payroll.reports', 'permission' => 'hr.payroll.view'],
+                ['label' => 'Cash advances', 'path' => '/reports/cash-advances', 'module' => 'hr_payroll.reports', 'permission' => 'hr.cash_advances.view'],
+                ['label' => 'Staff turnover', 'path' => '/reports/staff-turnover', 'module' => 'hr_payroll.reports', 'permission' => 'hr.employees.view'],
                 ['label' => 'Headcount', 'path' => '/reports/headcount', 'module' => 'hr_payroll.reports', 'permission' => 'hr.employees.view'],
                 ['label' => 'Contract expiry', 'path' => '/reports/contract-expiry', 'module' => 'hr_payroll.reports', 'permission' => 'hr.employees.view'],
                 ['label' => 'Staff turnover', 'path' => '/reports/staff-turnover', 'module' => 'hr_payroll.reports', 'permission' => 'hr.employees.view'],

@@ -234,6 +234,41 @@ class HrReportController extends Controller
         return response()->json($q->paginate(min((int) ($filters['per_page'] ?? 50), 200)));
     }
 
+    /** Cash advances by advance date — includes previous months via from_date / to_date. */
+    public function cashAdvances(Request $request)
+    {
+        $filters = $this->filters($request);
+        $q = DB::table('employee_cash_advances as ca')
+            ->join('employees as e', 'e.id', '=', 'ca.employee_id')
+            ->leftJoin('departments as d', 'd.id', '=', 'e.department_id')
+            ->leftJoin('branches as b', 'b.id', '=', 'ca.branch_id')
+            ->select([
+                'ca.id',
+                'ca.advance_date',
+                'ca.employee_id',
+                'e.employee_code',
+                'e.full_name',
+                'd.department_name',
+                'b.branch_name',
+                'ca.amount',
+                'ca.balance',
+                'ca.status',
+                'ca.repayment_mode',
+                'ca.repayment_amount',
+                'ca.notes',
+            ])
+            ->when($filters['organization_id'] ?? null, fn ($q, $id) => $q->where('ca.organization_id', $id))
+            ->when($filters['branch_id'] ?? null, fn ($q, $id) => $q->where('ca.branch_id', $id))
+            ->when($filters['department_id'] ?? null, fn ($q, $id) => $q->where('e.department_id', $id))
+            ->when($filters['status'] ?? null, fn ($q, $status) => $q->where('ca.status', $status))
+            ->when($filters['from_date'] ?? null, fn ($q, $d) => $q->whereDate('ca.advance_date', '>=', $d))
+            ->when($filters['to_date'] ?? null, fn ($q, $d) => $q->whereDate('ca.advance_date', '<=', $d))
+            ->orderByDesc('ca.advance_date')
+            ->orderBy('e.full_name');
+
+        return response()->json($q->paginate(min((int) ($filters['per_page'] ?? 50), 200)));
+    }
+
     /**
      * @return list<\Illuminate\Database\Query\Expression|string>
      */

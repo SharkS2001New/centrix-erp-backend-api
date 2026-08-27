@@ -41,6 +41,16 @@ class EmployeeCashAdvanceController extends HrOrgResourceController
             }
         }
 
+        if ($request->filled('from_date')) {
+            $query->whereDate('advance_date', '>=', $request->input('from_date'));
+        }
+        if ($request->filled('to_date')) {
+            $query->whereDate('advance_date', '<=', $request->input('to_date'));
+        }
+        if ($request->filled('status')) {
+            $query->where('status', $request->input('status'));
+        }
+
         $perPage = min((int) $request->input('per_page', 25), 200);
         $paginator = $query->orderByDesc('advance_date')->paginate($perPage);
         $viewer = $request->user();

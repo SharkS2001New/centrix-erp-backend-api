@@ -34,6 +34,7 @@ class HrReportsTest extends TestCase
         $this->assertContains('bank-transfer', $keys);
         $this->assertContains('nssf-remittance', $keys);
         $this->assertContains('other-deductions', $keys);
+        $this->assertContains('cash-advances', $keys);
         $this->assertContains('staff-turnover', $keys);
         $this->assertContains('headcount', $keys);
         $this->assertContains('contract-expiry', $keys);
@@ -64,6 +65,13 @@ class HrReportsTest extends TestCase
     public function test_hr_user_can_access_other_deductions_report(): void
     {
         $this->getJson('/api/v1/reports/other-deductions')
+            ->assertOk()
+            ->assertJsonStructure(['data', 'current_page']);
+    }
+
+    public function test_hr_user_can_access_cash_advances_report_with_date_range(): void
+    {
+        $this->getJson('/api/v1/reports/cash-advances?from_date=2026-01-01&to_date=2026-08-27')
             ->assertOk()
             ->assertJsonStructure(['data', 'current_page']);
     }

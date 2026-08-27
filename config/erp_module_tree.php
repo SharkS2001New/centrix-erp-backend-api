@@ -279,6 +279,7 @@ return [
         'bank-transfer' => 'hr_payroll.reports',
         'nssf-remittance' => 'hr_payroll.reports',
         'other-deductions' => 'hr_payroll.reports',
+        'cash-advances' => 'hr_payroll.reports',
         'staff-turnover' => 'hr_payroll.reports',
         'headcount' => 'hr_payroll.reports',
         'contract-expiry' => 'hr_payroll.reports',

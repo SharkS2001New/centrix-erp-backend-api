@@ -189,6 +189,7 @@ class ReportController extends Controller
                 ['key' => 'bank-transfer', 'path' => '/reports/bank-transfer', 'label' => 'Bank transfer'],
                 ['key' => 'nssf-remittance', 'path' => '/reports/nssf-remittance', 'label' => 'NSSF remittance'],
                 ['key' => 'other-deductions', 'path' => '/reports/other-deductions', 'label' => 'Other deductions by period'],
+                ['key' => 'cash-advances', 'path' => '/reports/cash-advances', 'label' => 'Cash advances'],
                 ['key' => 'staff-turnover', 'path' => '/reports/staff-turnover', 'label' => 'Staff turnover'],
                 ['key' => 'headcount', 'path' => '/reports/headcount', 'label' => 'Headcount'],
                 ['key' => 'contract-expiry', 'path' => '/reports/contract-expiry', 'label' => 'Contract expiry'],
