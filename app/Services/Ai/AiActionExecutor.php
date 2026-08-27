@@ -186,7 +186,7 @@ class AiActionExecutor
         $lines = $params['lines'] ?? [];
 
         if ($channel !== 'pos' && $customerNum <= 0) {
-            throw ValidationException::withMessages(['customer_num' => ['Customer is required for backend orders.']]);
+            throw ValidationException::withMessages(['customer_num' => ['Customer is required for Backoffice orders.']]);
         }
         if (! is_array($lines) || $lines === []) {
             throw ValidationException::withMessages(['lines' => ['At least one line item is required.']]);
@@ -1140,6 +1140,94 @@ class AiActionExecutor
         }
 
         return (bool) preg_match('/\b(use|with)\s+(?:the\s+)?form\b/i', $text);
+    }
+
+    /**
+     * True only when required params are present to actually save / run the write action.
+     * Collecting details mid-conversation must NOT show Confirm yet.
+     *
+     * @param  array<string, mixed>  $pending
+     */
+    public function isReadyToConfirm(array $pending): bool
+    {
+        $type = (string) ($pending['type'] ?? '');
+        $params = is_array($pending['params'] ?? null) ? $pending['params'] : [];
+
+        return match ($type) {
+            'create_lpo' => $this->lpoCreateParamsReady($params),
+            'create_product' => trim((string) ($params['product_name'] ?? '')) !== '',
+            'create_supplier' => trim((string) ($params['supplier_name'] ?? '')) !== '',
+            'create_customer' => trim((string) ($params['customer_name'] ?? '')) !== '',
+            'create_employee' => trim((string) ($params['first_name'] ?? $params['employee_name'] ?? '')) !== ''
+                || trim((string) ($params['last_name'] ?? '')) !== '',
+            'create_sales_order', 'create_held_order' => $this->salesOrderParamsReady($params),
+            'record_customer_payment' => $this->paymentParamsReady($params),
+            'create_report_template' => trim((string) ($params['name'] ?? '')) !== ''
+                && trim((string) ($params['instruction'] ?? $params['description'] ?? '')) !== '',
+            'submit_lpo_for_approval', 'approve_lpo', 'mark_lpo_sent', 'receive_lpo_goods' => trim((string) ($params['lpo_no'] ?? '')) !== '',
+            default => false,
+        };
+    }
+
+    /** @param  array<string, mixed>  $params */
+    protected function lpoCreateParamsReady(array $params): bool
+    {
+        if ((int) ($params['supplier_id'] ?? 0) <= 0) {
+            return false;
+        }
+
+        $lines = is_array($params['lines'] ?? null) ? $params['lines'] : [];
+        if ($lines !== []) {
+            return true;
+        }
+
+        return trim((string) ($params['order_num'] ?? '')) !== ''
+            || (int) ($params['sale_id'] ?? 0) > 0;
+    }
+
+    /** @param  array<string, mixed>  $params */
+    protected function salesOrderParamsReady(array $params): bool
+    {
+        $hasCustomer = trim((string) ($params['customer_num'] ?? $params['customer_name'] ?? '')) !== ''
+            || (int) ($params['customer_id'] ?? 0) > 0;
+        if (! $hasCustomer) {
+            return false;
+        }
+
+        $lines = is_array($params['lines'] ?? $params['items'] ?? null)
+            ? ($params['lines'] ?? $params['items'])
+            : [];
+
+        return $lines !== [];
+    }
+
+    /** @param  array<string, mixed>  $params */
+    protected function paymentParamsReady(array $params): bool
+    {
+        $hasOrder = (int) ($params['sale_id'] ?? 0) > 0
+            || trim((string) ($params['order_num'] ?? '')) !== '';
+        $amount = (float) ($params['amount'] ?? $params['amount_paid'] ?? 0);
+
+        return $hasOrder && $amount > 0;
+    }
+
+    /** Short prompt when the user tries to confirm before details are complete. */
+    public function notReadyToConfirmMessage(array $pending): string
+    {
+        $type = (string) ($pending['type'] ?? '');
+
+        return match ($type) {
+            'create_lpo' => 'Not ready to save yet — share the **supplier** and **line items** (or a sales order to copy from). When those are set, I will ask you to confirm.',
+            'create_product' => 'Not ready to save yet — share at least the **product name**. When details are complete, I will ask you to confirm.',
+            'create_supplier' => 'Not ready to save yet — share the **supplier name**. When details are complete, I will ask you to confirm.',
+            'create_customer' => 'Not ready to save yet — share the **customer name**. When details are complete, I will ask you to confirm.',
+            'create_employee' => 'Not ready to save yet — share the employee’s **name**. When details are complete, I will ask you to confirm.',
+            'create_sales_order', 'create_held_order' => 'Not ready to save yet — share the **customer** and **line items**. When those are set, I will ask you to confirm.',
+            'record_customer_payment' => 'Not ready to save yet — share the **order** and **payment amount**. When those are set, I will ask you to confirm.',
+            'create_report_template' => 'Not ready to save yet — share the **report name** and what it should show. When those are set, I will ask you to confirm.',
+            'submit_lpo_for_approval', 'approve_lpo', 'mark_lpo_sent', 'receive_lpo_goods' => 'Share the **LPO number** first, then I will ask you to confirm.',
+            default => 'Share the required details first. I will ask you to confirm only when everything is ready to save.',
+        };
     }
 
     /** @return array<string, mixed> */

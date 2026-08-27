@@ -609,6 +609,50 @@ class AttendanceClockPunchTest extends TestCase
         Carbon::setTestNow();
     }
 
+    public function test_late_punch_replaces_auto_forgotten_clock_out_instead_of_fake_lunch_in(): void
+    {
+        Sanctum::actingAs($this->admin);
+        Carbon::setTestNow(Carbon::parse('2026-08-13 23:00:00', 'Africa/Nairobi'));
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-13T07:47:00+03:00',
+            'direction' => 'auto',
+        ])->assertCreated();
+
+        app(\App\Services\Attendance\ForgottenClockOutService::class)->closeDueSessions((int) $this->org->id);
+
+        $session = EmployeeClockSession::query()->where('employee_id', $this->employee->id)->first();
+        $this->assertSame(EmployeeClockSession::CLOCK_OUT_KIND_AUTO_FORGOTTEN, $session->clock_out_kind);
+        $this->assertSame('17:00:00', $session->clock_out_at->timezone('Africa/Nairobi')->format('H:i:s'));
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-13T22:33:00+03:00',
+            'direction' => 'auto',
+            'hr_override' => true,
+        ])->assertCreated()->assertJsonPath('action', 'out');
+
+        $this->assertSame(1, EmployeeClockSession::query()->where('employee_id', $this->employee->id)->count());
+        $session->refresh();
+        $this->assertSame('22:33:00', $session->clock_out_at->timezone('Africa/Nairobi')->format('H:i:s'));
+        $this->assertNotSame(EmployeeClockSession::CLOCK_OUT_KIND_AUTO_FORGOTTEN, $session->clock_out_kind);
+
+        $punches = app(\App\Services\Attendance\AttendanceDayPunchPresenter::class)->present(
+            $this->employee->fresh('shift'),
+            '2026-08-13',
+            EmployeeClockSession::query()->where('employee_id', $this->employee->id)->get(),
+        );
+        $this->assertSame('07:47', $punches['clock_in']);
+        $this->assertNull($punches['lunch_out']);
+        $this->assertNull($punches['lunch_in']);
+        $this->assertSame('22:33', $punches['clock_out']);
+
+        Carbon::setTestNow();
+    }
+
     public function test_missed_punches_list_auto_closes_due_previous_day_sessions(): void
     {
         Sanctum::actingAs($this->admin);

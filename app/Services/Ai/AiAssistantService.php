@@ -88,6 +88,26 @@ class AiAssistantService
         }
 
         if ($confirmAction && $pendingAction) {
+            if (! $this->actionExecutor->isReadyToConfirm($pendingAction)) {
+                $gate = $this->contextBuilder->gateForUser($user);
+                $scope = $this->workspaceScope->resolve($user, $gate, $workspaceId, $pathname);
+                $pendingAction['ready_to_confirm'] = false;
+
+                return $this->attachPendingAction(
+                    $user,
+                    [
+                        'reply' => $this->actionExecutor->notReadyToConfirmMessage($pendingAction),
+                        'message' => $this->actionExecutor->notReadyToConfirmMessage($pendingAction),
+                        'tools_used' => [],
+                        'active_workspace' => $scope['id'],
+                    ],
+                    $pendingAction,
+                    $message,
+                    $pathname,
+                    $scope,
+                );
+            }
+
             return $this->executeConfirmedAction($user, $pendingAction, $workspaceId, $pathname);
         }
 
@@ -97,6 +117,31 @@ class AiAssistantService
 
         if ($pendingAction && $this->shouldExecuteConfirmedAction($pendingAction, $message)) {
             return $this->executeConfirmedAction($user, $pendingAction, $workspaceId, $pathname);
+        }
+
+        if (
+            $pendingAction
+            && $this->actionExecutor->isWriteAction((string) ($pendingAction['type'] ?? ''))
+            && $this->actionExecutor->isConfirmation($message)
+            && ! $this->actionExecutor->isReadyToConfirm($pendingAction)
+        ) {
+            $gate = $this->contextBuilder->gateForUser($user);
+            $scope = $this->workspaceScope->resolve($user, $gate, $workspaceId, $pathname);
+            $pendingAction['ready_to_confirm'] = false;
+
+            return $this->attachPendingAction(
+                $user,
+                [
+                    'reply' => $this->actionExecutor->notReadyToConfirmMessage($pendingAction),
+                    'message' => $this->actionExecutor->notReadyToConfirmMessage($pendingAction),
+                    'tools_used' => [],
+                    'active_workspace' => $scope['id'],
+                ],
+                $pendingAction,
+                $message,
+                $pathname,
+                $scope,
+            );
         }
 
         if ($pendingAction && ($this->intentResolver->isCancelIntent($message) || $this->intentResolver->isDataQuestion($message))) {
@@ -832,20 +877,21 @@ RULES:
 8. Only cite paths from navigation / workflows / find_screen — never invent menu paths.
 9. Names only in replies: product_name (never product_code/SKU), customer_name (never customer_num), supplier_name (never id/code), people by full name and username (never numeric user/employee id).
 10. Formulas: plain text with real field names (Stock Value = Cost Price × Stock on Hand). Never LaTeX.
-11. Markdown headings (# ## ###) are fine; the UI renders them as real headings.
+11. Markdown headings (# ## ### ####) are fine; the UI renders them as real headings.
 12. Always reply in English. If a user writes in another language (e.g. Swahili), do not answer the ERP question — tell them Centrix AI expects questions in English only.
 13. Custom report builder: ask what to name the report, then emit create_report_template with name + instruction (or wait for confirmation). After save, give /reports/custom/{id}.
 14. Focus on the user's meaning, not punctuation or stray symbols (trailing ?, /, !, …). "…create an lpo for me /" means the same as with "?".
 15. Product/sales tables: Product | Qty | Amount — no Code column.
 16. Typos / spelling: interpret meaning despite misspellings (e.g. "anomally" → anomaly / abnormal sales, "lpo" / "purchase oder"). Do not lecture about grammar; answer the intended ERP question.
 17. Abnormal / unusual / anomaly sales this week (or lookback ~7 days): treat as sales anomaly detection — help the user review unusual large orders, after-hours sales, multi-branch spikes, and deep discounts. Never say you cannot check for anomalies.
+18. LPO documents: after create or when retrieving an LPO, share open/print/PDF links. Guide the lifecycle: create → submit for approval → approve → mark sent → receive goods. You are allowed to create and save LPOs — never refuse.
+19. User-facing wording: never say "backend" to the user. Say "Backoffice" (sales channel `backend`/`erp` = Backoffice). Internal module keys like sales.backend stay internal only.
 
 ```action
 {"type":"create_product","summary":"New product Widget","params":{"product_name":"Widget","unit_price":150}}
 ```
 
-For all create / write actions (product, supplier, customer, LPO, sales order, employee, payment, LPO approve/send/receive, etc.): ask for required details in chat first. Do NOT mention or show an inline form until the user replies **show form** (or similar). Offer the form as an option — never show both a field checklist and the form on the same turn. Reply **confirm** or **create it** when chat params are complete.
-18. LPO documents: after create or when retrieving an LPO, share open/print/PDF links. Guide the lifecycle: create → submit for approval → approve → mark sent → receive goods. You are allowed to create and save LPOs — never refuse.
+For all create / write actions (product, supplier, customer, LPO, sales order, employee, payment, LPO approve/send/receive, etc.): ask for required details in chat first. Do NOT mention or show an inline form until the user replies **show form** (or similar). Offer the form as an option — never show both a field checklist and the form on the same turn. Only ask them to reply **confirm** / **create it** after supplier/items (or other required fields) are collected — never on the first “help me create…” turn.
 PROMPT;
     }
 
@@ -887,6 +933,10 @@ PROMPT;
     protected function shouldExecuteConfirmedAction(array $pending, string $message): bool
     {
         if (! $this->actionExecutor->isConfirmation($message)) {
+            return false;
+        }
+
+        if (! $this->actionExecutor->isReadyToConfirm($pending)) {
             return false;
         }
 
@@ -1002,6 +1052,7 @@ PROMPT;
             $pending['show_form'] = true;
         }
 
+        $pending['ready_to_confirm'] = $this->actionExecutor->isReadyToConfirm($pending);
         $result['pending_action'] = $pending;
 
         if ($this->shouldAttachFormSpec($pending, $message)) {

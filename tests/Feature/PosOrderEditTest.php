@@ -177,6 +177,57 @@ class PosOrderEditTest extends TestCase
         ]);
     }
 
+    public function test_pos_edit_void_soft_fails_when_kra_device_is_down(): void
+    {
+        $this->setPosOrderEditEnabled(true);
+        $this->enableKraDevice();
+
+        Http::fake([
+            '192.168.1.50:8010/api/health' => Http::response([
+                'success' => true,
+                'message' => 'OK',
+                'reachable' => true,
+            ], 200),
+            '192.168.1.50:8010/api/complete-workflow' => Http::sequence()
+                ->push([
+                    'success' => true,
+                    'message' => 'OK',
+                    'invoice_number' => 'CU-EDIT-SOFT-001',
+                    'Receipt Signature' => 'SIG-EDIT-SOFT',
+                    'signature_link' => 'https://example.test/qr-soft',
+                    'serial_number' => 'DEJA02220240050',
+                    'timestamp' => '2026-06-11T12:00:00',
+                ], 200)
+                ->push([
+                    'success' => false,
+                    'message' => 'Device offline',
+                ], 200),
+        ]);
+
+        $sale = $this->completePosSale($this->productCodeA, 1, ['submit_kra' => true]);
+
+        $this->assertDatabaseHas('kra_responses', [
+            'sale_id' => $sale['id'],
+            'status' => 'success',
+        ]);
+
+        $this->postJson("/api/v1/sales/orders/{$sale['id']}/restore-to-cart", [
+            'replace' => true,
+        ])->assertOk();
+
+        $return = CustomerReturn::query()
+            ->where('sale_id', $sale['id'])
+            ->where('return_kind', 'pos_edit')
+            ->where('status', 'approved')
+            ->first();
+
+        $this->assertNotNull($return);
+        $this->assertDatabaseHas('credit_notes', [
+            'customer_return_id' => $return->id,
+            'kra_status' => 'failed',
+        ]);
+    }
+
     public function test_manager_with_order_edit_permission_can_restore_another_users_booked_order(): void
     {
         $cashier = $this->createSalesUser('pos_edit_cashier', [

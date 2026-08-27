@@ -195,6 +195,9 @@ class AiToolResultReplyBuilderTest extends TestCase
         $this->assertStringContainsString('Sales anomalies', $reply);
         $this->assertStringContainsString('ACME Traders', $reply);
         $this->assertStringContainsString('98,000.00', $reply);
+        $this->assertStringContainsString('Backoffice', $reply);
+        $this->assertStringNotContainsString('| backend |', $reply);
+        $this->assertStringNotContainsString('|backend|', $reply);
         $this->assertStringContainsString('Deep discounts', $reply);
         $this->assertStringContainsString('/sales/orders', $reply);
         $this->assertStringNotContainsString('could not format a full answer', $reply);

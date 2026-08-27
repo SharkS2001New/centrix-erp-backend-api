@@ -2,6 +2,8 @@
 
 namespace App\Services\Ai;
 
+use App\Support\SalesChannelLabels;
+
 /**
  * Build a user-facing reply from tool JSON when the model returns empty text
  * (or only echoes internal tip/hint instructions).
@@ -1123,10 +1125,11 @@ class AiToolResultReplyBuilder
                 if (! is_array($row)) {
                     continue;
                 }
+                $channelRaw = isset($row['channel']) ? trim((string) $row['channel']) : '';
                 $lines[] = '| '.$this->cell((string) ($row['order_num'] ?? ''))
                     .' | '.$this->money((float) ($row['order_total'] ?? 0))
                     .' | '.$this->cell((string) ($row['customer'] ?? '—'))
-                    .' | '.$this->cell((string) ($row['channel'] ?? '—'))
+                    .' | '.$this->cell($channelRaw === '' ? '—' : SalesChannelLabels::label($channelRaw))
                     .' |';
             }
             $lines[] = '';

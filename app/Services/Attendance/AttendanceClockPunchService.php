@@ -87,6 +87,35 @@ class AttendanceClockPunchService
             $direction = $this->windows->resolve($employee, $punchedAt, $open);
         }
 
+        // Late evening punch while still clocked in must close the day — never drop as "missed"
+        // so ForgottenClockOut invents shift-end and a later punch becomes a fake "lunch in".
+        if (
+            $open
+            && in_array($direction, [
+                AttendancePunchWindowResolver::ACTION_MISSED,
+                AttendancePunchWindowResolver::ACTION_IGNORE,
+            ], true)
+            && $this->isLateSameDayOutCandidate($open, $punchedAt, $employee)
+        ) {
+            $direction = AttendancePunchWindowResolver::ACTION_OUT;
+        }
+
+        // Real punch after auto-forgotten shift-end close: replace invent time, do not open a new IN.
+        if ($open === null) {
+            $replaced = $this->maybeReplaceForgottenClockOut(
+                $employee,
+                $punchedAt,
+                $deviceNo,
+                $direction,
+                $hrOverride,
+                $source,
+                $payload['branch_id'] ?? null,
+            );
+            if ($replaced !== null) {
+                return $replaced;
+            }
+        }
+
         if ($hrOverride && in_array($direction, [
             AttendancePunchWindowResolver::ACTION_IGNORE,
             AttendancePunchWindowResolver::ACTION_MISSED,
@@ -730,6 +759,130 @@ class AttendanceClockPunchService
         return [
             'action' => 'in',
             'session' => $session->load('employee'),
+            'attendance' => $attendance,
+        ];
+    }
+
+    /**
+     * After evening window start, an open session should still accept a late clock-out.
+     */
+    protected function isLateSameDayOutCandidate(
+        EmployeeClockSession $open,
+        Carbon $punchedAt,
+        Employee $employee,
+    ): bool {
+        $inAt = AppTimezone::normalize($open->clock_in_at);
+        if (! $inAt) {
+            return false;
+        }
+
+        $punchLocal = $punchedAt->copy()->timezone(AppTimezone::name());
+        if ($punchLocal->toDateString() !== $inAt->toDateString() || ! $punchLocal->gt($inAt)) {
+            return false;
+        }
+
+        $windows = $this->windows->windowsFor($employee, $punchLocal);
+        $eveningFrom = HrAttendanceSettingsResolver::normalizeClockTime(
+            $windows['evening_clock_out_from'] ?? null,
+            '',
+        );
+        if ($eveningFrom === '' || ! preg_match('/^(\d{2}):(\d{2})$/', $eveningFrom, $m)) {
+            // No evening window configured — still prefer closing the open day vs inventing shift-end.
+            return true;
+        }
+
+        $punchMinutes = ($punchLocal->hour * 60) + $punchLocal->minute;
+        $fromMinutes = ((int) $m[1] * 60) + (int) $m[2];
+
+        return $punchMinutes >= $fromMinutes;
+    }
+
+    /**
+     * Replace an auto-forgotten shift-end close with the real late punch.
+     *
+     * @return array{action: string, session: EmployeeClockSession, attendance?: mixed}|null
+     */
+    protected function maybeReplaceForgottenClockOut(
+        Employee $employee,
+        Carbon $punchedAt,
+        ?string $deviceNo,
+        string $direction,
+        bool $hrOverride,
+        string $source,
+        mixed $branchId,
+    ): ?array {
+        $punchLocal = $punchedAt->copy()->timezone(AppTimezone::name());
+        $date = $punchLocal->toDateString();
+
+        $forgotten = EmployeeClockSession::query()
+            ->where('employee_id', $employee->id)
+            ->whereDate('clock_in_at', $date)
+            ->where('clock_out_kind', EmployeeClockSession::CLOCK_OUT_KIND_AUTO_FORGOTTEN)
+            ->whereNotNull('clock_out_at')
+            ->orderByDesc('clock_in_at')
+            ->first();
+
+        if (! $forgotten) {
+            return null;
+        }
+
+        $forgottenOut = AppTimezone::normalize($forgotten->clock_out_at);
+        $forgottenIn = AppTimezone::normalize($forgotten->clock_in_at);
+        if (! $forgottenIn || ! $punchLocal->gt($forgottenIn)) {
+            return null;
+        }
+
+        $wantsOut = in_array($direction, [
+            AttendancePunchWindowResolver::ACTION_OUT,
+            AttendancePunchWindowResolver::ACTION_MISSED,
+            AttendancePunchWindowResolver::ACTION_IGNORE,
+            'out',
+        ], true) || $hrOverride;
+
+        if (! $wantsOut) {
+            return null;
+        }
+
+        // Prefer the later of forgotten close vs real punch; real punch is always later in this bug.
+        if ($forgottenOut && $punchLocal->lte($forgottenOut) && ! $hrOverride) {
+            return null;
+        }
+
+        $previousAutoOut = $forgotten->clock_out_at;
+        $forgotten->clock_out_at = $punchedAt;
+        $forgotten->clock_out_kind = $hrOverride
+            ? EmployeeClockSession::CLOCK_OUT_KIND_HR
+            : EmployeeClockSession::CLOCK_OUT_KIND_DEVICE;
+        $forgotten->needs_reconciliation = false;
+        if ($source === 'hr_applied') {
+            $forgotten->source = 'hr_applied';
+        }
+        if ($deviceNo) {
+            $forgotten->device_identifier = $deviceNo;
+        }
+        $forgotten->save();
+
+        // Drop stray "new IN" sessions created after the invent shift-end close on the same day.
+        EmployeeClockSession::query()
+            ->where('employee_id', $employee->id)
+            ->whereDate('clock_in_at', $date)
+            ->where('id', '!=', $forgotten->id)
+            ->where('clock_in_at', '>=', $previousAutoOut ?? $forgotten->clock_in_at)
+            ->delete();
+
+        $attendance = $this->reconciler->reconcileFromSessions(
+            $employee,
+            $date,
+            $source,
+            $deviceNo,
+            $branchId !== null && $branchId !== '' ? (int) $branchId : null,
+        );
+        $forgotten->attendance_id = $attendance->id;
+        $forgotten->save();
+
+        return [
+            'action' => 'out',
+            'session' => $forgotten->fresh()->load(['employee', 'attendance']),
             'attendance' => $attendance,
         ];
     }

@@ -366,6 +366,7 @@ class AiAssistantTest extends TestCase
             ->assertJsonPath('pending_action.type', 'create_lpo');
 
         $this->assertEmpty($first->json('form_spec.fields') ?? []);
+        $this->assertFalse((bool) $first->json('pending_action.ready_to_confirm'));
 
         Http::fake([
             '*' => Http::response([
@@ -385,6 +386,7 @@ class AiAssistantTest extends TestCase
             ->assertJsonPath('pending_action.type', 'create_lpo');
 
         $this->assertNotEmpty($second->json('form_spec.fields') ?? []);
+        $this->assertFalse((bool) $second->json('pending_action.ready_to_confirm'));
     }
 
     public function test_chat_rejects_image_content(): void

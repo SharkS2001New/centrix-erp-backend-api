@@ -107,6 +107,19 @@ class CreditNoteService
         $creditNote = $this->submitToKra($creditNote, $return, $financeSettings);
 
         if ($creditNote->kra_status === 'failed') {
+            // POS order-edit voids must not block External POS when the device is down —
+            // same soft-fail posture as checkout fiscalization. Normal returns still abort.
+            if ($return->return_kind === 'pos_edit') {
+                Log::warning('KRA soft-fail on POS edit void — edit continues without fiscal credit', [
+                    'sale_id' => $return->sale_id,
+                    'customer_return_id' => $return->id,
+                    'credit_note_id' => $creditNote->id,
+                    'message' => $creditNote->kra_error_message,
+                ]);
+
+                return $creditNote;
+            }
+
             KraDeviceFailure::abort((string) ($creditNote->kra_error_message ?: 'KRA device rejected the credit note.'));
         }
 

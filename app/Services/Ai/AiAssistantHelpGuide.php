@@ -71,7 +71,7 @@ Type naturally. You are in **{$scope}**. Tip: type **Help** anytime to see this 
 - Price history for @Product
 
 #### Purchasing (LPO)
-- Create / save an LPO (share supplier + lines, then **confirm**)
+- Create / save an LPO (share supplier + lines first; **confirm** only when ready to save)
 - Show LPO status / download PDF
 - Submit for approval, approve, mark sent, or receive goods
 
@@ -90,7 +90,7 @@ Type naturally. You are in **{$scope}**. Tip: type **Help** anytime to see this 
 
 #### Create in chat
 - Create product, supplier, customer, employee, sales order, or LPO  
-  Share details in chat → reply **confirm** (or **show form**)
+  Share details in chat first → when ready, reply **confirm** (or **show form**)
 
 Ask one clear question next — for example: *“Yesterday’s sales”* or *“Create an LPO”*.
 MD;
