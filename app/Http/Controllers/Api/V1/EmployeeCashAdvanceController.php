@@ -51,6 +51,21 @@ class EmployeeCashAdvanceController extends HrOrgResourceController
             $query->where('status', $request->input('status'));
         }
 
+        if ($q = trim((string) $request->input('q', ''))) {
+            $like = '%'.$q.'%';
+            $query->where(function ($sub) use ($like) {
+                $sub->where('notes', 'like', $like)
+                    ->orWhere('status', 'like', $like)
+                    ->orWhereHas('employee', function ($emp) use ($like) {
+                        $emp->where('full_name', 'like', $like)
+                            ->orWhere('first_name', 'like', $like)
+                            ->orWhere('last_name', 'like', $like)
+                            ->orWhere('employee_code', 'like', $like)
+                            ->orWhere('payroll_number', 'like', $like);
+                    });
+            });
+        }
+
         $perPage = min((int) $request->input('per_page', 25), 200);
         $paginator = $query->orderByDesc('advance_date')->paginate($perPage);
         $viewer = $request->user();
