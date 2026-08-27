@@ -1170,7 +1170,11 @@ class AiActionExecutor
 
         return match ($type) {
             'create_lpo' => $this->lpoCreateParamsReady($params),
-            'create_product' => trim((string) ($params['product_name'] ?? '')) !== '',
+            'create_product' => trim((string) ($params['product_name'] ?? '')) !== ''
+                && (int) ($params['subcategory_id'] ?? 0) > 0
+                && (int) ($params['unit_id'] ?? 0) > 0
+                && (int) ($params['vat_id'] ?? 0) > 0
+                && is_numeric($params['unit_price'] ?? null),
             'create_supplier' => trim((string) ($params['supplier_name'] ?? '')) !== '',
             'create_customer' => trim((string) ($params['customer_name'] ?? '')) !== '',
             'create_employee' => trim((string) ($params['first_name'] ?? $params['employee_name'] ?? '')) !== ''
@@ -1233,7 +1237,7 @@ class AiActionExecutor
 
         return match ($type) {
             'create_lpo' => 'Not ready to save yet — share the **supplier** and **line items** (or a sales order to copy from). When those are set, I will ask you to confirm.',
-            'create_product' => 'Not ready to save yet — share at least the **product name**. When details are complete, I will ask you to confirm.',
+            'create_product' => 'Not ready to save yet — share the **product name**, **sub-category**, **unit of measure**, **VAT rate**, and **selling price**. When those are set, I will ask you to confirm.',
             'create_supplier' => 'Not ready to save yet — share the **supplier name**. When details are complete, I will ask you to confirm.',
             'create_customer' => 'Not ready to save yet — share the **customer name**. When details are complete, I will ask you to confirm.',
             'create_employee' => 'Not ready to save yet — share the employee’s **name**. When details are complete, I will ask you to confirm.',

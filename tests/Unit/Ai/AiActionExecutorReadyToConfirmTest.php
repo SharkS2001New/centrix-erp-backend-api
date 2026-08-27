@@ -40,7 +40,7 @@ class AiActionExecutorReadyToConfirmTest extends TestCase
         ]));
     }
 
-    public function test_create_product_ready_when_name_present(): void
+    public function test_create_product_ready_when_required_fields_present(): void
     {
         $executor = app(AiActionExecutor::class);
 
@@ -50,6 +50,22 @@ class AiActionExecutorReadyToConfirmTest extends TestCase
         ]));
 
         $this->assertTrue($executor->isReadyToConfirm([
+            'type' => 'create_product',
+            'params' => [
+                'product_name' => 'Widget',
+                'subcategory_id' => 1,
+                'unit_id' => 2,
+                'vat_id' => 3,
+                'unit_price' => 120,
+            ],
+        ]));
+    }
+
+    public function test_create_product_not_ready_with_name_only(): void
+    {
+        $executor = app(AiActionExecutor::class);
+
+        $this->assertFalse($executor->isReadyToConfirm([
             'type' => 'create_product',
             'params' => ['product_name' => 'Widget'],
         ]));
@@ -61,6 +77,15 @@ class AiActionExecutorReadyToConfirmTest extends TestCase
         $message = $executor->notReadyToConfirmMessage(['type' => 'create_lpo', 'params' => []]);
 
         $this->assertStringContainsString('supplier', strtolower($message));
+        $this->assertStringContainsString('confirm', strtolower($message));
+    }
+
+    public function test_not_ready_message_mentions_missing_product_details(): void
+    {
+        $executor = app(AiActionExecutor::class);
+        $message = $executor->notReadyToConfirmMessage(['type' => 'create_product', 'params' => []]);
+
+        $this->assertStringContainsString('vat', strtolower($message));
         $this->assertStringContainsString('confirm', strtolower($message));
     }
 

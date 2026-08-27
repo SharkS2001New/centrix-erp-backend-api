@@ -26,6 +26,7 @@ class AiAssistantService
         protected AiProviderFactory $providers,
         protected AiReplyFormatter $replyFormatter,
         protected AiAssistantHelpGuide $helpGuide,
+        protected AiCreateProductParamMerger $productParamMerger,
     ) {}
 
     public function isAvailableForUser(User $user): bool
@@ -85,6 +86,42 @@ class AiAssistantService
                 'tools_used' => [],
                 'error_code' => 'not_configured',
             ];
+        }
+
+        $productMergeNotes = [];
+        if (is_array($pendingAction) && (string) ($pendingAction['type'] ?? '') === 'create_product') {
+            $mergedProduct = $this->productParamMerger->merge($user, $pendingAction, $message, $history);
+            $pendingAction = $mergedProduct['pending'];
+            $productMergeNotes = $mergedProduct['notes'];
+
+            // Short field follow-ups (VAT / UoM / prices) must not depend on the LLM.
+            if (
+                ! $confirmAction
+                && ! $this->actionExecutor->isConfirmation($message)
+                && ! $this->intentResolver->isCancelIntent($message)
+                && ! $this->intentResolver->isDataQuestion($message)
+                && ($mergedProduct['changed'] || $this->productParamMerger->looksLikeFieldFollowUp($message))
+            ) {
+                $gate = $this->contextBuilder->gateForUser($user);
+                $scope = $this->workspaceScope->resolve($user, $gate, $workspaceId, $pathname);
+                $reply = $this->productParamMerger->statusReply($pendingAction, $productMergeNotes);
+
+                return $this->attachPendingAction(
+                    $user,
+                    [
+                        'success' => true,
+                        'reply' => $reply,
+                        'message' => $reply,
+                        'tools_used' => ['create_product_param_merger'],
+                        'active_workspace' => $scope['id'],
+                        'provider' => $runtime['provider'] ?? null,
+                    ],
+                    $pendingAction,
+                    $message,
+                    $pathname,
+                    $scope,
+                );
+            }
         }
 
         if ($confirmAction && $pendingAction) {
@@ -249,7 +286,13 @@ class AiAssistantService
         try {
             $rawReply = $this->completeWithProvider($runtime, $messages);
             if ($rawReply === '') {
-                $rawReply = 'I could not generate a response. Please try rephrasing your question.';
+                if (is_array($pendingAction) && $this->actionExecutor->isWriteAction((string) ($pendingAction['type'] ?? ''))) {
+                    $rawReply = (string) ($pendingAction['type'] ?? '') === 'create_product'
+                        ? $this->productParamMerger->statusReply($pendingAction, $productMergeNotes)
+                        : $this->defaultReplyForPendingAction((string) ($pendingAction['type'] ?? ''), false);
+                } else {
+                    $rawReply = 'I could not generate a response. Please try rephrasing your question.';
+                }
             }
 
             if (str_contains($rawReply, 'DECLINE_OFF_TOPIC')) {
@@ -320,6 +363,9 @@ class AiAssistantService
             }
 
             if ($pending) {
+                if ((string) ($pending['type'] ?? '') === 'create_product') {
+                    $pending = $this->productParamMerger->merge($user, $pending, $message, $history)['pending'];
+                }
                 $pending = $this->enrichPendingActionFromEntityRefs($pending, $normalizedRefs);
                 $actionType = (string) ($pending['type'] ?? '');
                 $allowedInWorkspace = $actionType !== '' && in_array($actionType, $scope['action_types'] ?? [], true);
@@ -352,6 +398,10 @@ class AiAssistantService
                 // Unknown action types: reply only — never show a Confirm strip.
             }
 
+            if (! array_key_exists('pending_action', $result)) {
+                $result['pending_action'] = null;
+            }
+
             return $result;
         } catch (AiProviderException $e) {
             Log::warning('AI chat provider failure', [
@@ -366,6 +416,7 @@ class AiAssistantService
                 'message' => $e->getMessage(),
                 'tools_used' => [],
                 'error_code' => $e->codeKey,
+                'pending_action' => $pendingAction,
             ];
         } catch (\Throwable $e) {
             Log::error('AI chat exception', [
@@ -379,6 +430,7 @@ class AiAssistantService
                 'message' => $this->formatInternalFailure($e),
                 'tools_used' => [],
                 'error_code' => 'internal_error',
+                'pending_action' => $pendingAction,
             ];
         }
     }
@@ -498,7 +550,13 @@ class AiAssistantService
         try {
             $rawReply = $this->completeWithProvider($runtime, $messages);
             if ($rawReply === '') {
-                $rawReply = 'I could not generate a response. Please try rephrasing your question.';
+                if (is_array($pendingAction) && $this->actionExecutor->isWriteAction((string) ($pendingAction['type'] ?? ''))) {
+                    $rawReply = (string) ($pendingAction['type'] ?? '') === 'create_product'
+                        ? $this->productParamMerger->statusReply($pendingAction)
+                        : $this->defaultReplyForPendingAction((string) ($pendingAction['type'] ?? ''), false, $trainingMode);
+                } else {
+                    $rawReply = 'I could not generate a response. Please try rephrasing your question.';
+                }
             }
 
             if (str_contains($rawReply, 'DECLINE_OFF_TOPIC')) {
@@ -932,6 +990,14 @@ PROMPT;
     {
         if ($this->intentResolver->isCancelIntent($message) || $this->intentResolver->isDataQuestion($message)) {
             return false;
+        }
+
+        if ($this->actionExecutor->isConfirmation($message) || $this->actionExecutor->wantsFormUi($message)) {
+            return true;
+        }
+
+        if ($this->productParamMerger->looksLikeFieldFollowUp($message)) {
+            return true;
         }
 
         if ($this->intentResolver->inferCreateAction($message, $history, $pathname) !== null) {
