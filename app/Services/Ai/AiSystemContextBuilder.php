@@ -361,6 +361,9 @@ class AiSystemContextBuilder
                 if (! empty($item['requires_admin']) && ! $user->is_admin) {
                     continue;
                 }
+                if (! empty($item['requires_hr_payroll']) && ! $gate->enabled('hr_payroll')) {
+                    continue;
+                }
                 if (! empty($item['module']) && ! $gate->enabled($item['module'])) {
                     continue;
                 }
