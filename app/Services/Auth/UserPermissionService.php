@@ -169,19 +169,41 @@ class UserPermissionService
             ->where('permission_code', $permissionCode)
             ->first();
 
-        if (! $permission || (string) $permission->module !== 'admin') {
+        if (! $permission) {
             return false;
         }
 
-        if ($gate === null) {
-            return true;
+        $module = (string) $permission->module;
+
+        if ($module === 'admin') {
+            if ($gate === null) {
+                return true;
+            }
+
+            return PermissionMatrixService::permissionModuleEnabled(
+                $permissionCode,
+                'admin',
+                $gate,
+            );
         }
 
-        return PermissionMatrixService::permissionModuleEnabled(
-            $permissionCode,
-            'admin',
-            $gate,
-        );
+        // Standalone Centrix Payments tenants: org admins configure channels without a full role matrix grant.
+        if ($module === 'centrix_payments') {
+            if ($gate === null) {
+                return true;
+            }
+            if (! $gate->centrixPaymentsPlatformEnabled()) {
+                return false;
+            }
+
+            return PermissionMatrixService::permissionModuleEnabled(
+                $permissionCode,
+                'centrix_payments',
+                $gate,
+            );
+        }
+
+        return false;
     }
 
     /**
