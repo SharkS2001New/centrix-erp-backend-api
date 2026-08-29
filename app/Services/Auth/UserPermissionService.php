@@ -450,6 +450,7 @@ class UserPermissionService
             $map = $this->grantOrgAdminEnabledModulePermissions($map, $gate);
         } elseif ($user->is_admin && $gate !== null) {
             $map = $this->grantOrgAdminAdministrationPermissions($map, $gate);
+            $map = $this->grantOrgAdminCentrixPaymentsPermissions($map, $gate);
             // Org admins must always unlock enabled application shells (Hotel POS /
             // Hotel Backoffice / retail POS / …) even when the shared Administrator
             // role was provisioned before hospitality existed.
@@ -478,6 +479,7 @@ class UserPermissionService
             // Org admins keep Administration; finer feature rights follow the role matrix.
             // Enabled application shells are unlocked via entry permissions below.
             $map = $this->grantOrgAdminAdministrationPermissions($map, $gate);
+            $map = $this->grantOrgAdminCentrixPaymentsPermissions($map, $gate);
             $map = $this->grantOrgAdminEnabledApplicationEntryPermissions($map, $gate);
         }
 
@@ -602,6 +604,30 @@ class UserPermissionService
 
         $map['admin.view'] = true;
         $map['admin.manage'] = true;
+
+        return $this->expandCapabilityAliases($map);
+    }
+
+    /**
+     * Org administrators receive full Centrix Payments when that application is licensed —
+     * standalone Lipana-style tenants configure M-Pesa / Equity here without Backoffice.
+     *
+     * @param  array<string, bool>  $map
+     * @return array<string, bool>
+     */
+    protected function grantOrgAdminCentrixPaymentsPermissions(array $map, CapabilityGate $gate): array
+    {
+        if (! $gate->centrixPaymentsPlatformEnabled()) {
+            return $map;
+        }
+
+        foreach (Permission::query()->where('module', 'centrix_payments')->get() as $permission) {
+            $code = (string) $permission->permission_code;
+            if (! PermissionMatrixService::permissionModuleEnabled($code, 'centrix_payments', $gate)) {
+                continue;
+            }
+            $map[$code] = true;
+        }
 
         return $this->expandCapabilityAliases($map);
     }
