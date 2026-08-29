@@ -282,6 +282,8 @@ class OrganizationProvisionController extends Controller
                 $modules = $this->platformConfig->reconcileEnabledModules($org, $modules, $data['sales_platform']);
                 $org->enabled_modules = $this->provisioning->normalizeEnabledModules($modules);
                 $org->save();
+            }
+            if (array_key_exists('applications', $data) || array_key_exists('enable_mobile_orders', $data['sales_platform'])) {
                 $this->provisioning->syncModuleSettingsFromEnabledModules($org);
             }
         }

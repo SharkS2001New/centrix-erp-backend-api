@@ -431,6 +431,10 @@ class OrganizationPlatformConfigService
             ? $moduleSettings['centrix_payments']
             : [];
         foreach ($this->platformControlledCentrixPaymentsKeys() as $key) {
+            // Centrix Payments is toggled on the Applications tab (enabled_modules), not Sales behaviour.
+            if ($key === 'enable_centrix_payments') {
+                continue;
+            }
             if (array_key_exists($key, $salesPlatform)) {
                 $currentCentrixPayments[$key] = (bool) $salesPlatform[$key];
             }
@@ -505,15 +509,6 @@ class OrganizationPlatformConfigService
             $modules['investors.reports'] = (bool) $salesPlatform['enable_investors'];
             $updates['enabled_modules'] = $modules;
         }
-        if (array_key_exists('enable_centrix_payments', $salesPlatform)) {
-            $modules = is_array($updates['enabled_modules'] ?? null)
-                ? $updates['enabled_modules']
-                : (is_array($org->enabled_modules) ? $org->enabled_modules : []);
-            $modules['centrix_payments'] = (bool) $salesPlatform['enable_centrix_payments'];
-            $modules['centrix_payments.reports'] = (bool) $salesPlatform['enable_centrix_payments'];
-            $updates['enabled_modules'] = $modules;
-        }
-
         $org->forceFill($updates)->save();
 
         app(\App\Services\Erp\ErpContext::class)->forgetOrganizationCache((int) $org->id);
