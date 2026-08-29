@@ -209,6 +209,21 @@ return [
                 'reports' => ['label' => 'Investor reports', 'actions' => ['view']],
             ],
         ],
+        'centrix_payments' => [
+            'label' => 'Centrix Payments',
+            'features' => [
+                'dashboard' => ['label' => 'Payments dashboard', 'actions' => ['view']],
+                'receive' => ['label' => 'Receive payment', 'actions' => ['view', 'create']],
+                'transactions' => ['label' => 'Payment transactions', 'actions' => ['view']],
+                'accounts' => ['label' => 'Payment accounts', 'actions' => ['view', 'create', 'edit', 'delete']],
+                'mpesa' => ['label' => 'M-Pesa', 'actions' => ['view', 'manage']],
+                'bank' => ['label' => 'Bank accounts', 'actions' => ['view', 'manage']],
+                'reconcile' => ['label' => 'Reconciliation', 'actions' => ['view', 'manage']],
+                'refunds' => ['label' => 'Refunds & reversals', 'actions' => ['view', 'create']],
+                'reports' => ['label' => 'Payment reports', 'actions' => ['view', 'export']],
+                'settings' => ['label' => 'Payments settings', 'actions' => ['view', 'edit']],
+            ],
+        ],
         'reports' => [
             'label' => 'Reports',
             'features' => [

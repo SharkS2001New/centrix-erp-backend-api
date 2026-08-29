@@ -22,6 +22,9 @@ use App\Http\Controllers\Api\V1\CustomerInvoicePaymentController;
 use App\Http\Controllers\Api\V1\CreditNoteController;
 use App\Http\Controllers\Api\V1\CustomerReturnController;
 use App\Http\Controllers\Api\V1\MobileOrdersQuickActionsController;
+use App\Http\Controllers\Api\V1\CentrixPayments\DashboardController as CentrixPaymentsDashboardController;
+use App\Http\Controllers\Api\V1\CentrixPayments\PaymentAccountController as CentrixPaymentAccountController;
+use App\Http\Controllers\Api\V1\CentrixPayments\TransactionController as CentrixPaymentTransactionController;
 use App\Http\Controllers\Api\V1\MpesaPaybillAccountController;
 use App\Http\Controllers\Api\V1\EquityBankAccountController;
 use App\Http\Controllers\Api\V1\LegacyOrdersController;
@@ -1152,6 +1155,31 @@ Route::prefix('v1')->group(function () {
             Route::get('{id}/reports/money-flow', [InvestorController::class, 'moneyFlowReport'])
                 ->middleware('erp.permission:investors.reports.view|investors.investors.view')
                 ->whereNumber('id');
+        });
+
+        Route::middleware(['erp.module:centrix_payments'])->prefix('centrix-payments')->group(function () {
+            Route::get('dashboard', [CentrixPaymentsDashboardController::class, 'show'])
+                ->middleware('erp.permission:centrix_payments.dashboard.view');
+            Route::get('payment-accounts', [CentrixPaymentAccountController::class, 'index'])
+                ->middleware('erp.permission:centrix_payments.accounts.view');
+            Route::post('payment-accounts', [CentrixPaymentAccountController::class, 'store'])
+                ->middleware('erp.permission:centrix_payments.accounts.create|centrix_payments.accounts.edit');
+            Route::post('payment-accounts/sync', [CentrixPaymentAccountController::class, 'sync'])
+                ->middleware('erp.permission:centrix_payments.accounts.edit|centrix_payments.mpesa.manage');
+            Route::get('payment-accounts/{id}', [CentrixPaymentAccountController::class, 'show'])
+                ->middleware('erp.permission:centrix_payments.accounts.view')
+                ->whereNumber('id');
+            Route::patch('payment-accounts/{id}', [CentrixPaymentAccountController::class, 'update'])
+                ->middleware('erp.permission:centrix_payments.accounts.edit')
+                ->whereNumber('id');
+            Route::delete('payment-accounts/{id}', [CentrixPaymentAccountController::class, 'destroy'])
+                ->middleware('erp.permission:centrix_payments.accounts.delete|centrix_payments.accounts.edit')
+                ->whereNumber('id');
+            Route::post('payment-accounts/{id}/test', [CentrixPaymentAccountController::class, 'testConnection'])
+                ->middleware('erp.permission:centrix_payments.accounts.edit|centrix_payments.mpesa.manage')
+                ->whereNumber('id');
+            Route::get('transactions', [CentrixPaymentTransactionController::class, 'index'])
+                ->middleware('erp.permission:centrix_payments.transactions.view');
         });
 
         // Accounting — read vs manage

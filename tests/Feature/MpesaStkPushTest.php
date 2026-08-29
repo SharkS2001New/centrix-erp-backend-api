@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\MpesaPaybillAccount;
 use App\Models\Organization;
 use App\Models\User;
 use Laravel\Sanctum\Sanctum;
@@ -21,9 +22,16 @@ class MpesaStkPushTest extends TestCase
         Sanctum::actingAs($this->user);
 
         $org = Organization::findOrFail($this->user->organization_id);
+        $modules = is_array($org->enabled_modules) ? $org->enabled_modules : [];
+        $modules['centrix_payments'] = true;
         $settings = $org->module_settings ?? [];
+        $settings['centrix_payments'] = array_merge($settings['centrix_payments'] ?? [], [
+            'enable_centrix_payments' => true,
+        ]);
         $settings['finance'] = array_merge($settings['finance'] ?? [], [
+            'enable_mpesa_stk' => true,
             'mpesa' => [
+                'enable_stk_push' => true,
                 'env' => 'live',
                 'consumer_key' => 'test-key',
                 'consumer_secret' => 'test-secret',
@@ -33,7 +41,31 @@ class MpesaStkPushTest extends TestCase
                 'stk_callback_url' => 'http://localhost:8000/api/v1/payments/stk/callback',
             ],
         ]);
-        $org->update(['module_settings' => $settings]);
+        $org->update([
+            'enabled_modules' => $modules,
+            'module_settings' => $settings,
+        ]);
+        $this->flushOrganizationCache((int) $org->id);
+
+        MpesaPaybillAccount::query()->updateOrCreate(
+            [
+                'organization_id' => $org->id,
+                'primary_short_code' => '5000072',
+            ],
+            [
+                'name' => 'Test Paybill',
+                'shortcode' => '5000072',
+                'till_number' => '8881950',
+                'branch_id' => $this->user->branch_id,
+                'is_default' => true,
+                'is_active' => true,
+                'enable_stk_push' => true,
+                'consumer_key' => 'test-key',
+                'consumer_secret' => 'test-secret',
+                'passkey' => 'test-passkey',
+                'stk_callback_url' => 'http://localhost:8000/api/v1/payments/stk/callback',
+            ],
+        );
     }
 
     public function test_stk_push_rejects_localhost_callback_url(): void
@@ -73,6 +105,7 @@ class MpesaStkPushTest extends TestCase
             'stk_callback_url' => 'https://example.com/api/v1/payments/stk/callback',
         ]);
         $org->update(['module_settings' => $settings]);
+        $this->flushOrganizationCache((int) $org->id);
 
         $productCode = \App\Models\Product::first()->product_code;
         $cartId = $this->postJson('/api/v1/sales/carts', [
@@ -112,6 +145,7 @@ class MpesaStkPushTest extends TestCase
             ]),
         ]);
         $org->update(['module_settings' => $settings]);
+        $this->flushOrganizationCache((int) $org->id);
 
         $productCode = \App\Models\Product::first()->product_code;
         $cartId = $this->postJson('/api/v1/sales/carts', [
@@ -131,5 +165,10 @@ class MpesaStkPushTest extends TestCase
             ->assertJsonFragment([
                 'message' => 'STK push is disabled for this organization. Enable it under Admin → Settings → Finance.',
             ]);
+    }
+
+    protected function flushOrganizationCache(int $organizationId): void
+    {
+        app(\App\Services\Erp\ErpContext::class)->forgetOrganizationCache($organizationId);
     }
 }

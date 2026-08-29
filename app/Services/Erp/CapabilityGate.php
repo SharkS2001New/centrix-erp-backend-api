@@ -410,6 +410,16 @@ class CapabilityGate
         return (bool) ($investors['enable_investors'] ?? false);
     }
 
+    public function centrixPaymentsPlatformEnabled(): bool
+    {
+        if ($this->enabled('centrix_payments')) {
+            return true;
+        }
+        $settings = $this->moduleSettings('centrix_payments');
+
+        return (bool) ($settings['enable_centrix_payments'] ?? false);
+    }
+
     public function advancedDataImportPlatformEnabled(): bool
     {
         $admin = $this->moduleSettings('admin');
@@ -712,6 +722,7 @@ class CapabilityGate
             'platform_ai_enabled' => $this->aiPlatformEnabled(),
             'platform_whatsapp_enabled' => $this->whatsappPlatformEnabled(),
             'platform_investors_enabled' => $this->investorsPlatformEnabled(),
+            'platform_centrix_payments_enabled' => $this->centrixPaymentsPlatformEnabled(),
             'platform_advanced_data_import_enabled' => $this->advancedDataImportPlatformEnabled(),
             'platform_tab_workspace_enabled' => $this->tabWorkspacePlatformEnabled(),
             'advanced_data_import_pages' => $this->advancedDataImportPagesEnabled(),

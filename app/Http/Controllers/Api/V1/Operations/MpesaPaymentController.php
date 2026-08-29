@@ -15,6 +15,7 @@ use App\Models\Organization;
 use App\Models\TemporaryCart;
 use App\Models\Till;
 use App\Services\Erp\ErpContext;
+use App\Services\Payments\CentrixPaymentsAvailabilityService;
 use App\Services\Mpesa\MpesaPaybillAccountService;
 use App\Services\Mpesa\MpesaPaymentReferenceParser;
 use App\Services\Mpesa\MpesaSettingsResolver;
@@ -44,6 +45,28 @@ class MpesaPaymentController extends Controller
     {
         $cart = $this->findOwnedCart($cartId, $request->user());
         $org = Organization::findOrFail($request->user()->organization_id);
+
+        try {
+            CentrixPaymentsAvailabilityService::forOrganization($org)->assertModuleEnabled();
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 403);
+        }
+
+        $branch = $cart->branch_id ? Branch::find($cart->branch_id) : null;
+        $till = $cart->till_id ? Till::find($cart->till_id) : null;
+        $availability = CentrixPaymentsAvailabilityService::forOrganization($org);
+        if (! $availability->mpesaAccountConfigured($org, $branch, $till)) {
+            return response()->json([
+                'message' => 'M-Pesa is not configured for this branch.',
+            ], 422);
+        }
+
+        try {
+            MpesaSettingsResolver::assertStkPushEnabledForOrganization($org);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
         $mpesaService = $this->mpesaForCart($cart, $request->user());
 
         try {

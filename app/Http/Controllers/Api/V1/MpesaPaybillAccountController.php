@@ -8,6 +8,7 @@ use App\Models\MpesaPaybillAccount;
 use App\Models\RouteModel;
 use App\Models\Till;
 use App\Services\Auth\UserAccessService;
+use App\Services\Payments\PaymentAccountService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
@@ -15,7 +16,10 @@ use Illuminate\Validation\ValidationException;
 
 class MpesaPaybillAccountController extends Controller
 {
-    public function __construct(protected UserAccessService $access) {}
+    public function __construct(
+        protected UserAccessService $access,
+        protected PaymentAccountService $paymentAccounts,
+    ) {}
 
     public function index(Request $request)
     {
@@ -63,6 +67,7 @@ class MpesaPaybillAccountController extends Controller
         ]));
 
         $this->syncScopeLinks($account);
+        $this->paymentAccounts->upsertFromMpesaPaybill($account->fresh());
 
         return response()->json($account->fresh(), 201);
     }
@@ -96,6 +101,7 @@ class MpesaPaybillAccountController extends Controller
 
         $account->fill($data)->save();
         $this->syncScopeLinks($account->fresh());
+        $this->paymentAccounts->upsertFromMpesaPaybill($account->fresh());
 
         return response()->json($account->fresh());
     }

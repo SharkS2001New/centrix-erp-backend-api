@@ -38,6 +38,7 @@ return [
     'fulfillment' => ['distribution'],
     'accounting' => ['accounting', 'payments'],
     'investors' => ['investors'],
+    'centrix_payments' => ['centrix_payments'],
     'reports' => [
         'sales.reports',
         'inventory.reports',

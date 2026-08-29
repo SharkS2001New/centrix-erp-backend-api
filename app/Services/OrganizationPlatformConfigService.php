@@ -50,6 +50,12 @@ class OrganizationPlatformConfigService
     }
 
     /** @return list<string> */
+    public function platformControlledCentrixPaymentsKeys(): array
+    {
+        return config('erp.platform_controlled.centrix_payments', []);
+    }
+
+    /** @return list<string> */
     public function platformControlledInventoryKeys(): array
     {
         return config('erp.platform_controlled.inventory', []);
@@ -421,6 +427,16 @@ class OrganizationPlatformConfigService
         }
         $moduleSettings['investors'] = $currentInvestors;
 
+        $currentCentrixPayments = is_array($moduleSettings['centrix_payments'] ?? null)
+            ? $moduleSettings['centrix_payments']
+            : [];
+        foreach ($this->platformControlledCentrixPaymentsKeys() as $key) {
+            if (array_key_exists($key, $salesPlatform)) {
+                $currentCentrixPayments[$key] = (bool) $salesPlatform[$key];
+            }
+        }
+        $moduleSettings['centrix_payments'] = $currentCentrixPayments;
+
         $currentAdmin = is_array($moduleSettings['admin'] ?? null) ? $moduleSettings['admin'] : [];
         foreach ($this->platformControlledAdminKeys() as $key) {
             if (! array_key_exists($key, $salesPlatform)) {
@@ -487,6 +503,14 @@ class OrganizationPlatformConfigService
             $modules = is_array($org->enabled_modules) ? $org->enabled_modules : [];
             $modules['investors'] = (bool) $salesPlatform['enable_investors'];
             $modules['investors.reports'] = (bool) $salesPlatform['enable_investors'];
+            $updates['enabled_modules'] = $modules;
+        }
+        if (array_key_exists('enable_centrix_payments', $salesPlatform)) {
+            $modules = is_array($updates['enabled_modules'] ?? null)
+                ? $updates['enabled_modules']
+                : (is_array($org->enabled_modules) ? $org->enabled_modules : []);
+            $modules['centrix_payments'] = (bool) $salesPlatform['enable_centrix_payments'];
+            $modules['centrix_payments.reports'] = (bool) $salesPlatform['enable_centrix_payments'];
             $updates['enabled_modules'] = $modules;
         }
 
@@ -577,6 +601,7 @@ class OrganizationPlatformConfigService
             'use_platform_gemini' => false,
             'enable_whatsapp_orders' => false,
             'enable_investors' => false,
+            'enable_centrix_payments' => false,
             'enable_advanced_data_import' => false,
             'advanced_data_import_pages' => AdvancedDataImportPageRegistry::defaultEnabledMap(),
             'stock_deduct_on' => [
@@ -668,6 +693,8 @@ class OrganizationPlatformConfigService
             'enable_whatsapp_orders' => (bool) ($whatsapp['enable_whatsapp_orders'] ?? false),
             'enable_investors' => (bool) (($gate->moduleSettings('investors')['enable_investors'] ?? false)
                 || ($org->enabled_modules['investors'] ?? false)),
+            'enable_centrix_payments' => (bool) (($gate->moduleSettings('centrix_payments')['enable_centrix_payments'] ?? false)
+                || ($org->enabled_modules['centrix_payments'] ?? false)),
             'enable_advanced_data_import' => (bool) ($admin['enable_advanced_data_import'] ?? false),
             'advanced_data_import_pages' => $importPages,
             'stock_deduct_on' => $this->normalizeStockDeductOn(

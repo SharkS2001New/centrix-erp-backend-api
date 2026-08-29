@@ -169,6 +169,19 @@ return [
         'kind' => 'reports',
     ],
 
+    'centrix_payments' => [
+        'label' => 'Centrix Payments',
+        'nav_group' => 'Centrix Payments',
+        'kind' => 'domain',
+        'children' => ['centrix_payments.reports'],
+    ],
+    'centrix_payments.reports' => [
+        'label' => 'Payment reports',
+        'nav_group' => 'Centrix Payments',
+        'parent' => 'centrix_payments',
+        'kind' => 'reports',
+    ],
+
     'hospitality' => [
         'label' => 'Hospitality',
         'nav_group' => 'Hospitality',
