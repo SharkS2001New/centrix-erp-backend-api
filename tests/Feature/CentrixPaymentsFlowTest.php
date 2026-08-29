@@ -6,6 +6,7 @@ use App\Http\Middleware\EnsureOrganizationLicenseActive;
 use App\Models\MpesaPaybillAccount;
 use App\Models\Organization;
 use App\Models\PaymentAccount;
+use App\Models\Permission;
 use App\Models\User;
 use App\Services\Erp\PermissionMatrixService;
 use Laravel\Sanctum\Sanctum;
@@ -129,6 +130,20 @@ class CentrixPaymentsFlowTest extends TestCase
                 'availability' => ['module_enabled', 'mpesa_stk_available', 'mpesa_configured'],
                 'totals' => ['today_collections', 'successful_payments', 'pending_payments'],
             ])
+            ->assertJsonPath('availability.module_enabled', true);
+    }
+
+    public function test_org_admin_can_access_centrix_payments_without_role_matrix_grant(): void
+    {
+        \Illuminate\Support\Facades\DB::table('role_permissions')
+            ->whereIn('permission_id', Permission::query()->where('module', 'centrix_payments')->pluck('id'))
+            ->delete();
+
+        $this->user->update(['is_admin' => true]);
+        $this->user->refresh();
+
+        $this->getJson('/api/v1/centrix-payments/dashboard')
+            ->assertOk()
             ->assertJsonPath('availability.module_enabled', true);
     }
 }

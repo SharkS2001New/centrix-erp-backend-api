@@ -60,6 +60,7 @@ class PermissionMatrixService
             self::ensureNotificationsForBackofficeRoles();
             self::ensureShopDebtorsForAdminRoles();
             self::migrateLegacyShopDebtorsPermissions();
+            self::ensureCentrixPaymentsForAdminRoles();
             self::ensureCollectPaymentForPosCashierRoles();
             self::ensureHrTimeAttendancePagesForExistingRoles();
             // Shared Administrator must keep every industry shell (commerce + hospitality).
@@ -736,6 +737,31 @@ class PermissionMatrixService
 
         foreach ($adminRoleIds as $roleId) {
             foreach ($shopDebtorsIds as $permissionId) {
+                \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
+                    'role_id' => $roleId,
+                    'permission_id' => $permissionId,
+                ]);
+            }
+        }
+    }
+
+    /** Grant Centrix Payments permissions to Administrator / Admin roles. */
+    public static function ensureCentrixPaymentsForAdminRoles(): void
+    {
+        $permissionIds = Permission::query()
+            ->where('module', 'centrix_payments')
+            ->pluck('id');
+
+        if ($permissionIds->isEmpty()) {
+            return;
+        }
+
+        $adminRoleIds = \App\Models\Role::query()
+            ->whereIn('role_name', ['Administrator', 'Admin'])
+            ->pluck('id');
+
+        foreach ($adminRoleIds as $roleId) {
+            foreach ($permissionIds as $permissionId) {
                 \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
                     'role_id' => $roleId,
                     'permission_id' => $permissionId,
