@@ -133,7 +133,7 @@ class ApplicationProvisioner
             }
         }
 
-        foreach (['distribution', 'accounting', 'hr', 'admin'] as $id) {
+        foreach (['distribution', 'accounting', 'centrix_payments', 'hr', 'admin'] as $id) {
             if ($applications[$id]) {
                 $modules = $this->mergeModulePatch($modules, $this->enablePatch($id));
             } else {
@@ -225,6 +225,7 @@ class ApplicationProvisioner
             'distribution' => (bool) ($enabledModules['distribution'] ?? false),
             'accounting' => (bool) ($enabledModules['accounting'] ?? false)
                 || (bool) ($enabledModules['payments'] ?? false),
+            'centrix_payments' => (bool) ($enabledModules['centrix_payments'] ?? false),
             'hr' => (bool) ($enabledModules['hr_payroll'] ?? false),
             'admin' => (bool) ($enabledModules['admin'] ?? false),
             default => false,
@@ -299,6 +300,10 @@ class ApplicationProvisioner
                 'accounting.dashboard' => true,
                 'accounting.reports' => true,
             ],
+            'centrix_payments' => [
+                'centrix_payments' => true,
+                'centrix_payments.reports' => true,
+            ],
             'hr' => [
                 'hr_payroll' => true,
                 'hr_payroll.dashboard' => true,
@@ -342,6 +347,10 @@ class ApplicationProvisioner
                 'payments' => false,
                 'accounting.dashboard' => false,
                 'accounting.reports' => false,
+            ],
+            'centrix_payments' => [
+                'centrix_payments' => false,
+                'centrix_payments.reports' => false,
             ],
             'hr' => [
                 'hr_payroll' => false,

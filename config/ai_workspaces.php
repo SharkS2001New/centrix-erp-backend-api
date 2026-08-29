@@ -153,6 +153,24 @@ return [
             '/\b(pos checkout|held order|till float)\b/i',
         ],
     ],
+    'centrix_payments' => [
+        'label' => 'Centrix Payments',
+        'description' => 'Payment accounts, M-Pesa STK, transactions, reconciliation, and payment settings.',
+        'nav_section_ids' => ['centrix_payments'],
+        'nav_path_prefixes' => ['/centrix-payments', '/admin/mpesa-settings', '/admin/mpesa-paybills', '/admin/equity-accounts'],
+        'module_catalog_keys' => ['centrix_payments'],
+        'action_types' => [],
+        'workflow_keys' => [],
+        'keywords' => [
+            'payment', 'mpesa', 'stk', 'paybill', 'reconcile', 'transaction', 'account', 'bank', 'equity',
+            'receive', 'refund', 'reversal', 'c2b', 'callback',
+        ],
+        'foreign_signals' => [
+            '/\b(create product|inventory stock|grn|lpo|sales order)\b/i',
+            '/\b(payroll|employee hire|leave request)\b/i',
+            '/\b(journal entry|chart of accounts|trial balance)\b/i',
+        ],
+    ],
     'hr' => [
         'label' => 'Human Resources',
         'description' => 'Employees, departments, attendance, leave, payroll, and HR reports.',

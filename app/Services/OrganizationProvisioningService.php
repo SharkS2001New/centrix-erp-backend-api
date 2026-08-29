@@ -381,6 +381,18 @@ class OrganizationProvisioningService
         }
         $settings['distribution'] = $dist;
 
+        $centrixPaymentsEnabled = (bool) ($modules['centrix_payments'] ?? false);
+        $centrixPayments = is_array($settings['centrix_payments'] ?? null)
+            ? $settings['centrix_payments']
+            : [];
+        $centrixPayments['enable_centrix_payments'] = $centrixPaymentsEnabled;
+        $settings['centrix_payments'] = $centrixPayments;
+
+        $investorsEnabled = (bool) ($modules['investors'] ?? false);
+        $investors = is_array($settings['investors'] ?? null) ? $settings['investors'] : [];
+        $investors['enable_investors'] = $investorsEnabled;
+        $settings['investors'] = $investors;
+
         $org->forceFill(['module_settings' => $settings])->save();
 
         return $org->fresh();

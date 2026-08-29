@@ -20,6 +20,7 @@ return [
         'hospitality_backoffice',
         'admin',
         'accounting',
+        'centrix_payments',
         'hr',
         'distribution',
     ],

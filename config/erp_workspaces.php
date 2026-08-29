@@ -99,6 +99,15 @@ return [
         'permission_prefixes' => ['accounting.'],
         'entry_permission' => 'accounting.dashboard.view',
     ],
+    'centrix_payments' => [
+        'label' => 'Centrix Payments',
+        'description' => 'Receive payments, manage M-Pesa and bank accounts, reconcile, and track transactions.',
+        'icon' => 'payments',
+        'home_path' => '/centrix-payments',
+        'domain_modules' => ['centrix_payments'],
+        'permission_prefixes' => ['centrix_payments.'],
+        'entry_permission' => 'centrix_payments.dashboard.view',
+    ],
     'hr' => [
         'label' => 'Human Resources',
         'description' => 'Employees, attendance, payroll, and HR reports.',

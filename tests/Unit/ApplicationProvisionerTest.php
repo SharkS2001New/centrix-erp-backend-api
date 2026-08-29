@@ -24,6 +24,7 @@ class ApplicationProvisionerTest extends TestCase
 
         $this->assertContains('pos', $ids);
         $this->assertContains('backoffice', $ids);
+        $this->assertContains('centrix_payments', $ids);
         $this->assertContains('hotel_bar_pos', $ids);
         $this->assertContains('hospitality_backoffice', $ids);
         $this->assertContains('admin', $ids);
@@ -206,6 +207,30 @@ class ApplicationProvisionerTest extends TestCase
         $this->assertTrue($apps['hospitality_backoffice']);
         $this->assertFalse($apps['backoffice']);
         $this->assertFalse($apps['pos']);
+    }
+
+    public function test_centrix_payments_can_be_enabled_without_backoffice(): void
+    {
+        $modules = $this->provisioner->enabledModulesFromApplications([
+            'pos' => false,
+            'backoffice' => false,
+            'hotel_bar_pos' => false,
+            'hospitality_backoffice' => false,
+            'distribution' => false,
+            'accounting' => false,
+            'centrix_payments' => true,
+            'hr' => false,
+            'admin' => true,
+        ]);
+
+        $this->assertTrue($modules['centrix_payments']);
+        $this->assertTrue($modules['centrix_payments.reports']);
+        $this->assertFalse($modules['sales.backend'] ?? false);
+        $this->assertTrue($modules['admin']);
+
+        $apps = $this->provisioner->applicationsFromEnabledModules($modules);
+        $this->assertTrue($apps['centrix_payments']);
+        $this->assertFalse($apps['backoffice']);
     }
 
     public function test_cascade_never_persists_config_only_keys(): void
