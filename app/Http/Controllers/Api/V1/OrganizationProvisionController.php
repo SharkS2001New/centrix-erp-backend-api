@@ -83,8 +83,8 @@ class OrganizationProvisionController extends Controller
                     ? $profile['application_ids']
                     : (
                         ($profile['industry'] ?? IndustryRegistry::industryForProfile($key)) === 'hospitality'
-                            ? ['hotel_bar_pos', 'hospitality_backoffice', 'accounting', 'hr', 'admin']
-                            : ['pos', 'backoffice', 'distribution', 'accounting', 'hr', 'admin']
+                            ? ['hotel_bar_pos', 'hospitality_backoffice', 'accounting', 'centrix_payments', 'hr', 'admin']
+                            : ['pos', 'backoffice', 'distribution', 'accounting', 'centrix_payments', 'hr', 'admin']
                     ),
             ])
             ->values();
