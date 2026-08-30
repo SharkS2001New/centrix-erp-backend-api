@@ -16,7 +16,6 @@ return [
         'backoffice',
         'hospitality_backoffice',
         'accounting',
-        'centrix_payments',
         'hr',
         'distribution',
         'admin',
@@ -218,25 +217,6 @@ return [
             ],
             'module_labels' => [
                 'reports' => 'Financial reports',
-            ],
-        ],
-        'centrix_payments' => [
-            'label' => 'Centrix Payments',
-            'description' => 'M-Pesa STK, payment accounts, transactions, reconciliation, and payment reports.',
-            'registry_modules' => ['centrix_payments'],
-            'module_features' => [
-                'centrix_payments' => [
-                    'dashboard',
-                    'receive',
-                    'transactions',
-                    'accounts',
-                    'mpesa',
-                    'bank',
-                    'reconcile',
-                    'refunds',
-                    'reports',
-                    'settings',
-                ],
             ],
         ],
         'hr' => [

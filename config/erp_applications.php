@@ -14,7 +14,6 @@ return [
         'hospitality_backoffice',
         'distribution',
         'accounting',
-        'centrix_payments',
         'hr',
         'admin',
     ],
@@ -49,11 +48,6 @@ return [
             'label' => 'Accounting',
             'description' => 'General ledger, payments, receivables, expenses, and financial reports.',
             'icon' => 'chart',
-        ],
-        'centrix_payments' => [
-            'label' => 'Centrix Payments',
-            'description' => 'M-Pesa STK, payment accounts, transactions, and reconciliation — standalone or alongside ERP.',
-            'icon' => 'payments',
         ],
         'hr' => [
             'label' => 'Human Resources',

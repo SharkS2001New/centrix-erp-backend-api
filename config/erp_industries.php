@@ -32,7 +32,6 @@ return [
                 'manager',
                 'backoffice',
                 'accounting',
-                'centrix_payments',
                 'hr',
                 'distribution',
                 'admin',
@@ -52,7 +51,6 @@ return [
                 'manager',
                 // Shared finance/HR/admin when those apps are later enabled for a hotel tenant.
                 'accounting',
-                'centrix_payments',
                 'hr',
                 'admin',
             ],

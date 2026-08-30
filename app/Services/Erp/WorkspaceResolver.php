@@ -68,6 +68,9 @@ class WorkspaceResolver
         $available = [];
 
         foreach ($definitions as $id => $def) {
+            if ($id === 'centrix_payments') {
+                continue;
+            }
             if (! $this->workspaceAllowedByLoginChannels((string) $id, $user)) {
                 continue;
             }

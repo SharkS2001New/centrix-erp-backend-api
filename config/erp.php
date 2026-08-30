@@ -275,9 +275,6 @@ return [
         'investors' => [
             'enable_investors',
         ],
-        'centrix_payments' => [
-            'enable_centrix_payments',
-        ],
         'admin' => [
             'enable_advanced_data_import',
             'advanced_data_import_pages',

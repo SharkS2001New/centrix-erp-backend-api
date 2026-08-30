@@ -24,7 +24,7 @@ class ApplicationProvisionerTest extends TestCase
 
         $this->assertContains('pos', $ids);
         $this->assertContains('backoffice', $ids);
-        $this->assertContains('centrix_payments', $ids);
+        $this->assertNotContains('centrix_payments', $ids);
         $this->assertContains('hotel_bar_pos', $ids);
         $this->assertContains('hospitality_backoffice', $ids);
         $this->assertContains('admin', $ids);
@@ -218,7 +218,6 @@ class ApplicationProvisionerTest extends TestCase
             'hospitality_backoffice' => false,
             'distribution' => false,
             'accounting' => false,
-            'centrix_payments' => true,
             'hr' => false,
             'admin' => true,
         ]);

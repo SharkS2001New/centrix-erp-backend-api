@@ -237,11 +237,8 @@ class OrganizationProvisionController extends Controller
         ));
 
         if ($resolvedModules = $this->resolveEnabledModulesInput($data, $org)) {
-            $current = is_array($org->enabled_modules) ? $org->enabled_modules : [];
-            $centrixEnabled = (bool) ($current['centrix_payments'] ?? false);
-            $resolvedModules['centrix_payments'] = $centrixEnabled;
-            $resolvedModules['centrix_payments.reports'] = $centrixEnabled
-                || (bool) ($current['centrix_payments.reports'] ?? false);
+            $resolvedModules['centrix_payments'] = false;
+            $resolvedModules['centrix_payments.reports'] = false;
             $data['enabled_modules'] = $resolvedModules;
         } elseif (isset($data['enabled_modules'])) {
             $data['enabled_modules'] = $this->validateEnabledModulesMap($data['enabled_modules']);
@@ -783,7 +780,6 @@ class OrganizationProvisionController extends Controller
             'sales_platform.use_platform_gemini' => 'sometimes|boolean',
             'sales_platform.enable_whatsapp_orders' => 'sometimes|boolean',
             'sales_platform.enable_investors' => 'sometimes|boolean',
-            'sales_platform.enable_centrix_payments' => 'sometimes|boolean',
             'sales_platform.enable_advanced_data_import' => 'sometimes|boolean',
             'sales_platform.advanced_data_import_pages' => 'sometimes|array',
             'sales_platform.advanced_data_import_pages.*' => 'sometimes|boolean',
