@@ -133,7 +133,7 @@ class ApplicationProvisioner
             }
         }
 
-        foreach (['distribution', 'accounting', 'centrix_payments', 'hr', 'admin'] as $id) {
+        foreach (['distribution', 'accounting', 'hr', 'admin'] as $id) {
             if ($applications[$id]) {
                 $modules = $this->mergeModulePatch($modules, $this->enablePatch($id));
             } else {

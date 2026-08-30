@@ -898,6 +898,10 @@ class ErpSettingsController extends Controller
             unset($data['mpesa']);
         }
 
+        if (! $user->is_super_admin && array_key_exists('equity', $data) && is_array($data['equity']) && ! $gate->equityBankPlatformEnabled()) {
+            unset($data['equity']);
+        }
+
         $current = $gate->moduleSettings('finance');
         $nextFinance = array_merge($current, array_filter(
             $data,
@@ -1520,6 +1524,10 @@ class ErpSettingsController extends Controller
 
         if (! $gate->mpesaStkPlatformEnabled()) {
             unset($finance['mpesa'], $finance['mpesa_status']);
+        }
+
+        if (! $gate->equityBankPlatformEnabled()) {
+            unset($finance['equity']);
         }
 
         return $finance;

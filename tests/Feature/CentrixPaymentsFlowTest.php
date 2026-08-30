@@ -147,7 +147,7 @@ class CentrixPaymentsFlowTest extends TestCase
             ->assertJsonPath('availability.module_enabled', true);
     }
 
-    public function test_platform_admin_can_disable_centrix_payments_despite_stale_sales_platform_flag(): void
+    public function test_platform_admin_enables_and_disables_centrix_payments_from_sales_behaviour(): void
     {
         config(['erp.allow_org_provisioning' => true]);
 
@@ -161,7 +161,7 @@ class CentrixPaymentsFlowTest extends TestCase
             'hospitality_backoffice' => false,
             'distribution' => false,
             'accounting' => false,
-            'centrix_payments' => true,
+            'centrix_payments' => false,
             'hr' => false,
             'admin' => true,
         ];
@@ -170,13 +170,12 @@ class CentrixPaymentsFlowTest extends TestCase
             'applications' => $applications,
             'sales_platform' => ['enable_centrix_payments' => true],
         ])->assertOk()
-            ->assertJsonPath('effective_modules.centrix_payments', true);
-
-        $applications['centrix_payments'] = false;
+            ->assertJsonPath('effective_modules.centrix_payments', true)
+            ->assertJsonPath('sales_platform.enable_centrix_payments', true);
 
         $response = $this->patchJson("/api/v1/admin/organizations/{$this->org->id}", [
-            'applications' => $applications,
-            'sales_platform' => ['enable_centrix_payments' => true],
+            'applications' => array_merge($applications, ['centrix_payments' => true]),
+            'sales_platform' => ['enable_centrix_payments' => false],
         ])->assertOk();
 
         $response->assertJsonPath('effective_modules.centrix_payments', false);

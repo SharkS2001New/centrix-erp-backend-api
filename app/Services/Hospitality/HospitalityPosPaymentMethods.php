@@ -80,9 +80,18 @@ class HospitalityPosPaymentMethods
         $hospitality = $gate->moduleSettings('hospitality');
         $raw = $hospitality['payment_methods'] ?? null;
         if (is_array($raw) && $raw !== []) {
-            return self::normalize($raw);
+            $methods = self::normalize($raw);
+        } else {
+            $methods = self::fromSalesSettings($gate->moduleSettings('sales'));
         }
 
-        return self::fromSalesSettings($gate->moduleSettings('sales'));
+        if (! $gate->mpesaStkPlatformEnabled()) {
+            $methods['mpesa'] = false;
+        }
+        if (! $gate->equityBankPlatformEnabled()) {
+            $methods['equity'] = false;
+        }
+
+        return $methods;
     }
 }

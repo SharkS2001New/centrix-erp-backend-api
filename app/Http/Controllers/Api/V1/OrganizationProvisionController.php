@@ -83,8 +83,8 @@ class OrganizationProvisionController extends Controller
                     ? $profile['application_ids']
                     : (
                         ($profile['industry'] ?? IndustryRegistry::industryForProfile($key)) === 'hospitality'
-                            ? ['hotel_bar_pos', 'hospitality_backoffice', 'accounting', 'centrix_payments', 'hr', 'admin']
-                            : ['pos', 'backoffice', 'distribution', 'accounting', 'centrix_payments', 'hr', 'admin']
+                            ? ['hotel_bar_pos', 'hospitality_backoffice', 'accounting', 'hr', 'admin']
+                            : ['pos', 'backoffice', 'distribution', 'accounting', 'hr', 'admin']
                     ),
             ])
             ->values();
@@ -237,6 +237,11 @@ class OrganizationProvisionController extends Controller
         ));
 
         if ($resolvedModules = $this->resolveEnabledModulesInput($data, $org)) {
+            $current = is_array($org->enabled_modules) ? $org->enabled_modules : [];
+            $centrixEnabled = (bool) ($current['centrix_payments'] ?? false);
+            $resolvedModules['centrix_payments'] = $centrixEnabled;
+            $resolvedModules['centrix_payments.reports'] = $centrixEnabled
+                || (bool) ($current['centrix_payments.reports'] ?? false);
             $data['enabled_modules'] = $resolvedModules;
         } elseif (isset($data['enabled_modules'])) {
             $data['enabled_modules'] = $this->validateEnabledModulesMap($data['enabled_modules']);
@@ -283,9 +288,7 @@ class OrganizationProvisionController extends Controller
                 $org->enabled_modules = $this->provisioning->normalizeEnabledModules($modules);
                 $org->save();
             }
-            if (array_key_exists('applications', $data) || array_key_exists('enable_mobile_orders', $data['sales_platform'])) {
-                $this->provisioning->syncModuleSettingsFromEnabledModules($org);
-            }
+            $this->provisioning->syncModuleSettingsFromEnabledModules($org);
         }
 
         if (array_key_exists('payroll_platform', $data) && is_array($data['payroll_platform'])) {
@@ -578,6 +581,8 @@ class OrganizationProvisionController extends Controller
                 'driver_attendance_enabled' => $gate->driverAttendanceEnabled(),
                 'allowed_login_channels' => $gate->allowedLoginChannels(),
                 'platform_mpesa_stk_enabled' => $gate->mpesaStkPlatformEnabled(),
+                'platform_equity_bank_enabled' => $gate->equityBankPlatformEnabled(),
+                'platform_centrix_payments_enabled' => $gate->centrixPaymentsPlatformEnabled(),
                 'platform_kra_integration_enabled' => $gate->kraIntegrationPlatformEnabled(),
                 'platform_ai_enabled' => $gate->aiPlatformEnabled(),
                 'platform_advanced_data_import_enabled' => $gate->advancedDataImportPlatformEnabled(),
@@ -772,6 +777,7 @@ class OrganizationProvisionController extends Controller
             'sales_platform.append_same_day_customer_orders' => 'sometimes|boolean',
             'sales_platform.enable_backoffice_order_edit' => 'sometimes|boolean',
             'sales_platform.enable_mpesa_stk' => 'sometimes|boolean',
+            'sales_platform.enable_equity_bank' => 'sometimes|boolean',
             'sales_platform.enable_kra_integration' => 'sometimes|boolean',
             'sales_platform.enable_ai' => 'sometimes|boolean',
             'sales_platform.use_platform_gemini' => 'sometimes|boolean',

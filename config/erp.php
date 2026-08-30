@@ -44,7 +44,7 @@ return [
         'small_shop' => [
             'label' => 'Small shop (backoffice sales only)',
             'industry' => 'commerce',
-            'application_ids' => ['pos', 'backoffice', 'accounting', 'centrix_payments', 'hr', 'admin'],
+            'application_ids' => ['pos', 'backoffice', 'accounting', 'hr', 'admin'],
             'modules' => array_merge($allModulesFalse, [
                 'sales' => true,
                 'sales.backend' => true,
@@ -63,7 +63,7 @@ return [
         'wholesale_retail' => [
             'label' => 'Wholesale & retail (full stack)',
             'industry' => 'commerce',
-            'application_ids' => ['pos', 'backoffice', 'distribution', 'accounting', 'centrix_payments', 'hr', 'admin'],
+            'application_ids' => ['pos', 'backoffice', 'distribution', 'accounting', 'hr', 'admin'],
             'modules' => array_merge($allModulesFalse, [
                 'sales' => true,
                 'sales.backend' => true,
@@ -90,7 +90,7 @@ return [
         'supermarket' => [
             'label' => 'Supermarket (POS retail)',
             'industry' => 'commerce',
-            'application_ids' => ['pos', 'backoffice', 'accounting', 'centrix_payments', 'hr', 'admin'],
+            'application_ids' => ['pos', 'backoffice', 'accounting', 'hr', 'admin'],
             'modules' => array_merge($allModulesFalse, [
                 'sales' => true,
                 'sales.backend' => true,
@@ -117,14 +117,14 @@ return [
             'label' => 'Custom setup',
             'industry' => 'commerce',
             // Blank slate within Retail & Distribution only (no hospitality apps).
-            'application_ids' => ['pos', 'backoffice', 'distribution', 'accounting', 'centrix_payments', 'hr', 'admin'],
+            'application_ids' => ['pos', 'backoffice', 'distribution', 'accounting', 'hr', 'admin'],
             'modules' => $allModulesFalse,
             'default_channels' => ['backend'],
         ],
         'distribution' => [
             'label' => 'Distribution / warehouse',
             'industry' => 'commerce',
-            'application_ids' => ['pos', 'backoffice', 'distribution', 'accounting', 'centrix_payments', 'hr', 'admin'],
+            'application_ids' => ['pos', 'backoffice', 'distribution', 'accounting', 'hr', 'admin'],
             'modules' => array_merge($allModulesFalse, [
                 'sales' => true,
                 'sales.backend' => true,
@@ -159,7 +159,6 @@ return [
                 'hotel_bar_pos',
                 'hospitality_backoffice',
                 'accounting',
-                'centrix_payments',
                 'hr',
                 'admin',
             ],
@@ -253,6 +252,7 @@ return [
         ],
         'finance' => [
             'enable_mpesa_stk',
+            'enable_equity_bank',
             'enable_kra_integration',
         ],
             'hospitality' => [
@@ -697,6 +697,7 @@ return [
         ],
         'finance' => [
             'enable_mpesa_stk' => true,
+            'enable_equity_bank' => true,
             'enable_kra_integration' => true,
             'enable_kra_device' => false,
             'kra_device_ip' => '',

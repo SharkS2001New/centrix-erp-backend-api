@@ -209,7 +209,7 @@ class ApplicationProvisionerTest extends TestCase
         $this->assertFalse($apps['pos']);
     }
 
-    public function test_centrix_payments_can_be_enabled_without_backoffice(): void
+    public function test_centrix_payments_is_not_toggled_from_applications(): void
     {
         $modules = $this->provisioner->enabledModulesFromApplications([
             'pos' => false,
@@ -223,14 +223,10 @@ class ApplicationProvisionerTest extends TestCase
             'admin' => true,
         ]);
 
-        $this->assertTrue($modules['centrix_payments']);
-        $this->assertTrue($modules['centrix_payments.reports']);
-        $this->assertFalse($modules['sales.backend'] ?? false);
+        $this->assertFalse($modules['centrix_payments'] ?? false);
+        $this->assertFalse($modules['centrix_payments.reports'] ?? false);
         $this->assertTrue($modules['admin']);
-
-        $apps = $this->provisioner->applicationsFromEnabledModules($modules);
-        $this->assertTrue($apps['centrix_payments']);
-        $this->assertFalse($apps['backoffice']);
+        $this->assertFalse($modules['sales.backend'] ?? false);
     }
 
     public function test_cascade_never_persists_config_only_keys(): void

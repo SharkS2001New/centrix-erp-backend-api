@@ -119,10 +119,10 @@ class AuthRegistrationConcurrencyTest extends TestCase
         $response = $this->getJson('/api/v1/admin/organizations/provision-options')->assertOk();
 
         $applicationIds = collect($response->json('applications'))->pluck('id')->all();
-        $this->assertContains('centrix_payments', $applicationIds);
+        $this->assertContains('pos', $applicationIds);
 
         $wholesale = collect($response->json('profiles'))->firstWhere('key', 'wholesale_retail');
-        $this->assertContains('centrix_payments', $wholesale['application_ids'] ?? []);
+        $this->assertNotContains('centrix_payments', $wholesale['application_ids'] ?? []);
         $this->assertArrayHasKey('applications', $response->json('profiles.0'));
     }
 

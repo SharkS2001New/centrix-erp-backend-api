@@ -379,6 +379,13 @@ class CapabilityGate
         return (bool) ($finance['enable_mpesa_stk'] ?? true);
     }
 
+    public function equityBankPlatformEnabled(): bool
+    {
+        $finance = $this->moduleSettings('finance');
+
+        return (bool) ($finance['enable_equity_bank'] ?? true);
+    }
+
     public function kraIntegrationPlatformEnabled(): bool
     {
         $finance = $this->moduleSettings('finance');
@@ -718,6 +725,7 @@ class CapabilityGate
             'pos_order_edit_enabled' => $this->posOrderEditEnabled(),
             'backoffice_order_edit_enabled' => $this->backofficeOrderEditEnabled(),
             'platform_mpesa_stk_enabled' => $this->mpesaStkPlatformEnabled(),
+            'platform_equity_bank_enabled' => $this->equityBankPlatformEnabled(),
             'platform_kra_integration_enabled' => $this->kraIntegrationPlatformEnabled(),
             'platform_ai_enabled' => $this->aiPlatformEnabled(),
             'platform_whatsapp_enabled' => $this->whatsappPlatformEnabled(),
@@ -782,6 +790,9 @@ class CapabilityGate
         if (isset($moduleSettings['finance']) && is_array($moduleSettings['finance'])) {
             if (! $this->mpesaStkPlatformEnabled()) {
                 unset($moduleSettings['finance']['mpesa'], $moduleSettings['finance']['enable_mpesa_stk']);
+            }
+            if (! $this->equityBankPlatformEnabled()) {
+                unset($moduleSettings['finance']['equity'], $moduleSettings['finance']['enable_equity_bank']);
             }
             if (! $this->kraIntegrationPlatformEnabled()) {
                 foreach ([

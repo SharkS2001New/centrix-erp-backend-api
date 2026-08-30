@@ -431,10 +431,6 @@ class OrganizationPlatformConfigService
             ? $moduleSettings['centrix_payments']
             : [];
         foreach ($this->platformControlledCentrixPaymentsKeys() as $key) {
-            // Centrix Payments is toggled on the Applications tab (enabled_modules), not Sales behaviour.
-            if ($key === 'enable_centrix_payments') {
-                continue;
-            }
             if (array_key_exists($key, $salesPlatform)) {
                 $currentCentrixPayments[$key] = (bool) $salesPlatform[$key];
             }
@@ -509,6 +505,15 @@ class OrganizationPlatformConfigService
             $modules['investors.reports'] = (bool) $salesPlatform['enable_investors'];
             $updates['enabled_modules'] = $modules;
         }
+        if (array_key_exists('enable_centrix_payments', $salesPlatform)) {
+            $modules = is_array($updates['enabled_modules'] ?? null)
+                ? $updates['enabled_modules']
+                : (is_array($org->enabled_modules) ? $org->enabled_modules : []);
+            $modules['centrix_payments'] = (bool) $salesPlatform['enable_centrix_payments'];
+            $modules['centrix_payments.reports'] = (bool) $salesPlatform['enable_centrix_payments'];
+            $updates['enabled_modules'] = $modules;
+        }
+
         $org->forceFill($updates)->save();
 
         app(\App\Services\Erp\ErpContext::class)->forgetOrganizationCache((int) $org->id);
@@ -591,6 +596,7 @@ class OrganizationPlatformConfigService
             'mobile_enable_driver_app' => in_array($deploymentProfile, ['distribution', 'wholesale_retail'], true),
             'mobile_enable_driver_attendance' => false,
             'enable_mpesa_stk' => true,
+            'enable_equity_bank' => true,
             'enable_kra_integration' => true,
             'enable_ai' => true,
             'use_platform_gemini' => false,
@@ -682,6 +688,7 @@ class OrganizationPlatformConfigService
             'mobile_enable_driver_app' => (bool) ($distribution['mobile_enable_driver_app'] ?? true),
             'mobile_enable_driver_attendance' => (bool) ($distribution['mobile_enable_driver_attendance'] ?? false),
             'enable_mpesa_stk' => (bool) ($finance['enable_mpesa_stk'] ?? true),
+            'enable_equity_bank' => (bool) ($finance['enable_equity_bank'] ?? true),
             'enable_kra_integration' => (bool) ($finance['enable_kra_integration'] ?? true),
             'enable_ai' => (bool) ($ai['enable_ai'] ?? true),
             'use_platform_gemini' => (bool) ($ai['use_platform_gemini'] ?? false),
@@ -872,6 +879,10 @@ class OrganizationPlatformConfigService
             unset($data['enable_mpesa_amount'], $data['enable_mpesa_code']);
         }
 
+        if ($gate && ! $gate->equityBankPlatformEnabled()) {
+            unset($data['enable_equity_bank']);
+        }
+
         return $data;
     }
 
@@ -923,6 +934,12 @@ class OrganizationPlatformConfigService
                 unset($data['mpesa']);
             } elseif (! $this->mpesaStkAllowedForPayload($data)) {
                 unset($data['mpesa']);
+            }
+        }
+
+        if (isset($data['equity']) && is_array($data['equity'])) {
+            if ($gate && ! $gate->equityBankPlatformEnabled()) {
+                unset($data['equity']);
             }
         }
 

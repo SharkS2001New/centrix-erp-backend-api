@@ -162,6 +162,7 @@ class ErpCapabilitiesController extends Controller
         $isMobileChannel = in_array($loginChannel, ['mobile', 'manager'], true);
 
         $payload['platform_mpesa_stk_enabled'] = $gate->mpesaStkPlatformEnabled();
+        $payload['platform_equity_bank_enabled'] = $gate->equityBankPlatformEnabled();
         $payload['platform_kra_integration_enabled'] = $gate->kraIntegrationPlatformEnabled();
         $payload['platform_ai_enabled'] = $gate->aiPlatformEnabled();
         if (! $isMobileChannel) {
