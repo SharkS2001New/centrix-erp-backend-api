@@ -181,7 +181,15 @@ class CartOperationsController extends Controller
         $user = $request->user();
         $cart = $this->findOwnedCart($cartId, $user);
         $gate = $this->erp->gateForUser($user);
-        $this->updateCartLine($cart, $lineRef, $request->validated(), $user, $gate);
+        $validated = $request->validated();
+
+        DB::transaction(function () use ($cart, $lineRef, $validated, $user, $gate) {
+            $locked = TemporaryCart::query()->whereKey($cart->id)->lockForUpdate()->first();
+            if (! $locked) {
+                throw new InvalidArgumentException('Cart not found.');
+            }
+            $this->updateCartLine($locked, $lineRef, $validated, $user, $gate);
+        }, 5);
 
         return $this->cartResponse($this->freshOwnedCart($cart), $user, includeNextOrderNum: false);
     }

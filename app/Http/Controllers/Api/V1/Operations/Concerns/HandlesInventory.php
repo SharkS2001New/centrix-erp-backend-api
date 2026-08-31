@@ -511,40 +511,53 @@ trait HandlesInventory
      */
     protected function releaseExpiredReservations(?int $cartId = null, ?string $productCode = null): int
     {
-        $query = StockReservation::query()
-            ->whereNull('released_at')
-            ->whereNotNull('expires_at')
-            ->where('expires_at', '<=', now());
+        return $this->runInventoryDeadlockSafe(function () use ($cartId, $productCode): int {
+            $query = StockReservation::query()
+                ->whereNull('released_at')
+                ->whereNotNull('expires_at')
+                ->where('expires_at', '<=', now());
 
-        if ($cartId !== null) {
-            $query->where('cart_id', $cartId);
-        }
+            if ($cartId !== null) {
+                $query->where('cart_id', $cartId);
+            }
 
-        if ($productCode !== null && $productCode !== '') {
-            $query->where('product_code', $productCode);
-        }
+            if ($productCode !== null && $productCode !== '') {
+                $query->where('product_code', $productCode);
+            }
 
-        return $query->update(['released_at' => now()]);
+            return $query->update(['released_at' => now()]);
+        });
     }
 
     protected function releaseLineReservation(int $cartLineId): void
     {
-        $line = \App\Models\CartLine::query()->find($cartLineId);
+        $line = \App\Models\CartLine::query()
+            ->with('cart:id,branch_id')
+            ->find($cartLineId);
 
-        StockReservation::where('cart_line_id', $cartLineId)
-            ->whereNull('released_at')
-            ->update(['released_at' => now()]);
+        $this->runInventoryDeadlockSafe(function () use ($cartLineId, $line): void {
+            if ($line?->cart?->branch_id && $line->product_code) {
+                $this->lockCurrentStockForUpdate(
+                    (string) $line->product_code,
+                    (int) $line->cart->branch_id,
+                );
+            }
 
-        // Orphan cart holds (e.g. before bind after restore-to-cart) for this line's SKU.
-        if ($line) {
-            StockReservation::query()
-                ->where('cart_id', $line->cart_id)
-                ->where('product_code', $line->product_code)
-                ->whereNull('cart_line_id')
+            StockReservation::where('cart_line_id', $cartLineId)
                 ->whereNull('released_at')
-                ->where('quantity', (float) $line->quantity)
                 ->update(['released_at' => now()]);
-        }
+
+            // Orphan cart holds (e.g. before bind after restore-to-cart) for this line's SKU.
+            if ($line) {
+                StockReservation::query()
+                    ->where('cart_id', $line->cart_id)
+                    ->where('product_code', $line->product_code)
+                    ->whereNull('cart_line_id')
+                    ->whereNull('released_at')
+                    ->where('quantity', (float) $line->quantity)
+                    ->update(['released_at' => now()]);
+            }
+        });
     }
 
     /**
@@ -665,39 +678,85 @@ trait HandlesInventory
 
     protected function releaseCartReservations(int $cartId): void
     {
-        StockReservation::where('cart_id', $cartId)
-            ->whereNull('released_at')
-            ->update(['released_at' => now()]);
+        $this->runInventoryDeadlockSafe(function () use ($cartId): void {
+            $this->lockStockForCartReservations($cartId);
+
+            StockReservation::where('cart_id', $cartId)
+                ->whereNull('released_at')
+                ->update(['released_at' => now()]);
+        });
     }
 
     protected function transferCartReservationsToSale(int $cartId, int $saleId): void
     {
-        StockReservation::where('cart_id', $cartId)
-            ->whereNull('released_at')
-            ->update([
-                'sale_id' => $saleId,
-                'cart_id' => null,
-                'cart_line_id' => null,
-                'expires_at' => null,
-            ]);
+        $this->runInventoryDeadlockSafe(function () use ($cartId, $saleId): void {
+            $this->lockStockForCartReservations($cartId);
+
+            StockReservation::where('cart_id', $cartId)
+                ->whereNull('released_at')
+                ->update([
+                    'sale_id' => $saleId,
+                    'cart_id' => null,
+                    'cart_line_id' => null,
+                    'expires_at' => null,
+                ]);
+        });
     }
 
     protected function transferSaleReservationsToCart(int $saleId, int $cartId): void
     {
-        StockReservation::where('sale_id', $saleId)
-            ->whereNull('released_at')
-            ->update([
-                'sale_id' => null,
-                'cart_id' => $cartId,
-                'expires_at' => null,
-            ]);
+        $this->runInventoryDeadlockSafe(function () use ($saleId, $cartId): void {
+            $rows = StockReservation::query()
+                ->where('sale_id', $saleId)
+                ->whereNull('released_at')
+                ->orderBy('product_code')
+                ->orderBy('id')
+                ->get(['branch_id', 'product_code']);
+
+            $locked = [];
+            foreach ($rows as $row) {
+                $key = (int) $row->branch_id.'|'.(string) $row->product_code;
+                if (isset($locked[$key])) {
+                    continue;
+                }
+                $this->lockCurrentStockForUpdate((string) $row->product_code, (int) $row->branch_id);
+                $locked[$key] = true;
+            }
+
+            StockReservation::where('sale_id', $saleId)
+                ->whereNull('released_at')
+                ->update([
+                    'sale_id' => null,
+                    'cart_id' => $cartId,
+                    'expires_at' => null,
+                ]);
+        });
     }
 
     protected function releaseSaleReservations(int $saleId): void
     {
-        StockReservation::where('sale_id', $saleId)
-            ->whereNull('released_at')
-            ->update(['released_at' => now()]);
+        $this->runInventoryDeadlockSafe(function () use ($saleId): void {
+            $rows = StockReservation::query()
+                ->where('sale_id', $saleId)
+                ->whereNull('released_at')
+                ->orderBy('product_code')
+                ->orderBy('id')
+                ->get(['branch_id', 'product_code']);
+
+            $locked = [];
+            foreach ($rows as $row) {
+                $key = (int) $row->branch_id.'|'.(string) $row->product_code;
+                if (isset($locked[$key])) {
+                    continue;
+                }
+                $this->lockCurrentStockForUpdate((string) $row->product_code, (int) $row->branch_id);
+                $locked[$key] = true;
+            }
+
+            StockReservation::where('sale_id', $saleId)
+                ->whereNull('released_at')
+                ->update(['released_at' => now()]);
+        });
     }
 
     protected function saleHasActiveReservations(int $saleId): bool
@@ -774,5 +833,38 @@ trait HandlesInventory
                 saleId: (int) $sale->id,
             );
         }
+    }
+
+    /**
+     * Lock current_stock rows for every SKU held on a cart before releasing reservations.
+     * Consistent lock order across concurrent POS checkouts reduces MySQL 1213 deadlocks.
+     */
+    protected function lockStockForCartReservations(int $cartId): void
+    {
+        $rows = StockReservation::query()
+            ->where('cart_id', $cartId)
+            ->whereNull('released_at')
+            ->orderBy('product_code')
+            ->orderBy('id')
+            ->get(['branch_id', 'product_code']);
+
+        $locked = [];
+        foreach ($rows as $row) {
+            $key = (int) $row->branch_id.'|'.(string) $row->product_code;
+            if (isset($locked[$key])) {
+                continue;
+            }
+            $this->lockCurrentStockForUpdate((string) $row->product_code, (int) $row->branch_id);
+            $locked[$key] = true;
+        }
+    }
+
+    protected function runInventoryDeadlockSafe(callable $callback, int $attempts = 5): mixed
+    {
+        if (DB::transactionLevel() > 0) {
+            return $callback();
+        }
+
+        return DB::transaction($callback, $attempts);
     }
 }
