@@ -1746,6 +1746,23 @@ class CartOperationsController extends Controller
         $onWholesaleRetailFlag = array_key_exists('on_wholesale_retail', $input)
             ? (bool) $input['on_wholesale_retail']
             : (bool) $row->on_wholesale_retail;
+
+        // Swap / SKU change must not leave two rows for the same product mode.
+        if ((string) $productCode !== (string) $row->product_code) {
+            $duplicate = CartLine::query()
+                ->where('cart_id', $cart->id)
+                ->where('product_code', $product->product_code)
+                ->where('on_wholesale_retail', $onWholesaleRetailFlag ? 1 : 0)
+                ->where('id', '!=', $row->id)
+                ->orderBy('line_no')
+                ->first();
+            if ($duplicate) {
+                $qty = round((float) $qty + (float) $duplicate->quantity, 4);
+                $this->releaseLineReservation((int) $duplicate->id);
+                $duplicate->delete();
+            }
+        }
+
         $isRetail = $this->isRetailLine($product, $onWholesaleRetailFlag);
         $salesSettings = $gate->moduleSettings('sales');
 
