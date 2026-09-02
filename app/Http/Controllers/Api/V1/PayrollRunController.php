@@ -108,15 +108,11 @@ class PayrollRunController extends BaseResourceController
     }
 
     /**
-     * Admin only — delete run and lines; restore closed attendance, overtime, advances, etc.
+     * Delete run and lines; restore closed attendance, overtime, advances, etc.
      * Paid runs are locked so disbursed payroll cannot be removed by mistake.
      */
     public function destroy(Request $request, string $id)
     {
-        if (! $request->user()?->is_admin) {
-            return response()->json(['message' => 'Only administrators can delete payroll runs.'], 403);
-        }
-
         $run = $this->findScopedRun($request, $id)->load('payPeriod');
 
         if ($run->status === 'paid') {

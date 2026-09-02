@@ -7,8 +7,11 @@ use App\Models\Organization;
 use App\Models\PayPeriod;
 use App\Models\PayrollLine;
 use App\Models\PayrollRun;
+use App\Models\Permission;
+use App\Models\Role;
 use App\Models\User;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
@@ -192,6 +195,31 @@ class PayrollRunWorkflowTest extends TestCase
             ]);
     }
 
+    public function test_payroll_creator_can_delete_unpaid_payroll_run(): void
+    {
+        $hr = $this->userWithPermissions(['hr.payroll.create']);
+        Sanctum::actingAs($hr);
+
+        $run = $this->createRun('processed');
+
+        $this->deleteJson("/api/v1/payroll-runs/{$run->id}")
+            ->assertOk();
+
+        $this->assertDatabaseMissing('payroll_runs', ['id' => $run->id]);
+    }
+
+    public function test_cannot_delete_paid_payroll_run(): void
+    {
+        $run = $this->createRun('paid');
+
+        $this->deleteJson("/api/v1/payroll-runs/{$run->id}")
+            ->assertStatus(422)
+            ->assertJsonPath(
+                'message',
+                'Paid payroll runs cannot be deleted. Marking as paid locks the run.',
+            );
+    }
+
     public function test_mark_paid_rejects_non_processed_runs(): void
     {
         $run = $this->createRun('approved');
@@ -302,6 +330,39 @@ class PayrollRunWorkflowTest extends TestCase
             'total_gross' => 50000,
             'total_net' => 42595,
             'processed_by' => $status === 'processed' ? $this->admin->id : null,
+        ]);
+    }
+
+    protected function userWithPermissions(array $codes): User
+    {
+        $role = Role::query()->firstOrCreate(
+            ['role_name' => 'Payroll delete test '.md5(json_encode($codes))],
+            ['scope' => 'branch', 'is_active' => true],
+        );
+
+        $permissionIds = Permission::query()
+            ->whereIn('permission_code', $codes)
+            ->pluck('id')
+            ->all();
+
+        DB::table('role_permissions')->where('role_id', $role->id)->delete();
+        foreach ($permissionIds as $permissionId) {
+            DB::table('role_permissions')->insert([
+                'role_id' => $role->id,
+                'permission_id' => (int) $permissionId,
+            ]);
+        }
+
+        return User::query()->create([
+            'organization_id' => $this->admin->organization_id,
+            'branch_id' => $this->admin->branch_id,
+            'role_id' => $role->id,
+            'username' => 'payroll_delete_'.uniqid(),
+            'email' => null,
+            'password' => $this->admin->password,
+            'full_name' => 'Payroll Delete Test',
+            'is_admin' => false,
+            'is_active' => true,
         ]);
     }
 }
