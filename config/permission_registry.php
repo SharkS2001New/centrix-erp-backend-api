@@ -318,7 +318,7 @@ return [
                 'allowances' => ['label' => 'Allowances', 'actions' => ['view', 'create', 'edit', 'delete']],
                 'deductions' => ['label' => 'Deductions', 'actions' => ['view', 'create', 'edit', 'delete']],
                 'cash_advances' => ['label' => 'Cash advances', 'actions' => ['view', 'create', 'edit', 'approve']],
-                'payroll' => ['label' => 'Payroll runs', 'actions' => ['view', 'create', 'approve']],
+                'payroll' => ['label' => 'Payroll runs', 'actions' => ['view', 'create', 'approve', 'delete']],
                 'holidays' => ['label' => 'Public holidays', 'actions' => ['view', 'create', 'edit', 'delete']],
                 'leave_settings' => ['label' => 'Leave settings', 'actions' => ['view', 'edit']],
             ],

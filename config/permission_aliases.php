@@ -354,6 +354,7 @@ return [
         'hr.leave.approve',
         'hr.payroll.create',
         'hr.payroll.approve',
+        'hr.payroll.delete',
         'hr.holidays.create',
         'hr.holidays.edit',
         'hr.holidays.delete',

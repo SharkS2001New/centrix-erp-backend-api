@@ -195,9 +195,9 @@ class PayrollRunWorkflowTest extends TestCase
             ]);
     }
 
-    public function test_payroll_creator_can_delete_unpaid_payroll_run(): void
+    public function test_payroll_delete_permission_can_delete_unpaid_payroll_run(): void
     {
-        $hr = $this->userWithPermissions(['hr.payroll.create']);
+        $hr = $this->userWithPermissions(['hr.payroll.delete']);
         Sanctum::actingAs($hr);
 
         $run = $this->createRun('processed');

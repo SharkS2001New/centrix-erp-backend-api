@@ -1404,7 +1404,7 @@ Route::prefix('v1')->group(function () {
             Route::apiResource('payroll-runs', PayrollRunController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update'], ['erp.permission:hr.manage'])
-                ->middlewareFor(['destroy'], ['erp.permission:hr.manage|hr.payroll.create']);
+                ->middlewareFor(['destroy'], ['erp.permission:hr.manage|hr.payroll.delete']);
             Route::apiResource('payroll-lines', PayrollLineController::class)
                 ->middleware('erp.permission:hr.view');
         });
