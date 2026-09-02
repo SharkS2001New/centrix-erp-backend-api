@@ -72,11 +72,14 @@ class PlatformInvoiceDocumentService
         $subtotal = $totals['subtotal'];
         $taxAmount = $totals['tax_amount'];
         $total = $totals['total'];
+        $vatEnabled = ($options['vat_enabled'] ?? true) !== false;
         $pricesIncludeVat = (bool) ($options['prices_include_vat'] ?? true);
         $vatLabel = $pricesIncludeVat
             ? 'VAT ('.$this->money($invoice->tax_rate).'% included)'
             : 'VAT ('.$this->money($invoice->tax_rate).'%)';
-        $amountHeader = $pricesIncludeVat ? 'Amount (inc. VAT)' : 'Amount (ex. VAT)';
+        $amountHeader = ! $vatEnabled
+            ? 'Amount'
+            : ($pricesIncludeVat ? 'Amount (inc. VAT)' : 'Amount (ex. VAT)');
 
         $accent = $theme['accent'];
         $bg = $theme['bg'];
@@ -176,8 +179,10 @@ class PlatformInvoiceDocumentService
                 <tbody>'.$rowHtml.'</tbody>
             </table>
             <table class="totals">
-                <tr><td>Subtotal (ex. VAT)</td><td style="text-align:right;">'.$currency.' '.$this->money($subtotal).'</td></tr>
-                <tr><td>'.$vatLabel.'</td><td style="text-align:right;">'.$currency.' '.$this->money($taxAmount).'</td></tr>
+                '.($vatEnabled
+                    ? '<tr><td>Subtotal (ex. VAT)</td><td style="text-align:right;">'.$currency.' '.$this->money($subtotal).'</td></tr>
+                <tr><td>'.$vatLabel.'</td><td style="text-align:right;">'.$currency.' '.$this->money($taxAmount).'</td></tr>'
+                    : '').'
                 <tr class="total"><td>Total due</td><td style="text-align:right;">'.$currency.' '.$this->money($total).'</td></tr>
             </table>
             '.($invoice->notes ? '<div class="notes"><strong>Notes</strong><br>'.nl2br(e($invoice->notes)).'</div>' : '').'

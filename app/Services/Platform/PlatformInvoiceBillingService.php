@@ -122,6 +122,33 @@ class PlatformInvoiceBillingService
             'applications' => $applications,
             'module_summaries' => $moduleSummaries,
             'seller' => $this->platformSeller(),
+            'default_currency' => (string) config('platform_billing.currency', 'KES'),
+            'invoice_currencies' => $this->invoiceCurrencies(),
+        ];
+    }
+
+    /** @return list<array{code: string, label: string}> */
+    public function invoiceCurrencies(): array
+    {
+        $configured = config('platform_billing.invoice_currencies');
+        if (is_array($configured) && $configured !== []) {
+            return array_values(array_map(static function ($row) {
+                if (is_string($row)) {
+                    return ['code' => strtoupper($row), 'label' => strtoupper($row)];
+                }
+
+                return [
+                    'code' => strtoupper((string) ($row['code'] ?? '')),
+                    'label' => (string) ($row['label'] ?? ($row['code'] ?? '')),
+                ];
+            }, $configured));
+        }
+
+        return [
+            ['code' => 'KES', 'label' => 'KES — Kenyan Shilling'],
+            ['code' => 'USD', 'label' => 'USD — US Dollar'],
+            ['code' => 'EUR', 'label' => 'EUR — Euro'],
+            ['code' => 'GBP', 'label' => 'GBP — British Pound'],
         ];
     }
 
@@ -205,7 +232,8 @@ class PlatformInvoiceBillingService
         }
 
         $gross = round($gross, 2);
-        if ($taxRate <= 0) {
+        $vatEnabled = ($options['vat_enabled'] ?? true) !== false;
+        if (! $vatEnabled || $taxRate <= 0) {
             return [
                 'subtotal' => $gross,
                 'tax_amount' => 0.0,

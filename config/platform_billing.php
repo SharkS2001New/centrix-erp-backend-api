@@ -7,6 +7,23 @@
 return [
     'currency' => 'KES',
 
+    'invoice_currencies' => [
+        ['code' => 'KES', 'label' => 'KES — Kenyan Shilling'],
+        ['code' => 'USD', 'label' => 'USD — US Dollar'],
+        ['code' => 'EUR', 'label' => 'EUR — Euro'],
+        ['code' => 'GBP', 'label' => 'GBP — British Pound'],
+        ['code' => 'UGX', 'label' => 'UGX — Ugandan Shilling'],
+        ['code' => 'TZS', 'label' => 'TZS — Tanzanian Shilling'],
+        ['code' => 'RWF', 'label' => 'RWF — Rwandan Franc'],
+        ['code' => 'ZAR', 'label' => 'ZAR — South African Rand'],
+        ['code' => 'AUD', 'label' => 'AUD — Australian Dollar'],
+        ['code' => 'CAD', 'label' => 'CAD — Canadian Dollar'],
+        ['code' => 'CHF', 'label' => 'CHF — Swiss Franc'],
+        ['code' => 'INR', 'label' => 'INR — Indian Rupee'],
+        ['code' => 'AED', 'label' => 'AED — UAE Dirham'],
+        ['code' => 'SAR', 'label' => 'SAR — Saudi Riyal'],
+    ],
+
     'modules' => [
         'sales' => [
             'label' => 'Sales',

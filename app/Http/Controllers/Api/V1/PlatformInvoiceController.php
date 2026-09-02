@@ -260,6 +260,7 @@ class PlatformInvoiceController extends Controller
             'invoice_options.print_font_scale' => 'nullable|in:compact,standard,large,extra_large',
             'invoice_options.print_spacing' => 'nullable|in:compact,comfortable,spacious',
             'invoice_options.prices_include_vat' => 'nullable|boolean',
+            'invoice_options.vat_enabled' => 'nullable|boolean',
             'invoice_options.customer_kind' => 'nullable|in:centrix_tenant,external',
             'line_items' => 'required|array|min:1',
             'line_items.*.module_key' => 'nullable|string|max:80',
