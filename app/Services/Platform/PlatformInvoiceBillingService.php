@@ -232,8 +232,8 @@ class PlatformInvoiceBillingService
         }
 
         $gross = round($gross, 2);
-        $vatEnabled = ($options['vat_enabled'] ?? true) !== false;
-        if (! $vatEnabled || $taxRate <= 0) {
+        $vatMode = $this->resolveInvoiceVatMode($options);
+        if ($vatMode === 'none' || $taxRate <= 0) {
             return [
                 'subtotal' => $gross,
                 'tax_amount' => 0.0,
@@ -241,7 +241,7 @@ class PlatformInvoiceBillingService
             ];
         }
 
-        $pricesIncludeVat = (bool) ($options['prices_include_vat'] ?? true);
+        $pricesIncludeVat = $vatMode === 'inclusive';
         if ($pricesIncludeVat) {
             // Line amounts are VAT-inclusive — total due equals the sum of entered figures.
             $total = $gross;
@@ -264,6 +264,23 @@ class PlatformInvoiceBillingService
             'tax_amount' => $taxAmount,
             'total' => $total,
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $options
+     * @return 'none'|'exclusive'|'inclusive'
+     */
+    public function resolveInvoiceVatMode(array $options): string
+    {
+        $mode = $options['vat_mode'] ?? null;
+        if (in_array($mode, ['none', 'exclusive', 'inclusive'], true)) {
+            return $mode;
+        }
+        if (($options['vat_enabled'] ?? true) === false) {
+            return 'none';
+        }
+
+        return ($options['prices_include_vat'] ?? true) ? 'inclusive' : 'exclusive';
     }
 
     public function nextInvoiceNumber(): string

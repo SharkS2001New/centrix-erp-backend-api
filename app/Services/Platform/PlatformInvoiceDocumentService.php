@@ -53,6 +53,7 @@ class PlatformInvoiceDocumentService
         $theme = $this->themeFor($templateId);
         $options = is_array($invoice->invoice_options) ? $invoice->invoice_options : [];
         $showQty = ($options['show_quantity'] ?? true) !== false;
+        $showLineNumbers = $lines->count() !== 1;
         $showBranding = ($options['show_branding'] ?? true) !== false;
         $showPayment = ($options['show_payment_details'] ?? true) !== false;
         $paymentDetails = trim((string) ($options['payment_details'] ?? ''));
@@ -72,14 +73,17 @@ class PlatformInvoiceDocumentService
         $subtotal = $totals['subtotal'];
         $taxAmount = $totals['tax_amount'];
         $total = $totals['total'];
-        $vatEnabled = ($options['vat_enabled'] ?? true) !== false;
-        $pricesIncludeVat = (bool) ($options['prices_include_vat'] ?? true);
+        $billing = app(PlatformInvoiceBillingService::class);
+        $vatMode = $billing->resolveInvoiceVatMode($options);
+        $pricesIncludeVat = $vatMode === 'inclusive';
         $vatLabel = $pricesIncludeVat
             ? 'VAT ('.$this->money($invoice->tax_rate).'% included)'
             : 'VAT ('.$this->money($invoice->tax_rate).'%)';
-        $amountHeader = ! $vatEnabled
-            ? 'Amount'
-            : ($pricesIncludeVat ? 'Amount (inc. VAT)' : 'Amount (ex. VAT)');
+        $amountHeader = match ($vatMode) {
+            'none' => 'Amount',
+            'inclusive' => 'Amount (inc. VAT)',
+            default => 'Amount (ex. VAT)',
+        };
 
         $accent = $theme['accent'];
         $bg = $theme['bg'];
@@ -103,7 +107,7 @@ class PlatformInvoiceDocumentService
             $invoice->bill_to_tax_pin ? 'PIN: '.$invoice->bill_to_tax_pin : null,
         ]);
 
-        $colspan = $showQty ? 4 : 3;
+        $colspan = ($showLineNumbers ? 1 : 0) + 1 + ($showQty ? 1 : 0) + 1;
         $rowHtml = '';
         if ($lines->isEmpty()) {
             $rowHtml = '<tr><td colspan="'.$colspan.'" style="padding:8px;color:#64748b;">No line items</td></tr>';
@@ -112,9 +116,11 @@ class PlatformInvoiceDocumentService
                 $qty = (float) ($row['quantity'] ?? 1);
                 $unit = (float) ($row['unit_price'] ?? 0);
                 $amount = isset($row['amount']) ? (float) $row['amount'] : $qty * $unit;
-                $rowHtml .= '<tr>'
-                    .'<td style="padding:6px;border-bottom:1px solid #e2e8f0;">'.($index + 1).'</td>'
-                    .'<td style="padding:6px;border-bottom:1px solid #e2e8f0;white-space:pre-wrap;">'.nl2br(e((string) ($row['description'] ?? ''))).'</td>';
+                $rowHtml .= '<tr>';
+                if ($showLineNumbers) {
+                    $rowHtml .= '<td style="padding:6px;border-bottom:1px solid #e2e8f0;">'.($index + 1).'</td>';
+                }
+                $rowHtml .= '<td style="padding:6px;border-bottom:1px solid #e2e8f0;white-space:pre-wrap;">'.nl2br(e((string) ($row['description'] ?? ''))).'</td>';
                 if ($showQty) {
                     $rowHtml .= '<td style="padding:6px;border-bottom:1px solid #e2e8f0;text-align:right;">'.$this->money($qty).'</td>';
                 }
@@ -148,6 +154,9 @@ class PlatformInvoiceDocumentService
         $qtyHeader = $showQty
             ? '<th style="text-align:right;padding:4px;border-bottom:2px solid '.$accent.';font-size:10px;text-transform:uppercase;">Qty</th>'
             : '';
+        $numHeader = $showLineNumbers
+            ? '<th style="padding:4px;border-bottom:2px solid '.$accent.';font-size:10px;text-transform:uppercase;">#</th>'
+            : '';
 
         $paymentHtml = '';
         if ($showPayment && $paymentDetails !== '') {
@@ -171,7 +180,7 @@ class PlatformInvoiceDocumentService
             <table class="grid"><tr><td>'.$sellerBlock.'</td><td>'.$billToBlock.'</td></tr></table>
             <table class="items">
                 <thead><tr>
-                    <th>#</th>
+                    '.$numHeader.'
                     <th>Description</th>
                     '.$qtyHeader.'
                     <th style="text-align:right;">'.$amountHeader.'</th>
@@ -179,7 +188,7 @@ class PlatformInvoiceDocumentService
                 <tbody>'.$rowHtml.'</tbody>
             </table>
             <table class="totals">
-                '.($vatEnabled
+                '.($vatMode !== 'none'
                     ? '<tr><td>Subtotal (ex. VAT)</td><td style="text-align:right;">'.$currency.' '.$this->money($subtotal).'</td></tr>
                 <tr><td>'.$vatLabel.'</td><td style="text-align:right;">'.$currency.' '.$this->money($taxAmount).'</td></tr>'
                     : '').'
