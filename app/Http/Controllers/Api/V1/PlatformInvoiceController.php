@@ -298,6 +298,8 @@ class PlatformInvoiceController extends Controller
         $payload['organization'] = $invoice->organization
             ? $invoice->organization->only(['id', 'company_code', 'org_name'])
             : null;
+        $payload['issue_date'] = $invoice->issue_date?->format('Y-m-d');
+        $payload['due_date'] = $invoice->due_date?->format('Y-m-d');
 
         return $payload;
     }
