@@ -162,8 +162,8 @@ class AiAssistantService
             && $this->actionExecutor->isConfirmation($message)
             && ! $this->actionExecutor->isReadyToConfirm($pendingAction)
         ) {
-            $gate = $this->contextBuilder->gateForUser($user);
-            $scope = $this->workspaceScope->resolve($user, $gate, $workspaceId, $pathname);
+        $gate = $this->contextBuilder->gateForUser($user);
+        $scope = $this->workspaceScope->resolve($user, $gate, $workspaceId, $pathname);
             $pendingAction['ready_to_confirm'] = false;
 
             return $this->attachPendingAction(
@@ -291,7 +291,7 @@ class AiAssistantService
                         ? $this->productParamMerger->statusReply($pendingAction, $productMergeNotes)
                         : $this->defaultReplyForPendingAction((string) ($pendingAction['type'] ?? ''), false);
                 } else {
-                    $rawReply = 'I could not generate a response. Please try rephrasing your question.';
+                $rawReply = 'I could not generate a response. Please try rephrasing your question.';
                 }
             }
 
@@ -555,7 +555,7 @@ class AiAssistantService
                         ? $this->productParamMerger->statusReply($pendingAction)
                         : $this->defaultReplyForPendingAction((string) ($pendingAction['type'] ?? ''), false, $trainingMode);
                 } else {
-                    $rawReply = 'I could not generate a response. Please try rephrasing your question.';
+                $rawReply = 'I could not generate a response. Please try rephrasing your question.';
                 }
             }
 

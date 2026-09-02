@@ -1185,11 +1185,11 @@ class CartOperationsController extends Controller
                 $user->organization_id
                 ?? \App\Support\OrganizationIdResolver::forBranch($branchId)
             ),
-            'branch_id' => $branchId,
-            'order_source' => $orderSource,
-            'till_id' => $input['till_id'] ?? null,
-            'route_id' => $routeId,
-            'update_no' => 0,
+                'branch_id' => $branchId,
+                'order_source' => $orderSource,
+                'till_id' => $input['till_id'] ?? null,
+                'route_id' => $routeId,
+                'update_no' => 0,
         ];
 
         // Dedicated cart for POS outbox upload — must not share the cashier's sticky
@@ -1836,14 +1836,14 @@ class CartOperationsController extends Controller
                 $expiresAt,
             ): void {
                 $this->releaseLineReservation($lineId);
-                $this->reserveStock(
+            $this->reserveStock(
                     $branchId,
                     $reserveProductCode,
                     $reserveQty,
                     $reserveLocation,
                     $userId,
                     $cartId,
-                    $allowBelowStock,
+                $allowBelowStock,
                     $lineId,
                     $expiresAt,
                 );

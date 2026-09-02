@@ -55,8 +55,8 @@ class PlatformAiControlTest extends TestCase
         $status = $this->getJson('/api/v1/ai/status');
         if ($status->status() === 200) {
             $status
-                ->assertJsonPath('platform_enabled', false)
-                ->assertJsonPath('enabled', false);
+            ->assertJsonPath('platform_enabled', false)
+            ->assertJsonPath('enabled', false);
         }
 
         $org = Organization::findOrFail($orgId);

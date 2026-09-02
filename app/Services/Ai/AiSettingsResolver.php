@@ -673,7 +673,7 @@ class AiSettingsResolver
                 $model = (string) config('ai.gemini.model', 'gemini-3.6-flash');
             }
             $model = self::normalizeGeminiModel($model);
-            if ($baseUrl === '') {
+        if ($baseUrl === '') {
                 $baseUrl = (string) config('ai.gemini.base_url');
             }
 

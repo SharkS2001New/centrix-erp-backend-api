@@ -151,7 +151,7 @@ class HikvisionIsapiClient
                 'UserInfoSearchCond',
                 $pageCond,
             );
-            $search = $payload['UserInfoSearch'] ?? $payload['UserInfoSearchCond'] ?? $payload;
+        $search = $payload['UserInfoSearch'] ?? $payload['UserInfoSearchCond'] ?? $payload;
             $list = $this->normalizeInfoList($search['UserInfo'] ?? $search['InfoList'] ?? []);
             $total = max($total, (int) ($search['totalMatches'] ?? $search['numOfMatches'] ?? count($list)));
             $users = array_merge($users, $list);
@@ -234,7 +234,7 @@ class HikvisionIsapiClient
     {
         $pageCond = array_merge($cond, [
             'searchID' => $this->shortSearchId($cond['searchID'] ?? null),
-            'searchResultPosition' => (int) ($cond['searchResultPosition'] ?? 0),
+                'searchResultPosition' => (int) ($cond['searchResultPosition'] ?? 0),
             'maxResults' => min(self::ISAPI_SEARCH_PAGE_SIZE, max(1, (int) ($cond['maxResults'] ?? 30))),
         ]);
         $payload = $this->postIsapiSearch(
@@ -391,9 +391,9 @@ class HikvisionIsapiClient
                 break;
             }
             $position += max(1, count($list));
-        }
+            }
 
-        return [
+            return [
             'fingerprints' => array_slice($fingerprints, 0, $wanted),
             'total' => $total > 0 ? $total : count($fingerprints),
         ];

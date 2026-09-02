@@ -270,7 +270,7 @@ class CustomerReturnService
             if ($lines !== null) {
                 $return->lines()->delete();
                 if ($lines !== []) {
-                    $this->syncLines($return, $lines);
+                $this->syncLines($return, $lines);
                 }
             }
 
@@ -319,10 +319,10 @@ class CustomerReturnService
             }
 
             if (! $isCreditNote) {
-                foreach ($return->lines as $line) {
-                    if ((float) $line->return_qty <= 0) {
-                        continue;
-                    }
+            foreach ($return->lines as $line) {
+                if ((float) $line->return_qty <= 0) {
+                    continue;
+                }
 
                 $unitCost = $this->resolveReturnUnitCost(
                     $return->sale_id ? (int) $return->sale_id : null,
@@ -355,7 +355,7 @@ class CustomerReturnService
                     'returned_by' => $user->id,
                 ]);
 
-                    $line->update(['legacy_return_id' => $legacy->id]);
+                $line->update(['legacy_return_id' => $legacy->id]);
                 }
             }
 
@@ -363,7 +363,7 @@ class CustomerReturnService
                 if ($isCreditNote) {
                     $this->applyCreditNoteToSale($return->fresh(['lines']));
                 } else {
-                    $this->applyReturnToSale($return->fresh(['lines']));
+                $this->applyReturnToSale($return->fresh(['lines']));
                 }
                 $sale = Sale::query()->find($return->sale_id);
                 if ($sale) {
@@ -504,16 +504,16 @@ class CustomerReturnService
                     if ($this->isCreditNoteReturn($return)) {
                         $this->reverseCreditNoteFromSale($return);
                     } else {
-                        $this->reverseReturnFromSale($return);
-                    }
+                    $this->reverseReturnFromSale($return);
+                }
                     $sale = Sale::query()->find($return->sale_id);
                     if ($sale) {
                         app(TripAutoCloseService::class)->markReturnedSaleCompleteIfBalanced($sale, $user);
                     }
                 }
                 if (! $this->isCreditNoteReturn($return)) {
-                    $this->reverseApprovedStock($return, $user);
-                    $this->deleteLegacySyncRows($return);
+                $this->reverseApprovedStock($return, $user);
+                $this->deleteLegacySyncRows($return);
                 }
                 CreditNote::query()->where('customer_return_id', $return->id)->delete();
 
@@ -548,16 +548,16 @@ class CustomerReturnService
                     if ($this->isCreditNoteReturn($return)) {
                         $this->reverseCreditNoteFromSale($return);
                     } else {
-                        $this->reverseReturnFromSale($return);
-                    }
+                    $this->reverseReturnFromSale($return);
+                }
                     $sale = Sale::query()->find($return->sale_id);
                     if ($sale) {
                         app(TripAutoCloseService::class)->markReturnedSaleCompleteIfBalanced($sale, $user);
                     }
                 }
                 if (! $this->isCreditNoteReturn($return)) {
-                    $this->reverseApprovedStock($return, $user);
-                    $this->deleteLegacySyncRows($return);
+                $this->reverseApprovedStock($return, $user);
+                $this->deleteLegacySyncRows($return);
                 }
                 CreditNote::query()->where('customer_return_id', $return->id)->delete();
                 $this->proofService->deleteExisting($return);
@@ -1126,10 +1126,10 @@ class CustomerReturnService
             if ($sale) {
                 $sale->loadMissing('items');
                 $gate = $this->capabilityGateForUser($user);
-                $saleItem = $line->sale_item_id
-                    ? $sale->items->firstWhere('id', (int) $line->sale_item_id)
-                    : null;
-                $saleItem ??= $sale->items->firstWhere('product_code', $line->product_code);
+                    $saleItem = $line->sale_item_id
+                        ? $sale->items->firstWhere('id', (int) $line->sale_item_id)
+                        : null;
+                    $saleItem ??= $sale->items->firstWhere('product_code', $line->product_code);
 
                 if ($saleItem && $gate) {
                     return $this->resolveReturnStockLocationForSaleLine($sale, $saleItem, $user, $gate);
@@ -1485,7 +1485,7 @@ class CustomerReturnService
             $maxReturnQty = $saleItem
                 ? $this->maxReturnQtyForSaleItem($saleItem, (int) $saleId, $excludeReturnId)
                 : (isset($line['max_return_qty'])
-                    ? (float) $line['max_return_qty']
+                ? (float) $line['max_return_qty']
                     : $qtySold);
 
             if ($returnQty > $maxReturnQty + 0.0001) {
