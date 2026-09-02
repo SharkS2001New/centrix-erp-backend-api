@@ -934,4 +934,54 @@ class AttendanceClockPunchTest extends TestCase
             'lunch_status' => 'taken',
         ]);
     }
+
+    public function test_evening_out_closes_earliest_open_and_drops_duplicate_morning_open(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        EmployeeClockSession::query()->create([
+            'employee_id' => $this->employee->id,
+            'organization_id' => $this->org->id,
+            'branch_id' => $this->employee->branch_id,
+            'source' => 'clock_device',
+            'clock_in_at' => '2026-09-02 08:04:00',
+            'clock_out_at' => null,
+            'device_identifier' => 'TERMINAL-01',
+        ]);
+        EmployeeClockSession::query()->create([
+            'employee_id' => $this->employee->id,
+            'organization_id' => $this->org->id,
+            'branch_id' => $this->employee->branch_id,
+            'source' => 'clock_device',
+            'clock_in_at' => '2026-09-02 08:04:20',
+            'clock_out_at' => null,
+            'device_identifier' => 'TERMINAL-01',
+        ]);
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-09-02T17:02:00+03:00',
+            'direction' => 'auto',
+        ])->assertSuccessful()->assertJsonPath('action', 'out');
+
+        $sessions = EmployeeClockSession::query()
+            ->where('employee_id', $this->employee->id)
+            ->orderBy('clock_in_at')
+            ->get();
+
+        $this->assertCount(1, $sessions);
+        $this->assertSame('08:04:00', $sessions[0]->clock_in_at->timezone('Africa/Nairobi')->format('H:i:s'));
+        $this->assertSame('17:02:00', $sessions[0]->clock_out_at->timezone('Africa/Nairobi')->format('H:i:s'));
+
+        $punches = app(\App\Services\Attendance\AttendanceDayPunchPresenter::class)->present(
+            $this->employee->fresh('shift'),
+            '2026-09-02',
+            $sessions,
+        );
+        $this->assertSame('08:04', $punches['clock_in']);
+        $this->assertNull($punches['lunch_out']);
+        $this->assertNull($punches['lunch_in']);
+        $this->assertSame('17:02', $punches['clock_out']);
+    }
 }

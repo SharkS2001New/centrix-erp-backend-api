@@ -59,7 +59,7 @@ class AttendanceClockPunchService
         $open = EmployeeClockSession::query()
             ->where('employee_id', $employee->id)
             ->whereNull('clock_out_at')
-            ->orderByDesc('clock_in_at')
+            ->orderBy('clock_in_at')
             ->first();
 
         // Real evening punch after auto shift-end close must win before same-hour dedupe.
@@ -947,6 +947,11 @@ class AttendanceClockPunchService
         }
         $open->save();
 
+        // Duplicate morning opens must not remain after a real day close (or they look like "lunch in").
+        if ($this->isEndOfDayOutPunch($employee, $punchedAt)) {
+            $this->discardDuplicateOpenSessions($employee, $open);
+        }
+
         $attendanceDate = AppTimezone::normalize($open->clock_in_at)?->toDateString()
             ?? $punchedAt->timezone(AppTimezone::name())->toDateString();
         $attendance = $this->reconciler->reconcileFromSessions(
@@ -962,8 +967,41 @@ class AttendanceClockPunchService
 
         return [
             'action' => 'out',
-            'session' => $open->load(['employee', 'attendance']),
+            'session' => $open->fresh()->load(['employee', 'attendance']),
             'attendance' => $attendance,
         ];
+    }
+
+    protected function isEndOfDayOutPunch(Employee $employee, Carbon $punchedAt): bool
+    {
+        $local = $punchedAt->copy()->timezone(AppTimezone::name());
+        if ($this->windows->isInNamedWindow($employee, $local, 'evening_clock_out_from', 'evening_clock_out_to')) {
+            return true;
+        }
+
+        return (($local->hour * 60) + $local->minute) >= (16 * 60);
+    }
+
+    protected function discardDuplicateOpenSessions(Employee $employee, EmployeeClockSession $kept): void
+    {
+        $date = AppTimezone::normalize($kept->clock_in_at)?->toDateString()
+            ?? AppTimezone::normalize($kept->clock_out_at)?->toDateString();
+        if ($date === null) {
+            return;
+        }
+
+        $duplicates = EmployeeClockSession::query()
+            ->where('employee_id', $employee->id)
+            ->whereNull('clock_out_at')
+            ->where('id', '!=', $kept->id)
+            ->whereDate('clock_in_at', $date)
+            ->get();
+
+        foreach ($duplicates as $duplicate) {
+            HikvisionAccessEvent::query()
+                ->where('clock_session_id', $duplicate->id)
+                ->update(['clock_session_id' => null]);
+            $duplicate->delete();
+        }
     }
 }
