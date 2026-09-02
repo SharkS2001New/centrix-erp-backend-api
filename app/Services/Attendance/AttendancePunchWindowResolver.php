@@ -146,11 +146,25 @@ class AttendancePunchWindowResolver
                             ->whereBetween('clock_out_at', [$dayStart, $dayEnd]);
                     });
             })
-            ->get(['clock_in_at', 'clock_out_at']);
+            ->get(['clock_in_at', 'clock_out_at', 'clock_out_kind']);
 
         foreach ($sessions as $session) {
             foreach ([$session->clock_in_at, $session->clock_out_at] as $stamp) {
-                if ($stamp && $this->wallHourKey($stamp) === $hourKey) {
+                if (! $stamp) {
+                    continue;
+                }
+                if (
+                    $stamp === $session->clock_out_at
+                    && $session->clock_out_kind === EmployeeClockSession::CLOCK_OUT_KIND_AUTO_FORGOTTEN
+                ) {
+                    $forgottenOut = AppTimezone::normalize($stamp)?->copy()->timezone(AppTimezone::name());
+                    if ($forgottenOut && $local->gt($forgottenOut)) {
+                        // A real device punch after auto shift-end close must not be blocked
+                        // as a duplicate scan in the same hour (e.g. close invented 18:00, scan 18:25).
+                        continue;
+                    }
+                }
+                if ($this->wallHourKey($stamp) === $hourKey) {
                     return true;
                 }
             }

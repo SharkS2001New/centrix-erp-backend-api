@@ -62,6 +62,25 @@ class AttendanceClockPunchService
             ->orderByDesc('clock_in_at')
             ->first();
 
+        // Real evening punch after auto shift-end close must win before same-hour dedupe.
+        if ($open === null && ! $hrOverride) {
+            $probeDirection = $direction === 'auto'
+                ? $this->windows->resolve($employee, $punchedAt, null)
+                : $direction;
+            $replaced = $this->maybeReplaceForgottenClockOut(
+                $employee,
+                $punchedAt,
+                $deviceNo,
+                $probeDirection,
+                $hrOverride,
+                $source,
+                $payload['branch_id'] ?? null,
+            );
+            if ($replaced !== null) {
+                return $replaced;
+            }
+        }
+
         // Same-hour extra scans must not close anything. Closing first wrote 23:59:59
         // whenever timezone made the open session look like a different calendar day.
         if (! $hrOverride && $this->windows->hasActivityInSameHour($employee, $punchedAt)) {
@@ -844,7 +863,7 @@ class AttendanceClockPunchService
         }
 
         // Prefer the later of forgotten close vs real punch; real punch is always later in this bug.
-        if ($forgottenOut && $punchLocal->lte($forgottenOut) && ! $hrOverride) {
+        if ($forgottenOut && $punchLocal->lt($forgottenOut) && ! $hrOverride) {
             return null;
         }
 

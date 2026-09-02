@@ -3,6 +3,8 @@
 namespace App\Services\Attendance\Hikvision;
 
 use App\Models\AttendanceClockDevice;
+use App\Models\Employee;
+use App\Models\EmployeeClockSession;
 use App\Models\HikvisionAccessEvent;
 use App\Models\HikvisionEmployeeMapping;
 use App\Services\Attendance\AttendanceClockPunchService;
@@ -97,9 +99,14 @@ class HikvisionAttendanceSyncService
         $result['pulled'] = count($events);
         // Retry stuck punches first (mapping may have been fixed), then apply the fresh pull.
         $retryResult = $this->reprocessPendingEvents($device);
+        $forgottenResult = $this->reprocessForgottenClockOutReplacements($device, $from, $to);
         $processResult = $this->processEvents($device, $events);
 
-        return $this->mergeProcessResults($result, $processResult, $retryResult);
+        return $this->mergeProcessResults(
+            $result,
+            $processResult,
+            $this->mergeProcessResults($retryResult, $forgottenResult, ['stored' => 0, 'applied' => 0, 'skipped' => 0, 'retried' => 0, 'errors' => []]),
+        );
     }
 
     /**
@@ -185,6 +192,8 @@ class HikvisionAttendanceSyncService
 
         $processResult = $this->processEvents($device, $events);
 
+        $forgottenResult = $this->reprocessForgottenClockOutReplacements($device);
+
         return $this->mergeProcessResults([
             'stored' => 0,
             'applied' => 0,
@@ -192,7 +201,7 @@ class HikvisionAttendanceSyncService
             'duplicates' => 0,
             'retried' => 0,
             'errors' => [],
-        ], $processResult, $retryResult);
+        ], $processResult, $this->mergeProcessResults($retryResult, $forgottenResult, ['stored' => 0, 'applied' => 0, 'skipped' => 0, 'retried' => 0, 'errors' => []]));
     }
 
     /**
@@ -261,6 +270,122 @@ class HikvisionAttendanceSyncService
         $result['errors'] = $applied['errors'];
 
         return $result;
+    }
+
+    /**
+     * Re-apply stored device punches that can replace an auto shift-end close with the real clock-out.
+     * Needed when the PC/agent was offline: forgotten close ran first, then catch-up sync must
+     * upgrade 18:00 (shift end) to the actual terminal time (e.g. 20:15).
+     *
+     * @return array{stored: int, applied: int, skipped: int, retried: int, errors: list<string>}
+     */
+    public function reprocessForgottenClockOutReplacements(
+        AttendanceClockDevice $device,
+        ?Carbon $from = null,
+        ?Carbon $to = null,
+        int $limit = 500,
+    ): array {
+        $result = [
+            'stored' => 0,
+            'applied' => 0,
+            'skipped' => 0,
+            'retried' => 0,
+            'errors' => [],
+        ];
+
+        $query = HikvisionAccessEvent::query()
+            ->where('attendance_clock_device_id', $device->id)
+            ->whereNotNull('processed_at')
+            ->orderBy('event_time')
+            ->orderBy('id')
+            ->limit(max(1, min(2000, $limit)));
+
+        if ($from !== null) {
+            $query->where('event_time', '>=', $from);
+        }
+        if ($to !== null) {
+            $query->where('event_time', '<=', $to);
+        }
+
+        $mappingCache = [];
+
+        foreach ($query->get() as $stored) {
+            $punchedAt = AppTimezone::normalize($stored->event_time);
+            if ($punchedAt === null) {
+                continue;
+            }
+
+            $employeeNo = (string) ($stored->employee_no ?? '');
+            $employeeId = $this->resolveMappedEmployeeId(
+                $device,
+                $employeeNo,
+                $mappingCache,
+                (string) ($stored->employee_name ?? ''),
+            );
+            if (! $employeeId) {
+                continue;
+            }
+
+            $employee = Employee::query()->find($employeeId);
+            if (! $employee) {
+                continue;
+            }
+
+            if (! $this->hasReplaceableForgottenClose($employee, $punchedAt)) {
+                $result['skipped']++;
+
+                continue;
+            }
+
+            try {
+                $punch = $this->applyPunch($device, $employeeNo, $employeeId, $punchedAt, 'auto');
+                if (($punch['action'] ?? '') !== 'out') {
+                    $result['skipped']++;
+
+                    continue;
+                }
+
+                $stored->processed_at = AppTimezone::now();
+                $stored->process_error = null;
+                $stored->clock_session_id = $punch['session']?->id ?? null;
+                $stored->save();
+                $result['applied']++;
+                $result['retried']++;
+            } catch (\Throwable $e) {
+                $result['skipped']++;
+                $result['errors'][] = "{$employeeNo} @ {$punchedAt->toIso8601String()}: ".$e->getMessage();
+            }
+        }
+
+        $result['errors'] = array_slice($result['errors'], 0, 20);
+
+        return $result;
+    }
+
+    protected function hasReplaceableForgottenClose(Employee $employee, Carbon $punchedAt): bool
+    {
+        $punchLocal = $punchedAt->copy()->timezone(AppTimezone::name());
+        $date = $punchLocal->toDateString();
+
+        $forgotten = EmployeeClockSession::query()
+            ->where('employee_id', $employee->id)
+            ->whereDate('clock_in_at', $date)
+            ->where('clock_out_kind', EmployeeClockSession::CLOCK_OUT_KIND_AUTO_FORGOTTEN)
+            ->whereNotNull('clock_out_at')
+            ->orderByDesc('clock_in_at')
+            ->first();
+
+        if (! $forgotten) {
+            return false;
+        }
+
+        $forgottenOut = AppTimezone::normalize($forgotten->clock_out_at);
+        $forgottenIn = AppTimezone::normalize($forgotten->clock_in_at);
+
+        return $forgottenIn
+            && $forgottenOut
+            && $punchLocal->gt($forgottenIn)
+            && $punchLocal->gte($forgottenOut);
     }
 
     /**

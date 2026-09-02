@@ -94,6 +94,67 @@ class PayrollRunWorkflowTest extends TestCase
         Carbon::setTestNow();
     }
 
+    public function test_ensure_runnable_returns_only_next_unpaid_period_in_order(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-09-30 12:00:00', 'Africa/Nairobi'));
+
+        $orgId = (int) $this->admin->organization_id;
+        $org = Organization::findOrFail($orgId);
+        $settings = $org->module_settings ?? [];
+        $settings['hr_payroll'] = array_merge($settings['hr_payroll'] ?? [], [
+            'enforce_month_end_run_schedule' => false,
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        $august = PayPeriod::create([
+            'organization_id' => $orgId,
+            'period_code' => '2026-08',
+            'period_start' => '2026-08-01',
+            'period_end' => '2026-08-31',
+            'status' => 'open',
+        ]);
+        PayPeriod::create([
+            'organization_id' => $orgId,
+            'period_code' => '2026-09',
+            'period_start' => '2026-09-01',
+            'period_end' => '2026-09-30',
+            'status' => 'open',
+        ]);
+
+        $this->postJson('/api/v1/pay-periods/ensure-runnable')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $august->id)
+            ->assertJsonPath('schedule.next_eligible_period_id', $august->id);
+
+        $september = PayPeriod::query()
+            ->where('organization_id', $orgId)
+            ->where('period_code', '2026-09')
+            ->firstOrFail();
+
+        $this->postJson('/api/v1/payroll-runs', [
+            'pay_period_id' => $september->id,
+            'run_date' => '2026-09-30',
+        ])->assertStatus(422);
+
+        $this->postJson('/api/v1/payroll-runs', [
+            'pay_period_id' => $august->id,
+            'run_date' => '2026-09-30',
+        ])->assertCreated();
+
+        $this->postJson('/api/v1/pay-periods/ensure-runnable')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $september->id);
+
+        $this->postJson('/api/v1/payroll-runs', [
+            'pay_period_id' => $august->id,
+            'run_date' => '2026-09-30',
+        ])->assertStatus(422);
+
+        Carbon::setTestNow();
+    }
+
     public function test_mark_paid_rejects_non_processed_runs(): void
     {
         $run = $this->createRun('approved');

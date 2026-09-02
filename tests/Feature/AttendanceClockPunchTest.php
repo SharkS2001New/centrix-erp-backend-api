@@ -653,6 +653,95 @@ class AttendanceClockPunchTest extends TestCase
         Carbon::setTestNow();
     }
 
+    public function test_same_hour_device_punch_after_auto_forgotten_close_updates_clock_out_without_hr_override(): void
+    {
+        Sanctum::actingAs($this->admin);
+        Carbon::setTestNow(Carbon::parse('2026-08-14 02:05:00', 'Africa/Nairobi'));
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-13T08:10:00+03:00',
+            'direction' => 'auto',
+        ])->assertCreated();
+
+        app(\App\Services\Attendance\ForgottenClockOutService::class)->closeDueSessions((int) $this->org->id);
+
+        $session = EmployeeClockSession::query()->where('employee_id', $this->employee->id)->first();
+        $this->assertSame('17:00:00', $session->clock_out_at->timezone('Africa/Nairobi')->format('H:i:s'));
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-13T17:25:00+03:00',
+            'direction' => 'auto',
+        ])->assertSuccessful()->assertJsonPath('action', 'out');
+
+        $session->refresh();
+        $this->assertSame('17:25:00', $session->clock_out_at->timezone('Africa/Nairobi')->format('H:i:s'));
+        $this->assertSame(EmployeeClockSession::CLOCK_OUT_KIND_DEVICE, $session->clock_out_kind);
+        $this->assertDatabaseHas('employee_attendance', [
+            'employee_id' => $this->employee->id,
+            'attendance_date' => '2026-08-13',
+            'check_out' => '17:25:00',
+        ]);
+
+        Carbon::setTestNow();
+    }
+
+    public function test_hikvision_catch_up_sync_replaces_forgotten_shift_end_with_stored_device_punch(): void
+    {
+        Sanctum::actingAs($this->admin);
+        Carbon::setTestNow(Carbon::parse('2026-08-14 02:05:00', 'Africa/Nairobi'));
+
+        $device = AttendanceClockDevice::query()
+            ->where('organization_id', $this->org->id)
+            ->where('device_no', 'TERMINAL-01')
+            ->firstOrFail();
+
+        HikvisionEmployeeMapping::query()->create([
+            'organization_id' => $this->org->id,
+            'attendance_clock_device_id' => $device->id,
+            'employee_id' => $this->employee->id,
+            'hikvision_employee_no' => 'EMP#HIK001',
+            'sync_status' => 'mapped',
+        ]);
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-13T08:10:00+03:00',
+            'direction' => 'auto',
+        ])->assertCreated();
+
+        app(\App\Services\Attendance\ForgottenClockOutService::class)->closeDueSessions((int) $this->org->id);
+
+        $session = EmployeeClockSession::query()->where('employee_id', $this->employee->id)->first();
+        $this->assertSame('17:00:00', $session->clock_out_at->timezone('Africa/Nairobi')->format('H:i:s'));
+
+        HikvisionAccessEvent::query()->create([
+            'organization_id' => $this->org->id,
+            'attendance_clock_device_id' => $device->id,
+            'event_key' => 'catch-up-'.uniqid(),
+            'employee_no' => 'EMP#HIK001',
+            'event_time' => '2026-08-13 17:25:00',
+            'raw_payload' => [],
+            'processed_at' => now(),
+            'process_error' => HikvisionAccessEvent::DUPLICATE_PUNCH,
+            'clock_session_id' => $session->id,
+        ]);
+
+        $result = app(\App\Services\Attendance\Hikvision\HikvisionAttendanceSyncService::class)
+            ->reprocessForgottenClockOutReplacements($device);
+
+        $this->assertSame(1, $result['applied']);
+        $session->refresh();
+        $this->assertSame('17:25:00', $session->clock_out_at->timezone('Africa/Nairobi')->format('H:i:s'));
+        $this->assertSame(EmployeeClockSession::CLOCK_OUT_KIND_DEVICE, $session->clock_out_kind);
+
+        Carbon::setTestNow();
+    }
+
     public function test_missed_punches_list_auto_closes_due_previous_day_sessions(): void
     {
         Sanctum::actingAs($this->admin);
