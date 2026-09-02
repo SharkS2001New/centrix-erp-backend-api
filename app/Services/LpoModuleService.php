@@ -255,7 +255,7 @@ class LpoModuleService
                 'can_delete' => $canDelete,
                 'amount_paid' => round($paymentsTotal, 2),
                 'balance_due' => round(max(0, $netAmount - $paymentsTotal), 2),
-                'workflow_actions' => $workflow->workflowActions($lpo, $organizationId, $supplier),
+                'workflow_actions' => $workflow->workflowActions($lpo, $organizationId, $supplier, $viewer),
                 'approval_pending' => $pendingRequest !== null,
                 'action_request' => $this->presentActionRequest($pendingRequest, $viewer),
                 'approval_rejection' => $lastRejections[$lpoNo] ?? null,
@@ -464,7 +464,7 @@ class LpoModuleService
             'amount_paid' => round($paymentsTotal, 2),
             'balance_due' => round($payableBalance, 2),
             'workflow_actions' => app(\App\Services\Purchasing\LpoWorkflowService::class)
-                ->workflowActions($lpo, $organizationId),
+                ->workflowActions($lpo, $organizationId, null, $viewer),
             'approval_pending' => $pendingRequest !== null,
             'action_request' => $this->presentActionRequest($pendingRequest, $viewer),
             'approval_rejection' => $lastRejections[$lpoNo] ?? null,

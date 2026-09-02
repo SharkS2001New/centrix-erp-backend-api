@@ -24,8 +24,12 @@ class LpoWorkflowService
     ) {}
 
     /** @return list<string> */
-    public function workflowActions(LpoMst $lpo, ?int $organizationId = null, ?Supplier $supplier = null): array
-    {
+    public function workflowActions(
+        LpoMst $lpo,
+        ?int $organizationId = null,
+        ?Supplier $supplier = null,
+        ?User $viewer = null,
+    ): array {
         $settings = ProcurementSettingsResolver::forOrganizationId($organizationId);
         $status = (int) ($lpo->lpo_status_code ?? 0);
         $actions = [];
@@ -48,7 +52,11 @@ class LpoWorkflowService
             $actions[] = 'mark_sent';
         }
 
-        return $actions;
+        if ($viewer?->is_admin && $status < self::STATUS_AWAITING_RECEIVE) {
+            $actions[] = 'force_mark_sent';
+        }
+
+        return array_values(array_unique($actions));
     }
 
     public function applyAction(LpoMst $lpo, string $action, User $user, Organization $organization): LpoMst
@@ -72,6 +80,7 @@ class LpoWorkflowService
                 'submit_for_approval' => $this->submitForApproval($lpo, $settings, $user),
                 'approve' => $this->approve($lpo, $settings, $status),
                 'mark_sent' => $this->markSent($lpo, $settings, $organization, $user, $status),
+                'force_mark_sent' => $this->forceMarkSent($lpo, $user, $status),
                 default => throw ValidationException::withMessages([
                     'action' => ['Unsupported workflow action.'],
                 ]),
@@ -207,6 +216,36 @@ class LpoWorkflowService
         if ($settings['auto_email_supplier_on_lpo']) {
             $this->maybeEmailSupplier($lpo, $organization);
         }
+    }
+
+    protected function forceMarkSent(LpoMst $lpo, User $user, int $status): void
+    {
+        if (! $user->is_admin) {
+            throw ValidationException::withMessages([
+                'action' => ['Only administrators can skip the LPO workflow.'],
+            ]);
+        }
+
+        if ($status >= self::STATUS_AWAITING_RECEIVE) {
+            throw ValidationException::withMessages([
+                'action' => ['This LPO has already been sent or received.'],
+            ]);
+        }
+
+        $lpo->update([
+            'lpo_status_code' => self::STATUS_AWAITING_RECEIVE,
+            'sent_at' => now(),
+            'sent_by' => $user->id,
+        ]);
+
+        app(ActionRequestService::class)->markResolvedFromDomain(
+            'lpo_approval',
+            'lpo_mst',
+            (int) $lpo->lpo_no,
+            'approved',
+            $user,
+            'Marked as sent by administrator (workflow skipped).',
+        );
     }
 
     protected function maybeEmailSupplier(LpoMst $lpo, Organization $organization): void

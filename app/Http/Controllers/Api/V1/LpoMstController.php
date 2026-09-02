@@ -263,7 +263,7 @@ class LpoMstController extends BaseResourceController
     public function workflow(Request $request, string $lpoNo)
     {
         $data = $request->validate([
-            'action' => 'required|in:mark_checked,submit_for_approval,approve,mark_sent',
+            'action' => 'required|in:mark_checked,submit_for_approval,approve,mark_sent,force_mark_sent',
         ]);
 
         $lpo = $this->baseQuery($request)->where($this->routeKeyColumn(), $lpoNo)->firstOrFail();
