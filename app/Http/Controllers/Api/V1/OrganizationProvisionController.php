@@ -477,7 +477,10 @@ class OrganizationProvisionController extends Controller
 
         $sessionsByUser = $sessions->groupBy('tokenable_id');
 
-        $data = $users->map(function (User $user) use ($sessionsByUser) {
+        $data = $users->map(function (User $user) use ($sessionsByUser, $org) {
+            $industry = \App\Services\Erp\IndustryRegistry::industryForProfile(
+                (string) ($org->deployment_profile ?? 'wholesale_retail'),
+            );
             $activeLogins = ($sessionsByUser->get($user->id) ?? collect())->map(fn ($token) => [
                 'id' => $token->id,
                 'channel' => $token->login_channel,
@@ -485,6 +488,7 @@ class OrganizationProvisionController extends Controller
                 'active_workspace_label' => WorkspaceSessionLabel::for(
                     $token->active_workspace_id,
                     $token->login_channel,
+                    $industry,
                 ),
                 'device' => $token->name,
                 'last_used_at' => $token->last_used_at,

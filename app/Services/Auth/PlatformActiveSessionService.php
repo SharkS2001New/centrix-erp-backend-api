@@ -5,6 +5,7 @@ namespace App\Services\Auth;
 use App\Models\Organization;
 use App\Models\PersonalAccessToken;
 use App\Models\User;
+use App\Services\Erp\IndustryRegistry;
 use App\Services\Erp\WorkspaceSessionLabel;
 use Illuminate\Support\Carbon;
 
@@ -20,11 +21,17 @@ class PlatformActiveSessionService
         $organizations = Organization::query()
             ->where('company_code', '!=', $platformCode)
             ->orderBy('org_name')
-            ->get(['id', 'company_code', 'org_name']);
+            ->get(['id', 'company_code', 'org_name', 'deployment_profile']);
 
         if ($organizations->isEmpty()) {
             return [];
         }
+
+        $industryByOrg = $organizations->mapWithKeys(
+            fn (Organization $org) => [
+                $org->id => IndustryRegistry::industryForProfile((string) ($org->deployment_profile ?? 'wholesale_retail')),
+            ],
+        );
 
         $idleByOrg = $organizations->mapWithKeys(
             fn (Organization $org) => [
@@ -87,6 +94,7 @@ class PlatformActiveSessionService
                 'active_workspace_label' => WorkspaceSessionLabel::for(
                     $token->active_workspace_id,
                     $token->login_channel ?: UserLoginChannelService::BACKOFFICE,
+                    $industryByOrg->get($orgId),
                 ),
                 'computer_id' => $token->name,
                 'last_active_at' => ($token->last_used_at ?? $token->updated_at)?->toIso8601String(),

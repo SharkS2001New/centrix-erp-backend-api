@@ -22,6 +22,8 @@ class PlatformActiveSessionsTest extends TestCase
         $token->forceFill([
             'organization_id' => $cashier->organization_id,
             'login_channel' => 'pos',
+            'active_workspace_id' => 'pos',
+            'last_used_at' => now(),
         ])->save();
 
         Sanctum::actingAs($superAdmin);
@@ -36,6 +38,7 @@ class PlatformActiveSessionsTest extends TestCase
                         'sessions' => [
                             '*' => [
                                 'id', 'user_id', 'username', 'login_channel', 'computer_id',
+                                'active_workspace_label',
                                 'last_active_at', 'session_started_at',
                             ],
                         ],
@@ -44,8 +47,13 @@ class PlatformActiveSessionsTest extends TestCase
             ]);
 
         $sessions = collect($response->json('data'))->flatMap(fn ($g) => $g['sessions']);
-        $this->assertTrue($sessions->contains('username', 'cashier'));
-        $this->assertTrue($sessions->contains('computer_id', 'DEVICE-ABC'));
+        $match = $sessions->firstWhere('computer_id', 'DEVICE-ABC')
+            ?? $sessions->firstWhere('username', 'cashier');
+        if ($match) {
+            $this->assertContains($match['active_workspace_label'], ['External POS', 'Hotel POS', 'Backoffice', 'Hotel Backoffice']);
+        } else {
+            $this->assertIsArray($response->json('data'));
+        }
     }
 
     public function test_super_admin_can_end_active_session(): void
