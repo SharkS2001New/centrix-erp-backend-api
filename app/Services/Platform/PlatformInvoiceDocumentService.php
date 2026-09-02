@@ -129,8 +129,15 @@ class PlatformInvoiceDocumentService
             }
         }
 
-        $issue = $invoice->issue_date?->format('d M Y') ?? '—';
-        $due = $invoice->due_date?->format('d M Y') ?? '—';
+        $issue = $invoice->issue_date?->format('j F Y') ?? '—';
+        $due = $invoice->due_date?->format('j F Y') ?? '—';
+        $metaHtml = '<div class="invoice-meta">'
+            .'<div class="meta-row"><span class="meta-label">Invoice No:</span><strong>'.e($number).'</strong></div>'
+            .'<div class="meta-row"><span class="meta-label">Invoice date:</span><span>'.e($issue).'</span></div>'
+            .($invoice->due_date
+                ? '<div class="meta-row"><span class="meta-label">Due date:</span><span>'.e($due).'</span></div>'
+                : '')
+            .'</div>';
 
         $headerHtml = match ($header) {
             'solid' => '<div style="background:'.$accent.';color:#fff;padding:14px 16px;margin:-14px -14px 14px;">'
@@ -166,6 +173,9 @@ class PlatformInvoiceDocumentService
         return '<!DOCTYPE html><html><head><meta charset="utf-8"><style>
             body{font-family:DejaVu Sans,sans-serif;font-size:11px;color:#0f172a;margin:14px;background:'.$bg.';'.$borderCss.'}
             .muted{color:#64748b;font-size:10px;}
+            .invoice-meta{margin:8px 0 10px;display:flex;flex-direction:column;gap:4px;font-size:10px;line-height:1.45}
+            .meta-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:0.35em}
+            .meta-label{color:#64748b;font-weight:bold;min-width:84px}
             .grid{width:100%;margin-top:10px;}
             .grid td{vertical-align:top;width:50%;}
             table.items{width:100%;border-collapse:collapse;margin-top:12px;}
@@ -176,7 +186,7 @@ class PlatformInvoiceDocumentService
             .notes{margin-top:12px;white-space:pre-wrap;}
         </style></head><body>
             '.$headerHtml.'
-            <p class="muted">Issue date: '.$issue.' · Due: '.$due.' · Status: '.e((string) $invoice->status).' · Design: '.e($templateId).'</p>
+            '.$metaHtml.'
             <table class="grid"><tr><td>'.$sellerBlock.'</td><td>'.$billToBlock.'</td></tr></table>
             <table class="items">
                 <thead><tr>
