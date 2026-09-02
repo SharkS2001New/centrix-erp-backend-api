@@ -208,7 +208,7 @@ class ReportController extends Controller
                 ['key' => 'hospitality-fnb-by-category', 'path' => '/reports/hospitality-fnb-by-category', 'label' => 'F&B by category'],
                 ['key' => 'hospitality-open-checks', 'path' => '/reports/hospitality-open-checks', 'label' => 'Open / unpaid checks'],
                 ['key' => 'hospitality-voids', 'path' => '/reports/hospitality-voids', 'label' => 'Voided checks'],
-                ['key' => 'hospitality-eod-cashier', 'path' => '/reports/hospitality-eod-cashier', 'label' => 'Hotel POS EOD by cashier'],
+                ['key' => 'hospitality-eod-cashier', 'path' => '/reports/hospitality-eod-cashier', 'label' => 'End of day — cashier (food, drink & rooms)'],
                 ['key' => 'hospitality-profit-loss', 'path' => '/reports/hospitality-profit-loss', 'label' => 'Hospitality P&L'],
                 ['key' => 'hospitality-consumption-variance', 'path' => '/reports/hospitality-consumption-variance', 'label' => 'Consumption variance'],
             ],

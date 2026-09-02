@@ -77,6 +77,7 @@ class PayrollRunController extends BaseResourceController
         }
 
         app(PayrollRunScheduleService::class)->assertCanRunPayrollForPeriod($period);
+        app(PayrollRunScheduleService::class)->assertEligiblePeriodForRun($period);
 
         if (! isset($data['status'])) {
             $hr = HrPayrollSettingsResolver::forOrganizationId((int) $period->organization_id);

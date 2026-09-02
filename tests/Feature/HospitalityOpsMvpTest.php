@@ -350,4 +350,74 @@ class HospitalityOpsMvpTest extends TestCase
             'status' => 'occupied',
         ])->assertUnprocessable();
     }
+
+    public function test_eod_cashier_report_includes_pos_room_sales_by_cashier(): void
+    {
+        $modules = $this->org->enabled_modules ?? [];
+        $modules['hospitality.bar_pos'] = true;
+        $this->org->forceFill(['enabled_modules' => $modules])->save();
+
+        $settings = $this->org->module_settings ?? [];
+        $hospitality = is_array($settings['hospitality'] ?? null) ? $settings['hospitality'] : [];
+        $hospitality['services'] = array_merge(HospitalityServices::DEFAULTS, [
+            'rooms' => true,
+            'front_desk' => true,
+            'folios' => false,
+            'table_pos' => false,
+            'room_charge' => false,
+        ]);
+        $this->org->putModuleSettingsSection('hospitality', $hospitality);
+
+        $type = HospitalityRoomType::query()->create([
+            'organization_id' => $this->org->id,
+            'code' => 'EOD'.random_int(10, 99),
+            'name' => 'EOD Twin',
+            'base_rate' => 5000,
+            'max_occupancy' => 2,
+            'is_active' => true,
+        ]);
+        $room = HospitalityRoom::query()->create([
+            'organization_id' => $this->org->id,
+            'room_type_id' => $type->id,
+            'room_number' => 'E'.random_int(100, 999),
+            'floor' => '1',
+            'status' => 'vacant',
+            'is_active' => true,
+        ]);
+
+        $checkout = now()->addDays(2)->setTime(10, 0)->toIso8601String();
+        $checkId = (int) $this->postJson('/api/v1/hospitality/pos/checks', [
+            'room_id' => $room->id,
+            'nights' => 2,
+            'checkout_at' => $checkout,
+            'guest_name' => 'EOD Guest',
+        ])->assertCreated()->json('check.id');
+
+        $this->postJson("/api/v1/hospitality/pos/checks/{$checkId}/settle", [
+            'payments' => [['method_code' => 'CASH', 'amount' => 10000]],
+        ])->assertOk();
+
+        $today = now()->toDateString();
+        $service = app(\App\Services\Hospitality\HospitalityReportService::class);
+        $eod = $service->run($this->org, 'hospitality-eod-cashier', $today, $today);
+
+        $this->assertNotEmpty($eod['columns']);
+        $keys = array_column($eod['columns'], 'key');
+        $this->assertContains('room_sales', $keys);
+        $this->assertContains('room_nights', $keys);
+        $this->assertContains('room_stays', $keys);
+
+        $cashierRow = collect($eod['rows'])->first(fn ($row) => (int) ($row['cashier_id'] ?? 0) === (int) $this->user->id);
+        $this->assertNotNull($cashierRow, 'Settling cashier should appear on EOD report.');
+        $this->assertSame(10000.0, (float) $cashierRow['room_sales']);
+        $this->assertSame(2.0, (float) $cashierRow['room_nights']);
+        $this->assertSame(1, (int) $cashierRow['room_stays']);
+        $this->assertSame(1, (int) $cashierRow['room_checks']);
+        $this->assertSame(0.0, (float) $cashierRow['fnb_sales']);
+
+        $this->getJson('/api/v1/reports/hospitality-eod-cashier?from='.$today.'&to='.$today)
+            ->assertOk()
+            ->assertJsonPath('data.0.room_sales', 10000)
+            ->assertJsonPath('data.0.room_nights', 2);
+    }
 }

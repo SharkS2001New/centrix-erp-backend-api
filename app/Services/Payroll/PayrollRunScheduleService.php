@@ -5,9 +5,11 @@ namespace App\Services\Payroll;
 use App\Services\Hr\HrPayrollSettingsResolver;
 use App\Services\Platform\PlatformPayrollScheduleSettingsResolver;
 use App\Models\PayPeriod;
+use App\Models\PayrollRun;
 use Carbon\Carbon;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Support\Collection;
+use Illuminate\Validation\ValidationException;
 
 class PayrollRunScheduleService
 {
@@ -207,6 +209,111 @@ class PayrollRunScheduleService
     }
 
     /**
+     * Pay period IDs that already have a non-void payroll run.
+     *
+     * @return array<int, int>
+     */
+    public function periodIdsWithRuns(int $organizationId): array
+    {
+        return PayrollRun::query()
+            ->where('organization_id', $organizationId)
+            ->where('status', '!=', 'void')
+            ->pluck('pay_period_id')
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Next period that may be run: earliest unpaid period in chronological order.
+     * Later months are hidden until all earlier periods have been run (no skipping).
+     */
+    public function nextEligiblePeriodForRun(int $organizationId, ?Carbon $today = null): ?PayPeriod
+    {
+        $today = ($today ?? now())->copy()->startOfDay();
+        $runPeriodIds = array_flip($this->periodIdsWithRuns($organizationId));
+
+        $periods = PayPeriod::query()
+            ->where('organization_id', $organizationId)
+            ->orderBy('period_start')
+            ->orderBy('id')
+            ->get();
+
+        foreach ($periods as $period) {
+            if (isset($runPeriodIds[$period->id])) {
+                continue;
+            }
+
+            if (! $this->canRunPayrollForPeriod($period, $today)) {
+                return null;
+            }
+
+            return $period;
+        }
+
+        foreach ($this->ensureRunnablePeriods($organizationId, $today) as $period) {
+            if (isset($runPeriodIds[$period->id])) {
+                continue;
+            }
+            if ($this->canRunPayrollForPeriod($period, $today)) {
+                return $period;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @return Collection<int, PayPeriod>
+     */
+    public function eligiblePeriodsForRun(int $organizationId, ?Carbon $today = null): Collection
+    {
+        $next = $this->nextEligiblePeriodForRun($organizationId, $today);
+
+        return $next ? collect([$next]) : collect();
+    }
+
+    public function assertPeriodNotAlreadyRun(PayPeriod $period): void
+    {
+        $exists = PayrollRun::query()
+            ->where('organization_id', (int) $period->organization_id)
+            ->where('pay_period_id', $period->id)
+            ->where('status', '!=', 'void')
+            ->exists();
+
+        if ($exists) {
+            throw ValidationException::withMessages([
+                'pay_period_id' => ['Payroll has already been run for this pay period.'],
+            ]);
+        }
+    }
+
+    public function assertEligiblePeriodForRun(PayPeriod $period, ?Carbon $today = null): void
+    {
+        $this->assertPeriodNotAlreadyRun($period);
+
+        $orgId = (int) $period->organization_id;
+        $next = $this->nextEligiblePeriodForRun($orgId, $today);
+
+        if ($next && (int) $next->id === (int) $period->id) {
+            return;
+        }
+
+        if ($next) {
+            $label = Carbon::parse($next->period_end)->format('F Y');
+            throw ValidationException::withMessages([
+                'pay_period_id' => [
+                    "Run payroll for {$label} first. Pay periods cannot be skipped.",
+                ],
+            ]);
+        }
+
+        throw new HttpResponseException(response()->json([
+            'message' => $this->runBlockedMessage($period, $today),
+        ], 422));
+    }
+
+    /**
      * @return array<string, mixed>
      */
     public function describe(?Carbon $today = null, ?int $organizationId = null): array
@@ -223,14 +330,20 @@ class PayrollRunScheduleService
                     . $graceDays
                     . ' days of the following month.',
                 'Upcoming (future) months cannot be processed.',
+                'Only the earliest unpaid pay period can be selected — periods cannot be skipped.',
                 'Payroll runs can be deleted until they are marked as paid.',
             ]
             : [
                 'Month-end schedule enforcement is off (platform and/or organization setting).',
                 'Payroll may run for the current or any past month at any time.',
                 'Upcoming (future) months cannot be processed.',
+                'Only the earliest unpaid pay period can be selected — periods cannot be skipped.',
                 'Payroll runs can be deleted until they are marked as paid.',
             ];
+
+        $nextEligible = $organizationId
+            ? $this->nextEligiblePeriodForRun((int) $organizationId, $today)
+            : null;
 
         return [
             'today' => $today->toDateString(),
@@ -239,7 +352,10 @@ class PayrollRunScheduleService
             'rules' => $rules,
             'runnable_period_codes' => array_column($runnable, 'period_code'),
             'runnable_periods' => $runnable,
-            'can_run_any_period_today' => $enforce ? count($runnable) > 0 : true,
+            'can_run_any_period_today' => $nextEligible !== null,
+            'next_eligible_period_id' => $nextEligible?->id,
+            'next_eligible_period_code' => $nextEligible?->period_code,
+            'eligible_period_ids' => $nextEligible ? [(int) $nextEligible->id] : [],
             'next_window' => $this->nextWindowHint($today, $organizationId, $enforce, $graceDays),
         ];
     }

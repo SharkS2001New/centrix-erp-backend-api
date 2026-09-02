@@ -272,7 +272,7 @@ class HospitalityReportService
             'columns' => [
                 ['key' => 'period_from', 'label' => 'From'],
                 ['key' => 'period_to', 'label' => 'To'],
-                ['key' => 'fnb_revenue', 'label' => 'F&B revenue'],
+                ['key' => 'fnb_revenue', 'label' => 'Food & drink revenue'],
                 ['key' => 'room_revenue', 'label' => 'Room revenue'],
                 ['key' => 'other_folio_revenue', 'label' => 'Other folio'],
                 ['key' => 'gross_revenue', 'label' => 'Gross revenue'],
@@ -341,7 +341,7 @@ class HospitalityReportService
         return round($total, 2);
     }
 
-    /** End-of-day F&B sales grouped by cashier (closed_by). */
+    /** End-of-day F&B + POS room sales grouped by cashier (closed_by). */
     protected function eodCashier(Organization $org, string $from, string $to): array
     {
         $checks = HospitalityCheck::query()
@@ -358,6 +358,11 @@ class HospitalityReportService
                     'cashier_id' => $cid ?: null,
                     'cashier_name' => 'Unassigned',
                     'checks' => 0,
+                    'room_checks' => 0,
+                    'room_stays' => 0,
+                    'room_nights' => 0.0,
+                    'room_sales' => 0.0,
+                    'fnb_sales' => 0.0,
                     'gross_sales' => 0.0,
                     'vat_total' => 0.0,
                     'amount_paid' => 0.0,
@@ -372,6 +377,31 @@ class HospitalityReportService
             $byCashier[$cid]['gross_sales'] += (float) $check->total;
             $byCashier[$cid]['vat_total'] += (float) $check->vat_total;
             $byCashier[$cid]['amount_paid'] += (float) $check->amount_paid;
+        }
+
+        $roomAgg = DB::table('hospitality_check_lines as l')
+            ->join('hospitality_checks as c', 'c.id', '=', 'l.check_id')
+            ->where('c.organization_id', $org->id)
+            ->whereIn('c.status', ['paid', 'settled', 'partially_paid'])
+            ->whereBetween(DB::raw('DATE(COALESCE(c.closed_at, c.updated_at))'), [$from, $to])
+            ->where('l.modifiers->type', HospitalityPosRoomSaleService::LINE_TYPE)
+            ->groupBy(DB::raw('COALESCE(c.closed_by, c.opened_by, 0)'))
+            ->selectRaw('COALESCE(c.closed_by, c.opened_by, 0) as cashier_id')
+            ->selectRaw('COUNT(DISTINCT c.id) as room_checks')
+            ->selectRaw('COUNT(*) as room_stays')
+            ->selectRaw('COALESCE(SUM(l.qty), 0) as room_nights')
+            ->selectRaw('COALESCE(SUM(l.line_total), 0) as room_sales')
+            ->get();
+
+        foreach ($roomAgg as $agg) {
+            $cid = (int) $agg->cashier_id;
+            if (! isset($byCashier[$cid])) {
+                continue;
+            }
+            $byCashier[$cid]['room_checks'] = (int) $agg->room_checks;
+            $byCashier[$cid]['room_stays'] = (int) $agg->room_stays;
+            $byCashier[$cid]['room_nights'] = (float) $agg->room_nights;
+            $byCashier[$cid]['room_sales'] = (float) $agg->room_sales;
         }
 
         $userIds = array_filter(array_keys($byCashier));
@@ -413,9 +443,16 @@ class HospitalityReportService
             $row['cashier_name'] = $cid
                 ? (string) ($names[$cid] ?? ('User #'.$cid))
                 : 'Unassigned';
-            foreach (['gross_sales', 'vat_total', 'amount_paid', 'cash', 'mpesa', 'card_bank', 'room_charge', 'other'] as $k) {
+            $row['fnb_sales'] = round(max(0, $row['gross_sales'] - $row['room_sales']), 2);
+            foreach ([
+                'room_nights', 'room_sales', 'fnb_sales', 'gross_sales', 'vat_total', 'amount_paid',
+                'cash', 'mpesa', 'card_bank', 'room_charge', 'other',
+            ] as $k) {
                 $row[$k] = round($row[$k], 2);
             }
+            $row['room_stays'] = (int) $row['room_stays'];
+            $row['room_checks'] = (int) $row['room_checks'];
+            $row['checks'] = (int) $row['checks'];
             $row['sale_date'] = $from === $to ? $from : "{$from} → {$to}";
             $rows[] = $row;
         }
@@ -427,13 +464,18 @@ class HospitalityReportService
                 ['key' => 'sale_date', 'label' => 'Date'],
                 ['key' => 'cashier_name', 'label' => 'Cashier'],
                 ['key' => 'checks', 'label' => 'Checks'],
+                ['key' => 'room_checks', 'label' => 'Checks with rooms'],
+                ['key' => 'room_stays', 'label' => 'Room stays sold'],
+                ['key' => 'room_nights', 'label' => 'Room nights'],
+                ['key' => 'room_sales', 'label' => 'Room sales'],
+                ['key' => 'fnb_sales', 'label' => 'Food & drink sales'],
                 ['key' => 'gross_sales', 'label' => 'Gross sales'],
                 ['key' => 'vat_total', 'label' => 'VAT'],
                 ['key' => 'amount_paid', 'label' => 'Collected'],
                 ['key' => 'cash', 'label' => 'Cash'],
                 ['key' => 'mpesa', 'label' => 'M-Pesa'],
                 ['key' => 'card_bank', 'label' => 'Card/Bank'],
-                ['key' => 'room_charge', 'label' => 'Room charge'],
+                ['key' => 'room_charge', 'label' => 'Charge to room'],
                 ['key' => 'other', 'label' => 'Other'],
             ],
             'rows' => $rows,
@@ -836,8 +878,8 @@ class HospitalityReportService
                 ['key' => 'adr', 'label' => 'ADR'],
                 ['key' => 'revpar', 'label' => 'RevPAR'],
                 ['key' => 'room_revenue', 'label' => 'Room rev'],
-                ['key' => 'fnb_gross', 'label' => 'F&B gross'],
-                ['key' => 'fnb_collected', 'label' => 'F&B collected'],
+                ['key' => 'fnb_gross', 'label' => 'Food & drink gross'],
+                ['key' => 'fnb_collected', 'label' => 'Food & drink collected'],
                 ['key' => 'cash', 'label' => 'Cash'],
                 ['key' => 'mpesa', 'label' => 'M-Pesa'],
                 ['key' => 'card_bank', 'label' => 'Card/Bank'],

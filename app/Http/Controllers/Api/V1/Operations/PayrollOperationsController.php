@@ -70,7 +70,7 @@ class PayrollOperationsController extends Controller
         $schedule = $scheduleService->describe(null, $orgId ? (int) $orgId : null);
         if ($orgId) {
             $schedule['periods'] = $scheduleService
-                ->ensureRunnablePeriods((int) $orgId)
+                ->eligiblePeriodsForRun((int) $orgId)
                 ->values();
         }
 

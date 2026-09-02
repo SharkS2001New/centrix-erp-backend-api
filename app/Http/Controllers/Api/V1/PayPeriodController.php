@@ -86,10 +86,10 @@ class PayPeriodController extends BaseResourceController
             return response()->json(['message' => 'Organization is required.'], 422);
         }
 
-        $periods = app(PayrollRunScheduleService::class)->ensureRunnablePeriods((int) $orgId);
+        $eligible = app(PayrollRunScheduleService::class)->eligiblePeriodsForRun((int) $orgId);
 
         return response()->json([
-            'data' => $periods,
+            'data' => $eligible->values(),
             'schedule' => app(PayrollRunScheduleService::class)->describe(null, (int) $orgId),
         ]);
     }
