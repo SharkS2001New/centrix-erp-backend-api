@@ -519,6 +519,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::get('hospitality-payments-breakdown', [ReportController::class, 'hospitalityPaymentsBreakdown'])
             ->middleware('erp.permission:reports.view|hospitality.reports.view|hospitality.payments_breakdown.view');
+        Route::get('hospitality-eod-report', [ReportController::class, 'hospitalityEodReport'])
+            ->middleware('erp.permission:reports.view|hospitality.reports.view');
 
         Route::middleware('erp.permission:reports.view|hr.view')->group(function () {
             Route::get('payroll-summary', [ReportController::class, 'payrollSummary']);

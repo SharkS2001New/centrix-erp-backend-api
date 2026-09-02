@@ -3,6 +3,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\PayPeriod;
 use App\Models\PayrollRun;
+use App\Services\Payroll\PayPeriodStatusService;
 use App\Services\Payroll\PayrollRunScheduleService;
 use Illuminate\Http\Request;
 
@@ -29,9 +30,13 @@ class PayPeriodController extends BaseResourceController
 
         $perPage = min((int) $request->input('per_page', 25), 200);
 
-        return response()->json(
-            $query->orderByDesc('period_start')->orderByDesc('id')->paginate($perPage),
+        $paginator = $query->orderByDesc('period_start')->orderByDesc('id')->paginate($perPage);
+        $statusSync = app(PayPeriodStatusService::class);
+        $paginator->getCollection()->transform(
+            fn (PayPeriod $period) => $statusSync->sync($period),
         );
+
+        return response()->json($paginator);
     }
 
     public function store(Request $request)

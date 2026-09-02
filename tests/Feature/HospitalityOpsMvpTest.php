@@ -419,5 +419,17 @@ class HospitalityOpsMvpTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.0.room_sales', 10000)
             ->assertJsonPath('data.0.room_nights', 2);
+
+        $this->getJson('/api/v1/reports/hospitality-eod-report?sale_date='.$today)
+            ->assertOk()
+            ->assertJsonPath('summary.room_sales', 10000)
+            ->assertJsonPath('summary.room_nights', 2)
+            ->assertJsonPath('summary.transactions', 1)
+            ->assertJsonStructure([
+                'summary',
+                'payments',
+                'payment_lines',
+                'cashiers',
+            ]);
     }
 }

@@ -155,6 +155,43 @@ class PayrollRunWorkflowTest extends TestCase
         Carbon::setTestNow();
     }
 
+    public function test_mark_paid_closes_pay_period(): void
+    {
+        $run = $this->createRun('processed');
+        $employee = Employee::firstOrFail();
+        $period = $run->payPeriod;
+        $this->assertSame('open', $period->status);
+
+        PayrollLine::create([
+            'payroll_run_id' => $run->id,
+            'employee_id' => $employee->id,
+            'gross_pay' => 50000,
+            'nssf' => 1080,
+            'shif' => 1375,
+            'housing_levy' => 750,
+            'paye' => 4200,
+            'other_deductions' => 0,
+            'deductions' => 7405,
+            'net_pay' => 42595,
+            'taxable_income' => 46795,
+            'employer_nssf' => 1080,
+            'employer_housing' => 750,
+        ]);
+
+        $this->postJson("/api/v1/payroll/runs/{$run->id}/mark-paid", [
+            'payment_reference' => 'BANK-2026-07',
+        ])->assertOk();
+
+        $this->assertSame('closed', $period->fresh()->status);
+
+        $this->getJson('/api/v1/pay-periods?per_page=50')
+            ->assertOk()
+            ->assertJsonFragment([
+                'id' => $period->id,
+                'status' => 'closed',
+            ]);
+    }
+
     public function test_mark_paid_rejects_non_processed_runs(): void
     {
         $run = $this->createRun('approved');
@@ -254,6 +291,7 @@ class PayrollRunWorkflowTest extends TestCase
             'period_start' => now()->startOfMonth()->toDateString(),
             'period_end' => now()->endOfMonth()->toDateString(),
             'pay_date' => now()->endOfMonth()->toDateString(),
+            'status' => 'open',
         ]);
 
         return PayrollRun::create([

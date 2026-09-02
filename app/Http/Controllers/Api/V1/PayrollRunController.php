@@ -7,6 +7,7 @@ use App\Models\PayrollRun;
 use App\Models\User;
 use App\Services\Hr\HrPayrollSettingsResolver;
 use App\Services\Notifications\ActionRequestService;
+use App\Services\Payroll\PayPeriodStatusService;
 use App\Services\Payroll\PayrollRunApprovalService;
 use App\Services\Payroll\PayrollCycleSettlementService;
 use App\Services\Payroll\PayrollRunScheduleService;
@@ -125,9 +126,14 @@ class PayrollRunController extends BaseResourceController
         }
 
         return DB::transaction(function () use ($run) {
+            $period = $run->payPeriod;
             $restored = app(PayrollCycleSettlementService::class)->restoreForRun($run);
             PayrollLine::query()->where('payroll_run_id', $run->id)->delete();
             $run->delete();
+
+            if ($period) {
+                app(PayPeriodStatusService::class)->sync($period);
+            }
 
             return response()->json([
                 'message' => 'Payroll run deleted. Related HR records were reopened for that period.',

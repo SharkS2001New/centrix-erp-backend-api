@@ -16,6 +16,7 @@ use App\Services\Hr\HrPayrollSettingsResolver;
 use App\Services\Payroll\KenyaStatutoryCalculator;
 use App\Services\Payroll\KenyaStatutoryReference;
 use App\Models\PayPeriod;
+use App\Services\Payroll\PayPeriodStatusService;
 use App\Services\Payroll\PayrollCycleSettlementService;
 use App\Services\Payroll\PayrollEarningsService;
 use App\Services\Payroll\PayrollAutoProcessService;
@@ -406,6 +407,10 @@ class PayrollOperationsController extends Controller
             'paid_at' => now(),
             'payment_reference' => $payload['payment_reference'] ?? null,
         ]);
+
+        if ($run->payPeriod) {
+            app(PayPeriodStatusService::class)->sync($run->payPeriod);
+        }
 
         return response()->json($run->fresh(['payPeriod', 'paidByUser', 'approvedByUser']));
     }
