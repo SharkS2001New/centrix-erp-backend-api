@@ -209,6 +209,96 @@ class SalesCartCheckoutStockTest extends TestCase
         $this->assertDatabaseMissing('cart_lines', ['update_code' => $retail['update_code']]);
     }
 
+    public function test_patch_mode_flip_collapses_same_sku_mode_twins(): void
+    {
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $wholesaleCart = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 1,
+            'on_wholesale_retail' => 0,
+        ])->assertCreated()->json();
+
+        $wholesale = collect($wholesaleCart['lines'] ?? [])->firstWhere('on_wholesale_retail', 0)
+            ?? collect($wholesaleCart['lines'] ?? [])->firstWhere('on_wholesale_retail', false);
+        $this->assertNotEmpty($wholesale['update_code'] ?? null);
+
+        // Simulate a stuck twin (race / old bug): same SKU still wholesale.
+        \App\Models\CartLine::query()->create([
+            'cart_id' => $cartId,
+            'product_code' => $this->productCode,
+            'product_name' => $wholesale['product_name'] ?? $this->productCode,
+            'unit_price' => (float) ($wholesale['unit_price'] ?? 1),
+            'quantity' => 1,
+            'uom' => $wholesale['uom'] ?? 'BAG',
+            'product_vat' => 0,
+            'amount' => (float) ($wholesale['unit_price'] ?? 1),
+            'discount_given' => 0,
+            'on_wholesale_retail' => 0,
+            'line_no' => 99,
+            'update_code' => 'CLU-TWIN-'.uniqid(),
+        ]);
+
+        $res = $this->patchJson("/api/v1/sales/carts/{$cartId}/lines/{$wholesale['update_code']}", [
+            'quantity' => 1,
+            'on_wholesale_retail' => 0,
+            'update_no' => $wholesaleCart['update_no'] ?? null,
+        ])->assertOk()->json();
+
+        $lines = collect($res['lines'] ?? [])->where('product_code', $this->productCode)
+            ->filter(fn ($line) => (int) ($line['on_wholesale_retail'] ?? 0) === 0)
+            ->values();
+        $this->assertCount(1, $lines);
+        $this->assertEqualsWithDelta(1.0, (float) ($lines[0]['quantity'] ?? 0), 0.0001);
+    }
+
+    public function test_f12_mode_flip_into_existing_wholesale_collapses_to_one_line(): void
+    {
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 2,
+            'on_wholesale_retail' => 0,
+        ])->assertCreated();
+
+        $retailCart = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 5,
+            'on_wholesale_retail' => 1,
+        ])->assertCreated()->json();
+
+        $retail = collect($retailCart['lines'] ?? [])->first(
+            fn ($line) => (int) ($line['on_wholesale_retail'] ?? 0) === 1,
+        );
+        $this->assertNotNull($retail);
+
+        // F12 convert retail → wholesale (bags). Must not leave two wholesale rows.
+        $res = $this->patchJson("/api/v1/sales/carts/{$cartId}/lines/{$retail['update_code']}", [
+            'quantity' => 1,
+            'on_wholesale_retail' => 0,
+            'update_no' => $retailCart['update_no'] ?? null,
+        ])->assertOk()->json();
+
+        $wholesaleLines = collect($res['lines'] ?? [])
+            ->filter(fn ($line) => (int) ($line['on_wholesale_retail'] ?? 0) === 0)
+            ->values();
+        $retailLines = collect($res['lines'] ?? [])
+            ->filter(fn ($line) => (int) ($line['on_wholesale_retail'] ?? 0) === 1)
+            ->values();
+
+        $this->assertCount(1, $wholesaleLines);
+        $this->assertCount(0, $retailLines);
+        // Folded existing wholesale (2) + converted entry (1).
+        $this->assertEqualsWithDelta(3.0, (float) ($wholesaleLines[0]['quantity'] ?? 0), 0.0001);
+    }
+
     public function test_held_order_can_be_cancelled(): void
     {
         $template = Sale::query()->where('organization_id', $this->user->organization_id)->firstOrFail();

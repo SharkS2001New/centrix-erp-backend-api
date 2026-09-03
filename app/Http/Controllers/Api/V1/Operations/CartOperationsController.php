@@ -60,10 +60,64 @@ class CartOperationsController extends Controller
         array $extra = [],
         bool $includeNextOrderNum = false,
     ) {
+        $this->sanitizeDuplicateCartLines($cart);
+
         return response()->json(
             $this->presentCart($cart, $user, $extra, $includeNextOrderNum),
             $status,
         );
+    }
+
+    /**
+     * Remove stuck TemporaryCart twins for the same SKU + retail/wholesale mode.
+     * Keeps the earliest line_no and folds sibling quantities into it.
+     */
+    protected function sanitizeDuplicateCartLines(TemporaryCart $cart): void
+    {
+        $cart->loadMissing('lines');
+        $groups = [];
+        foreach ($cart->lines as $line) {
+            $key = (string) $line->product_code.'|'.((int) ($line->on_wholesale_retail ?? 0));
+            $groups[$key][] = $line;
+        }
+
+        $changed = false;
+        foreach ($groups as $siblings) {
+            if (count($siblings) < 2) {
+                continue;
+            }
+            usort(
+                $siblings,
+                static fn (CartLine $a, CartLine $b) => ((int) $a->line_no) <=> ((int) $b->line_no)
+                    ?: ((int) $a->id) <=> ((int) $b->id),
+            );
+            $keep = array_shift($siblings);
+            $qty = (float) $keep->quantity;
+            $discount = (float) ($keep->discount_given ?? 0);
+            foreach ($siblings as $dup) {
+                $qty = round($qty + (float) $dup->quantity, 4);
+                $discount = round($discount + (float) ($dup->discount_given ?? 0), 2);
+                $this->releaseLineReservation((int) $dup->id);
+                $dup->delete();
+                $changed = true;
+            }
+            if (
+                abs($qty - (float) $keep->quantity) > 0.0001
+                || abs($discount - (float) ($keep->discount_given ?? 0)) > 0.0001
+            ) {
+                $keep->update([
+                    'quantity' => $qty,
+                    'discount_given' => $discount,
+                    'amount' => round((float) $keep->unit_price * $qty, 2),
+                ]);
+                $changed = true;
+            }
+        }
+
+        if ($changed) {
+            $cart->unsetRelation('lines');
+            $cart->load('lines');
+        }
     }
 
     public function store(StoreCartRequest $request)
@@ -171,7 +225,16 @@ class CartOperationsController extends Controller
         $user = $request->user();
         $cart = $this->findOwnedCart($cartId, $user, withLines: false);
         $gate = $this->erp->gateForUser($user);
-        $this->addCartLine($cart, $request->validated(), $user, $gate);
+
+        // Lock the cart so concurrent POS adds (qty Enter / F12 convert races) cannot
+        // create two TemporaryCart rows for the same SKU + retail/wholesale mode.
+        DB::transaction(function () use ($cart, $request, $user, $gate) {
+            $locked = TemporaryCart::query()->whereKey($cart->id)->lockForUpdate()->first();
+            if (! $locked) {
+                throw new InvalidArgumentException('Cart not found.');
+            }
+            $this->addCartLine($locked, $request->validated(), $user, $gate);
+        }, 5);
 
         return $this->cartResponse($this->freshOwnedCart($cart), $user, 201, includeNextOrderNum: false);
     }
@@ -1747,20 +1810,34 @@ class CartOperationsController extends Controller
             ? (bool) $input['on_wholesale_retail']
             : (bool) $row->on_wholesale_retail;
 
-        // Swap / SKU change must not leave two rows for the same product mode.
-        if ((string) $productCode !== (string) $row->product_code) {
-            $duplicate = CartLine::query()
-                ->where('cart_id', $cart->id)
-                ->where('product_code', $product->product_code)
-                ->where('on_wholesale_retail', $onWholesaleRetailFlag ? 1 : 0)
-                ->where('id', '!=', $row->id)
-                ->orderBy('line_no')
-                ->first();
-            if ($duplicate) {
+        // Always collapse siblings with the same SKU + retail/wholesale mode.
+        // F12 bags↔kg flips used to update one row while leaving another same-mode
+        // twin (SKU change was the only merge path before).
+        $modeChanged = ((bool) $row->on_wholesale_retail) !== $onWholesaleRetailFlag;
+        $discountGivenSeed = array_key_exists('discount_given', $input)
+            ? (float) $input['discount_given']
+            : (float) $row->discount_given;
+        $duplicates = CartLine::query()
+            ->where('cart_id', $cart->id)
+            ->where('product_code', $product->product_code)
+            ->where('on_wholesale_retail', $onWholesaleRetailFlag ? 1 : 0)
+            ->where('id', '!=', $row->id)
+            ->orderBy('line_no')
+            ->get();
+        foreach ($duplicates as $duplicate) {
+            // Mode flip into an existing bags/kg row: fold that qty in (combine-identical).
+            // Same-mode qty edit: client quantity is authoritative — only delete the twin.
+            if ($modeChanged || ! array_key_exists('quantity', $input)) {
                 $qty = round((float) $qty + (float) $duplicate->quantity, 4);
-                $this->releaseLineReservation((int) $duplicate->id);
-                $duplicate->delete();
             }
+            if ($modeChanged || ! array_key_exists('discount_given', $input)) {
+                $discountGivenSeed = round(
+                    $discountGivenSeed + (float) ($duplicate->discount_given ?? 0),
+                    2,
+                );
+            }
+            $this->releaseLineReservation((int) $duplicate->id);
+            $duplicate->delete();
         }
 
         $isRetail = $this->isRetailLine($product, $onWholesaleRetailFlag);
@@ -1768,7 +1845,7 @@ class CartOperationsController extends Controller
 
         $discountGiven = array_key_exists('discount_given', $input)
             ? (float) $input['discount_given']
-            : (float) $row->discount_given;
+            : $discountGivenSeed;
         $discountGiven = $this->resolveLineDiscountGiven($salesSettings, $discountGiven);
         $discountService = app(\App\Services\Sales\DiscountApprovalService::class);
         if (! $discountService->allowsManualLineDiscount($salesSettings, $cart->order_source)) {

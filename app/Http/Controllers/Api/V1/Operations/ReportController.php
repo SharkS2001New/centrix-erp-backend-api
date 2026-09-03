@@ -1827,6 +1827,11 @@ class ReportController extends Controller
         }
         $paidDebtors = (float) $paidDebtorsQuery->sum('sp.amount');
 
+        // Cashier / session filter: Debtor summary must not show branch-wide AR collections
+        // (e.g. Diana's payments on Naomi's End of Day). Match Invoice sales (paid debtors).
+        if ($cashierId || $floatSessionId) {
+            $creditPayments = $paidDebtors;
+        }
         // Period credit outstanding only (legacy INVOICETOTALS analogue) — display, not netsales.
         $closingDebtors = round(max(0, $creditSales), 2);
 

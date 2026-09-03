@@ -212,8 +212,17 @@ class SalePaymentAllocationService
     protected function resolvePaymentFloatSessionId(array $payment, User $user): ?int
     {
         $sessionId = isset($payment['float_session_id']) ? (int) $payment['float_session_id'] : null;
+
+        // When the cashier has an open till session, debtor collections must land on
+        // that session so X / Z / End of Day show "Invoice sales (paid debtors)".
         if (! $sessionId) {
-            return null;
+            $open = TillFloatSession::query()
+                ->where('cashier_id', $user->id)
+                ->whereRaw('LOWER(status) = ?', ['open'])
+                ->orderByDesc('id')
+                ->first();
+
+            return $open ? (int) $open->id : null;
         }
 
         $session = TillFloatSession::find($sessionId);

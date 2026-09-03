@@ -319,6 +319,213 @@ class TillSessionFlowTest extends TestCase
         $this->assertNotContains('CASH', $paymentCodes);
     }
 
+    public function test_debtor_payment_without_session_id_auto_links_open_till_for_x_z_eod(): void
+    {
+        $session = $this->openFreshSession(2000);
+        $cashMethod = PaymentMethod::where('method_code', 'CASH')->firstOrFail();
+
+        $priorSale = Sale::create([
+            'order_num' => 990105,
+            'branch_id' => $this->user->branch_id,
+            'organization_id' => $this->user->organization_id,
+            'channel' => 'pos',
+            'till_id' => $this->till->id,
+            'float_session_id' => null,
+            'cashier_id' => $this->user->id,
+            'status' => 'completed',
+            'order_total' => 1800,
+            'total_vat' => 0,
+            'amount_paid' => 0,
+            'payment_status' => 'unpaid',
+            'is_credit_sale' => true,
+            'completed_at' => now()->subDay(),
+        ]);
+
+        // No float_session_id — must still attach to the cashier's open session.
+        $this->postJson("/api/v1/sales/{$priorSale->id}/payments", [
+            'payment_method_id' => $cashMethod->id,
+            'amount' => 1200,
+        ])->assertOk();
+
+        $linked = SalePayment::query()
+            ->where('sale_id', $priorSale->id)
+            ->latest('id')
+            ->first();
+        $this->assertNotNull($linked);
+        $this->assertSame((int) $session->id, (int) $linked->float_session_id);
+
+        $xReport = $this->getJson("/api/v1/pos/sessions/{$session->id}/x-report")
+            ->assertOk()
+            ->json('report');
+        $this->assertEqualsWithDelta(
+            1200,
+            (float) ($xReport['sales']['debtor_collections'] ?? $xReport['sales']['invoice_sales'] ?? 0),
+            0.01,
+        );
+
+        $date = now()->toDateString();
+        $eodOpen = $this->getJson(
+            '/api/v1/reports/eod-report?sale_date='.$date.'&cashier_id='.$this->user->id,
+        )->assertOk()->json();
+        $this->assertEqualsWithDelta(
+            1200,
+            (float) ($eodOpen['summary']['paid_debtors'] ?? 0),
+            0.01,
+            'Open-session debtor collections must appear on End of Day',
+        );
+
+        $this->postJson("/api/v1/pos/sessions/{$session->id}/close", [
+            'closing_amount' => 3200,
+        ])->assertOk();
+
+        $zReport = $this->getJson("/api/v1/pos/sessions/{$session->id}/z-report")
+            ->assertOk()
+            ->json('report');
+        $this->assertEqualsWithDelta(
+            1200,
+            (float) ($zReport['sales']['debtor_collections'] ?? $zReport['sales']['invoice_sales'] ?? 0),
+            0.01,
+            'Z report must keep Invoice sales (paid debtors) after close',
+        );
+        $this->assertEqualsWithDelta(
+            3200,
+            (float) ($zReport['expected_cash'] ?? 0),
+            0.01,
+        );
+
+        $eodClosed = $this->getJson(
+            '/api/v1/reports/eod-report?sale_date='.$date.'&cashier_id='.$this->user->id,
+        )->assertOk()->json();
+        $this->assertEqualsWithDelta(
+            1200,
+            (float) ($eodClosed['summary']['paid_debtors'] ?? 0),
+            0.01,
+        );
+    }
+
+    public function test_debtor_payment_stays_on_collecting_cashier_session_only(): void
+    {
+        $collector = User::where('username', 'cashier')->first();
+        $this->assertNotNull($collector);
+
+        // Original credit sale belongs to admin — collector is a different cashier.
+        $priorSale = Sale::create([
+            'order_num' => 990106,
+            'branch_id' => $this->user->branch_id,
+            'organization_id' => $this->user->organization_id,
+            'channel' => 'pos',
+            'till_id' => $this->till->id,
+            'float_session_id' => null,
+            'cashier_id' => $this->user->id,
+            'status' => 'completed',
+            'order_total' => 900,
+            'total_vat' => 0,
+            'amount_paid' => 0,
+            'payment_status' => 'unpaid',
+            'is_credit_sale' => true,
+            'completed_at' => now()->subDay(),
+        ]);
+
+        $adminSession = $this->openFreshSession(1000);
+
+        Sanctum::actingAs($collector);
+        $this->enableRequirePosTillFloat();
+        TillFloatSession::query()
+            ->where('cashier_id', $collector->id)
+            ->where('status', 'open')
+            ->update(['status' => 'closed', 'closed_at' => now()]);
+
+        $collectorSession = TillFloatSession::create([
+            'organization_id' => $collector->organization_id,
+            'branch_id' => $collector->branch_id ?? $this->user->branch_id,
+            'till_id' => $this->till->id,
+            'cashier_id' => $collector->id,
+            'session_date' => now()->toDateString(),
+            'opened_at' => now(),
+            'working_amount' => 500,
+            'status' => 'open',
+        ]);
+
+        $cashMethod = PaymentMethod::where('method_code', 'CASH')->firstOrFail();
+        $this->postJson("/api/v1/sales/{$priorSale->id}/payments", [
+            'payment_method_id' => $cashMethod->id,
+            'amount' => 900,
+            'float_session_id' => $collectorSession->id,
+        ])->assertOk();
+
+        $collectorX = $this->getJson("/api/v1/pos/sessions/{$collectorSession->id}/x-report")
+            ->assertOk()
+            ->json('report');
+        $this->assertEqualsWithDelta(
+            900,
+            (float) ($collectorX['sales']['debtor_collections'] ?? 0),
+            0.01,
+        );
+
+        Sanctum::actingAs($this->user);
+        $adminX = $this->getJson("/api/v1/pos/sessions/{$adminSession->id}/x-report")
+            ->assertOk()
+            ->json('report');
+        $this->assertEqualsWithDelta(
+            0,
+            (float) ($adminX['sales']['debtor_collections'] ?? 0),
+            0.01,
+            'Admin session must not inherit another cashier\'s debtor collection',
+        );
+
+        $date = now()->toDateString();
+        $eodCollector = $this->getJson(
+            '/api/v1/reports/eod-report?sale_date='.$date.'&cashier_id='.$collector->id,
+        )->assertOk()->json();
+        $this->assertEqualsWithDelta(
+            900,
+            (float) ($eodCollector['summary']['paid_debtors'] ?? 0),
+            0.01,
+        );
+
+        $eodAdmin = $this->getJson(
+            '/api/v1/reports/eod-report?sale_date='.$date.'&cashier_id='.$this->user->id,
+        )->assertOk()->json();
+        $this->assertEqualsWithDelta(
+            0,
+            (float) ($eodAdmin['summary']['paid_debtors'] ?? 0),
+            0.01,
+            'Filtering End of Day by another cashier must exclude this collection',
+        );
+
+        $eodAll = $this->getJson('/api/v1/reports/eod-report?sale_date='.$date)
+            ->assertOk()
+            ->json();
+        $this->assertEqualsWithDelta(
+            900,
+            (float) ($eodAll['summary']['paid_debtors'] ?? 0),
+            0.01,
+            'All cashiers total may include it once — as the collector\'s session only',
+        );
+
+        $sessions = collect($eodAll['sessions'] ?? $eodAll['tills'] ?? []);
+        $collectorRow = $sessions->firstWhere('float_session_id', (int) $collectorSession->id);
+        $adminRow = $sessions->firstWhere('float_session_id', (int) $adminSession->id);
+        $this->assertNotNull($collectorRow);
+        $this->assertEqualsWithDelta(900, (float) ($collectorRow['paid_debtors'] ?? 0), 0.01);
+        if ($adminRow) {
+            $this->assertEqualsWithDelta(0, (float) ($adminRow['paid_debtors'] ?? 0), 0.01);
+        }
+
+        $this->assertEqualsWithDelta(
+            900,
+            (float) ($eodCollector['debtors']['payments_received'] ?? 0),
+            0.01,
+            'Debtor summary Payments received must follow the collecting cashier filter',
+        );
+        $this->assertEqualsWithDelta(
+            0,
+            (float) ($eodAdmin['debtors']['payments_received'] ?? 0),
+            0.01,
+            'Debtor summary must not show another cashier\'s collections',
+        );
+    }
+
     public function test_unpaid_credit_sale_does_not_inflate_x_report_expected(): void
     {
         $session = $this->openFreshSession(997);
