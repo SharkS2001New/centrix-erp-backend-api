@@ -551,6 +551,44 @@ class SalesReportsTest extends TestCase
         $this->assertFalse($ids->contains((int) $stockUser->id), 'Inventory-only users must not appear');
     }
 
+    public function test_report_filter_cashiers_includes_hotel_pos_cashiers(): void
+    {
+        $hotelRole = \App\Models\Role::query()->firstOrCreate(
+            ['role_name' => 'Hotel Cashier Filter '.uniqid()],
+            ['scope' => 'branch', 'is_active' => true],
+        );
+        $hotelPermId = \App\Models\Permission::query()
+            ->where('permission_code', 'hotel_bar_pos.checks.create')
+            ->value('id');
+        $this->assertNotNull($hotelPermId, 'hotel_bar_pos.checks.create must exist in permissions');
+        \Illuminate\Support\Facades\DB::table('role_permissions')->where('role_id', $hotelRole->id)->delete();
+        \Illuminate\Support\Facades\DB::table('role_permissions')->insert([
+            'role_id' => $hotelRole->id,
+            'permission_id' => $hotelPermId,
+        ]);
+
+        $hotelCashier = User::create([
+            'organization_id' => $this->admin->organization_id,
+            'branch_id' => $this->admin->branch_id,
+            'role_id' => $hotelRole->id,
+            'username' => 'hotel_cashier_'.uniqid(),
+            'password' => \Illuminate\Support\Facades\Hash::make('password'),
+            'full_name' => 'Hotel POS Cashier',
+            'access_scope' => 'branch',
+            'login_channels' => ['backoffice'],
+            'is_active' => true,
+        ]);
+
+        $response = $this->getJson('/api/v1/reports/filter-cashiers?per_page=50')
+            ->assertOk();
+
+        $ids = collect($response->json('data'))->pluck('id')->map(fn ($id) => (int) $id);
+        $this->assertTrue(
+            $ids->contains((int) $hotelCashier->id),
+            'Hotel POS cashiers must appear in End of Day cashier filter',
+        );
+    }
+
     public function test_daily_sales_and_sales_by_product_tally_with_order_discount(): void
     {
         $day = now()->toDateString();

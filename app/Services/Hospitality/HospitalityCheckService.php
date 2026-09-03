@@ -859,6 +859,7 @@ class HospitalityCheckService
                 app(HospitalityPosEmailReportService::class)->notifySettleIfEnabled($org, $fresh);
                 // Prepaid Hotel POS room nights — occupy until expected checkout (separate from PMS folio stays).
                 app(HospitalityPosRoomSaleService::class)->occupyRoomsFromSettledCheck($fresh, $user);
+                $this->discardEmptyOpenDrafts((int) $check->organization_id, (int) $user->id);
             }
 
             return $this->presentable($fresh->fresh());
@@ -954,6 +955,7 @@ class HospitalityCheckService
         $page = max(1, (int) ($filters['page'] ?? 1));
 
         $this->discardEmptyOpenDrafts($organizationId);
+        $this->reconcileFullyPaidOpenChecks($organizationId);
 
         $query = HospitalityCheck::query()
             ->with([
@@ -990,7 +992,7 @@ class HospitalityCheckService
             : null;
 
         if ($normalized === 'open') {
-            $query->whereIn('status', ['open', 'unpaid', 'held', 'partially_paid']);
+            $query->whereIn('status', ['unpaid', 'held', 'partially_paid']);
         } elseif ($normalized === 'unpaid') {
             $query->whereIn('status', self::COLLECTIBLE_STATUSES);
         } elseif ($normalized === 'paid') {
@@ -999,6 +1001,9 @@ class HospitalityCheckService
             $query->where('status', 'void');
         } elseif ($normalized) {
             $query->where('status', $normalized);
+        } else {
+            // POS "open" tickets are in-progress drafts — not backoffice orders.
+            $query->where('status', '!=', 'open');
         }
 
         $this->applyCheckListSearch($query, (string) ($filters['q'] ?? ''));
@@ -1014,15 +1019,30 @@ class HospitalityCheckService
             });
         }
 
-        // POS may open a blank check before the first item. Those drafts are not orders.
-        $query->where(function ($inner) {
-            $inner->where('status', '!=', 'open')
-                ->orWhere('total', '>', 0)
-                ->orWhere('amount_paid', '>', 0)
-                ->orWhereHas('lines');
-        });
-
         return $query->paginate($limit, ['*'], 'page', $page);
+    }
+
+    /** Fix rare rows where payment was recorded but status stayed open. */
+    protected function reconcileFullyPaidOpenChecks(int $organizationId): int
+    {
+        $ids = HospitalityCheck::query()
+            ->where('organization_id', $organizationId)
+            ->where('status', 'open')
+            ->where('total', '>', 0)
+            ->whereRaw('ROUND(COALESCE(amount_paid, 0), 2) >= ROUND(total, 2)')
+            ->pluck('id')
+            ->all();
+
+        if ($ids === []) {
+            return 0;
+        }
+
+        return HospitalityCheck::query()
+            ->whereIn('id', $ids)
+            ->update([
+                'status' => 'paid',
+                'closed_at' => DB::raw('COALESCE(closed_at, NOW())'),
+            ]);
     }
 
     /**

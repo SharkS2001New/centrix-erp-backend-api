@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Builder;
 
 /**
  * Users eligible for sales report / sales-data cashier & salesperson filters:
- * backoffice order create, POS checkout, or mobile field sales create.
+ * backoffice order create, retail POS checkout, Hotel POS checks, or mobile field sales.
  */
 class SalesReportUserScope
 {
@@ -19,6 +19,9 @@ class SalesReportUserScope
             'sales.orders.create',
             'pos.checkout.create',
             'pos.terminal.view',
+            // Hotel / bar POS cashiers settle checks — must appear on hospitality EOD filters.
+            'hotel_bar_pos.checks.create',
+            'hotel_bar_pos.terminal.view',
             'mobile_sales.orders.create',
         ];
     }

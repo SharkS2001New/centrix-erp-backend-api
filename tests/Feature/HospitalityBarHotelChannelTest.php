@@ -188,33 +188,34 @@ class HospitalityBarHotelChannelTest extends TestCase
             ->where('code', 'HOTEL')
             ->firstOrFail();
 
-        $product = Product::query()
-            ->where('organization_id', $this->org->id)
-            ->orderBy('product_code')
-            ->firstOrFail();
-        $product->forceFill([
-            'sell_on_bar' => true,
-            'sell_on_hotel' => true,
-        ])->save();
+        [$barProduct, $hotelProduct] = $this->createBarAndHotelListProducts();
 
         $this->user->forceFill(['hospitality_outlet_id' => $bar->id])->save();
         $barOpened = $this->postJson('/api/v1/hospitality/pos/checks', [
             'outlet_id' => $bar->id,
-            'product_code' => $product->product_code,
+            'product_code' => $barProduct->product_code,
         ])->assertCreated()->json('check');
         $this->postJson('/api/v1/hospitality/pos/checks/'.$barOpened['id'].'/lines', [
-            'product_code' => $product->product_code,
+            'product_code' => $barProduct->product_code,
             'qty' => 1,
+        ])->assertOk();
+        $barWithLine = $this->getJson('/api/v1/hospitality/pos/checks/'.$barOpened['id'])->assertOk()->json('check');
+        $this->postJson('/api/v1/hospitality/pos/checks/'.$barOpened['id'].'/settle', [
+            'payments' => [['method_code' => 'CASH', 'amount' => (float) $barWithLine['total']]],
         ])->assertOk();
 
         $this->user->forceFill(['hospitality_outlet_id' => $hotel->id])->save();
         $hotelOpened = $this->postJson('/api/v1/hospitality/pos/checks', [
             'outlet_id' => $hotel->id,
-            'product_code' => $product->product_code,
+            'product_code' => $hotelProduct->product_code,
         ])->assertCreated()->json('check');
         $this->postJson('/api/v1/hospitality/pos/checks/'.$hotelOpened['id'].'/lines', [
-            'product_code' => $product->product_code,
+            'product_code' => $hotelProduct->product_code,
             'qty' => 1,
+        ])->assertOk();
+        $hotelWithLine = $this->getJson('/api/v1/hospitality/pos/checks/'.$hotelOpened['id'])->assertOk()->json('check');
+        $this->postJson('/api/v1/hospitality/pos/checks/'.$hotelOpened['id'].'/settle', [
+            'payments' => [['method_code' => 'CASH', 'amount' => (float) $hotelWithLine['total']]],
         ])->assertOk();
 
         $all = collect($this->getJson('/api/v1/hospitality/checks?per_page=50')->assertOk()->json('checks'));
@@ -227,6 +228,32 @@ class HospitalityBarHotelChannelTest extends TestCase
         $this->assertFalse($barRows->contains('id', $hotelOpened['id']));
         $this->assertTrue($hotelRows->contains('id', $hotelOpened['id']));
         $this->assertFalse($hotelRows->contains('id', $barOpened['id']));
+    }
+
+    public function test_backoffice_order_list_excludes_open_pos_drafts(): void
+    {
+        $checks = app(HospitalityCheckService::class);
+        $bar = $checks->ensureDefaultOutlet($this->org, null);
+        [$barProduct] = $this->createBarAndHotelListProducts();
+
+        $this->user->forceFill(['hospitality_outlet_id' => $bar->id])->save();
+        $opened = $this->postJson('/api/v1/hospitality/pos/checks', [
+            'outlet_id' => $bar->id,
+            'product_code' => $barProduct->product_code,
+        ])->assertCreated()->json('check');
+
+        $rows = collect($this->getJson('/api/v1/hospitality/checks?per_page=50')->assertOk()->json('checks'));
+        $this->assertFalse($rows->contains('id', $opened['id']));
+
+        $withLine = $this->getJson('/api/v1/hospitality/pos/checks/'.$opened['id'])->assertOk()->json('check');
+        $this->postJson('/api/v1/hospitality/pos/checks/'.$opened['id'].'/settle', [
+            'payments' => [['method_code' => 'CASH', 'amount' => (float) $withLine['total']]],
+        ])->assertOk();
+
+        $paidRows = collect($this->getJson('/api/v1/hospitality/checks?per_page=50')->assertOk()->json('checks'));
+        $match = $paidRows->firstWhere('id', $opened['id']);
+        $this->assertNotNull($match);
+        $this->assertSame('paid', $match['status']);
     }
 
     public function test_pos_price_update_follows_outlet_channel(): void
@@ -288,5 +315,60 @@ class HospitalityBarHotelChannelTest extends TestCase
         ])
             ->assertOk()
             ->assertJsonPath('unit_price', 310);
+    }
+
+    /** @return array{0: Product, 1: Product} */
+    protected function createBarAndHotelListProducts(): array
+    {
+        $template = Product::query()
+            ->where('organization_id', $this->org->id)
+            ->whereNotNull('subcategory_id')
+            ->orderBy('product_code')
+            ->firstOrFail();
+
+        $foodCat = Category::query()->firstOrCreate(
+            ['organization_id' => $this->org->id, 'category_name' => 'Food'],
+        );
+        $drinksCat = Category::query()->firstOrCreate(
+            ['organization_id' => $this->org->id, 'category_name' => 'Drinks'],
+        );
+        $foodSub = SubCategory::query()->firstOrCreate(
+            [
+                'organization_id' => $this->org->id,
+                'category_id' => $foodCat->id,
+                'subcategory_name' => 'Kitchen',
+            ],
+        );
+        $drinksSub = SubCategory::query()->firstOrCreate(
+            [
+                'organization_id' => $this->org->id,
+                'category_id' => $drinksCat->id,
+                'subcategory_name' => 'Bar',
+            ],
+        );
+
+        $barProduct = $template->replicate(['id', 'product_code', 'image_path', 'deleted_at', 'deleted_by']);
+        $barProduct->exists = false;
+        $barProduct->product_code = 'BARLIST1';
+        $barProduct->product_name = 'Bar List Drink';
+        $barProduct->unit_price = 120;
+        $barProduct->subcategory_id = $drinksSub->id;
+        $barProduct->sell_on_bar = true;
+        $barProduct->sell_on_hotel = false;
+        $barProduct->sell_on_retail = false;
+        $barProduct->save();
+
+        $hotelProduct = $template->replicate(['id', 'product_code', 'image_path', 'deleted_at', 'deleted_by']);
+        $hotelProduct->exists = false;
+        $hotelProduct->product_code = 'HTLLIST1';
+        $hotelProduct->product_name = 'Hotel List Dish';
+        $hotelProduct->unit_price = 220;
+        $hotelProduct->subcategory_id = $foodSub->id;
+        $hotelProduct->sell_on_bar = false;
+        $hotelProduct->sell_on_hotel = true;
+        $hotelProduct->sell_on_retail = false;
+        $hotelProduct->save();
+
+        return [$barProduct, $hotelProduct];
     }
 }
