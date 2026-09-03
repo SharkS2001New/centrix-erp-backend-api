@@ -1008,6 +1008,55 @@ class SalesCartCheckoutStockTest extends TestCase
         $this->assertCount(2, $cart['lines'] ?? []);
         $quantities = collect($cart['lines'])->pluck('quantity')->map(fn ($q) => (float) $q)->sort()->values()->all();
         $this->assertEquals([2.0, 10.0], $quantities);
+
+        // GET must not sanitize/fold separate lines when combine is off.
+        $shown = $this->getJson("/api/v1/sales/carts/{$cartId}")->assertOk()->json();
+        $this->assertCount(2, $shown['lines'] ?? []);
+    }
+
+    public function test_combine_off_does_not_collapse_same_mode_siblings_on_patch(): void
+    {
+        $org = $this->user->organization()->firstOrFail();
+        $moduleSettings = (array) ($org->module_settings ?? []);
+        $sales = array_merge(
+            config('erp.module_settings_defaults.sales', []),
+            is_array($moduleSettings['sales'] ?? null) ? $moduleSettings['sales'] : [],
+            ['pos_combine_identical_lines' => false],
+        );
+        $org->update([
+            'module_settings' => array_merge($moduleSettings, ['sales' => $sales]),
+        ]);
+        $this->user->setRelation('organization', $org->fresh());
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->assertCreated()->json('id');
+
+        $first = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 1,
+            'on_wholesale_retail' => 0,
+        ])->assertCreated()->json();
+
+        $second = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 1,
+            'on_wholesale_retail' => 0,
+        ])->assertCreated()->json();
+
+        $this->assertCount(2, $second['lines'] ?? []);
+        $lineA = collect($second['lines'])->firstWhere('update_code', $first['lines'][0]['update_code'] ?? null)
+            ?? ($second['lines'][0] ?? null);
+        $this->assertNotEmpty($lineA['update_code'] ?? null);
+
+        $patched = $this->patchJson("/api/v1/sales/carts/{$cartId}/lines/{$lineA['update_code']}", [
+            'quantity' => 1,
+            'on_wholesale_retail' => 0,
+            'update_no' => $second['update_no'] ?? null,
+        ])->assertOk()->json();
+
+        $this->assertCount(2, $patched['lines'] ?? []);
     }
 
     public function test_fresh_owned_cart_after_delete_returns_friendly_404_not_type_error(): void

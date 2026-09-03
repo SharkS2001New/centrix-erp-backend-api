@@ -60,7 +60,11 @@ class CartOperationsController extends Controller
         array $extra = [],
         bool $includeNextOrderNum = false,
     ) {
-        $this->sanitizeDuplicateCartLines($cart);
+        // Only when "Combine identical products on POS cart" is on. When off, Sugar 1 bag
+        // + Sugar 1 bag must stay two lines (sanitize used to fold them every response).
+        if ($this->combinesIdenticalCartLines($user)) {
+            $this->sanitizeDuplicateCartLines($cart);
+        }
 
         return response()->json(
             $this->presentCart($cart, $user, $extra, $includeNextOrderNum),
@@ -68,9 +72,18 @@ class CartOperationsController extends Controller
         );
     }
 
+    /** Honour platform/org pos_combine_identical_lines (default true). */
+    protected function combinesIdenticalCartLines(User $user): bool
+    {
+        $salesSettings = $this->erp->gateForUser($user)->moduleSettings('sales');
+
+        return ($salesSettings['pos_combine_identical_lines'] ?? true) !== false;
+    }
+
     /**
      * Remove stuck TemporaryCart twins for the same SKU + retail/wholesale mode.
      * Keeps the earliest line_no and folds sibling quantities into it.
+     * Caller must only invoke when combinesIdenticalCartLines() is true.
      */
     protected function sanitizeDuplicateCartLines(TemporaryCart $cart): void
     {
@@ -1810,38 +1823,42 @@ class CartOperationsController extends Controller
             ? (bool) $input['on_wholesale_retail']
             : (bool) $row->on_wholesale_retail;
 
-        // Always collapse siblings with the same SKU + retail/wholesale mode.
-        // F12 bags↔kg flips used to update one row while leaving another same-mode
-        // twin (SKU change was the only merge path before).
+        $salesSettings = $gate->moduleSettings('sales');
+        $combineIdentical = ($salesSettings['pos_combine_identical_lines'] ?? true) !== false;
+
+        // Collapse same-SKU same-mode siblings only when combine-identical is on.
+        // When off, cashiers may keep Sugar 1 bag and Sugar 1 bag as separate lines —
+        // never delete those siblings on qty edit or F12 mode flip.
         $modeChanged = ((bool) $row->on_wholesale_retail) !== $onWholesaleRetailFlag;
         $discountGivenSeed = array_key_exists('discount_given', $input)
             ? (float) $input['discount_given']
             : (float) $row->discount_given;
-        $duplicates = CartLine::query()
-            ->where('cart_id', $cart->id)
-            ->where('product_code', $product->product_code)
-            ->where('on_wholesale_retail', $onWholesaleRetailFlag ? 1 : 0)
-            ->where('id', '!=', $row->id)
-            ->orderBy('line_no')
-            ->get();
-        foreach ($duplicates as $duplicate) {
-            // Mode flip into an existing bags/kg row: fold that qty in (combine-identical).
-            // Same-mode qty edit: client quantity is authoritative — only delete the twin.
-            if ($modeChanged || ! array_key_exists('quantity', $input)) {
-                $qty = round((float) $qty + (float) $duplicate->quantity, 4);
+        if ($combineIdentical) {
+            $duplicates = CartLine::query()
+                ->where('cart_id', $cart->id)
+                ->where('product_code', $product->product_code)
+                ->where('on_wholesale_retail', $onWholesaleRetailFlag ? 1 : 0)
+                ->where('id', '!=', $row->id)
+                ->orderBy('line_no')
+                ->get();
+            foreach ($duplicates as $duplicate) {
+                // Mode flip into an existing bags/kg row: fold that qty in.
+                // Same-mode qty edit: client quantity is authoritative — only delete the twin.
+                if ($modeChanged || ! array_key_exists('quantity', $input)) {
+                    $qty = round((float) $qty + (float) $duplicate->quantity, 4);
+                }
+                if ($modeChanged || ! array_key_exists('discount_given', $input)) {
+                    $discountGivenSeed = round(
+                        $discountGivenSeed + (float) ($duplicate->discount_given ?? 0),
+                        2,
+                    );
+                }
+                $this->releaseLineReservation((int) $duplicate->id);
+                $duplicate->delete();
             }
-            if ($modeChanged || ! array_key_exists('discount_given', $input)) {
-                $discountGivenSeed = round(
-                    $discountGivenSeed + (float) ($duplicate->discount_given ?? 0),
-                    2,
-                );
-            }
-            $this->releaseLineReservation((int) $duplicate->id);
-            $duplicate->delete();
         }
 
         $isRetail = $this->isRetailLine($product, $onWholesaleRetailFlag);
-        $salesSettings = $gate->moduleSettings('sales');
 
         $discountGiven = array_key_exists('discount_given', $input)
             ? (float) $input['discount_given']
