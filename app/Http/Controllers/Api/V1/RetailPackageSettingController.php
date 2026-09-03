@@ -108,21 +108,49 @@ class RetailPackageSettingController extends BaseResourceController
 
     public function store(Request $request)
     {
-        $response = parent::store($request);
-        $payload = $response->getData(true);
-        $id = $payload['id'] ?? null;
-        if (! $id) {
-            return $response;
+        $rules = array_fill_keys($this->fillableFields(), 'nullable');
+        $data = $request->validate($rules);
+        $productCode = trim((string) ($data['product_code'] ?? ''));
+        if ($productCode === '') {
+            return response()->json([
+                'message' => 'The product code field is required.',
+                'errors' => ['product_code' => ['The product code field is required.']],
+            ], 422);
+        }
+        $data['product_code'] = $productCode;
+
+        // One retail package row per product_code (uq_product_code). Upsert so
+        // product form / create races do not throw Duplicate entry 1062.
+        $existing = $this->settingsQuery($request)
+            ->where('product_code', $productCode)
+            ->first();
+        $prevMarkup = $existing ? (float) ($existing->markup_price ?? 0) : 0;
+        $wasExisting = $existing !== null;
+
+        $model = RetailPackageSetting::query()->updateOrCreate(
+            ['product_code' => $productCode],
+            $data,
+        );
+        $model = $this->settingsQuery($request)->find($model->id) ?? $model;
+
+        $user = $request->user();
+        if ($user && $this->auditable()) {
+            $this->auditLogger()->logModel(
+                $user,
+                $wasExisting ? 'update' : 'create',
+                $model,
+                $wasExisting ? $existing?->getAttributes() : null,
+                $model->getAttributes(),
+                $request,
+            );
         }
 
-        $model = $this->settingsQuery($request)->find($id);
-        if (! $model) {
-            return $response;
+        $nextMarkup = (float) ($model->markup_price ?? 0);
+        if (! $wasExisting || $nextMarkup !== $prevMarkup) {
+            $this->broadcastMarkupChanged($model, $prevMarkup, $nextMarkup);
         }
 
-        $this->broadcastMarkupChanged($model, 0, (float) ($model->markup_price ?? 0));
-
-        return response()->json($this->presentSetting($model), 201);
+        return response()->json($this->presentSetting($model), $wasExisting ? 200 : 201);
     }
 
     public function update(Request $request, string $id, ?string $nestedId = null)
