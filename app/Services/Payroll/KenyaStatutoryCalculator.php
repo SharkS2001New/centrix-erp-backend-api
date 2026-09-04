@@ -34,6 +34,9 @@ class KenyaStatutoryCalculator
         float $privateInsurancePremiums = 0,
         ?int $organizationId = null,
         bool $deductShif = true,
+        bool $deductNssf = true,
+        bool $deductHousing = true,
+        bool $deductPaye = true,
     ): array {
         $gross = round(max(0, $grossPay), 2);
         $other = round(max(0, $otherDeductions), 2);
@@ -41,25 +44,37 @@ class KenyaStatutoryCalculator
             ? KenyaPayrollSettingsResolver::resolveForOrganizationId($organizationId)
             : KenyaPayrollSettingsResolver::resolve();
 
-        $nssfParts = $this->nssf($gross, $cfg['nssf']);
+        $nssfParts = $deductNssf
+            ? $this->nssf($gross, $cfg['nssf'])
+            : ['tier1' => 0.0, 'tier2' => 0.0, 'total' => 0.0];
         $nssf = $nssfParts['total'];
         $shif = $deductShif ? $this->shif($gross, $cfg['shif']) : 0.0;
-        $housing = round($gross * (float) $cfg['housing_levy']['employee_rate'], 2);
+        $housing = $deductHousing
+            ? round($gross * (float) $cfg['housing_levy']['employee_rate'], 2)
+            : 0.0;
 
         // SHIF is an allowable deduction from taxable income (Tax Laws Amendment Act 2024).
         // It does NOT also qualify for insurance relief.
         $taxable = round(max(0, $gross - $nssf - $shif - $housing), 2);
-        $payeBeforeRelief = $this->progressiveTax($taxable, $cfg['paye']['bands']);
-        $personalRelief = (float) $cfg['paye']['personal_relief_monthly'];
-        $insuranceRelief = $this->insuranceRelief($privateInsurancePremiums, $cfg['paye']);
-        $paye = round(max(0, $payeBeforeRelief - $personalRelief - $insuranceRelief), 2);
+        $payeBeforeRelief = $deductPaye
+            ? $this->progressiveTax($taxable, $cfg['paye']['bands'])
+            : 0.0;
+        $personalRelief = $deductPaye ? (float) $cfg['paye']['personal_relief_monthly'] : 0.0;
+        $insuranceRelief = $deductPaye
+            ? $this->insuranceRelief($privateInsurancePremiums, $cfg['paye'])
+            : 0.0;
+        $paye = $deductPaye
+            ? round(max(0, $payeBeforeRelief - $personalRelief - $insuranceRelief), 2)
+            : 0.0;
 
         $statutory = round($nssf + $shif + $housing + $paye, 2);
         $deductions = round($statutory + $other, 2);
         $net = round(max(0, $gross - $deductions), 2);
 
         $employerNssf = $nssf;
-        $employerHousing = round($gross * (float) $cfg['housing_levy']['employer_rate'], 2);
+        $employerHousing = $deductHousing
+            ? round($gross * (float) $cfg['housing_levy']['employer_rate'], 2)
+            : 0.0;
 
         return [
             'gross_pay' => $gross,

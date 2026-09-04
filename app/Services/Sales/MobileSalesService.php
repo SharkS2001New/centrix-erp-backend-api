@@ -682,28 +682,28 @@ class MobileSalesService
         }
 
         return $sale->items->map(function ($item) use ($returnMetaByItemId) {
-            $product = $item->product;
-            $isRetail = (bool) $item->on_wholesale_retail;
-            $display = app(SaleLineQuantityDisplayService::class);
-            $qtyDisp = $product
-                ? $display->formatLineQtyDisplay(
-                    (float) $item->quantity,
-                    $product,
-                    $isRetail,
-                    $item->uom,
-                )
-                : trim((float) $item->quantity.' '.($item->uom ?? ''));
+                    $product = $item->product;
+                    $isRetail = (bool) $item->on_wholesale_retail;
+                    $display = app(SaleLineQuantityDisplayService::class);
+                    $qtyDisp = $product
+                        ? $display->formatLineQtyDisplay(
+                            (float) $item->quantity,
+                            $product,
+                            $isRetail,
+                            $item->uom,
+                        )
+                        : trim((float) $item->quantity.' '.($item->uom ?? ''));
             $discountGiven = round((float) ($item->discount_given ?? 0), 2);
-            $displayUnitPrice = $product
-                ? $display->displayUnitPrice(
-                    (float) $item->quantity,
-                    (float) $item->amount,
-                    $product,
-                    $isRetail,
+                    $displayUnitPrice = $product
+                        ? $display->displayUnitPrice(
+                            (float) $item->quantity,
+                            (float) $item->amount,
+                            $product,
+                            $isRetail,
                     $discountGiven,
                     (float) $item->selling_price,
-                )
-                : (float) $item->selling_price;
+                        )
+                        : (float) $item->selling_price;
             $displayAmount = $product
                 ? $display->displayLineAmount(
                     (float) $item->quantity,
@@ -731,19 +731,19 @@ class MobileSalesService
                 ? (($unit->uses_small_packaging ?? true) !== false)
                 : true;
 
-            return [
-                'sale_item_id' => (int) $item->id,
-                'product_code' => $item->product_code,
-                'product_name' => $product?->product_name ?? $item->product_code,
+                    return [
+                        'sale_item_id' => (int) $item->id,
+                        'product_code' => $item->product_code,
+                        'product_name' => $product?->product_name ?? $item->product_code,
                 'qty' => $qty,
-                'qtyDisp' => $qtyDisp,
-                'uom' => $item->uom,
-                'unit_price' => $displayUnitPrice,
-                'unit_price_per_base' => (float) $item->selling_price,
+                        'qtyDisp' => $qtyDisp,
+                        'uom' => $item->uom,
+                        'unit_price' => $displayUnitPrice,
+                        'unit_price_per_base' => (float) $item->selling_price,
                 'discount_given' => $discountGiven,
-                'product_vat' => (float) $item->product_vat,
+                        'product_vat' => (float) $item->product_vat,
                 'amount' => $displayAmount,
-                'sell_on_retail' => (int) $item->on_wholesale_retail,
+                        'sell_on_retail' => (int) $item->on_wholesale_retail,
                 'product_sell_on_retail' => (int) ($product?->sell_on_retail ?? 0),
                 'max_return_qty' => round($maxReturnQty, 4),
                 'already_returned' => round($alreadyReturned, 4),
@@ -1212,15 +1212,15 @@ class MobileSalesService
         $orgId = (int) ($user->organization_id ?? 0);
         $ttl = (int) config('cache.mobile_reconciliation_ttl', 120);
         $build = function () use ($user, $monthStart, $today, $allChannels): array {
-            $dailySales = $this->dailyTrendWithCounts($user, $monthStart, $today, $allChannels);
+        $dailySales = $this->dailyTrendWithCounts($user, $monthStart, $today, $allChannels);
 
-            return [
-                'month_label' => $monthStart->format('F Y'),
-                'from_date' => $monthStart->toDateString(),
-                'to_date' => $today->toDateString(),
-                'daily_sales' => $dailySales,
-                'weekly_sales' => $this->weeklyBucketsFromDaily($dailySales, $monthStart, $today),
-            ];
+        return [
+            'month_label' => $monthStart->format('F Y'),
+            'from_date' => $monthStart->toDateString(),
+            'to_date' => $today->toDateString(),
+            'daily_sales' => $dailySales,
+            'weekly_sales' => $this->weeklyBucketsFromDaily($dailySales, $monthStart, $today),
+        ];
         };
 
         if ($orgId <= 0 || $ttl <= 0) {

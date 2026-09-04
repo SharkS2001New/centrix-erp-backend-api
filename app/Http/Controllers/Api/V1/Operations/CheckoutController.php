@@ -736,7 +736,7 @@ class CheckoutController extends Controller
                 $payNow = $cashDue;
                 $amountPaid = $appendPriorPaid + $payNow + $voucherPayment + $pointsPayment + $mpesaOnCart;
             } else {
-                $payNow = min($payNow, $cashDue);
+            $payNow = min($payNow, $cashDue);
                 $amountPaid = $appendPriorPaid + $payNow + $voucherPayment + $pointsPayment + $mpesaOnCart;
             }
             if (! $customerNum && $loyaltyCardId) {
@@ -902,7 +902,7 @@ class CheckoutController extends Controller
                             (string) $cart->channel,
                         );
                         if ($customer) {
-                            $customerNameOverride = trim((string) ($customer->customer_name ?? ''));
+                $customerNameOverride = trim((string) ($customer->customer_name ?? ''));
                         }
                     }
                     if ($customerNameOverride === '') {
@@ -985,7 +985,7 @@ class CheckoutController extends Controller
                         'completed_at' => $clientCompleted,
                     ])->save();
                 } else {
-                    $sale->update(['completed_at' => now()]);
+                $sale->update(['completed_at' => now()]);
                 }
             }
 
@@ -1182,17 +1182,17 @@ class CheckoutController extends Controller
                         (int) $sale->organization_id,
                         (string) $sale->payment_method_code,
                     );
-                    if ($method) {
-                        SalePayment::create([
-                            'sale_id' => $sale->id,
-                            'float_session_id' => $floatSessionId,
-                            'payment_method_id' => $method->id,
-                            'amount' => $payNow,
-                            'reference_number' => $input['payment_reference'] ?? null,
-                            'paid_at' => $input['payment_date'] ?? now(),
-                        ]);
-                    }
-                    SalePaymentColumnMapper::applyToSale($sale, $paymentMethodCode, $payNow);
+                if ($method) {
+                    SalePayment::create([
+                        'sale_id' => $sale->id,
+                        'float_session_id' => $floatSessionId,
+                        'payment_method_id' => $method->id,
+                        'amount' => $payNow,
+                        'reference_number' => $input['payment_reference'] ?? null,
+                        'paid_at' => $input['payment_date'] ?? now(),
+                    ]);
+                }
+                SalePaymentColumnMapper::applyToSale($sale, $paymentMethodCode, $payNow);
                     $mpesaRecordedInSplits = strtoupper((string) $paymentMethodCode) === 'MPESA';
                 }
 
@@ -1308,10 +1308,10 @@ class CheckoutController extends Controller
                 && ! $offlineOrderUpload;
             $submitKra = $eligibleForKra
                 && KraFiscalPolicy::shouldFiscalizeSale(
-                    $finance,
-                    (float) $sale->order_total,
-                    $explicitSubmit,
-                );
+                $finance,
+                (float) $sale->order_total,
+                $explicitSubmit,
+            );
 
             $kraResponse = null;
             $pendingKra = false;

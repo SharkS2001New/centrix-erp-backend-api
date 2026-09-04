@@ -131,8 +131,8 @@ class EmployeeOvertimeController extends HrOrgResourceController
             'employee_id' => $req . 'integer|exists:employees,id',
             'organization_id' => ($updating ? 'sometimes|' : '') . 'integer|exists:organizations,id',
             'work_date' => $req . 'date',
-            'hours' => $req . 'numeric|min:0',
-            'rate_mode' => 'nullable|in:fixed_hourly,from_salary',
+            'hours' => 'nullable|numeric|min:0',
+            'rate_mode' => 'nullable|in:fixed_hourly,from_salary,fixed_amount',
             'hourly_rate' => 'nullable|numeric|min:0',
             'rate_multiplier' => 'nullable|numeric|min:1',
             'amount' => 'nullable|numeric|min:0',
@@ -145,12 +145,35 @@ class EmployeeOvertimeController extends HrOrgResourceController
     /** @param  array<string, mixed>  $data */
     protected function computeAmount(array $data, ?Employee $employee): array
     {
-        if (! empty($data['amount']) && empty($data['hours'])) {
+        $mode = $data['rate_mode'] ?? 'from_salary';
+
+        if ($mode === 'fixed_amount') {
+            $amount = round((float) ($data['amount'] ?? 0), 2);
+            if ($amount <= 0) {
+                throw ValidationException::withMessages([
+                    'amount' => ['Enter the fixed overtime amount.'],
+                ]);
+            }
+            $data['rate_mode'] = 'fixed_amount';
+            $data['hours'] = (float) ($data['hours'] ?? 0);
+            $data['hourly_rate'] = null;
+            $data['rate_multiplier'] = 1;
+            $data['amount'] = $amount;
+
+            return $data;
+        }
+
+        if (! empty($data['amount']) && empty($data['hours']) && $mode !== 'fixed_hourly' && $mode !== 'from_salary') {
             return $data;
         }
 
         $hours = (float) ($data['hours'] ?? 0);
-        $mode = $data['rate_mode'] ?? 'from_salary';
+        if ($hours <= 0) {
+            throw ValidationException::withMessages([
+                'hours' => ['Enter overtime hours.'],
+            ]);
+        }
+
         $orgId = (int) ($employee?->organization_id ?? $data['organization_id'] ?? 0);
         $hr = HrPayrollSettingsResolver::forOrganizationId($orgId ?: null);
         $mult = (float) ($data['rate_multiplier'] ?? $hr['overtime_rate_multiplier'] ?? 1.5);

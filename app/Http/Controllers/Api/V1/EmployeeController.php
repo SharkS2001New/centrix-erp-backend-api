@@ -386,7 +386,13 @@ class EmployeeController extends BaseResourceController
             'nssf_number' => 'nullable|string|max:45',
             'sha_number' => 'nullable|string|max:45',
             'pays_sha' => 'nullable|boolean',
+            'pays_nssf' => 'nullable|boolean',
+            'pays_housing_levy' => 'nullable|boolean',
+            'pays_paye' => 'nullable|boolean',
             'housing_levy_number' => 'nullable|string|max:45',
+            'eligible_for_overtime' => 'nullable|boolean',
+            'auto_approve_overtime' => 'nullable|boolean',
+            'monthly_overtime_amount' => 'nullable|numeric|min:0',
             'is_active' => 'nullable|boolean',
         ]);
     }

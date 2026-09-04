@@ -565,11 +565,16 @@ class EmployeeAttendanceController extends HrOrgResourceController
             $data['lateness_waiver_reason'] ?? null,
         );
 
+        $autoApproved = $waiver->status === 'approved';
+
         return response()->json([
-            'message' => 'Lateness waiver submitted for manager approval.',
+            'message' => $autoApproved
+                ? 'Lateness waiver applied.'
+                : 'Lateness waiver submitted for manager approval.',
+            'auto_approved' => $autoApproved,
             'waiver_request' => $waiver,
             'attendance' => $row->fresh(['employee', 'branch']),
-        ], 202);
+        ], $autoApproved ? 200 : 202);
     }
 
     /**
@@ -588,6 +593,7 @@ class EmployeeAttendanceController extends HrOrgResourceController
         $rows = $this->scopedAttendanceByIds($ids, $request);
         $service = app(LatenessWaiverApprovalService::class);
         $submitted = [];
+        $autoApproved = [];
         $skipped = [];
 
         foreach ($rows as $row) {
@@ -602,11 +608,18 @@ class EmployeeAttendanceController extends HrOrgResourceController
                     (bool) $data['lateness_waived'],
                     $data['lateness_waiver_reason'] ?? null,
                 );
-                $submitted[] = [
+                $entry = [
                     'id' => $row->id,
                     'employee_name' => $label,
                     'waiver_request_id' => $waiver->id,
+                    'status' => $waiver->status,
+                    'auto_approved' => $waiver->status === 'approved',
                 ];
+                if ($waiver->status === 'approved') {
+                    $autoApproved[] = $entry;
+                } else {
+                    $submitted[] = $entry;
+                }
             } catch (\Throwable $e) {
                 $skipped[] = [
                     'id' => $row->id,
@@ -628,13 +641,17 @@ class EmployeeAttendanceController extends HrOrgResourceController
         }
 
         return response()->json([
-            'submitted_count' => count($submitted),
-            'skipped_count' => count($skipped),
-            'updated_count' => count($submitted), // FE compat
+            'message' => count($autoApproved) > 0 && count($submitted) === 0
+                ? 'Lateness waiver applied.'
+                : (count($submitted) > 0
+                    ? 'Lateness waiver requests submitted for approval.'
+                    : 'No waiver requests submitted.'),
+            'updated_count' => count($submitted) + count($autoApproved),
+            'updated' => array_merge($autoApproved, $submitted), // FE compat
             'submitted' => $submitted,
-            'updated' => $submitted,
+            'auto_approved' => $autoApproved,
             'skipped' => $skipped,
-        ], count($submitted) > 0 ? 202 : 422);
+        ]);
     }
 
     /** POST /lateness-waiver-requests/{id}/approve */

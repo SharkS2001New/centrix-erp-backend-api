@@ -99,8 +99,8 @@ class UserPermissionService
         // Org admins always retain Administration access so they can fix roles/users.
         // Operational Backoffice / POS / etc. require an explicit role grant.
         if ($user->is_admin && $this->orgAdminAutoGrantsPermission($permissionCode, $gate)) {
-            return true;
-        }
+                return true;
+            }
 
         if ($this->hasDirectPermission($user, $permissionCode)) {
             return $this->permissionAllowedByGate($permissionCode, $gate);
@@ -295,8 +295,12 @@ class UserPermissionService
 
     public function canApproveLatenessWaivers(User $user): bool
     {
-        return $this->hasRoleAssignedPermission($user, 'hr.attendance.waive.approve')
-            || $this->hasAssignedCapability($user, 'hr.manage');
+        // Dedicated waive approve permission (Roles → Human resources / Lateness waivers — Approve).
+        // Also honor the legacy dotted code and the hr.manage capability itself — not every
+        // HR feature grant (leave.approve etc.), so clerks can request without self-approving.
+        return $this->hasRoleAssignedPermission($user, 'hr.attendance_waive.approve')
+            || $this->hasRoleAssignedPermission($user, 'hr.attendance.waive.approve')
+            || $this->hasRoleAssignedPermission($user, 'hr.manage');
     }
 
     /** @return Collection<int, User> */
@@ -484,22 +488,22 @@ class UserPermissionService
             ->whereIn('id', $this->roleAssignedPermissionIds($user))
             ->get();
 
-        if ($gate !== null) {
-            $permissions = $permissions->filter(
-                fn (Permission $permission) => PermissionMatrixService::isRegistryModuleEnabled(
-                    (string) $permission->module,
-                    $gate,
-                ),
-            );
-        }
+            if ($gate !== null) {
+                $permissions = $permissions->filter(
+                    fn (Permission $permission) => PermissionMatrixService::isRegistryModuleEnabled(
+                        (string) $permission->module,
+                        $gate,
+                    ),
+                );
+            }
 
-        $map = [];
-        foreach ($permissions as $permission) {
-            $map[(string) $permission->permission_code] = true;
-        }
+            $map = [];
+            foreach ($permissions as $permission) {
+                $map[(string) $permission->permission_code] = true;
+            }
 
-        return $map;
-    }
+            return $map;
+        }
 
     /** @return array<string, bool> Role-assigned feature codes for accurate sidebar / nav visibility. */
     public function navigationPermissionMapForUser(User $user, ?CapabilityGate $gate = null): array

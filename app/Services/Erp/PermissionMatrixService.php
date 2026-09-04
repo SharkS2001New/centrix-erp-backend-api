@@ -588,6 +588,7 @@ class PermissionMatrixService
             'catalogue.vat_rates.delete' => 'pricing_tax.vat_rates.delete',
             'catalogue.price_history.view' => 'pricing_tax.price_history.view',
             'catalogue.kra_invoices.view' => 'pricing_tax.kra_invoices.view',
+            'hr.attendance.waive.approve' => 'hr.attendance_waive.approve',
         ];
 
         $permissions = Permission::query()

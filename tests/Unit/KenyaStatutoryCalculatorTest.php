@@ -80,4 +80,24 @@ class KenyaStatutoryCalculatorTest extends TestCase
         $this->assertEqualsWithDelta(6258.35, $r['paye'], 0.02);
         $this->assertEqualsWithDelta(39991.65, $r['net_pay'], 0.02);
     }
+
+    public function test_housing_nssf_and_paye_can_be_skipped(): void
+    {
+        $r = $this->calculator->calculateMonthly(
+            50000,
+            0,
+            0,
+            null,
+            true,
+            false,
+            false,
+            false,
+        );
+
+        $this->assertEquals(0, $r['nssf']);
+        $this->assertEquals(1375, $r['shif']);
+        $this->assertEquals(0, $r['housing_levy']);
+        $this->assertEquals(0, $r['paye']);
+        $this->assertEquals(48625, $r['taxable_income']);
+    }
 }

@@ -374,6 +374,24 @@ class AttendanceDayReconciler
         // Applied after we know lunch was skipped.
 
         if ($pairs === []) {
+            $status = $forcedStatus ?? 'absent';
+            $isPaidWithoutPunches = in_array($status, ['present', 'late', 'half_day'], true);
+            $creditedHours = 0.0;
+            if ($isPaidWithoutPunches) {
+                $creditedHours = $status === 'half_day'
+                    ? round($expectedHours * 0.5, 2)
+                    : round($expectedHours, 2);
+            }
+            // Clearing auto-absent audit text when HR corrects the day to a paid status.
+            $resolvedNotes = $notes;
+            if (
+                $isPaidWithoutPunches
+                && is_string($resolvedNotes)
+                && str_starts_with($resolvedNotes, 'Auto-marked absent')
+            ) {
+                $resolvedNotes = 'Corrected to '.$status.' by HR (no punches)';
+            }
+
             $attendance = EmployeeAttendance::query()->updateOrCreate(
                 [
                     'employee_id' => $employee->id,
@@ -384,10 +402,10 @@ class AttendanceDayReconciler
                     'branch_id' => $branchId ?? $employee->branch_id,
                     'check_in' => null,
                     'check_out' => null,
-                    'status' => $forcedStatus ?? 'absent',
+                    'status' => $status,
                     'source' => $source,
                     'device_identifier' => $deviceIdentifier,
-                    'hours_worked' => 0,
+                    'hours_worked' => $creditedHours,
                     'expected_hours' => $expectedHours,
                     'late_minutes' => 0,
                     'lunch_late_minutes' => 0,
@@ -395,7 +413,7 @@ class AttendanceDayReconciler
                     'lunch_minutes' => null,
                     'early_leave_minutes' => 0,
                     'overtime_minutes' => 0,
-                    'notes' => $notes,
+                    'notes' => $resolvedNotes,
                 ],
             );
             $this->clearAutoOvertime($employee->id, $date);
@@ -643,16 +661,35 @@ class AttendanceDayReconciler
             ->where('notes', 'like', self::AUTO_OT_NOTE_PREFIX.'%')
             ->first();
 
-        if ($overtimeMinutes <= 0 || $hours <= self::MIN_AUTO_OVERTIME_HOURS) {
-            if ($existing && $existing->status === 'pending' && $existing->payroll_run_id === null) {
-                $existing->delete();
-            }
+        $eligible = (bool) ($employee->eligible_for_overtime ?? true);
+        $lockedMonthly = (float) ($employee->monthly_overtime_amount ?? 0);
+        // Salary already includes OT, or a fixed monthly OT is locked on the employee —
+        // do not create punch-based overtime rows.
+        if (! $eligible || $lockedMonthly > 0) {
+            $this->clearAutoOvertime($employee->id, $date, includeUnlockedApproved: true);
 
             return;
         }
 
-        if ($existing && in_array($existing->status, ['approved', 'paid', 'rejected'], true)) {
+        if ($overtimeMinutes <= 0 || $hours <= self::MIN_AUTO_OVERTIME_HOURS) {
+            $this->clearAutoOvertime($employee->id, $date);
+
             return;
+        }
+
+        if ($existing && in_array($existing->status, ['paid', 'rejected'], true)) {
+            return;
+        }
+        if ($existing && $existing->payroll_run_id !== null) {
+            return;
+        }
+
+        $autoApprove = (bool) ($employee->auto_approve_overtime ?? true);
+        $status = $autoApprove ? 'approved' : 'pending';
+
+        // Do not downgrade an already-approved unlocked row back to pending.
+        if ($existing && $existing->status === 'approved' && $status === 'pending') {
+            $status = 'approved';
         }
 
         $hr = HrPayrollSettingsResolver::forOrganizationId((int) $employee->organization_id);
@@ -670,14 +707,12 @@ class AttendanceDayReconciler
             'hourly_rate' => $rate,
             'rate_multiplier' => $mult,
             'amount' => $amount,
-            'status' => 'pending',
-            'notes' => self::AUTO_OT_NOTE_PREFIX.': '.$hours.'h past shift end',
+            'status' => $status,
+            'notes' => self::AUTO_OT_NOTE_PREFIX.': '.$hours.'h past shift end'
+                .($autoApprove ? ' (auto-approved)' : ' (pending approval)'),
         ];
 
         if ($existing) {
-            if ($existing->payroll_run_id !== null) {
-                return;
-            }
             $existing->update($payload);
         } else {
             EmployeeOvertime::create($payload);
@@ -736,15 +771,21 @@ class AttendanceDayReconciler
         }
     }
 
-    protected function clearAutoOvertime(int $employeeId, string $date): void
+    protected function clearAutoOvertime(int $employeeId, string $date, bool $includeUnlockedApproved = false): void
     {
-        EmployeeOvertime::query()
+        $query = EmployeeOvertime::query()
             ->where('employee_id', $employeeId)
             ->whereDate('work_date', $date)
-            ->where('status', 'pending')
             ->whereNull('payroll_run_id')
-            ->where('notes', 'like', self::AUTO_OT_NOTE_PREFIX.'%')
-            ->delete();
+            ->where('notes', 'like', self::AUTO_OT_NOTE_PREFIX.'%');
+
+        if ($includeUnlockedApproved) {
+            $query->whereIn('status', ['pending', 'approved']);
+        } else {
+            $query->where('status', 'pending');
+        }
+
+        $query->delete();
     }
 
     protected function normalizeTime(?string $time): string

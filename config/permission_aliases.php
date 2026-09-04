@@ -348,7 +348,7 @@ return [
         'hr.cash_advances.approve',
         'hr.attendance.create',
         'hr.manual_attendance.create',
-        'hr.attendance.waive.approve',
+        'hr.attendance_waive.approve',
         'hr.leave.create',
         'hr.leave.edit',
         'hr.leave.approve',

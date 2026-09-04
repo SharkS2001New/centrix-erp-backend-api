@@ -39,7 +39,8 @@ class LatenessWaiverApprovalService
     }
 
     /**
-     * Submit a waive (or undo) request for manager / HR approval. Does not change payroll hours yet.
+     * Submit a waive (or undo) request. Users who can approve waivers apply it immediately
+     * (no inbox notification). Everyone else creates a pending request and notifies approvers.
      */
     public function submit(User $requester, EmployeeAttendance $attendance, bool $waive, ?string $reason = null): LatenessWaiverRequest
     {
@@ -84,11 +85,41 @@ class LatenessWaiverApprovalService
             ]);
         }
 
-        $managerUserId = $this->resolveAssignedApproverUserId($employee, $requester);
-
         $date = $attendance->attendance_date instanceof \Carbon\Carbon
             ? $attendance->attendance_date->toDateString()
             : (string) $attendance->attendance_date;
+
+        // Requester already has approve rights → apply immediately, skip approval inbox.
+        if ($this->canApproveByPermission($requester)) {
+            $this->reconciler->setLatenessWaiver(
+                $attendance,
+                $waive,
+                $reason,
+                $requester->id,
+            );
+
+            $request = LatenessWaiverRequest::query()->create([
+                'organization_id' => $attendance->organization_id,
+                'branch_id' => $attendance->branch_id,
+                'employee_attendance_id' => $attendance->id,
+                'employee_id' => $attendance->employee_id,
+                'attendance_date' => $date,
+                'late_minutes' => $attendance->totalLateMinutes(),
+                'reason' => $reason,
+                'status' => 'approved',
+                'waive' => $waive,
+                'requested_by' => $requester->id,
+                'requested_at' => now(),
+                'reviewed_by' => $requester->id,
+                'reviewed_at' => now(),
+                'review_notes' => 'Auto-approved: requester has lateness waiver approval permission.',
+                'assigned_manager_user_id' => null,
+            ]);
+
+            return $request->fresh(['employee', 'attendance', 'assignedManager', 'requester', 'reviewer']);
+        }
+
+        $managerUserId = $this->resolveAssignedApproverUserId($employee, $requester);
 
         $request = LatenessWaiverRequest::query()->create([
             'organization_id' => $attendance->organization_id,
@@ -247,7 +278,7 @@ class LatenessWaiverApprovalService
             'reference_type' => 'lateness_waiver_request',
             'reference_id' => (int) $waiver->id,
             'assigned_to' => $waiver->assigned_manager_user_id,
-            'approver_permission' => 'hr.attendance.waive.approve',
+            'approver_permission' => 'hr.attendance_waive.approve',
             'title' => $waiver->waive ? 'Lateness waiver needs approval' : 'Undo lateness waiver needs approval',
             'message' => "{$requesterName} requested to {$action} {$waiver->late_minutes}m late for {$employeeName} on {$date}.",
             'reason' => $waiver->reason,

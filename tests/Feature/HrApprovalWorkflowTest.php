@@ -268,8 +268,9 @@ class HrApprovalWorkflowTest extends TestCase
 
     public function test_lateness_waiver_notifies_capability_approvers_and_skips_unqualified_manager(): void
     {
-        $requester = $this->userWithPermissions(['hr.manage']);
-        $approver = $this->userWithPermissions(['hr.leave.approve']);
+        // Requester can view attendance but cannot approve waivers → must notify.
+        $requester = $this->userWithPermissions(['hr.attendance.view']);
+        $approver = $this->userWithPermissions(['hr.attendance_waive.approve']);
         $unqualifiedManager = $this->userWithPermissions(['hr.attendance.view']);
         $admin = User::where('username', 'admin')->firstOrFail();
         $employee = Employee::query()->firstOrFail();
@@ -308,6 +309,7 @@ class HrApprovalWorkflowTest extends TestCase
             'Traffic',
         );
 
+        $this->assertSame('pending', $waiver->status);
         $this->assertNull($waiver->assigned_manager_user_id);
         $this->assertDatabaseHas('action_requests', [
             'type' => 'lateness_waiver',
@@ -342,5 +344,47 @@ class HrApprovalWorkflowTest extends TestCase
                 ->where('action_request_id', $actionRequestId)
                 ->value('action_url'),
         );
+    }
+
+    public function test_lateness_waiver_auto_approves_when_requester_can_approve(): void
+    {
+        $approver = $this->userWithPermissions(['hr.attendance_waive.approve']);
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $employee = Employee::query()->firstOrFail();
+
+        $attendance = \App\Models\EmployeeAttendance::query()->create([
+            'employee_id' => $employee->id,
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'attendance_date' => now()->subDays(2)->toDateString(),
+            'check_in' => '09:15:00',
+            'check_out' => '17:00:00',
+            'status' => 'late',
+            'source' => 'manual',
+            'hours_worked' => 7.25,
+            'expected_hours' => 8,
+            'late_minutes' => 45,
+            'lunch_late_minutes' => 0,
+            'lateness_waived' => false,
+        ]);
+
+        $waiver = app(\App\Services\Hr\LatenessWaiverApprovalService::class)->submit(
+            $approver,
+            $attendance,
+            true,
+            'Manager on site',
+        );
+
+        $this->assertSame('approved', $waiver->status);
+        $this->assertTrue((bool) $attendance->fresh()->lateness_waived);
+        $this->assertDatabaseMissing('action_requests', [
+            'type' => 'lateness_waiver',
+            'reference_id' => $waiver->id,
+            'status' => 'pending',
+        ]);
+        $this->assertDatabaseMissing('in_app_notifications', [
+            'type' => 'approval',
+            'title' => 'Lateness waiver needs approval',
+        ]);
     }
 }

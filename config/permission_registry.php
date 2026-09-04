@@ -305,6 +305,7 @@ return [
                 'positions' => ['label' => 'Positions', 'actions' => ['view', 'create', 'edit', 'delete']],
                 'kpis' => ['label' => 'KPIs', 'actions' => ['view', 'create', 'edit', 'delete']],
                 'attendance' => ['label' => 'Attendance', 'actions' => ['view', 'create']],
+                'attendance_waive' => ['label' => 'Lateness waivers', 'actions' => ['approve']],
                 'attendance_history' => ['label' => 'Attendance history', 'actions' => ['view']],
                 'missed_punches' => ['label' => 'Missed punches', 'actions' => ['view']],
                 'duplicate_punches' => ['label' => 'Duplicate punches', 'actions' => ['view']],

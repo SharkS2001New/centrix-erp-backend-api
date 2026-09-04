@@ -130,13 +130,13 @@ class SaleController extends BaseResourceController
         // Shop Debtors queues use shop_debtors.{unpaid|partial|paid}.view.
         // scope would hide POS credit sales whose workflow status is completed/paid.
         if (! $isExactOrderLookup && ! $forPosOrderEdit && ! $isHeldList && ! $shopDebtors) {
-            SalesOrderQueuePermissions::applyIndexScope(
-                $query,
-                $request->user(),
-                $gate,
-                app(UserPermissionService::class),
-                $channel,
-            );
+        SalesOrderQueuePermissions::applyIndexScope(
+            $query,
+            $request->user(),
+            $gate,
+            app(UserPermissionService::class),
+            $channel,
+        );
         }
 
         if ($forPosOrderEdit) {

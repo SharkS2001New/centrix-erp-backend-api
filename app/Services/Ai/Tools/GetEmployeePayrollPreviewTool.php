@@ -228,12 +228,27 @@ class GetEmployeePayrollPreviewTool implements AiToolInterface
         }
 
         $paysSha = (bool) ($employee->pays_sha ?? true);
-        $calc = $this->statutory->calculateMonthly($statutoryGross, $other, 0, $orgId, $paysSha);
+        $paysNssf = (bool) ($employee->pays_nssf ?? true);
+        $paysHousing = (bool) ($employee->pays_housing_levy ?? true);
+        $paysPaye = (bool) ($employee->pays_paye ?? true);
+        $calc = $this->statutory->calculateMonthly(
+            $statutoryGross,
+            $other,
+            0,
+            $orgId,
+            $paysSha,
+            $paysNssf,
+            $paysHousing,
+            $paysPaye,
+        );
         $calc = $this->applyStatutoryToPeriodGross($calc, $periodGross, $other);
         $calc['statutory_gross'] = $statutoryGross;
         $calc['period_gross'] = $periodGross;
         $calc['statutory_based_on_contract_gross'] = true;
         $calc['pays_sha'] = $paysSha;
+        $calc['pays_nssf'] = $paysNssf;
+        $calc['pays_housing_levy'] = $paysHousing;
+        $calc['pays_paye'] = $paysPaye;
         $calc['shif_skipped_because_pays_sha_off'] = ! $paysSha;
 
         return [
@@ -245,6 +260,9 @@ class GetEmployeePayrollPreviewTool implements AiToolInterface
                 'basic_salary' => $contractBasic,
                 'monthly_allowance' => $monthlyAllowance,
                 'pays_sha' => $paysSha,
+                'pays_nssf' => $paysNssf,
+                'pays_housing_levy' => $paysHousing,
+                'pays_paye' => $paysPaye,
                 'currency' => 'KES',
             ],
             'period' => [

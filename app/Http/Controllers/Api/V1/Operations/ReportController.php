@@ -72,11 +72,11 @@ class ReportController extends Controller
 
         $q = trim((string) $request->input('q', ''));
         if ($q !== '') {
-            $query->where(function ($inner) use ($q) {
-                $inner->where('full_name', 'like', "%{$q}%")
-                    ->orWhere('email', 'like', "%{$q}%")
-                    ->orWhere('username', 'like', "%{$q}%");
-            });
+        $query->where(function ($inner) use ($q) {
+            $inner->where('full_name', 'like', "%{$q}%")
+                ->orWhere('email', 'like', "%{$q}%")
+                ->orWhere('username', 'like', "%{$q}%");
+        });
         }
 
         $perPage = min((int) $request->input('per_page', 50), 50);
@@ -2699,7 +2699,7 @@ class ReportController extends Controller
                                 $inner->{$method.'Raw'}("CAST(`{$escaped}` AS CHAR) LIKE ?", ['%'.$search.'%']);
                             }
                         } else {
-                            $inner->{$method}($col, 'like', "%{$search}%");
+                        $inner->{$method}($col, 'like', "%{$search}%");
                         }
                     }
                 });

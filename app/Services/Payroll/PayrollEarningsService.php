@@ -88,8 +88,10 @@ class PayrollEarningsService
             $paidDays = round((float) ($attendanceSummary['paid_days'] ?? 0), 2);
             $monthDaysBasis = $this->payrollMonthDaysBasis((int) $employee->organization_id);
             if ($monthDaysBasis === 'fixed_30') {
-                $absentDays = (float) ($attendanceSummary['absent_days'] ?? 0);
-                $ratio = max(0, (30 - $absentDays) / 30);
+                // Unpaid leave is excluded from absent_days in summarizeAttendance, but still unpaid.
+                $unpaidDays = (float) ($attendanceSummary['absent_days'] ?? 0)
+                    + (float) ($attendanceSummary['unpaid_leave_days'] ?? 0);
+                $ratio = max(0, (30 - $unpaidDays) / 30);
             } else {
                 $ratio = $paidDays / $expectedDays;
             }
@@ -120,9 +122,14 @@ class PayrollEarningsService
             $ratio,
         );
         $allowances = $allowanceBreakdown['period'];
-        $overtimeTotal = $includeOvertime
+        $punchOvertime = $includeOvertime
             ? $this->approvedOvertimeInPeriod($employee->id, $start, $end)
             : 0.0;
+        $lockedMonthlyOvertime = 0.0;
+        if ($includeOvertime && (bool) ($employee->eligible_for_overtime ?? true)) {
+            $lockedMonthlyOvertime = max(0, (float) ($employee->monthly_overtime_amount ?? 0));
+        }
+        $overtimeTotal = round($punchOvertime + $lockedMonthlyOvertime, 2);
 
         $grossBeforeOther = round($periodBasic + $allowances + $overtimeTotal, 2);
         $contractGrossForOther = round($contractBasic + $allowanceBreakdown['monthly'], 2);
@@ -134,6 +141,15 @@ class PayrollEarningsService
             $other = $built['total'];
             $deductionsDetail = $built['detail'];
         }
+
+        $absentDays = (float) ($attendanceSummary['absent_days'] ?? 0);
+        $unpaidLeaveDays = (float) ($attendanceSummary['unpaid_leave_days'] ?? 0);
+        $lateMinutesTotal = (int) ($attendanceSummary['late_minutes_total'] ?? 0);
+        $absentAmount = round($absentDays * $dailyRate, 2);
+        $unpaidLeaveAmount = round($unpaidLeaveDays * $dailyRate, 2);
+        $latenessAmount = ($lateMinutesTotal > 0 && $expectedHours > 0)
+            ? round($contractBasic * (($lateMinutesTotal / 60) / $expectedHours), 2)
+            : 0.0;
 
         return [
             'employee_id' => $employee->id,
@@ -158,7 +174,17 @@ class PayrollEarningsService
                 'hour_ratio' => round($ratio, 4),
                 'daily_rate' => $dailyRate,
                 'overtime' => $overtimeTotal,
+                'punch_overtime' => $punchOvertime,
+                'locked_monthly_overtime' => $lockedMonthlyOvertime,
                 'attendance' => $attendanceSummary,
+                'absent_days' => $absentDays,
+                'unpaid_leave_days' => $unpaidLeaveDays,
+                'late_minutes_total' => $lateMinutesTotal,
+                // Explicit holds for payroll sheet display (full contract basic − these = period basic effect).
+                'absent_amount' => $absentAmount,
+                'unpaid_leave_amount' => $unpaidLeaveAmount,
+                'lateness_amount' => $latenessAmount,
+                'attendance_deduction' => round($absentAmount + $unpaidLeaveAmount + $latenessAmount, 2),
                 'deductions_detail' => $deductionsDetail,
                 'other_deductions_percent_base' => $contractGrossForOther,
                 'other_deductions_not_prorated' => true,
@@ -208,7 +234,14 @@ class PayrollEarningsService
             ->whereDate('attendance_date', '<=', $end)
             ->whereNull('payroll_run_id')
             ->get()
-            ->keyBy(fn ($a) => $a->attendance_date->format('Y-m-d'));
+            ->keyBy(function ($a) {
+                $d = $a->attendance_date;
+                if ($d instanceof Carbon) {
+                    return $d->toDateString();
+                }
+
+                return Carbon::parse((string) $d)->toDateString();
+            });
 
         $expected = 0.0;
         $attended = 0.0;

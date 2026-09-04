@@ -240,7 +240,7 @@ class AttendanceLunchReconcileTest extends TestCase
         $this->assertSame('late', $att->status);
     }
 
-    public function test_thirty_minutes_past_end_creates_pending_overtime(): void
+    public function test_thirty_minutes_past_end_creates_auto_approved_overtime(): void
     {
         $this->addSession('08:00:00', '13:00:00');
         $this->addSession('14:00:00', '17:30:00');
@@ -253,10 +253,10 @@ class AttendanceLunchReconcileTest extends TestCase
         $this->assertEquals(9.0, (float) $att->hours_worked);
         $this->assertSame(30, (int) $att->overtime_minutes);
         $this->assertSame(1, EmployeeOvertime::query()->where('employee_id', $this->employee->id)->count());
-        $this->assertSame('pending', EmployeeOvertime::query()->where('employee_id', $this->employee->id)->value('status'));
+        $this->assertSame('approved', EmployeeOvertime::query()->where('employee_id', $this->employee->id)->value('status'));
     }
 
-    public function test_sixty_minutes_past_end_creates_pending_overtime(): void
+    public function test_sixty_minutes_past_end_creates_auto_approved_overtime(): void
     {
         $this->addSession('08:00:00', '13:00:00');
         $this->addSession('14:00:00', '18:00:00');
@@ -275,9 +275,68 @@ class AttendanceLunchReconcileTest extends TestCase
             ->first();
 
         $this->assertNotNull($ot);
-        $this->assertSame('pending', $ot->status);
+        $this->assertSame('approved', $ot->status);
         $this->assertEquals(1.0, (float) $ot->hours);
         $this->assertStringContainsString('auto_from_attendance', (string) $ot->notes);
+    }
+
+    public function test_eligible_without_auto_approve_creates_pending_overtime(): void
+    {
+        $this->employee->update([
+            'eligible_for_overtime' => true,
+            'auto_approve_overtime' => false,
+        ]);
+        $this->addSession('08:00:00', '13:00:00');
+        $this->addSession('14:00:00', '18:00:00');
+
+        app(AttendanceDayReconciler::class)->reconcileFromSessions(
+            $this->employee->fresh('shift'),
+            $this->workDate,
+        );
+
+        $ot = EmployeeOvertime::query()
+            ->where('employee_id', $this->employee->id)
+            ->whereDate('work_date', $this->workDate)
+            ->first();
+
+        $this->assertNotNull($ot);
+        $this->assertSame('pending', $ot->status);
+    }
+
+    public function test_ineligible_employee_gets_no_overtime_row(): void
+    {
+        $this->employee->update([
+            'eligible_for_overtime' => false,
+            'auto_approve_overtime' => false,
+        ]);
+        $this->addSession('08:00:00', '13:00:00');
+        $this->addSession('14:00:00', '18:00:00');
+
+        $att = app(AttendanceDayReconciler::class)->reconcileFromSessions(
+            $this->employee->fresh('shift'),
+            $this->workDate,
+        );
+
+        $this->assertSame(60, (int) $att->overtime_minutes);
+        $this->assertSame(0, EmployeeOvertime::query()->where('employee_id', $this->employee->id)->count());
+    }
+
+    public function test_locked_monthly_overtime_suppresses_punch_overtime(): void
+    {
+        $this->employee->update([
+            'eligible_for_overtime' => true,
+            'auto_approve_overtime' => true,
+            'monthly_overtime_amount' => 5000,
+        ]);
+        $this->addSession('08:00:00', '13:00:00');
+        $this->addSession('14:00:00', '18:00:00');
+
+        app(AttendanceDayReconciler::class)->reconcileFromSessions(
+            $this->employee->fresh('shift'),
+            $this->workDate,
+        );
+
+        $this->assertSame(0, EmployeeOvertime::query()->where('employee_id', $this->employee->id)->count());
     }
 
     public function test_bank_lunch_skip_and_leave_early_keeps_full_paid_hours(): void
@@ -751,6 +810,10 @@ class AttendanceLunchReconcileTest extends TestCase
 
     public function test_deny_pending_overtime_caps_clock_out_to_shift_end(): void
     {
+        $this->employee->update([
+            'eligible_for_overtime' => true,
+            'auto_approve_overtime' => false,
+        ]);
         $this->addSession('08:00:00', '13:00:00');
         $afternoon = $this->addSession('14:00:00', '18:00:00');
 
