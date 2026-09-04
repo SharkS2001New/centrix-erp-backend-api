@@ -91,7 +91,21 @@ return Application::configure(basePath: dirname(__DIR__))
                 ], 404);
             }
 
-            return null;
+            if ($e->getModel() === \App\Models\PayrollRun::class) {
+                return response()->json([
+                    'message' => 'Payroll run not found. It may have been deleted or belongs to another organization.',
+                    'code' => 'payroll_run_not_found',
+                ], 404);
+            }
+
+            $model = class_basename((string) $e->getModel());
+
+            return response()->json([
+                'message' => $model !== ''
+                    ? "{$model} not found."
+                    : 'The requested record was not found.',
+                'code' => 'not_found',
+            ], 404);
         });
         $exceptions->renderable(function (AuthenticationException $e, Request $request) {
             if ($request->is('api/*') || $request->expectsJson()) {

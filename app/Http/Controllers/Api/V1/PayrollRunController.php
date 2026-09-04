@@ -30,7 +30,7 @@ class PayrollRunController extends BaseResourceController
             $this->access()->scopeOrganization($query, $user, 'organization_id', $request);
         }
 
-        return $query->firstOrFail();
+        return $query->first() ?? abort(404, 'Payroll run not found.');
     }
 
     public function index(Request $request)

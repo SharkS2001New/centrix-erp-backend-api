@@ -817,11 +817,11 @@ class TillOperationsController extends Controller
         $metricStatuses = app(OrderWorkflowService::class)->metricSaleStatuses();
         $tillMetrics = app(TillReportMetrics::class);
 
-        // Paid/collected session sales only — unpaid credit must not inflate Total Sales.
+        // ORDTTL: fully paid non-credit session sales only — credit collections are DBTTL.
         $salesBase = DB::table('sales')
             ->where('float_session_id', $floatSessionId)
             ->whereIn('status', $metricStatuses);
-        $tillMetrics->applyCollectedSalesFilter($salesBase);
+        $tillMetrics->applyOrdTtlSalesFilter($salesBase);
 
         $salesAgg = (clone $salesBase)
             ->selectRaw('
@@ -961,14 +961,11 @@ class TillOperationsController extends Controller
 
         $cash = $fromPayments + $legacyCash;
 
-        $debtorCollections = (float) DB::table('sale_payments as sp')
+        $debtorCollectionsQ = DB::table('sale_payments as sp')
             ->join('sales as s', 's.id', '=', 'sp.sale_id')
-            ->where('sp.float_session_id', $floatSessionId)
-            ->where(function ($query) use ($floatSessionId) {
-                $query->whereNull('s.float_session_id')
-                    ->orWhere('s.float_session_id', '!=', $floatSessionId);
-            })
-            ->sum('sp.amount');
+            ->where('sp.float_session_id', $floatSessionId);
+        $tillMetrics->applyDebtorCollectionFilter($debtorCollectionsQ);
+        $debtorCollections = (float) $debtorCollectionsQ->sum('sp.amount');
 
         return [
             'cash' => $cash,

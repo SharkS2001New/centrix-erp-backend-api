@@ -33,7 +33,20 @@ class TillReportMetricsTest extends TestCase
         $this->assertStringContainsString('>=', $sql);
     }
 
-    public function test_session_tender_filter_allows_credit_partials_not_fake_shortfalls(): void
+    public function test_ord_ttl_filter_excludes_credit_sales(): void
+    {
+        $metrics = new TillReportMetrics;
+        $query = Mockery::mock(Builder::class);
+        $query->shouldReceive('whereRaw')->twice()->andReturnSelf();
+        $query->shouldReceive('where')
+            ->once()
+            ->with(Mockery::type('Closure'))
+            ->andReturnSelf();
+
+        $metrics->applyOrdTtlSalesFilter($query);
+    }
+
+    public function test_session_tender_filter_allows_any_positive_tender(): void
     {
         $metrics = new TillReportMetrics;
         $query = Mockery::mock(Builder::class);
@@ -45,34 +58,7 @@ class TillReportMetricsTest extends TestCase
             ->once()
             ->with('COALESCE(amount_paid, 0) > ?', [TillReportMetrics::MIN_COLLECTED])
             ->andReturnSelf();
-        $query->shouldReceive('where')
-            ->once()
-            ->with(Mockery::type('Closure'))
-            ->andReturnSelf();
 
         $metrics->applySessionTenderSalesFilter($query);
-    }
-
-    public function test_credit_partial_filter_requires_credit_and_shortfall(): void
-    {
-        $metrics = new TillReportMetrics;
-        $query = Mockery::mock(Builder::class);
-        $query->shouldReceive('where')
-            ->once()
-            ->with('is_credit_sale', 1)
-            ->andReturnSelf();
-        $query->shouldReceive('whereRaw')
-            ->once()
-            ->with('COALESCE(amount_paid, 0) > ?', [TillReportMetrics::MIN_COLLECTED])
-            ->andReturnSelf();
-        $query->shouldReceive('whereRaw')
-            ->once()
-            ->with(
-                'COALESCE(amount_paid, 0) + ? < COALESCE(order_total, 0)',
-                [TillReportMetrics::MIN_COLLECTED],
-            )
-            ->andReturnSelf();
-
-        $metrics->applyCreditPartialSalesFilter($query);
     }
 }

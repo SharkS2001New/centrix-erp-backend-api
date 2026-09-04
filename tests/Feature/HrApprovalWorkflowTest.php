@@ -265,4 +265,82 @@ class HrApprovalWorkflowTest extends TestCase
             PayrollRun::query()->findOrFail($run['id'])->status,
         );
     }
+
+    public function test_lateness_waiver_notifies_capability_approvers_and_skips_unqualified_manager(): void
+    {
+        $requester = $this->userWithPermissions(['hr.manage']);
+        $approver = $this->userWithPermissions(['hr.leave.approve']);
+        $unqualifiedManager = $this->userWithPermissions(['hr.attendance.view']);
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $employee = Employee::query()->firstOrFail();
+
+        $managerEmployee = $employee->replicate();
+        $managerEmployee->employee_code = 'MGR-WV-'.uniqid();
+        $managerEmployee->payroll_number = 'MGR-WV-'.uniqid();
+        $managerEmployee->first_name = 'No';
+        $managerEmployee->last_name = 'Approve';
+        $managerEmployee->full_name = 'No Approve';
+        $managerEmployee->user_id = $unqualifiedManager->id;
+        $managerEmployee->reports_to_employee_id = null;
+        $managerEmployee->save();
+        $employee->forceFill(['reports_to_employee_id' => $managerEmployee->id])->save();
+
+        $attendance = \App\Models\EmployeeAttendance::query()->create([
+            'employee_id' => $employee->id,
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'attendance_date' => now()->subDay()->toDateString(),
+            'check_in' => '09:00:00',
+            'check_out' => '17:00:00',
+            'status' => 'late',
+            'source' => 'manual',
+            'hours_worked' => 7.5,
+            'expected_hours' => 8,
+            'late_minutes' => 30,
+            'lunch_late_minutes' => 0,
+            'lateness_waived' => false,
+        ]);
+
+        $waiver = app(\App\Services\Hr\LatenessWaiverApprovalService::class)->submit(
+            $requester,
+            $attendance,
+            true,
+            'Traffic',
+        );
+
+        $this->assertNull($waiver->assigned_manager_user_id);
+        $this->assertDatabaseHas('action_requests', [
+            'type' => 'lateness_waiver',
+            'reference_type' => 'lateness_waiver_request',
+            'reference_id' => $waiver->id,
+            'status' => 'pending',
+            'assigned_to' => null,
+        ]);
+
+        $actionRequestId = (int) DB::table('action_requests')
+            ->where('type', 'lateness_waiver')
+            ->where('reference_id', $waiver->id)
+            ->value('id');
+
+        $this->assertDatabaseHas('in_app_notifications', [
+            'user_id' => $approver->id,
+            'action_request_id' => $actionRequestId,
+            'type' => 'approval',
+        ]);
+        $this->assertDatabaseMissing('in_app_notifications', [
+            'user_id' => $unqualifiedManager->id,
+            'action_request_id' => $actionRequestId,
+        ]);
+        $this->assertDatabaseMissing('in_app_notifications', [
+            'user_id' => $requester->id,
+            'action_request_id' => $actionRequestId,
+        ]);
+
+        $this->assertStringContainsString(
+            '/hr/attendance/history?',
+            (string) DB::table('in_app_notifications')
+                ->where('action_request_id', $actionRequestId)
+                ->value('action_url'),
+        );
+    }
 }

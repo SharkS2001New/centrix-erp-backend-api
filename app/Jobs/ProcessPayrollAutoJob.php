@@ -41,7 +41,12 @@ class ProcessPayrollAutoJob implements ShouldQueue
 
             $payload = is_array($task->payload) ? $task->payload : [];
             $runId = (int) ($payload['run_id'] ?? 0);
-            $run = PayrollRun::with('payPeriod')->findOrFail($runId);
+            $run = PayrollRun::with('payPeriod')->find($runId);
+            if ($run === null) {
+                throw new \RuntimeException(
+                    'Payroll run not found. It may have been deleted before auto-process finished.',
+                );
+            }
 
             if ($run->payPeriod) {
                 app(PayrollRunScheduleService::class)->assertCanRunPayrollForPeriod($run->payPeriod);

@@ -1316,7 +1316,8 @@ class ReportController extends Controller
                 ->whereIn('status', $metricStatuses)
                 ->where('archived', 0),
         );
-        $tillMetrics->applyCollectedSalesFilter($salesBase);
+        // ORDTTL for till maths: exclude credit invoices (their collections are paid_debtors / DBTTL).
+        $tillMetrics->applyOrdTtlSalesFilter($salesBase);
         $this->applySalesTenantScope($salesBase, $orgId, $branchId);
         EffectiveSaleDate::applyFromToDateFilter($salesBase, $periodStartDate, $periodEndDate);
         if ($cashierId) {
@@ -1473,7 +1474,7 @@ class ReportController extends Controller
                 ->whereNotNull('float_session_id')
                 ->when($cashierId, fn ($q) => $q->where('cashier_id', $cashierId)),
         );
-        $tillMetrics->applyCollectedSalesFilter($salesBySessionSub);
+        $tillMetrics->applyOrdTtlSalesFilter($salesBySessionSub);
         $this->applySalesTenantScope($salesBySessionSub, $orgId, $branchId);
         EffectiveSaleDate::applyFromToDateFilter($salesBySessionSub, $periodStartDate, $periodEndDate);
         $salesBySessionSub = $salesBySessionSub
@@ -1499,14 +1500,12 @@ class ReportController extends Controller
             ->selectRaw('COALESCE(SUM(expense_amount), 0) as expenses_total')
             ->groupBy('float_session_id');
 
-        // Legacy DBTTL per session — debtor collections taken on the session (not session sales).
+        // Legacy DBTTL per session — credit / invoice collections taken on the session.
         $paidDebtorsBySessionSub = DB::table('sale_payments as sp')
             ->join('sales as s', 's.id', '=', 'sp.sale_id')
-            ->whereNotNull('sp.float_session_id')
-            ->where(function ($query) {
-                $query->whereNull('s.float_session_id')
-                    ->orWhereColumn('s.float_session_id', '!=', 'sp.float_session_id');
-            })
+            ->whereNotNull('sp.float_session_id');
+        $tillMetrics->applyDebtorCollectionFilter($paidDebtorsBySessionSub);
+        $paidDebtorsBySessionSub = $paidDebtorsBySessionSub
             ->select('sp.float_session_id')
             ->selectRaw('COALESCE(SUM(sp.amount), 0) as paid_debtors')
             ->groupBy('sp.float_session_id');
@@ -1688,7 +1687,7 @@ class ReportController extends Controller
                 ->when($floatSessionId, fn ($q) => $q->where('s.float_session_id', $floatSessionId)),
             's',
         );
-        $tillMetrics->applyCollectedSalesFilter($cashierRowsQuery, 's');
+        $tillMetrics->applyOrdTtlSalesFilter($cashierRowsQuery, 's');
         $this->applySalesTenantScope($cashierRowsQuery, $orgId, $branchId, 's');
         EffectiveSaleDate::applyFromToDateFilter($cashierRowsQuery, $periodStartDate, $periodEndDate, 's');
         $cashierRows = $cashierRowsQuery
@@ -1707,7 +1706,7 @@ class ReportController extends Controller
                 DB::raw('COALESCE(SUM(s.equity_amount), 0) + COALESCE(SUM(s.kcb_amount), 0) as bank_collected'),
             )
             ->get()
-            ->map(function ($row) use ($date, $branchId, $orgId, $isMonthly, $periodStartDate, $periodEndDate, $floatSessionId) {
+            ->map(function ($row) use ($date, $branchId, $orgId, $isMonthly, $periodStartDate, $periodEndDate, $floatSessionId, $tillMetrics) {
                 $floatQuery = DB::table('till_float_sessions')
                     ->where('cashier_id', $row->cashier_id);
                 if ($floatSessionId) {
@@ -1720,8 +1719,61 @@ class ReportController extends Controller
                 $this->applyBranchTenantScope($floatQuery, $orgId, $branchId);
                 $row->opening_float = (float) $floatQuery->sum('working_amount');
 
+                $debtorQ = DB::table('sale_payments as sp')
+                    ->join('sales as s', 's.id', '=', 'sp.sale_id')
+                    ->join('till_float_sessions as tfs', 'tfs.id', '=', 'sp.float_session_id')
+                    ->where('tfs.cashier_id', $row->cashier_id);
+                if ($floatSessionId) {
+                    $debtorQ->where('tfs.id', $floatSessionId);
+                } elseif ($isMonthly) {
+                    $debtorQ->whereBetween('tfs.session_date', [$periodStartDate, $periodEndDate]);
+                } else {
+                    $debtorQ->whereDate('tfs.session_date', $date);
+                }
+                $this->applyBranchTenantScope($debtorQ, $orgId, $branchId, 'tfs.branch_id');
+                $tillMetrics->applyDebtorCollectionFilter($debtorQ);
+                $row->paid_debtors = round((float) $debtorQ->sum('sp.amount'), 2);
+
                 return $row;
             });
+
+        // Cashiers who only collected debtors (no ORDTTL cash sales) still appear in Cashier maths.
+        $cashierById = $cashierRows->keyBy(fn ($row) => (int) $row->cashier_id);
+        foreach ($tillRows->groupBy(fn ($row) => (int) ($row->cashier_id ?? 0)) as $cid => $cashierSessions) {
+            $cid = (int) $cid;
+            if ($cid <= 0) {
+                continue;
+            }
+            $sessionDebtors = round((float) $cashierSessions->sum(fn ($r) => (float) ($r->paid_debtors ?? 0)), 2);
+            $sessionFloat = round((float) $cashierSessions->sum(fn ($r) => (float) ($r->opening_float ?? 0)), 2);
+            if ($cashierById->has($cid)) {
+                $existing = $cashierById->get($cid);
+                // Sales-row debtor query already sums the day; only seed when missing.
+                if ((float) ($existing->paid_debtors ?? 0) <= 0 && $sessionDebtors > 0) {
+                    $existing->paid_debtors = $sessionDebtors;
+                }
+                continue;
+            }
+            if ($sessionDebtors <= 0 && $sessionFloat <= 0) {
+                continue;
+            }
+            $first = $cashierSessions->first();
+            $cashierById->put($cid, (object) [
+                'cashier_id' => $cid,
+                'cashier' => $first->cashier ?? '—',
+                'transactions' => 0,
+                'gross_sales' => 0.0,
+                'total_vat' => 0.0,
+                'cash_collected' => 0.0,
+                'mpesa_collected' => 0.0,
+                'equity_collected' => 0.0,
+                'kcb_collected' => 0.0,
+                'bank_collected' => 0.0,
+                'opening_float' => $sessionFloat,
+                'paid_debtors' => $sessionDebtors,
+            ]);
+        }
+        $cashierRows = $cashierById->sortBy('cashier', SORT_NATURAL | SORT_FLAG_CASE)->values();
 
         // Expense summary / expected closing use till-session expenses only (same as X/Z):
         // attributed to the session cashier via float_session_id — not all branch expenses by date.
@@ -1809,16 +1861,13 @@ class ReportController extends Controller
         }
         $creditPayments = (float) $creditPaymentsQuery->sum('cip.amount_paid');
 
-        // Paid debtors taken on till sessions (same definition as X/Z Total paid debtors).
+        // Paid debtors taken on till sessions (same definition as X/Z Invoice sales / DBTTL).
         $paidDebtorsQuery = DB::table('sale_payments as sp')
             ->join('sales as s', 's.id', '=', 'sp.sale_id')
             ->join('till_float_sessions as tfs', 'tfs.id', '=', 'sp.float_session_id')
-            ->where(function ($query) {
-                $query->whereNull('s.float_session_id')
-                    ->orWhereColumn('s.float_session_id', '!=', 'sp.float_session_id');
-            })
             ->when($cashierId, fn ($q) => $q->where('tfs.cashier_id', $cashierId))
             ->when($floatSessionId, fn ($q) => $q->where('tfs.id', $floatSessionId));
+        $tillMetrics->applyDebtorCollectionFilter($paidDebtorsQuery);
         $this->applyBranchTenantScope($paidDebtorsQuery, $orgId, $branchId, 'tfs.branch_id');
         if ($isMonthly) {
             $paidDebtorsQuery->whereBetween('tfs.session_date', [$periodStartDate, $periodEndDate]);

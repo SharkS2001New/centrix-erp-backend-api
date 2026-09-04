@@ -8,7 +8,7 @@ class NotificationActionUrlBuilder
     {
         return match ($type) {
             'leave_request' => '/hr/leave?leave_day_id='.$referenceId,
-            'lateness_waiver' => '/hr/attendance?tab=records&waiver_id='.$referenceId,
+            'lateness_waiver' => self::latenessWaiverUrl($referenceId, $payload),
             'customer_return' => '/sales/returns?return_id='.$referenceId,
             'supplier_return' => '/suppliers/returns?return_id='.$referenceId,
             'journal_entry' => '/accounting/journal-entries/'.$referenceId,
@@ -24,6 +24,19 @@ class NotificationActionUrlBuilder
             'damage' => $referenceId > 0 ? '/inventory/damages?damage_id='.$referenceId : '/inventory/damages',
             default => '/notifications',
         };
+    }
+
+    /** @param  array<string, mixed>|null  $payload */
+    protected static function latenessWaiverUrl(int $referenceId, ?array $payload = null): string
+    {
+        $query = ['waiver_id' => $referenceId];
+        $date = trim((string) ($payload['attendance_date'] ?? ''));
+        if ($date !== '') {
+            $query['from_date'] = $date;
+            $query['to_date'] = $date;
+        }
+
+        return '/hr/attendance/history?'.http_build_query($query);
     }
 
     public static function absolute(?string $path): ?string

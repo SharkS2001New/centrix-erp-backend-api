@@ -12,10 +12,11 @@ use Illuminate\Database\Query\Builder;
  *   totalsales = ORDTTL + DBTTL + FLOATTTL
  *
  * Centrix mapping:
- *   ORDTTL  = SUM(order_total) on **fully paid** POS sales for the till session
- *             (order_total already reflects edit top-ups / returns — do not
+ *   ORDTTL  = SUM(order_total) on **fully paid non-credit** POS sales for the till
+ *             session (order_total already reflects edit top-ups / returns — do not
  *             add adjustment amounts or subtract returns again)
- *   DBTTL   = debtor / invoice collections taken on the session (debtor_payments)
+ *   DBTTL   = debtor / invoice collections taken on the session (sale_payments on
+ *             credit sales, or on sales from another / no till session)
  *   FLOATTTL = session working float
  *   EXPTTL  = session expenses
  *
@@ -26,8 +27,12 @@ use Illuminate\Database\Query\Builder;
  *   - Outstanding balance stays on credit outstanding / All Orders partial —
  *     scoped by cashier / session filters, never via a stale payment_status label.
  *
- * New credit invoices (legacy INVOICETOTALS) are reported separately and are not
- * added into netsales / totalsales — same as the stored procedures.
+ * Credit invoices (legacy INVOICETOTALS / DBTTL):
+ *   - Fully paid credit sales must NOT enter ORDTTL — collections belong in DBTTL
+ *     so X / Z / End of Day show "Invoice sales (paid debtors)" even when the
+ *     credit sale and the collection share the same till session.
+ *   - New unpaid credit invoices are display-only and are not added into
+ *     netsales / totalsales — same as the stored procedures.
  */
 class TillReportMetrics
 {
@@ -40,9 +45,12 @@ class TillReportMetrics
      * they must not inflate X / Z / EOD totalsales with the full order_total.
      * Amount maths only — never the denormalized payment_status label.
      *
+     * Credit sales are excluded from ORDTTL when $excludeCreditSales is true (till maths):
+     * their collections are counted as DBTTL instead.
+     *
      * @param  Builder|\Illuminate\Database\Eloquent\Builder  $query
      */
-    public function applyCollectedSalesFilter($query, string $alias = ''): void
+    public function applyCollectedSalesFilter($query, string $alias = '', bool $excludeCreditSales = false): void
     {
         $prefix = $alias === '' ? '' : rtrim($alias, '.').'.';
         $paid = "{$prefix}amount_paid";
@@ -52,6 +60,39 @@ class TillReportMetrics
             "COALESCE({$paid}, 0) + ? >= COALESCE({$total}, 0)",
             [self::MIN_COLLECTED],
         );
+        if ($excludeCreditSales) {
+            $query->where(function ($q) use ($prefix) {
+                $q->where("{$prefix}is_credit_sale", 0)
+                    ->orWhereNull("{$prefix}is_credit_sale");
+            });
+        }
+    }
+
+    /**
+     * ORDTTL filter for X / Z / End of Day till maths — fully paid cash sales only.
+     *
+     * @param  Builder|\Illuminate\Database\Eloquent\Builder  $query
+     */
+    public function applyOrdTtlSalesFilter($query, string $alias = ''): void
+    {
+        $this->applyCollectedSalesFilter($query, $alias, true);
+    }
+
+    /**
+     * DBTTL predicate: payments collected on a till session that settle credit /
+     * invoice debt (including same-session credit collections).
+     *
+     * @param  Builder|\Illuminate\Database\Eloquent\Builder  $query
+     */
+    public function applyDebtorCollectionFilter($query, string $saleAlias = 's', string $paymentAlias = 'sp'): void
+    {
+        $s = rtrim($saleAlias, '.').'.';
+        $sp = rtrim($paymentAlias, '.').'.';
+        $query->where(function ($q) use ($s, $sp) {
+            $q->where("{$s}is_credit_sale", 1)
+                ->orWhereNull("{$s}float_session_id")
+                ->orWhereColumn("{$s}float_session_id", '!=', "{$sp}float_session_id");
+        });
     }
 
     /**

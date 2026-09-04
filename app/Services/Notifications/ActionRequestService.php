@@ -440,6 +440,22 @@ class ActionRequestService
                 ->values();
         }
 
+        // HR approvals: include hr.manage capability holders, not only the
+        // exact approver_permission code (otherwise inbox stays empty).
+        $orgId = (int) $requester->organization_id;
+        $hrApprovers = match ($request->type) {
+            'lateness_waiver' => $this->permissions->usersWhoCanApproveLatenessWaivers($orgId),
+            'leave_request' => $this->permissions->usersWhoCanApproveLeaveRequests($orgId),
+            'cash_advance' => $this->permissions->usersWhoCanApproveCashAdvances($orgId),
+            'payroll_run' => $this->permissions->usersWhoCanApprovePayrollRuns($orgId),
+            default => null,
+        };
+        if ($hrApprovers !== null) {
+            return $hrApprovers
+                ->filter(fn (User $user) => (int) $user->id !== (int) $requester->id)
+                ->values();
+        }
+
         $permission = $request->approver_permission;
         if (! is_string($permission) || $permission === '') {
             return collect();

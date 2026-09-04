@@ -560,6 +560,78 @@ class TillSessionFlowTest extends TestCase
         $this->assertEqualsWithDelta(997, (float) ($xReport['expected_net_sales'] ?? 0), 0.01);
     }
 
+    public function test_same_session_credit_collection_shows_as_debtor_payments_on_x_z_eod(): void
+    {
+        $session = $this->openFreshSession(1000);
+        $cashMethod = PaymentMethod::where('method_code', 'CASH')->firstOrFail();
+
+        // Credit sale booked on this till session, then collected later the same session.
+        $creditSale = Sale::create([
+            'order_num' => 990201,
+            'branch_id' => $this->user->branch_id,
+            'organization_id' => $this->user->organization_id,
+            'channel' => 'pos',
+            'till_id' => $this->till->id,
+            'float_session_id' => $session->id,
+            'cashier_id' => $this->user->id,
+            'status' => 'completed',
+            'order_total' => 2200,
+            'total_vat' => 0,
+            'amount_paid' => 0,
+            'cash' => 0,
+            'payment_status' => 'unpaid',
+            'is_credit_sale' => true,
+            'completed_at' => now(),
+        ]);
+
+        $this->postJson("/api/v1/sales/{$creditSale->id}/payments", [
+            'payment_method_id' => $cashMethod->id,
+            'amount' => 2200,
+            'float_session_id' => $session->id,
+        ])->assertOk();
+
+        $xReport = $this->getJson("/api/v1/pos/sessions/{$session->id}/x-report")
+            ->assertOk()
+            ->json('report');
+
+        $this->assertEqualsWithDelta(
+            0,
+            (float) ($xReport['sales']['gross_sales'] ?? -1),
+            0.01,
+            'Paid credit invoices must not inflate ORDTTL / Total sales',
+        );
+        $this->assertEqualsWithDelta(
+            2200,
+            (float) ($xReport['sales']['debtor_collections'] ?? 0),
+            0.01,
+            'Same-session credit collections must show as Invoice sales (paid debtors)',
+        );
+        $this->assertEqualsWithDelta(
+            3200,
+            (float) ($xReport['expected_cash'] ?? 0),
+            0.01,
+        );
+
+        $this->postJson("/api/v1/pos/sessions/{$session->id}/close", [
+            'closing_amount' => 3200,
+        ])->assertOk();
+
+        $date = now()->toDateString();
+        $eod = $this->getJson(
+            '/api/v1/reports/eod-report?sale_date='.$date.'&cashier_id='.$this->user->id,
+        )->assertOk()->json();
+
+        $this->assertEqualsWithDelta(
+            2200,
+            (float) ($eod['summary']['paid_debtors'] ?? 0),
+            0.01,
+            'End of Day must keep same-session debtor collections after close',
+        );
+        $cashier = collect($eod['cashiers'] ?? [])->firstWhere('cashier_id', $this->user->id);
+        $this->assertNotNull($cashier);
+        $this->assertEqualsWithDelta(2200, (float) ($cashier['paid_debtors'] ?? 0), 0.01);
+    }
+
     public function test_cashier_can_open_second_session_same_day_with_new_float(): void
     {
         $first = $this->openFreshSession(5000);

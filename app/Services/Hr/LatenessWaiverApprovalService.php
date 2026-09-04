@@ -84,12 +84,7 @@ class LatenessWaiverApprovalService
             ]);
         }
 
-        $managerUserId = $this->resolveManagerUserId($employee);
-        if ($managerUserId && (int) $managerUserId === (int) $requester->id) {
-            // Requester is the manager — still create a request but leave unassigned so HR approvers are notified,
-            // unless they have approve permission (then they can self-approve via permission path after notify).
-            $managerUserId = null;
-        }
+        $managerUserId = $this->resolveAssignedApproverUserId($employee, $requester);
 
         $date = $attendance->attendance_date instanceof \Carbon\Carbon
             ? $attendance->attendance_date->toDateString()
@@ -113,6 +108,30 @@ class LatenessWaiverApprovalService
         $this->notifyApprovers($requester, $request, $employee);
 
         return $request->fresh(['employee', 'attendance', 'assignedManager', 'requester']);
+    }
+
+    /**
+     * Prefer the employee's line manager when that manager's user account
+     * holds lateness-waiver approval rights; otherwise fall back to all approvers.
+     */
+    protected function resolveAssignedApproverUserId(Employee $employee, User $requester): ?int
+    {
+        $managerUserId = $this->resolveManagerUserId($employee);
+        if (! $managerUserId || (int) $managerUserId === (int) $requester->id) {
+            return null;
+        }
+
+        $managerUser = User::query()
+            ->where('organization_id', $requester->organization_id)
+            ->where('id', $managerUserId)
+            ->where('is_active', true)
+            ->first();
+
+        if (! $managerUser || ! $this->canApproveByPermission($managerUser)) {
+            return null;
+        }
+
+        return (int) $managerUser->id;
     }
 
     public function approve(LatenessWaiverRequest $waiver, User $approver, ?string $reviewNotes = null): LatenessWaiverRequest
@@ -218,7 +237,9 @@ class LatenessWaiverApprovalService
             ? $waiver->attendance_date->toDateString()
             : (string) $waiver->attendance_date;
         $action = $waiver->waive ? 'waive' : 'undo waiver for';
-        $actionUrl = NotificationActionUrlBuilder::for('lateness_waiver', (int) $waiver->id);
+        $actionUrl = NotificationActionUrlBuilder::for('lateness_waiver', (int) $waiver->id, [
+            'attendance_date' => $date,
+        ]);
 
         app(ActionRequestService::class)->requestApproval($requester, [
             'type' => 'lateness_waiver',
@@ -238,6 +259,7 @@ class LatenessWaiverApprovalService
                 'late_minutes' => (int) $waiver->late_minutes,
                 'waive' => (bool) $waiver->waive,
                 'action_url' => $actionUrl,
+                'assigned_to' => $waiver->assigned_manager_user_id,
             ],
         ]);
     }

@@ -299,6 +299,50 @@ class UserPermissionService
             || $this->hasAssignedCapability($user, 'hr.manage');
     }
 
+    /** @return Collection<int, User> */
+    public function usersWhoCanApproveLatenessWaivers(int $organizationId): Collection
+    {
+        return User::query()
+            ->where('organization_id', $organizationId)
+            ->where('is_active', true)
+            ->get()
+            ->filter(fn (User $user) => $this->canApproveLatenessWaivers($user))
+            ->values();
+    }
+
+    /** @return Collection<int, User> */
+    public function usersWhoCanApproveLeaveRequests(int $organizationId): Collection
+    {
+        return User::query()
+            ->where('organization_id', $organizationId)
+            ->where('is_active', true)
+            ->get()
+            ->filter(fn (User $user) => $this->canApproveLeaveRequests($user))
+            ->values();
+    }
+
+    /** @return Collection<int, User> */
+    public function usersWhoCanApproveCashAdvances(int $organizationId): Collection
+    {
+        return User::query()
+            ->where('organization_id', $organizationId)
+            ->where('is_active', true)
+            ->get()
+            ->filter(fn (User $user) => $this->canApproveCashAdvances($user))
+            ->values();
+    }
+
+    /** @return Collection<int, User> */
+    public function usersWhoCanApprovePayrollRuns(int $organizationId): Collection
+    {
+        return User::query()
+            ->where('organization_id', $organizationId)
+            ->where('is_active', true)
+            ->get()
+            ->filter(fn (User $user) => $this->canApprovePayrollRuns($user))
+            ->values();
+    }
+
     public function canApproveOrderCancellations(User $user): bool
     {
         return $this->canApproveSalesOrders($user)

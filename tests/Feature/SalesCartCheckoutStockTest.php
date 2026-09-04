@@ -93,18 +93,26 @@ class SalesCartCheckoutStockTest extends TestCase
 
     public function test_checkout_renumbers_duplicate_cart_line_nos(): void
     {
-        $second = Product::query()
+        $others = Product::query()
             ->where('product_code', '!=', $this->productCode)
             ->whereNull('deleted_at')
             ->orderBy('id')
-            ->first();
-        $this->assertNotNull($second, 'Need a second product for multi-line checkout.');
+            ->limit(2)
+            ->get();
+        $this->assertGreaterThanOrEqual(
+            2,
+            $others->count(),
+            'Need two other products for multi-line checkout renumber test.',
+        );
+        $second = $others[0];
+        $third = $others[1];
 
         $cartId = $this->postJson('/api/v1/sales/carts', [
             'channel' => 'pos',
             'branch_id' => $this->user->branch_id,
         ])->json('id');
 
+        // Three distinct SKUs — same-SKU adds would merge when combine-identical is on.
         $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
             'product_code' => $this->productCode,
             'quantity' => 1,
@@ -114,9 +122,9 @@ class SalesCartCheckoutStockTest extends TestCase
             'quantity' => 1,
         ])->assertCreated();
         $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
-            'product_code' => $this->productCode,
+            'product_code' => $third->product_code,
             'quantity' => 1,
-        ])->assertCreated();
+        ])->assertCreated()->assertJsonCount(3, 'lines');
 
         // Simulate concurrent POS add race: cart_lines has no unique on line_no.
         \App\Models\CartLine::query()

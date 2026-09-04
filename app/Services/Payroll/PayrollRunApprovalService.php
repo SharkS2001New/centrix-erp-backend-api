@@ -57,7 +57,13 @@ class PayrollRunApprovalService
     {
         $run = PayrollRun::query()
             ->whereKey((int) $request->reference_id)
-            ->firstOrFail();
+            ->first();
+
+        if (! $run) {
+            throw ValidationException::withMessages([
+                'payroll_run' => 'This payroll run no longer exists. It may have been deleted.',
+            ]);
+        }
 
         if ($run->status !== 'pending_approval') {
             throw ValidationException::withMessages([
@@ -78,7 +84,13 @@ class PayrollRunApprovalService
     {
         $run = PayrollRun::query()
             ->whereKey((int) $request->reference_id)
-            ->firstOrFail();
+            ->first();
+
+        if (! $run) {
+            throw ValidationException::withMessages([
+                'payroll_run' => 'This payroll run no longer exists. It may have been deleted.',
+            ]);
+        }
 
         if ($run->status !== 'pending_approval') {
             throw ValidationException::withMessages([
