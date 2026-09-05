@@ -56,4 +56,16 @@ class EmployeeCashAdvanceDeductionTest extends TestCase
 
         $this->assertSame(2.0, $advance->payrollDeductionAmount());
     }
+
+    public function test_deduction_never_exceeds_original_advanced_amount(): void
+    {
+        $advance = new EmployeeCashAdvance([
+            'status' => 'open',
+            'amount' => 2450,
+            'balance' => 3000,
+            'repayment_mode' => 'full_next_cycle',
+        ]);
+
+        $this->assertSame(2450.0, $advance->payrollDeductionAmount());
+    }
 }

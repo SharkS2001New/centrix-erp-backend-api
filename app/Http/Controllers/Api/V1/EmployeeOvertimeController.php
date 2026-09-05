@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\Employee;
 use App\Models\EmployeeOvertime;
 use App\Services\Hr\HrPayrollSettingsResolver;
+use App\Services\Hr\OvertimeApprovalService;
+use App\Services\Notifications\ActionRequestService;
 use App\Services\Payroll\OvertimeRateCalculator;
 use App\Services\Payroll\PayrollCycleSettlementService;
 use Illuminate\Http\Request;
@@ -64,7 +66,12 @@ class EmployeeOvertimeController extends HrOrgResourceController
         $data['branch_id'] = $data['branch_id'] ?? $employee->branch_id;
         $data = $this->computeAmount($data, $employee);
 
-        return response()->json(EmployeeOvertime::create($data)->load('employee'), 201);
+        $row = EmployeeOvertime::create($data)->load('employee');
+        if ($row->status === 'pending') {
+            app(OvertimeApprovalService::class)->notifyOnPending($request->user(), $row);
+        }
+
+        return response()->json($row, 201);
     }
 
     public function update(Request $request, string $id)
@@ -81,14 +88,27 @@ class EmployeeOvertimeController extends HrOrgResourceController
         $data = $this->computeAmount(array_merge($row->toArray(), $data), $employee);
 
         $row->update($data);
+        $fresh = $row->fresh('employee');
+        if ($fresh->status === 'pending') {
+            app(OvertimeApprovalService::class)->notifyOnPending($request->user(), $fresh);
+        }
 
-        return response()->json($row->fresh('employee'));
+        return response()->json($fresh);
     }
 
     public function destroy(string $id)
     {
         $row = $this->findScoped($id);
         PayrollCycleSettlementService::assertNotPayrollLocked($row->payroll_run_id, 'overtime entry');
+        $actor = request()->user();
+        if ($row->status === 'pending' && $actor) {
+            app(ActionRequestService::class)->cancelAllPendingForDomainReference(
+                $actor,
+                'employee_overtime',
+                (int) $row->id,
+                'Overtime entry deleted.',
+            );
+        }
         $row->delete();
 
         return response()->json(null, 204);
@@ -98,27 +118,33 @@ class EmployeeOvertimeController extends HrOrgResourceController
     {
         $row = $this->findScoped($id);
         PayrollCycleSettlementService::assertNotPayrollLocked($row->payroll_run_id, 'overtime entry');
-        if ($row->status !== 'pending') {
-            throw ValidationException::withMessages([
-                'status' => ['Only pending overtime can be approved.'],
-            ]);
-        }
-        $row->update(['status' => 'approved']);
+        $approver = request()->user();
+        $approved = app(OvertimeApprovalService::class)->approve($row, $approver);
+        app(ActionRequestService::class)->markResolvedFromDomain(
+            'pending_overtime',
+            'employee_overtime',
+            (int) $approved->id,
+            'approved',
+            $approver,
+        );
 
-        return response()->json($row->fresh('employee'));
+        return response()->json($approved);
     }
 
     public function deny(string $id)
     {
         $row = $this->findScoped($id);
         PayrollCycleSettlementService::assertNotPayrollLocked($row->payroll_run_id, 'overtime entry');
-        if ($row->status !== 'pending') {
-            throw ValidationException::withMessages([
-                'status' => ['Only pending overtime can be denied.'],
-            ]);
-        }
-        app(\App\Services\Attendance\AttendanceDayReconciler::class)
-            ->rejectPendingOvertimeAndCapClockOut($row);
+        $actor = request()->user();
+        $overtimeId = (int) $row->id;
+        app(OvertimeApprovalService::class)->reject($row, $actor);
+        app(ActionRequestService::class)->markResolvedFromDomain(
+            'pending_overtime',
+            'employee_overtime',
+            $overtimeId,
+            'rejected',
+            $actor,
+        );
 
         return response()->json(null, 204);
     }

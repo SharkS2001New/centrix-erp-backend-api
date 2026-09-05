@@ -224,6 +224,30 @@ class EmployeeCashAdvanceController extends HrOrgResourceController
             ]);
         }
 
+        // Keep outstanding in sync when the advanced amount changes and nothing has been repaid yet.
+        // Otherwise editing "Advanced" to 2450 while balance stayed at 3000 made payroll deduct 3000.
+        if (array_key_exists('amount', $data)) {
+            $oldAmount = round((float) $row->amount, 2);
+            $oldBalance = round((float) $row->balance, 2);
+            $newAmount = round((float) $data['amount'], 2);
+            $explicitBalance = array_key_exists('balance', $data)
+                ? round((float) $data['balance'], 2)
+                : null;
+
+            if ($explicitBalance !== null) {
+                $data['balance'] = min($explicitBalance, $newAmount);
+            } elseif (abs($oldBalance - $oldAmount) < 0.009) {
+                $data['balance'] = $newAmount;
+            } else {
+                $data['balance'] = min($oldBalance, $newAmount);
+            }
+        } elseif (array_key_exists('balance', $data)) {
+            $cap = round((float) ($data['amount'] ?? $row->amount), 2);
+            if ($cap > 0) {
+                $data['balance'] = min(round((float) $data['balance'], 2), $cap);
+            }
+        }
+
         $row->update($data);
 
         return response()->json($this->advanceWithMeta($row->fresh('employee'), $request->user()));

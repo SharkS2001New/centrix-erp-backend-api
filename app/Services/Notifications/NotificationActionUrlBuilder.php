@@ -19,9 +19,12 @@ class NotificationActionUrlBuilder
             'lpo' => '/lpo/'.$referenceId,
             'payroll_run' => '/hr/payroll/runs/'.$referenceId,
             'cash_advance' => '/hr/cash-advances?advance_id='.$referenceId,
-            'expense' => $referenceId > 0 ? '/accounting/expenses?expense_id='.$referenceId : '/accounting/expenses',
+            'expense' => $referenceId > 0 ? '/expenses?expense_id='.$referenceId : '/expenses',
             'stock_take' => '/inventory/stock-take/'.$referenceId,
             'damage' => $referenceId > 0 ? '/inventory/damages?damage_id='.$referenceId : '/inventory/damages',
+            'pending_overtime' => $referenceId > 0
+                ? '/hr/pending-overtime?overtime_id='.$referenceId
+                : '/hr/pending-overtime',
             default => '/notifications',
         };
     }
@@ -69,11 +72,7 @@ class NotificationActionUrlBuilder
 
     public static function discountEditableActionUrl(?array $payload = null): string
     {
-        $channel = strtolower((string) ($payload['channel'] ?? ''));
-
-        return $channel === 'mobile'
-            ? '/mobile/orders?status=editable'
-            : '/sales/orders/queues/editable';
+        return '/sales/orders/queues/editable';
     }
 
     /** @param  array<string, mixed>|null  $payload */

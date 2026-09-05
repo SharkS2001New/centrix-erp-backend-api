@@ -236,7 +236,7 @@ class DiscountApprovalService
 
         if ($channel === 'mobile') {
             if ((string) $sale->status === 'editable') {
-                return '/mobile/orders?status=editable';
+                return '/sales/orders/queues/editable';
             }
 
             return '/sales/orders/queues/mobile';
@@ -251,11 +251,7 @@ class DiscountApprovalService
 
     public function saleEditableActionUrl(Sale $sale): string
     {
-        $channel = strtolower((string) ($sale->channel ?: 'backend'));
-
-        return $channel === 'mobile'
-            ? '/mobile/orders?status=editable'
-            : '/sales/orders/queues/editable';
+        return '/sales/orders/queues/editable';
     }
 
     public function canAutoApproveDiscount(User $user): bool

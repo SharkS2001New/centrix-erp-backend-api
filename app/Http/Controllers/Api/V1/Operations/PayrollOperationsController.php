@@ -559,7 +559,14 @@ class PayrollOperationsController extends Controller
             ->where('payroll_run_id', $run->id)
             ->whereKey((int) $lineId)
             ->with('employee')
-            ->firstOrFail();
+            ->first();
+
+        if (! $line) {
+            return response()->json([
+                'message' => 'Payroll line not found. It may have been excluded or the run was deleted.',
+                'code' => 'payroll_line_not_found',
+            ], 404);
+        }
 
         $data = $request->validate([
             'to' => 'nullable|email',

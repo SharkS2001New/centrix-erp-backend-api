@@ -21,6 +21,26 @@ class NotificationActionUrlBuilderTest extends TestCase
             '/suppliers/returns?return_id=9',
             NotificationActionUrlBuilder::for('supplier_return', 9),
         );
+        $this->assertSame(
+            '/expenses?expense_id=15',
+            NotificationActionUrlBuilder::for('expense', 15),
+        );
+        $this->assertSame(
+            '/expenses',
+            NotificationActionUrlBuilder::for('expense', 0),
+        );
+        $this->assertSame(
+            '/hr/cash-advances?advance_id=3',
+            NotificationActionUrlBuilder::for('cash_advance', 3),
+        );
+        $this->assertSame(
+            '/hr/pending-overtime?overtime_id=11',
+            NotificationActionUrlBuilder::for('pending_overtime', 11),
+        );
+        $this->assertSame(
+            '/sales/orders/queues/editable',
+            NotificationActionUrlBuilder::discountEditableActionUrl(['channel' => 'mobile']),
+        );
     }
 
     public function test_builds_absolute_frontend_url(): void

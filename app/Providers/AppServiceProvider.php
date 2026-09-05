@@ -61,6 +61,14 @@ class AppServiceProvider extends ServiceProvider
             if ($exception instanceof \Illuminate\Validation\ValidationException) {
                 return;
             }
+            if ($exception instanceof \Illuminate\Database\Eloquent\ModelNotFoundException) {
+                // Missing run/line after delete is an operational outcome, not a system fault.
+                return;
+            }
+            if ($exception instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface
+                && in_array($exception->getStatusCode(), [404, 422], true)) {
+                return;
+            }
             if (\App\Services\SystemIssues\SystemIssueReporter::isBenignImapNoise($exception)) {
                 return;
             }

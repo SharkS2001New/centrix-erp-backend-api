@@ -301,6 +301,21 @@ class AttendanceLunchReconcileTest extends TestCase
 
         $this->assertNotNull($ot);
         $this->assertSame('pending', $ot->status);
+
+        $this->assertDatabaseHas('action_requests', [
+            'organization_id' => $this->org->id,
+            'type' => 'pending_overtime',
+            'reference_type' => 'employee_overtime',
+            'reference_id' => $ot->id,
+            'status' => 'pending',
+        ]);
+
+        $this->assertDatabaseHas('in_app_notifications', [
+            'organization_id' => $this->org->id,
+            'user_id' => $this->admin->id,
+            'type' => 'approval',
+            'title' => 'Overtime pending approval',
+        ]);
     }
 
     public function test_ineligible_employee_gets_no_overtime_row(): void

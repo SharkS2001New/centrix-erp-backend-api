@@ -4,15 +4,20 @@ namespace App\Jobs;
 
 use App\Http\Controllers\Api\V1\Operations\PayrollOperationsController;
 use App\Models\BackgroundTask;
+use App\Models\PayrollLine;
 use App\Models\PayrollRun;
 use App\Models\User;
 use App\Services\Background\BackgroundTaskService;
 use App\Services\Payroll\PayrollAutoProcessService;
 use App\Services\Payroll\PayrollRunScheduleService;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
+use Throwable;
 
 class ProcessPayrollAutoJob implements ShouldQueue
 {
@@ -87,6 +92,7 @@ class ProcessPayrollAutoJob implements ShouldQueue
                 ),
                 'lines' => $built['lines'],
             ]);
+            $request->headers->set('Accept', 'application/json');
             $request->setUserResolver(fn () => $user);
 
             $response = app(PayrollOperationsController::class)->processRun($request, (string) $runId);
@@ -98,13 +104,73 @@ class ProcessPayrollAutoJob implements ShouldQueue
 
             $tasks->updateProgress($task, 98, 'Finalizing payroll run…');
             $tasks->markCompleted($task, is_array($data) ? $data : ['status' => 'completed']);
-        } catch (\Throwable $e) {
+        } catch (Throwable $e) {
+            $message = $this->friendlyFailureMessage($e);
             Log::warning('ProcessPayrollAutoJob failed', [
                 'task_id' => $this->taskId,
-                'error' => $e->getMessage(),
+                'error' => $message,
             ]);
-            $tasks->markFailed($task, $e->getMessage());
+            $tasks->markFailed($task, $message);
+
+            // Operational outcomes (deleted run, empty roster, validation) already
+            // live on the background task — do not fail the queue worker / HIGH alert.
+            if ($this->isExpectedOperationalFailure($e)) {
+                return;
+            }
+
             throw $e;
         }
+    }
+
+    protected function friendlyFailureMessage(Throwable $e): string
+    {
+        if ($e instanceof ModelNotFoundException) {
+            if ($e->getModel() === PayrollRun::class) {
+                return 'Payroll run not found. It may have been deleted before auto-process finished.';
+            }
+            if ($e->getModel() === PayrollLine::class) {
+                return 'Payroll line not found. It may have been excluded or the run was deleted.';
+            }
+        }
+
+        if ($e instanceof HttpExceptionInterface) {
+            $msg = trim((string) $e->getMessage());
+            if ($msg !== '') {
+                return $msg;
+            }
+        }
+
+        if ($e instanceof ValidationException) {
+            $first = collect($e->errors())->flatten()->first();
+            if (is_string($first) && $first !== '') {
+                return $first;
+            }
+        }
+
+        return $e->getMessage() !== '' ? $e->getMessage() : class_basename($e);
+    }
+
+    protected function isExpectedOperationalFailure(Throwable $e): bool
+    {
+        if ($e instanceof ModelNotFoundException) {
+            return in_array($e->getModel(), [PayrollRun::class, PayrollLine::class, User::class], true);
+        }
+
+        if ($e instanceof ValidationException) {
+            return true;
+        }
+
+        if ($e instanceof HttpExceptionInterface) {
+            $status = $e->getStatusCode();
+
+            return $status === 404 || $status === 422;
+        }
+
+        $message = strtolower($e->getMessage());
+
+        return str_contains($message, 'payroll run not found')
+            || str_contains($message, 'may have been deleted')
+            || str_contains($message, 'no eligible employees')
+            || str_contains($message, 'user not found for payroll');
     }
 }

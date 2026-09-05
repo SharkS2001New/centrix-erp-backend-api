@@ -53,7 +53,12 @@ class EmployeeCashAdvance extends Model
             return 0.0;
         }
 
+        // Never deduct more than the original advanced amount (guards stale balance > amount).
+        $amount = round((float) ($this->amount ?? 0), 2);
         $balance = round((float) $this->balance, 2);
+        if ($amount > 0) {
+            $balance = min($balance, $amount);
+        }
         if ($balance <= 0) {
             return 0.0;
         }

@@ -24,6 +24,7 @@ use App\Services\Notifications\Handlers\LatenessWaiverActionRequestHandler;
 use App\Services\Notifications\Handlers\LpoApprovalActionRequestHandler;
 use App\Services\Notifications\Handlers\OrderCancellationActionRequestHandler;
 use App\Services\Notifications\Handlers\PayrollRunActionRequestHandler;
+use App\Services\Notifications\Handlers\PendingOvertimeActionRequestHandler;
 use App\Services\Notifications\Handlers\StockAdjustmentActionRequestHandler;
 use App\Services\Notifications\Handlers\StockTakeCompletionActionRequestHandler;
 use App\Services\Notifications\Handlers\StockTransferActionRequestHandler;
@@ -56,6 +57,7 @@ class ActionRequestService
         ExpenseActionRequestHandler $expenseActionHandler,
         StockTakeCompletionActionRequestHandler $stockTakeCompletionHandler,
         DamageWriteOffActionRequestHandler $damageWriteOffHandler,
+        PendingOvertimeActionRequestHandler $pendingOvertimeHandler,
     ) {
         $this->handlers = collect([
             $supplierReturnHandler,
@@ -73,6 +75,7 @@ class ActionRequestService
             $expenseActionHandler,
             $stockTakeCompletionHandler,
             $damageWriteOffHandler,
+            $pendingOvertimeHandler,
         ])->keyBy(fn (ActionRequestHandler $handler) => $handler->type());
     }
 
@@ -229,6 +232,16 @@ class ActionRequestService
         );
     }
 
+    /** Withdraw pending requests for an arbitrary domain reference (e.g. cleared auto OT). */
+    public function cancelAllPendingForDomainReference(
+        User $actor,
+        string $referenceType,
+        int $referenceId,
+        ?string $comment = null,
+    ): void {
+        $this->cancelAllPendingForReference($actor, $referenceType, $referenceId, $comment);
+    }
+
     /** Withdraw pending cart discount requests when the cart is abandoned or cleared. */
     public function cancelAllPendingForCart(TemporaryCart $cart, User $actor, ?string $comment = null): void
     {
@@ -283,6 +296,7 @@ class ActionRequestService
             ]);
 
             $this->notifications->resolveForActionRequest($request);
+            $this->notifyRequesterOfOutcome($request->fresh(), 'cancelled', $actor, $comment);
         });
     }
 
@@ -448,6 +462,7 @@ class ActionRequestService
             'leave_request' => $this->permissions->usersWhoCanApproveLeaveRequests($orgId),
             'cash_advance' => $this->permissions->usersWhoCanApproveCashAdvances($orgId),
             'payroll_run' => $this->permissions->usersWhoCanApprovePayrollRuns($orgId),
+            'pending_overtime' => $this->permissions->usersWhoCanApprovePendingOvertime($orgId),
             default => null,
         };
         if ($hrApprovers !== null) {
@@ -538,9 +553,15 @@ class ActionRequestService
         }
 
         $approved = $outcome === 'approved';
-        $message = $approved
-            ? "Your request \"{$request->title}\" was approved by {$actor->full_name}."
-            : "Your request \"{$request->title}\" was rejected by {$actor->full_name}.";
+        $cancelled = $outcome === 'cancelled';
+        $message = match (true) {
+            $approved => "Your request \"{$request->title}\" was approved by {$actor->full_name}.",
+            $cancelled => "Your request \"{$request->title}\" was withdrawn"
+                .((int) $actor->id === (int) $request->requested_by
+                    ? '.'
+                    : " by {$actor->full_name}."),
+            default => "Your request \"{$request->title}\" was rejected by {$actor->full_name}.",
+        };
 
         if ($request->type === 'discount') {
             $orderNum = (int) (($request->payload ?? [])['order_num'] ?? 0);
@@ -548,6 +569,8 @@ class ActionRequestService
 
             if ($approved) {
                 $message = "Your discount on {$orderLabel} was approved by {$actor->full_name}.";
+            } elseif ($cancelled) {
+                $message = "Your discount request on {$orderLabel} was withdrawn.";
             } else {
                 $message = "Your discount on {$orderLabel} was rejected. Edit the order and resubmit for approval.";
                 if ($comment) {
@@ -573,22 +596,27 @@ class ActionRequestService
 
             if ($approved) {
                 $message = "{$poLabel}{$supplierLabel} was approved by {$actor->full_name}. You can now send it to the supplier.";
+            } elseif ($cancelled) {
+                $message = "{$poLabel}{$supplierLabel} was withdrawn.";
             } else {
                 $message = "{$poLabel}{$supplierLabel} was rejected. Revise the order and submit again for approval.";
                 if ($comment) {
                     $message .= " Reason: {$comment}";
                 }
             }
-        } elseif (! $approved && $comment) {
+        } elseif (! $approved && ! $cancelled && $comment) {
             $message .= " Reason: {$comment}";
         }
 
         $title = match (true) {
             $request->type === 'discount' && $approved => 'Discount approved',
+            $request->type === 'discount' && $cancelled => 'Discount withdrawn',
             $request->type === 'discount' => 'Discount rejected',
             $request->type === 'lpo_approval' && $approved => 'LPO approved',
+            $request->type === 'lpo_approval' && $cancelled => 'LPO withdrawn',
             $request->type === 'lpo_approval' => 'LPO rejected',
             $approved => 'Request approved',
+            $cancelled => 'Request withdrawn',
             default => 'Request rejected',
         };
 
@@ -596,12 +624,12 @@ class ActionRequestService
             'organization_id' => $request->organization_id,
             'action_request_id' => (int) $request->id,
             'type' => 'approval_outcome',
-            'severity' => $approved ? 'success' : 'danger',
+            'severity' => $approved ? 'success' : ($cancelled ? 'default' : 'danger'),
             'title' => $title,
             'message' => $message,
             'action_url' => $approved
                 ? ($request->payload['action_url'] ?? null)
-                : ($request->type === 'discount' && $request->reference_type === 'sale'
+                : ($request->type === 'discount' && $request->reference_type === 'sale' && ! $cancelled
                     ? app(\App\Services\Sales\DiscountApprovalService::class)->saleEditableActionUrl(
                         Sale::query()->findOrFail((int) $request->reference_id),
                     )

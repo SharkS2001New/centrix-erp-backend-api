@@ -98,6 +98,13 @@ return Application::configure(basePath: dirname(__DIR__))
                 ], 404);
             }
 
+            if ($e->getModel() === \App\Models\PayrollLine::class) {
+                return response()->json([
+                    'message' => 'Payroll line not found. It may have been excluded or the run was deleted.',
+                    'code' => 'payroll_line_not_found',
+                ], 404);
+            }
+
             $model = class_basename((string) $e->getModel());
 
             return response()->json([

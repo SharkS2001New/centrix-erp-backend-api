@@ -22,7 +22,7 @@ class InAppNotificationMailDelivery
 
         $settings = NotificationSettingsResolver::forOrganization($organization);
         $isApprovalRequest = $notification->type === 'approval';
-        $isApprovalOutcome = in_array($notification->type, ['approval_outcome', 'info'], true);
+        $isApprovalOutcome = $notification->type === 'approval_outcome';
         $enabled = match (true) {
             $isApprovalRequest => ! empty($settings['notify_on_approval_request']),
             $isApprovalOutcome => ! empty($settings['notify_on_approval_outcome']),

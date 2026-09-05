@@ -293,6 +293,23 @@ class UserPermissionService
             || $this->hasAssignedCapability($user, 'hr.manage');
     }
 
+    public function canApprovePendingOvertime(User $user): bool
+    {
+        return $this->hasRoleAssignedPermission($user, 'hr.pending_overtime.approve')
+            || $this->hasAssignedCapability($user, 'hr.manage');
+    }
+
+    /** @return Collection<int, User> */
+    public function usersWhoCanApprovePendingOvertime(int $organizationId): Collection
+    {
+        return User::query()
+            ->where('organization_id', $organizationId)
+            ->where('is_active', true)
+            ->get()
+            ->filter(fn (User $user) => $this->canApprovePendingOvertime($user))
+            ->values();
+    }
+
     public function canApproveLatenessWaivers(User $user): bool
     {
         // Dedicated waive approve permission (Roles → Human resources / Lateness waivers — Approve).
@@ -430,6 +447,7 @@ class UserPermissionService
             'lateness_waivers' => $this->canApproveLatenessWaivers($user),
             'payroll_runs' => $this->canApprovePayrollRuns($user),
             'cash_advances' => $this->canApproveCashAdvances($user),
+            'pending_overtime' => $this->canApprovePendingOvertime($user),
             'supplier_returns' => $this->canApproveSupplierReturns($user),
             'customer_returns' => $this->canApproveCustomerReturns($user),
             'inventory_operations' => $this->canApproveInventoryOperations($user),

@@ -713,9 +713,22 @@ class AttendanceDayReconciler
         ];
 
         if ($existing) {
+            $wasPending = $existing->status === 'pending';
             $existing->update($payload);
+            $overtime = $existing->fresh();
         } else {
-            EmployeeOvertime::create($payload);
+            $wasPending = false;
+            $overtime = EmployeeOvertime::create($payload);
+        }
+
+        if ($overtime->status === 'pending') {
+            try {
+                app(\App\Services\Hr\OvertimeApprovalService::class)->notifyOnPending(null, $overtime);
+            } catch (\Throwable $e) {
+                report($e);
+            }
+        } elseif ($wasPending && $overtime->status === 'approved') {
+            $this->resolvePendingOvertimeActionRequest($overtime, 'approved');
         }
     }
 
@@ -785,7 +798,63 @@ class AttendanceDayReconciler
             $query->where('status', 'pending');
         }
 
-        $query->delete();
+        $rows = $query->get();
+        foreach ($rows as $row) {
+            if ($row->status === 'pending') {
+                $this->cancelPendingOvertimeActionRequest($row);
+            }
+            $row->delete();
+        }
+    }
+
+    protected function resolvePendingOvertimeActionRequest(EmployeeOvertime $overtime, string $outcome): void
+    {
+        $actor = $this->systemActorForOrganization((int) $overtime->organization_id);
+        if ($actor === null) {
+            return;
+        }
+
+        try {
+            app(\App\Services\Notifications\ActionRequestService::class)->markResolvedFromDomain(
+                'pending_overtime',
+                'employee_overtime',
+                (int) $overtime->id,
+                $outcome,
+                $actor,
+            );
+        } catch (\Throwable $e) {
+            report($e);
+        }
+    }
+
+    protected function cancelPendingOvertimeActionRequest(EmployeeOvertime $overtime): void
+    {
+        $actor = $this->systemActorForOrganization((int) $overtime->organization_id);
+        if ($actor === null) {
+            return;
+        }
+
+        try {
+            app(\App\Services\Notifications\ActionRequestService::class)->cancelAllPendingForDomainReference(
+                $actor,
+                'employee_overtime',
+                (int) $overtime->id,
+                'Auto overtime cleared by attendance reconcile.',
+            );
+        } catch (\Throwable $e) {
+            report($e);
+        }
+    }
+
+    protected function systemActorForOrganization(int $organizationId): ?\App\Models\User
+    {
+        return \App\Models\User::query()
+            ->where('organization_id', $organizationId)
+            ->where('is_active', true)
+            ->whereNull('deleted_at')
+            ->orderByDesc('is_admin')
+            ->orderBy('id')
+            ->first();
     }
 
     protected function normalizeTime(?string $time): string

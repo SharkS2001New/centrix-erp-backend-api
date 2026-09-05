@@ -3,7 +3,9 @@
 namespace App\Services\Catalog;
 
 use App\Events\OrgCatalogPricingUpdated;
+use App\Models\Organization;
 use App\Models\User;
+use App\Services\Erp\IndustryRegistry;
 use App\Services\Notifications\InAppNotificationEvents;
 use App\Services\Notifications\InAppNotificationService;
 use App\Support\SalesReportUserScope;
@@ -385,6 +387,11 @@ class CatalogPricingBroadcastService
             ->get(['id', 'organization_id']);
 
         $notifications = app(InAppNotificationService::class);
+        $org = Organization::query()->find($organizationId);
+        $actionUrl = IndustryRegistry::isHospitality($org?->deployment_profile)
+            ? '/hotel-bar-pos'
+            : '/pos';
+
         foreach ($recipients as $recipient) {
             try {
                 $notifications->createForUser($recipient, [
@@ -393,8 +400,8 @@ class CatalogPricingBroadcastService
                     'severity' => 'default',
                     'title' => $title,
                     'message' => $message,
-                    // Visible in POS workspace filters; also reachable from mobile lists.
-                    'action_url' => '/pos',
+                    // Visible in the matching POS workspace filter.
+                    'action_url' => $actionUrl,
                     'created_by' => $actorUserId > 0 ? $actorUserId : null,
                 ]);
             } catch (\Throwable $e) {

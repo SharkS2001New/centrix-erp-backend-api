@@ -13,6 +13,8 @@ class NotificationWorkspaceFilter
         'hr' => ['hr_payroll'],
         'admin' => ['admin'],
         'pos' => ['sales'],
+        'hotel_bar_pos' => ['hospitality'],
+        'hospitality_backoffice' => ['hospitality', 'purchasing', 'inventory'],
         'distribution' => [],
     ];
 
@@ -25,6 +27,17 @@ class NotificationWorkspaceFilter
      */
     private const PREFIXES_BY_WORKSPACE = [
         'pos' => ['/pos', '/sales/pos'],
+        'hotel_bar_pos' => ['/hotel-bar-pos'],
+        'hospitality_backoffice' => [
+            '/hospitality',
+            '/inventory',
+            '/products',
+            '/categories',
+            '/uoms',
+            '/suppliers',
+            '/lpo',
+            '/purchases',
+        ],
         'backoffice' => [
             '/dashboard',
             '/sales',
