@@ -254,7 +254,58 @@ class SalesReportsTest extends TestCase
         $this->assertNotNull($posOverall);
         $this->assertSame(2, (int) ($posOverall['order_count'] ?? 0));
         $this->assertEqualsWithDelta(3500.0, (float) ($posOverall['gross_sales'] ?? 0), 0.01);
+        $this->assertEqualsWithDelta(3500.0, (float) ($posOverall['fully_paid_sales'] ?? 0), 0.01);
         $this->assertCount(1, $overallRows->where('channel', 'pos'));
+    }
+
+    public function test_sales_by_user_fully_paid_excludes_unpaid_credit_orders(): void
+    {
+        $today = now()->toDateString();
+
+        Sale::query()->create([
+            'order_num' => 995030,
+            'branch_id' => $this->admin->branch_id,
+            'organization_id' => $this->admin->organization_id,
+            'channel' => 'pos',
+            'cashier_id' => $this->admin->id,
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => 4000,
+            'total_vat' => 0,
+            'amount_paid' => 4000,
+            'archived' => 0,
+            'created_at' => now(),
+        ]);
+
+        Sale::query()->create([
+            'order_num' => 995031,
+            'branch_id' => $this->admin->branch_id,
+            'organization_id' => $this->admin->organization_id,
+            'channel' => 'pos',
+            'cashier_id' => $this->admin->id,
+            'status' => 'completed',
+            'payment_status' => 'unpaid',
+            'is_credit_sale' => 1,
+            'order_total' => 1500,
+            'total_vat' => 0,
+            'amount_paid' => 0,
+            'archived' => 0,
+            'created_at' => now(),
+        ]);
+
+        $rows = collect($this->getJson(
+            "/api/v1/reports/sales-by-user?from_date={$today}&to_date={$today}&date_column=sale_date&cashier_id={$this->admin->id}&channel=pos&per_page=50"
+        )->assertOk()->json('data'));
+
+        $pos = $rows->firstWhere('channel', 'pos');
+        $this->assertNotNull($pos);
+        $this->assertGreaterThanOrEqual(5500.0, (float) ($pos['gross_sales'] ?? 0));
+        $this->assertGreaterThanOrEqual(4000.0, (float) ($pos['fully_paid_sales'] ?? 0));
+        $this->assertLessThan(
+            (float) ($pos['gross_sales'] ?? 0),
+            (float) ($pos['fully_paid_sales'] ?? 0) + 0.01,
+            'Fully paid must stay below Gross when unpaid credit exists.',
+        );
     }
 
     public function test_dispatch_orders_match_orders_without_required_date_using_created_at(): void

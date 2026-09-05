@@ -48,6 +48,26 @@ class EmployeeOvertimeController extends HrOrgResourceController
             }
         }
 
+        if ($request->filled('from_date')) {
+            $query->whereDate('work_date', '>=', $request->input('from_date'));
+        }
+        if ($request->filled('to_date')) {
+            $query->whereDate('work_date', '<=', $request->input('to_date'));
+        }
+
+        if ($q = trim((string) $request->input('q', ''))) {
+            $query->where(function ($inner) use ($q) {
+                $inner->where('notes', 'like', "%{$q}%")
+                    ->orWhere('status', 'like', "%{$q}%")
+                    ->orWhereHas('employee', function ($emp) use ($q) {
+                        $emp->where('full_name', 'like', "%{$q}%")
+                            ->orWhere('first_name', 'like', "%{$q}%")
+                            ->orWhere('last_name', 'like', "%{$q}%")
+                            ->orWhere('employee_code', 'like', "%{$q}%");
+                    });
+            });
+        }
+
         $perPage = min((int) $request->input('per_page', 25), 200);
 
         return response()->json($query->orderByDesc('work_date')->paginate($perPage));
