@@ -102,4 +102,34 @@ return [
         'path' => '/reports/profit-loss',
         'workspace_id' => 'backoffice',
     ],
+    [
+        'topic' => 'Q: What is bank reconciliation in Centrix?',
+        'content' => 'A: Native GL matching of a bank/cash account to a bank statement. Import CSV (not Excel), match statement lines to posted book lines, Finish when |Difference| < 0.02. Path: /accounting/bank-reconciliation. Not M-Pesa/Equity recon.',
+        'path' => '/accounting/bank-reconciliation',
+        'workspace_id' => 'accounting',
+    ],
+    [
+        'topic' => 'Q: What CSV format for bank statement import?',
+        'content' => 'A: CSV/text only. Headers: date, description, reference, amount — or debit/credit (money_in/money_out). Example: date,description,reference,amount then 2026-06-01,Deposit,DEP-1,1500. Deposits positive; withdrawals negative. Dates YYYY-MM-DD preferred. Path: /accounting/bank-reconciliation.',
+        'path' => '/accounting/bank-reconciliation',
+        'workspace_id' => 'accounting',
+    ],
+    [
+        'topic' => 'Q: How do I upload and reconcile a bank statement?',
+        'content' => 'A: New reconciliation → bank account, statement date, ending balance → Bank statement tab → Import CSV → Reconcile tab (suggested/manual match, amounts within 0.02) → exclude noise → Add adjustment if needed → Finish now when Difference ≈ 0. Cleared items appear on /accounting/bank-register.',
+        'path' => '/accounting/bank-reconciliation',
+        'workspace_id' => 'accounting',
+    ],
+    [
+        'topic' => 'Q: Why is bank reconciliation difference not zero?',
+        'content' => 'A: Wrong ending balance typed, unmatched statement lines, uncleared book items, missing bank fee/interest journals, or bad matches. Match or exclude remaining lines; post missing journals; optional Add adjustment for immaterial gaps. Finish only when |Difference| < 0.02.',
+        'path' => '/accounting/bank-reconciliation',
+        'workspace_id' => 'accounting',
+    ],
+    [
+        'topic' => 'Bank reconciliation vs other recon tools',
+        'content' => 'Bank reconciliation = GL bank/cash vs bank statement CSV at /accounting/bank-reconciliation. M-Pesa, Equity, and Centrix Payments recon are separate payment-channel tools. Subledger recon compares AR/AP control accounts to operational balances — different again.',
+        'path' => '/accounting/bank-reconciliation',
+        'workspace_id' => 'accounting',
+    ],
 ];

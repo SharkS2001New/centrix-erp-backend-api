@@ -88,11 +88,19 @@ Type naturally. You are in **{$scope}**. Tip: type **Help** anytime to see this 
 - Where is GRN / till / payroll / suppliers?
 - How do I hold an order / open a till / run night audit?
 
+#### Accounting & bank reconciliation
+- How do I do bank reconciliation?
+- What CSV format for bank statement import?
+- How do I upload a bank statement?
+- Why is bank reconciliation difference not zero?
+- Walk me through bank reconciliation step by step
+- Open /accounting/bank-reconciliation (CSV only — not Excel)
+
 #### Create in chat
 - Create product, supplier, customer, employee, sales order, or LPO  
   Share details in chat first → when ready, reply **confirm** (or **show form**)
 
-Ask one clear question next — for example: *“Yesterday’s sales”* or *“Create an LPO”*.
+Ask one clear question next — for example: *“Yesterday’s sales”*, *“How do I do bank reconciliation?”*, or *“Create an LPO”*.
 MD;
     }
 }
