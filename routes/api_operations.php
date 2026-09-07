@@ -398,7 +398,14 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('kra/device-health', [KraOperationsController::class, 'deviceHealth']);
         Route::post('kra/device-init', [KraOperationsController::class, 'deviceInit']);
         Route::post('kra/device-restart', [KraOperationsController::class, 'deviceRestart']);
+        Route::post('kra/agent-package', [\App\Http\Controllers\Api\V1\KraAgentController::class, 'issueAgentPackage']);
+        Route::get('kra/agent/status', [\App\Http\Controllers\Api\V1\KraAgentController::class, 'status']);
     });
+
+    // Shop-PC CentrixKraAgent — Sanctum agent token only (no admin.manage).
+    Route::get('kra/agent/commands/pending', [\App\Http\Controllers\Api\V1\KraAgentController::class, 'pendingCommands']);
+    Route::post('kra/agent/heartbeat', [\App\Http\Controllers\Api\V1\KraAgentController::class, 'heartbeat']);
+    Route::post('kra/agent/commands/{commandId}/result', [\App\Http\Controllers\Api\V1\KraAgentController::class, 'commandResult']);
 
     // ---- Reports ----
     Route::middleware(['erp.report_module'])->prefix('reports')->group(function () {

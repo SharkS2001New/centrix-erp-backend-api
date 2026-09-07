@@ -27,7 +27,7 @@ class EnsureSessionNotIdle
 
         // Machine tokens for CentrixAttendanceAgent — must survive overnight PC sleep
         // and must not be treated as interactive browser sessions.
-        if (\App\Support\AttendanceAgentToken::isAgentTokenName($accessToken->name ?? null)) {
+        if (\App\Support\LocalAgentTokens::isAnyAgentTokenName($accessToken->name ?? null)) {
             return $next($request);
         }
 

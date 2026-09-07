@@ -56,6 +56,7 @@ use App\Http\Controllers\Api\V1\InventoryTransactionController;
 use App\Http\Controllers\Api\V1\JournalEntryController;
 use App\Http\Controllers\Api\V1\JournalEntryLineController;
 use App\Http\Controllers\Api\V1\KraResponseController;
+use App\Http\Controllers\Api\V1\KraAgentController;
 use App\Http\Controllers\Api\V1\Operations\KraOperationsController;
 use App\Http\Controllers\Api\V1\LoyaltyCardController;
 use App\Http\Controllers\Api\V1\LpoAttachmentController;
@@ -729,6 +730,8 @@ Route::prefix('v1')->group(function () {
                 Route::post('kra/device-health', [KraOperationsController::class, 'deviceHealth']);
                 Route::post('kra/device-init', [KraOperationsController::class, 'deviceInit']);
                 Route::post('kra/device-restart', [KraOperationsController::class, 'deviceRestart']);
+                Route::post('kra/agent-package', [KraAgentController::class, 'issueAgentPackage']);
+                Route::get('kra/agent/status', [KraAgentController::class, 'status']);
                 Route::post('kra-responses/{kraResponse}/retry', [KraOperationsController::class, 'retry']);
                 Route::post('kra-responses/{kraResponse}/credit', [KraOperationsController::class, 'credit'])
                     ->middleware(['erp.permission:pricing_tax.kra_invoices.credit|admin.manage']);

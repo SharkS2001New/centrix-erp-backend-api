@@ -697,6 +697,8 @@ return [
             'enable_equity_bank' => true,
             'enable_kra_integration' => true,
             'enable_kra_device' => false,
+            /** Cloud Centrix → shop CentrixKraAgent → local Comstore (kra_device_ip). */
+            'enable_kra_agent' => false,
             'kra_device_ip' => '',
             /** Smart VSCU hardware IP for POST /api/init and /api/restart-device (when API URL is a hostname). */
             'kra_device_hardware_ip' => '',

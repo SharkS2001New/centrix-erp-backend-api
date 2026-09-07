@@ -422,7 +422,7 @@ class AuthSessionService
         }
 
         if ($forceLogout) {
-            \App\Support\AttendanceAgentToken::excludeFromQuery($authUser->tokens())->delete();
+            \App\Support\LocalAgentTokens::excludeFromQuery($authUser->tokens())->delete();
         } else {
             $this->pruneStaleTokens($authUser);
             $authUser->tokens()->where('name', $clientId)->delete();
@@ -476,6 +476,7 @@ class AuthSessionService
         // Expired tokens are never valid sessions.
         $authUser->tokens()
             ->where('name', 'not like', \App\Support\AttendanceAgentToken::NAME_PREFIX.'%')
+            ->where('name', 'not like', \App\Support\KraAgentToken::NAME_PREFIX.'%')
             ->whereNotNull('expires_at')
             ->where('expires_at', '<=', now())
             ->delete();
@@ -486,6 +487,7 @@ class AuthSessionService
         $abandonedCutoff = now()->subMinutes(2);
         $authUser->tokens()
             ->where('name', 'not like', \App\Support\AttendanceAgentToken::NAME_PREFIX.'%')
+            ->where('name', 'not like', \App\Support\KraAgentToken::NAME_PREFIX.'%')
             ->whereNull('last_used_at')
             ->where('created_at', '<', $abandonedCutoff)
             ->delete();
@@ -495,6 +497,7 @@ class AuthSessionService
             $idleCutoff = now()->subMinutes($idleMinutes);
             $authUser->tokens()
                 ->where('name', 'not like', \App\Support\AttendanceAgentToken::NAME_PREFIX.'%')
+            ->where('name', 'not like', \App\Support\KraAgentToken::NAME_PREFIX.'%')
                 ->where(function ($query) use ($idleCutoff) {
                     $query
                         ->where(function ($q) use ($idleCutoff) {
@@ -515,6 +518,7 @@ class AuthSessionService
         $authUser->tokens()
             ->where('name', '!=', $clientId)
             ->where('name', 'not like', \App\Support\AttendanceAgentToken::NAME_PREFIX.'%')
+            ->where('name', 'not like', \App\Support\KraAgentToken::NAME_PREFIX.'%')
             ->whereNull('last_used_at')
             ->where('created_at', '<', now()->subMinutes(2))
             ->delete();

@@ -10,6 +10,10 @@ use InvalidArgumentException;
 
 class KraDeviceService
 {
+    protected ?KraAgentBridge $agentBridge = null;
+
+    protected ?\App\Models\KraAgent $kraAgent = null;
+
     public function __construct(
         protected string $deviceBaseUrl,
         protected string $serialNumber,
@@ -17,23 +21,51 @@ class KraDeviceService
         protected bool $isTest = false,
     ) {}
 
-    public static function fromSettings(array $financeSettings): self
+    public static function fromSettings(array $financeSettings, ?int $organizationId = null): self
     {
         $base = trim((string) ($financeSettings['kra_device_ip'] ?? ''));
         if ($base === '') {
-            throw new InvalidArgumentException('KRA device IP / URL is not configured.');
+            // Agent mode defaults local Comstore URL when not set yet.
+            if (! empty($financeSettings['enable_kra_agent'])) {
+                $base = 'http://127.0.0.1:4000';
+            } else {
+                throw new InvalidArgumentException('KRA device IP / URL is not configured.');
+            }
         }
 
         if (! str_starts_with($base, 'http://') && ! str_starts_with($base, 'https://')) {
             $base = 'http://' . $base;
         }
 
-        return new self(
+        $service = new self(
             rtrim($base, '/'),
             trim((string) ($financeSettings['kra_serial_number'] ?? '')),
             trim((string) ($financeSettings['kra_pin_number'] ?? '')),
             (bool) ($financeSettings['kra_device_test_mode'] ?? config('app.env') !== 'production'),
         );
+
+        $orgId = $organizationId
+            ?? (int) ($financeSettings['_organization_id'] ?? 0);
+        if (! empty($financeSettings['enable_kra_agent']) && $orgId > 0) {
+            $bridge = app(KraAgentBridge::class);
+            $agent = $bridge->resolveOrCreateForOrganization($orgId, $financeSettings);
+            $service->useAgentBridge($bridge, $agent);
+        }
+
+        return $service;
+    }
+
+    public function useAgentBridge(KraAgentBridge $bridge, \App\Models\KraAgent $agent): self
+    {
+        $this->agentBridge = $bridge;
+        $this->kraAgent = $agent;
+
+        return $this;
+    }
+
+    public function usesAgentBridge(): bool
+    {
+        return $this->agentBridge !== null && $this->kraAgent !== null;
     }
 
     public function sendSale(array $orderItems, float $totalAmount, string $invoiceNumber, ?string $buyerPin = null): array
@@ -588,7 +620,21 @@ class KraDeviceService
     /** @param  array<string, mixed>|null  $responseData */
     protected function deviceResponseSuccessful(\Illuminate\Http\Client\Response $response, ?array $responseData, string $path): bool
     {
-        if (! $response->successful()) {
+        return $this->deviceResponseSuccessfulFromParts(
+            $response->successful(),
+            $response->status(),
+            $responseData,
+            $path,
+        );
+    }
+
+    protected function deviceResponseSuccessfulFromParts(
+        bool $httpSuccessful,
+        int $httpStatus,
+        ?array $responseData,
+        string $path,
+    ): bool {
+        if (! $httpSuccessful) {
             return false;
         }
 
@@ -757,6 +803,40 @@ class KraDeviceService
         $url = $this->deviceBaseUrl.'/api/health';
 
         try {
+            if ($this->usesAgentBridge()) {
+                $proxied = $this->agentBridge->executeViaAgent(
+                    $this->kraAgent,
+                    'GET',
+                    '/api/health',
+                    null,
+                    'json',
+                    false,
+                    KraAgentBridge::HEALTH_WAIT_SECONDS,
+                );
+                $body = json_decode($proxied['body'], true);
+                $httpOk = $proxied['status'] >= 200 && $proxied['status'] < 300;
+                $isArray = is_array($body);
+                $statusOk = ! $isArray || ! isset($body['status'])
+                    || strtoupper((string) $body['status']) === 'OK';
+                $deviceConnected = ! $isArray || ! isset($body['deviceConnection'])
+                    || strcasecmp((string) $body['deviceConnection'], 'Connected') === 0;
+                $successful = $httpOk && $statusOk && $deviceConnected;
+                $message = $this->healthMessage($body, $httpOk, $statusOk, $deviceConnected);
+
+                return [
+                    'success' => $successful,
+                    'reachable' => true,
+                    'via_agent' => true,
+                    'http_status' => $proxied['status'],
+                    'url' => $url,
+                    'message' => $message,
+                    'device_connection' => $isArray ? ($body['deviceConnection'] ?? null) : null,
+                    'api_service' => $isArray ? ($body['apiService'] ?? null) : null,
+                    'device_version' => $isArray ? ($body['version'] ?? null) : null,
+                    'response' => $isArray ? $body : ['body' => $proxied['body']],
+                ];
+            }
+
             $response = Http::timeout(8)
                 ->acceptJson()
                 ->get($url);
@@ -789,6 +869,7 @@ class KraDeviceService
             return [
                 'success' => false,
                 'reachable' => false,
+                'via_agent' => $this->usesAgentBridge(),
                 'http_status' => null,
                 'url' => $url,
                 'message' => KraDeviceErrorTranslator::userMessage('Could not reach KRA device: '.$e->getMessage()),
@@ -876,6 +957,54 @@ class KraDeviceService
         $url = $this->deviceBaseUrl . $path;
 
         try {
+            if ($this->usesAgentBridge()) {
+                $proxied = $this->agentBridge->executeViaAgent(
+                    $this->kraAgent,
+                    'POST',
+                    $path,
+                    $payload,
+                    'json',
+                    false,
+                    KraAgentBridge::COMMAND_WAIT_SECONDS,
+                );
+                $responseData = json_decode($proxied['body'], true);
+                $httpSuccessful = $proxied['status'] >= 200 && $proxied['status'] < 300;
+                $successful = $this->deviceResponseSuccessfulFromParts(
+                    $httpSuccessful,
+                    $proxied['status'],
+                    is_array($responseData) ? $responseData : null,
+                    $path,
+                );
+
+                if (! $httpSuccessful && is_array($responseData) && ! empty($responseData['message'])) {
+                    return $this->deviceFailureResult(
+                        (string) $responseData['message'],
+                        $payload,
+                        $this->mapResponse($responseData),
+                    );
+                }
+
+                $rawMessage = is_array($responseData)
+                    ? ($responseData['message'] ?? $responseData['Message'] ?? $proxied['body'])
+                    : $proxied['body'];
+
+                if (! $successful) {
+                    return $this->deviceFailureResult(
+                        (string) $rawMessage,
+                        $payload,
+                        $this->mapResponse(is_array($responseData) ? $responseData : null),
+                    );
+                }
+
+                return [
+                    'success' => true,
+                    'message' => $rawMessage,
+                    'payload' => $payload,
+                    'response' => $this->mapResponse(is_array($responseData) ? $responseData : null),
+                    'via_agent' => true,
+                ];
+            }
+
             // Connect fast-fail: a flapping device IP must not pin PHP workers for
             // 60s × 3 attempts (~3 min) — that queues every other POS request
             // (cart save, search, checkout) behind the dead fiscal call.
@@ -923,6 +1052,7 @@ class KraDeviceService
         } catch (\Throwable $e) {
             Log::error('KRA device API error: ' . $e->getMessage(), array_merge([
                 'url' => $url,
+                'via_agent' => $this->usesAgentBridge(),
             ], $context));
 
             return $this->deviceFailureResult('Exception: ' . $e->getMessage(), $payload);

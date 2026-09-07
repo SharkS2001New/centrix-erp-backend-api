@@ -153,6 +153,7 @@ class OrganizationLicenseService
             ->where('tokenable_type', User::class)
             ->whereIn('tokenable_id', $userIds)
             ->where('name', 'not like', \App\Support\AttendanceAgentToken::NAME_PREFIX.'%')
+            ->where('name', 'not like', \App\Support\KraAgentToken::NAME_PREFIX.'%')
             ->delete();
     }
 

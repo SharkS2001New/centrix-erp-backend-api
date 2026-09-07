@@ -218,6 +218,7 @@ class UserController extends BaseResourceController
             }
             $model->tokens()
                 ->where('name', 'not like', \App\Support\AttendanceAgentToken::NAME_PREFIX.'%')
+            ->where('name', 'not like', \App\Support\KraAgentToken::NAME_PREFIX.'%')
                 ->delete();
         } else {
             unset($data['must_change_password']);
@@ -311,7 +312,7 @@ class UserController extends BaseResourceController
         // Role / org-admin changes must take effect on the next request — drop sessions
         // so clients cannot keep serving a stale permission map.
         if ($accessChanging && $fresh) {
-            \App\Support\AttendanceAgentToken::excludeFromQuery($fresh->tokens())->delete();
+            \App\Support\LocalAgentTokens::excludeFromQuery($fresh->tokens())->delete();
         }
 
         return response()->json($this->presentUser($fresh));

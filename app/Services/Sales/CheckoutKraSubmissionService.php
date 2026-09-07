@@ -46,7 +46,10 @@ class CheckoutKraSubmissionService
 
         $invoiceNumber = 'POS-'.$sale->order_num;
         try {
-            $service = KraDeviceService::fromSettings($finance);
+            $service = KraDeviceService::fromSettings(
+                $finance,
+                $gate->organization()?->id ? (int) $gate->organization()->id : null,
+            );
             // Cheap health probe first (8s, no retries). If Comstore/IP is flapping,
             // soft-skip fiscalization instead of blocking checkout on a long POST.
             $health = $service->checkHealth();

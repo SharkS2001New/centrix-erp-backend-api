@@ -826,6 +826,7 @@ class ErpSettingsController extends Controller
             'enable_mpesa_stk' => 'sometimes|boolean',
             'enable_kra_integration' => 'sometimes|boolean',
             'enable_kra_device' => 'sometimes|boolean',
+            'enable_kra_agent' => 'sometimes|boolean',
             'kra_device_ip' => 'sometimes|nullable|string|max:250',
             'kra_device_hardware_ip' => 'sometimes|nullable|string|max:100',
             'kra_serial_number' => 'sometimes|nullable|string|max:100',
@@ -887,9 +888,17 @@ class ErpSettingsController extends Controller
             $ip = trim((string) ($data['kra_device_ip'] ?? $gate->moduleSettings('finance')['kra_device_ip'] ?? ''));
             $serial = trim((string) ($data['kra_serial_number'] ?? $gate->moduleSettings('finance')['kra_serial_number'] ?? ''));
             $pin = trim((string) ($data['kra_pin_number'] ?? $gate->moduleSettings('finance')['kra_pin_number'] ?? ''));
+            $agentMode = ! empty($data['enable_kra_agent'])
+                || ! empty($gate->moduleSettings('finance')['enable_kra_agent']);
+            if ($ip === '' && $agentMode) {
+                $ip = 'http://127.0.0.1:4000';
+                $data['kra_device_ip'] = $ip;
+            }
             if ($ip === '' || $serial === '' || $pin === '') {
                 throw ValidationException::withMessages([
-                    'enable_kra_device' => 'KRA device IP, serial number, and shop PIN are required when the device is enabled.',
+                    'enable_kra_device' => $agentMode
+                        ? 'KRA serial number and shop PIN are required when the device is enabled (local Comstore URL defaults to http://127.0.0.1:4000 for the shop agent).'
+                        : 'KRA device IP, serial number, and shop PIN are required when the device is enabled.',
                 ]);
             }
         }
@@ -1515,7 +1524,7 @@ class ErpSettingsController extends Controller
     {
         if (! $gate->kraIntegrationPlatformEnabled()) {
             foreach ([
-                'enable_kra_device', 'kra_device_ip', 'kra_device_hardware_ip', 'kra_serial_number', 'kra_pin_number',
+                'enable_kra_device', 'enable_kra_agent', 'kra_device_ip', 'kra_device_hardware_ip', 'kra_serial_number', 'kra_pin_number',
                 'kra_device_test_mode', 'kra_plu_register_path', 'default_submit_kra', 'kra_bypass_above_amount',
             ] as $key) {
                 unset($finance[$key]);

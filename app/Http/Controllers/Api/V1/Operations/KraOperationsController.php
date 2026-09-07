@@ -22,9 +22,10 @@ class KraOperationsController extends Controller
 
     public function deviceStatus(Request $request)
     {
-        $user = $request->user();
-        $finance = $this->erp->gateForRequest($request)->moduleSettings('finance');
+        $gate = $this->erp->gateForRequest($request);
+        $finance = $gate->moduleSettings('finance');
         $configured = KraFiscalPolicy::isDeviceConfigured($finance);
+        $orgId = $gate->organization()?->id ? (int) $gate->organization()->id : null;
 
         $status = [
             'enabled' => $configured,
@@ -34,6 +35,7 @@ class KraOperationsController extends Controller
             'device_hardware_ip' => trim((string) ($finance['kra_device_hardware_ip'] ?? '')),
             'serial_number' => trim((string) ($finance['kra_serial_number'] ?? '')),
             'test_mode' => (bool) ($finance['kra_device_test_mode'] ?? false),
+            'enable_kra_agent' => (bool) ($finance['enable_kra_agent'] ?? false),
             'reachable' => false,
             'device_connection' => null,
             'message' => $configured ? 'Device not probed yet.' : 'KRA device is not configured.',
@@ -49,8 +51,9 @@ class KraOperationsController extends Controller
 
         try {
             $testFinance = array_merge($finance, ['enable_kra_device' => true]);
-            $result = KraDeviceService::fromSettings($testFinance)->checkHealth();
+            $result = KraDeviceService::fromSettings($testFinance, $orgId)->checkHealth();
             $status['reachable'] = (bool) ($result['reachable'] ?? false);
+            $status['via_agent'] = (bool) ($result['via_agent'] ?? false);
             $status['health_url'] = $result['url'] ?? null;
             $status['http_status'] = $result['http_status'] ?? null;
             $status['device_connection'] = $result['device_connection'] ?? null;
@@ -69,20 +72,23 @@ class KraOperationsController extends Controller
 
     public function deviceHealth(Request $request)
     {
-        $user = $request->user();
-        $finance = $this->erp->gateForRequest($request)->moduleSettings('finance');
+        $gate = $this->erp->gateForRequest($request);
+        $finance = $gate->moduleSettings('finance');
+        $orgId = $gate->organization()?->id ? (int) $gate->organization()->id : null;
 
         $draft = $request->validate([
             'kra_device_ip' => 'sometimes|nullable|string|max:250',
             'kra_device_hardware_ip' => 'sometimes|nullable|string|max:100',
             'kra_serial_number' => 'sometimes|nullable|string|max:100',
             'kra_device_test_mode' => 'sometimes|boolean',
+            'enable_kra_agent' => 'sometimes|boolean',
         ]);
 
         $testFinance = array_merge($finance, $draft, ['enable_kra_device' => true]);
 
         $ip = trim((string) ($testFinance['kra_device_ip'] ?? ''));
-        if ($ip === '') {
+        $agentMode = ! empty($testFinance['enable_kra_agent']);
+        if ($ip === '' && ! $agentMode) {
             return response()->json([
                 'success' => false,
                 'message' => 'Enter the device IP / URL before testing the connection.',
@@ -90,7 +96,7 @@ class KraOperationsController extends Controller
         }
 
         try {
-            $result = KraDeviceService::fromSettings($testFinance)->checkHealth();
+            $result = KraDeviceService::fromSettings($testFinance, $orgId)->checkHealth();
         } catch (InvalidArgumentException $e) {
             return response()->json([
                 'success' => false,
@@ -110,8 +116,9 @@ class KraOperationsController extends Controller
 
     public function deviceInit(Request $request)
     {
-        $user = $request->user();
-        $finance = $this->erp->gateForRequest($request)->moduleSettings('finance');
+        $gate = $this->erp->gateForRequest($request);
+        $finance = $gate->moduleSettings('finance');
+        $orgId = $gate->organization()?->id ? (int) $gate->organization()->id : null;
 
         $draft = $this->validateKraDeviceDraft($request);
 
@@ -134,7 +141,7 @@ class KraOperationsController extends Controller
         }
 
         try {
-            $result = KraDeviceService::fromSettings($testFinance)->initializeDevice($hardwareIp);
+            $result = KraDeviceService::fromSettings($testFinance, $orgId)->initializeDevice($hardwareIp);
         } catch (InvalidArgumentException $e) {
             return response()->json([
                 'success' => false,
@@ -154,8 +161,9 @@ class KraOperationsController extends Controller
 
     public function deviceRestart(Request $request)
     {
-        $user = $request->user();
-        $finance = $this->erp->gateForRequest($request)->moduleSettings('finance');
+        $gate = $this->erp->gateForRequest($request);
+        $finance = $gate->moduleSettings('finance');
+        $orgId = $gate->organization()?->id ? (int) $gate->organization()->id : null;
 
         $draft = $this->validateKraDeviceDraft($request);
         $testFinance = array_merge($finance, $draft, ['enable_kra_device' => true]);
@@ -169,7 +177,7 @@ class KraOperationsController extends Controller
         }
 
         try {
-            $result = KraDeviceService::fromSettings($testFinance)->restartDevice($hardwareIp);
+            $result = KraDeviceService::fromSettings($testFinance, $orgId)->restartDevice($hardwareIp);
         } catch (InvalidArgumentException $e) {
             return response()->json([
                 'success' => false,
@@ -216,12 +224,16 @@ class KraOperationsController extends Controller
             return response()->json(['message' => 'Linked sale not found.'], 422);
         }
 
-        $finance = $this->erp->gateForRequest($request)->moduleSettings('finance');
+        $gate = $this->erp->gateForRequest($request);
+        $finance = $gate->moduleSettings('finance');
         if (empty($finance['enable_kra_device'])) {
             return response()->json(['message' => 'Enable KRA device in Finance settings first.'], 422);
         }
 
-        $service = KraDeviceService::fromSettings($finance);
+        $service = KraDeviceService::fromSettings(
+            $finance,
+            $gate->organization()?->id ? (int) $gate->organization()->id : null,
+        );
         $allocator = app(\App\Services\Kra\KraTraderInvoiceAllocator::class);
         $invoiceNumber = $allocator->extractFromKraResponse($row)
             ?: $service->traderInvoiceForSale($sale, $finance);

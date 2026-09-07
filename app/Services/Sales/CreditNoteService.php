@@ -149,7 +149,10 @@ class CreditNoteService
         }
 
         try {
-            $service = KraDeviceService::fromSettings($financeSettings);
+            $service = KraDeviceService::fromSettings(
+                $financeSettings,
+                (int) ($return->organization_id ?? $sale?->organization_id ?? 0) ?: null,
+            );
             $orderItems = $return->lines
                 ->filter(fn ($line) => (float) $line->amount > 0)
                 ->map(function ($line) {
@@ -326,7 +329,10 @@ class CreditNoteService
         $reasonCode = KraRefundReasonMapper::normalizeCode($refundReasonCode)
             ?? KraRefundReasonMapper::fromReturnReason(null);
 
-        $service = KraDeviceService::fromSettings($financeSettings);
+        $service = KraDeviceService::fromSettings(
+            $financeSettings,
+            (int) ($sale->organization_id ?? 0) ?: null,
+        );
         $invoiceNumber = app(KraTraderInvoiceAllocator::class)
             ->forOrganization((int) $sale->organization_id);
 

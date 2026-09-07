@@ -100,7 +100,8 @@ class KraProductRegistrationController extends Controller
 
         $products = $query->with(['vat', 'unit'])->orderBy('product_name')->get();
         $path = trim((string) ($finance['kra_plu_register_path'] ?? '/api/register-plu'));
-        $service = KraDeviceService::fromSettings($finance);
+        $org = $this->erp->resolveOrganization($request);
+        $service = KraDeviceService::fromSettings($finance, $org?->id ? (int) $org->id : null);
         $result = $service->registerProducts($products->all(), $path, $finance);
 
         KraDeviceFailure::abortUnlessSuccess($result, 'KRA product registration failed.');
