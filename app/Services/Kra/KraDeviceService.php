@@ -27,7 +27,7 @@ class KraDeviceService
         if ($base === '') {
             // Agent mode defaults local Comstore URL when not set yet.
             if (! empty($financeSettings['enable_kra_agent'])) {
-                $base = 'http://127.0.0.1:4000';
+                $base = 'http://localhost:4000';
             } else {
                 throw new InvalidArgumentException('KRA device IP / URL is not configured.');
             }
@@ -37,8 +37,12 @@ class KraDeviceService
             $base = 'http://' . $base;
         }
 
+        $base = rtrim($base, '/');
+        // localhost and 127.0.0.1 are both valid for on-prem Comstore / agent.
+        $base = app(KraAgentBridge::class)->normalizeComstoreUrl($base);
+
         $service = new self(
-            rtrim($base, '/'),
+            $base,
             trim((string) ($financeSettings['kra_serial_number'] ?? '')),
             trim((string) ($financeSettings['kra_pin_number'] ?? '')),
             (bool) ($financeSettings['kra_device_test_mode'] ?? config('app.env') !== 'production'),
@@ -46,6 +50,7 @@ class KraDeviceService
 
         $orgId = $organizationId
             ?? (int) ($financeSettings['_organization_id'] ?? 0);
+        // Direct mode (legacy): cloud HTTP → kra_device_ip. Agent only when explicitly enabled.
         if (! empty($financeSettings['enable_kra_agent']) && $orgId > 0) {
             $bridge = app(KraAgentBridge::class);
             $agent = $bridge->resolveOrCreateForOrganization($orgId, $financeSettings);
@@ -66,6 +71,17 @@ class KraDeviceService
     public function usesAgentBridge(): bool
     {
         return $this->agentBridge !== null && $this->kraAgent !== null;
+    }
+
+    /** Agent checked in recently — safe to skip the extra health hop on checkout. */
+    public function agentIsWarm(): bool
+    {
+        if (! $this->usesAgentBridge()) {
+            return false;
+        }
+
+        return $this->agentBridge->isAgentOnline($this->kraAgent)
+            || $this->agentBridge->hasRecentCheckIn($this->kraAgent);
     }
 
     public function sendSale(array $orderItems, float $totalAmount, string $invoiceNumber, ?string $buyerPin = null): array

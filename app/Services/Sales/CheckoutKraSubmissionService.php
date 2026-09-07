@@ -50,26 +50,37 @@ class CheckoutKraSubmissionService
                 $finance,
                 $gate->organization()?->id ? (int) $gate->organization()->id : null,
             );
-            // Cheap health probe first (8s, no retries). If Comstore/IP is flapping,
-            // soft-skip fiscalization instead of blocking checkout on a long POST.
-            $health = $service->checkHealth();
-            if (! ($health['success'] ?? false)) {
-                $healthMessage = trim((string) ($health['message'] ?? ''));
-                if ($healthMessage === '') {
-                    $healthMessage = 'KRA device is unreachable or disconnected.';
+            // Agent path: skip health when the shop agent is online — one less round-trip.
+            // Direct Comstore path still probes health first (flapping device soft-skip).
+            $skipHealth = $service->usesAgentBridge() && $service->agentIsWarm();
+            if (! $skipHealth) {
+                $health = $service->checkHealth();
+                if (! ($health['success'] ?? false)) {
+                    $healthMessage = trim((string) ($health['message'] ?? ''));
+                    if ($healthMessage === '') {
+                        $healthMessage = 'KRA device is unreachable or disconnected.';
+                    }
+                    Log::warning('KRA soft-skip on checkout — device health failed before fiscalize', [
+                        'sale_id' => $sale->id,
+                        'message' => $healthMessage,
+                        'reachable' => $health['reachable'] ?? null,
+                        'device_connection' => $health['device_connection'] ?? null,
+                    ]);
+                    $result = [
+                        'success' => false,
+                        'message' => KraDeviceErrorTranslator::userMessage($healthMessage),
+                        'payload' => null,
+                        'response' => is_array($health['response'] ?? null) ? $health['response'] : null,
+                    ];
+                } else {
+                    $invoiceNumber = $service->traderInvoiceForSale($sale, $finance);
+                    $result = $service->sendSale(
+                        $orderItems,
+                        (float) $sale->order_total,
+                        $invoiceNumber,
+                        $buyerPin,
+                    );
                 }
-                Log::warning('KRA soft-skip on checkout — device health failed before fiscalize', [
-                    'sale_id' => $sale->id,
-                    'message' => $healthMessage,
-                    'reachable' => $health['reachable'] ?? null,
-                    'device_connection' => $health['device_connection'] ?? null,
-                ]);
-                $result = [
-                    'success' => false,
-                    'message' => KraDeviceErrorTranslator::userMessage($healthMessage),
-                    'payload' => null,
-                    'response' => is_array($health['response'] ?? null) ? $health['response'] : null,
-                ];
             } else {
                 $invoiceNumber = $service->traderInvoiceForSale($sale, $finance);
                 $result = $service->sendSale(

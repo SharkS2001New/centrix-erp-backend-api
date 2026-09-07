@@ -87,7 +87,8 @@ class KraAgentBridge
             'last_seen_at' => AppTimezone::toIso8601($agent->agent_last_seen_at),
             'version' => $agent->agent_version,
             'comstore_base_url' => $agent->comstore_base_url,
-            'poll_interval_seconds' => 1,
+            'poll_interval_seconds' => 0.05,
+            'long_poll_ms' => 2000,
             'online_ttl_seconds' => $this->onlineTtlSeconds(),
         ];
     }
@@ -130,13 +131,30 @@ class KraAgentBridge
     {
         $base = trim($base);
         if ($base === '') {
-            return 'http://127.0.0.1:4000';
+            return 'http://localhost:4000';
         }
         if (! str_starts_with($base, 'http://') && ! str_starts_with($base, 'https://')) {
             $base = 'http://'.$base;
         }
 
-        return rtrim($base, '/');
+        $base = rtrim($base, '/');
+
+        // Accept localhost and 127.0.0.1 interchangeably for local Comstore.
+        $parts = parse_url($base);
+        if (is_array($parts) && isset($parts['host'])) {
+            $host = strtolower((string) $parts['host']);
+            if ($host === '127.0.0.1' || $host === 'localhost' || $host === '::1') {
+                $scheme = strtolower((string) ($parts['scheme'] ?? 'http'));
+                $port = isset($parts['port']) ? ':'.$parts['port'] : '';
+                $path = (string) ($parts['path'] ?? '');
+                // Prefer the host the user typed (localhost vs 127.0.0.1); keep ::1 as localhost.
+                $normalizedHost = $host === '::1' ? 'localhost' : (string) $parts['host'];
+
+                return $scheme.'://'.$normalizedHost.$port.$path;
+            }
+        }
+
+        return $base;
     }
 
     /**
@@ -231,7 +249,7 @@ class KraAgentBridge
                 );
             }
 
-            usleep(100_000);
+            usleep(50_000);
         } while (microtime(true) < $deadline);
 
         KraAgentCommand::query()

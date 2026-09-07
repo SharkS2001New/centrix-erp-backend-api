@@ -56,7 +56,7 @@ class KraAgentController extends Controller
                 'organizationId' => (int) $org->id,
                 'agentId' => (int) $agent->id,
                 'comstoreBaseUrl' => $agent->comstore_base_url,
-                'pollIntervalSeconds' => 1,
+                'longPollMs' => 2000,
                 'heartbeatIntervalSeconds' => 60,
                 'commandTimeoutSeconds' => 50,
             ],
@@ -109,11 +109,24 @@ class KraAgentController extends Controller
     {
         $agent = $this->resolveAgentForToken($request);
         $version = trim((string) $request->input('agent_version', $request->query('agent_version', '')));
-        $commands = $this->bridge->pullPendingCommands(
-            $agent,
-            min(10, max(1, (int) $request->input('limit', 5))),
-            $version !== '' ? $version : null,
-        );
+        $waitMs = min(10_000, max(0, (int) $request->input('wait_ms', $request->query('wait_ms', 0))));
+        $deadline = microtime(true) + ($waitMs / 1000);
+        $commands = [];
+
+        do {
+            $commands = $this->bridge->pullPendingCommands(
+                $agent,
+                min(10, max(1, (int) $request->input('limit', 5))),
+                $version !== '' ? $version : null,
+            );
+            if ($commands !== []) {
+                break;
+            }
+            if ($waitMs <= 0 || microtime(true) >= $deadline) {
+                break;
+            }
+            usleep(50_000);
+        } while (true);
 
         return response()->json([
             'commands' => $commands,

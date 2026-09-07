@@ -891,16 +891,18 @@ class ErpSettingsController extends Controller
             $agentMode = ! empty($data['enable_kra_agent'])
                 || ! empty($gate->moduleSettings('finance')['enable_kra_agent']);
             if ($ip === '' && $agentMode) {
-                $ip = 'http://127.0.0.1:4000';
+                $ip = 'http://localhost:4000';
                 $data['kra_device_ip'] = $ip;
             }
             if ($ip === '' || $serial === '' || $pin === '') {
                 throw ValidationException::withMessages([
                     'enable_kra_device' => $agentMode
-                        ? 'KRA serial number and shop PIN are required when the device is enabled (local Comstore URL defaults to http://127.0.0.1:4000 for the shop agent).'
+                        ? 'KRA serial number and shop PIN are required when the device is enabled (local Comstore URL defaults to http://localhost:4000 for the shop agent).'
                         : 'KRA device IP, serial number, and shop PIN are required when the device is enabled.',
                 ]);
             }
+            // Persist a clean URL (allows localhost or 127.0.0.1).
+            $data['kra_device_ip'] = app(\App\Services\Kra\KraAgentBridge::class)->normalizeComstoreUrl($ip);
         }
 
         if (! $user->is_super_admin && array_key_exists('mpesa', $data) && is_array($data['mpesa']) && ! $gate->mpesaStkPlatformEnabled()) {
