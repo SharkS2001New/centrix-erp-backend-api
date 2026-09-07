@@ -59,6 +59,13 @@ class KraAgentController extends Controller
                 'longPollMs' => 2000,
                 'heartbeatIntervalSeconds' => 60,
                 'commandTimeoutSeconds' => 50,
+                'autoStartComstore' => true,
+                'comstoreWindowsServiceNames' => [],
+                'comstoreExecutablePath' => '',
+                'comstoreExecutableArgs' => '',
+                'comstoreStartCommand' => '',
+                'comstoreStartWorkingDirectory' => '',
+                'comstoreReadyTimeoutSeconds' => 45,
             ],
         ]);
     }
@@ -81,17 +88,55 @@ class KraAgentController extends Controller
 
         return response()->json(array_merge($status, [
             'enabled' => (bool) ($finance['enable_kra_agent'] ?? false),
-            'message' => $status['online']
-                ? 'KRA agent is online.'
-                : 'KRA agent is offline. Start the Windows service on the shop PC.',
+            'message' => $this->statusMessage($status, $finance),
         ]));
+    }
+
+    protected function statusMessage(array $status, array $finance): string
+    {
+        if (empty($finance['enable_kra_agent'])) {
+            return 'Shop PC agent is disabled. Centrix will call the Device IP / URL directly.';
+        }
+        if (! ($status['online'] ?? false)) {
+            return 'KRA agent is offline. Start the Windows service on the shop PC.';
+        }
+        if (! empty($status['manual_start_required']) || ($status['comstore_reachable'] ?? null) === false) {
+            return KraAgentBridge::comstoreManualStartUserMessage(
+                (string) ($status['comstore_base_url'] ?? 'http://localhost:4000'),
+            );
+        }
+
+        return 'KRA agent is online.';
     }
 
     public function heartbeat(Request $request)
     {
         $agent = $this->resolveAgentForToken($request);
         $version = trim((string) $request->input('agent_version', ''));
-        $this->bridge->touchAgent($agent, $version !== '' ? $version : null);
+
+        $comstoreReachable = $request->has('comstore_healthy')
+            ? $request->boolean('comstore_healthy')
+            : null;
+        $comstoreMessage = $request->has('comstore_message')
+            ? trim((string) $request->input('comstore_message', ''))
+            : null;
+
+        if ($comstoreReachable === false && ($comstoreMessage === null || $comstoreMessage === '')) {
+            $comstoreMessage = KraAgentBridge::comstoreManualStartUserMessage(
+                (string) ($agent->comstore_base_url ?? 'http://localhost:4000'),
+            );
+        }
+
+        if ($comstoreReachable === true && ($comstoreMessage === null || $comstoreMessage === '')) {
+            $comstoreMessage = '';
+        }
+
+        $this->bridge->touchAgent(
+            $agent,
+            $version !== '' ? $version : null,
+            $comstoreReachable,
+            $comstoreMessage,
+        );
 
         $comstore = trim((string) $request->input('comstore_base_url', ''));
         if ($comstore !== '') {

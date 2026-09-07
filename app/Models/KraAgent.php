@@ -14,12 +14,15 @@ class KraAgent extends Model
         'comstore_base_url',
         'agent_last_seen_at',
         'agent_version',
+        'comstore_reachable',
+        'comstore_status_message',
     ];
 
     protected function casts(): array
     {
         return [
             'agent_last_seen_at' => 'datetime',
+            'comstore_reachable' => 'boolean',
         ];
     }
 

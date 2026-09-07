@@ -31,6 +31,30 @@ class KraAgentBridge
 
     public const PING_WAIT_SECONDS = 12;
 
+    /** Marker from CentrixKraAgent when Comstore auto-start failed. */
+    public const COMSTORE_MANUAL_START_PREFIX = 'COMSTORE_MANUAL_START_REQUIRED';
+
+    public static function comstoreManualStartUserMessage(string $comstoreUrl = 'http://localhost:4000'): string
+    {
+        $url = trim($comstoreUrl) !== '' ? trim($comstoreUrl) : 'http://localhost:4000';
+
+        return 'Could not start Comstore from the shop agent. Please start Comstore manually on the shop PC '
+            .'(Windows service or Comstore application — usually '.$url.'), then click Test connection again.';
+    }
+
+    public static function isComstoreManualStartRequired(?string $message): bool
+    {
+        if ($message === null || $message === '') {
+            return false;
+        }
+
+        $lower = strtolower($message);
+
+        return str_contains($message, self::COMSTORE_MANUAL_START_PREFIX)
+            || str_contains($lower, 'start comstore manually')
+            || str_contains($lower, 'could not start comstore');
+    }
+
     /** @var list<string> */
     private const ALLOWED_PATH_PREFIXES = [
         '/api/health',
@@ -87,17 +111,32 @@ class KraAgentBridge
             'last_seen_at' => AppTimezone::toIso8601($agent->agent_last_seen_at),
             'version' => $agent->agent_version,
             'comstore_base_url' => $agent->comstore_base_url,
+            'comstore_reachable' => $agent->comstore_reachable,
+            'comstore_status_message' => $agent->comstore_status_message,
+            'manual_start_required' => self::isComstoreManualStartRequired(
+                (string) ($agent->comstore_status_message ?? ''),
+            ) || $agent->comstore_reachable === false,
             'poll_interval_seconds' => 0.05,
             'long_poll_ms' => 2000,
             'online_ttl_seconds' => $this->onlineTtlSeconds(),
         ];
     }
 
-    public function touchAgent(KraAgent $agent, ?string $version = null): void
-    {
+    public function touchAgent(
+        KraAgent $agent,
+        ?string $version = null,
+        ?bool $comstoreReachable = null,
+        ?string $comstoreStatusMessage = null,
+    ): void {
         $agent->agent_last_seen_at = AppTimezone::now();
         if ($version !== null && $version !== '') {
             $agent->agent_version = mb_substr($version, 0, 40);
+        }
+        if ($comstoreReachable !== null) {
+            $agent->comstore_reachable = $comstoreReachable;
+        }
+        if ($comstoreStatusMessage !== null) {
+            $agent->comstore_status_message = mb_substr(trim($comstoreStatusMessage), 0, 500) ?: null;
         }
         $agent->save();
     }

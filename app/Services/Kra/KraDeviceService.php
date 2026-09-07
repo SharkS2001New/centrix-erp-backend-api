@@ -839,10 +839,15 @@ class KraDeviceService
                 $successful = $httpOk && $statusOk && $deviceConnected;
                 $message = $this->healthMessage($body, $httpOk, $statusOk, $deviceConnected);
 
+                if ($this->kraAgent) {
+                    $this->agentBridge->touchAgent($this->kraAgent, null, true, '');
+                }
+
                 return [
                     'success' => $successful,
                     'reachable' => true,
                     'via_agent' => true,
+                    'manual_start_required' => false,
                     'http_status' => $proxied['status'],
                     'url' => $url,
                     'message' => $message,
@@ -871,6 +876,8 @@ class KraDeviceService
             return [
                 'success' => $successful,
                 'reachable' => true,
+                'via_agent' => false,
+                'manual_start_required' => false,
                 'http_status' => $response->status(),
                 'url' => $url,
                 'message' => $message,
@@ -882,13 +889,34 @@ class KraDeviceService
         } catch (\Throwable $e) {
             Log::warning('KRA device health check failed: '.$e->getMessage(), ['url' => $url]);
 
+            $raw = $e->getMessage();
+            $manual = $this->usesAgentBridge() && (
+                KraAgentBridge::isComstoreManualStartRequired($raw)
+                || (bool) preg_match('/connection refused|actively refused|failed to connect|no connection could be made/i', $raw)
+            );
+            $comstoreUrl = $this->kraAgent?->comstore_base_url
+                ?? $this->deviceBaseUrl
+                ?? 'http://localhost:4000';
+
+            if ($manual && $this->kraAgent) {
+                $this->agentBridge->touchAgent(
+                    $this->kraAgent,
+                    null,
+                    false,
+                    KraAgentBridge::comstoreManualStartUserMessage((string) $comstoreUrl),
+                );
+            }
+
             return [
                 'success' => false,
                 'reachable' => false,
                 'via_agent' => $this->usesAgentBridge(),
+                'manual_start_required' => $manual,
                 'http_status' => null,
                 'url' => $url,
-                'message' => KraDeviceErrorTranslator::userMessage('Could not reach KRA device: '.$e->getMessage()),
+                'message' => $manual
+                    ? KraAgentBridge::comstoreManualStartUserMessage((string) $comstoreUrl)
+                    : KraDeviceErrorTranslator::userMessage('Could not reach KRA device: '.$raw),
                 'device_connection' => null,
                 'api_service' => null,
                 'device_version' => null,
