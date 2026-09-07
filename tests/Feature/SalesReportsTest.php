@@ -258,6 +258,86 @@ class SalesReportsTest extends TestCase
         $this->assertCount(1, $overallRows->where('channel', 'pos'));
     }
 
+    public function test_sales_by_user_summary_sums_all_cashiers_not_one_row(): void
+    {
+        $today = now()->toDateString();
+        $suffix = substr(uniqid(), -8);
+
+        $otherCashier = User::query()->create([
+            'organization_id' => $this->admin->organization_id,
+            'branch_id' => $this->admin->branch_id,
+            'role_id' => $this->admin->role_id,
+            'username' => 'sales_user_'.$suffix,
+            'full_name' => 'Sales User '.$suffix,
+            'email' => 'sales_user_'.$suffix.'@example.test',
+            'password' => bcrypt('password'),
+            'is_admin' => false,
+            'access_scope' => 'org',
+        ]);
+
+        Sale::query()->create([
+            'order_num' => 995040,
+            'branch_id' => $this->admin->branch_id,
+            'organization_id' => $this->admin->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $this->admin->id,
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => 5000,
+            'total_vat' => 500,
+            'amount_paid' => 5000,
+            'archived' => 0,
+            'created_at' => now(),
+            'effective_sale_date' => $today,
+        ]);
+
+        Sale::query()->create([
+            'order_num' => 995041,
+            'branch_id' => $this->admin->branch_id,
+            'organization_id' => $this->admin->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $otherCashier->id,
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => 3000,
+            'total_vat' => 300,
+            'amount_paid' => 3000,
+            'archived' => 0,
+            'created_at' => now(),
+            'effective_sale_date' => $today,
+        ]);
+
+        $response = $this->getJson(
+            "/api/v1/reports/sales-by-user?from_date={$today}&to_date={$today}&date_column=sale_date&channel=mobile&per_page=200"
+        )->assertOk();
+
+        $rows = collect($response->json('data'));
+        $summary = $response->json('summary') ?? [];
+
+        // API summary must equal the sum of all returned rows — not mirror a single cashier
+        // (the previous GROUP BY + first() bug).
+        $this->assertLessThanOrEqual(200, (int) $response->json('total'));
+        $this->assertEqualsWithDelta(
+            (float) $rows->sum(fn ($row) => (float) ($row['gross_sales'] ?? 0)),
+            (float) ($summary['gross_sales'] ?? 0),
+            0.01,
+        );
+        $this->assertSame(
+            (int) $rows->sum(fn ($row) => (int) ($row['order_count'] ?? 0)),
+            (int) ($summary['order_count'] ?? 0),
+        );
+
+        $adminRow = $rows->firstWhere('cashier_id', $this->admin->id);
+        $otherRow = $rows->firstWhere('cashier_id', $otherCashier->id);
+        $this->assertNotNull($adminRow);
+        $this->assertNotNull($otherRow);
+        $this->assertGreaterThanOrEqual(5000.0, (float) ($adminRow['gross_sales'] ?? 0));
+        $this->assertGreaterThanOrEqual(3000.0, (float) ($otherRow['gross_sales'] ?? 0));
+        $this->assertArrayHasKey('gross_profit', $summary);
+        $this->assertArrayHasKey('gross_profit', $adminRow);
+        $this->assertArrayHasKey('gross_profit', $otherRow);
+    }
+
     public function test_sales_by_user_fully_paid_excludes_unpaid_credit_orders(): void
     {
         $today = now()->toDateString();

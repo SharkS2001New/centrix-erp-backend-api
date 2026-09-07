@@ -584,7 +584,7 @@ class ReportController extends Controller
             $filters,
             ['sale_date', 'branch_id', 'cashier_id', 'channel'],
             ['organization_id', 'branch_id', 'cashier_id', 'salesperson', 'channel'],
-            ['order_count', 'gross_sales', 'total_vat', 'net_sales', 'amount_collected', 'fully_paid_sales'],
+            ['order_count', 'gross_sales', 'total_vat', 'net_sales', 'amount_collected', 'fully_paid_sales', 'cogs', 'gross_profit'],
             [],
             fn ($q) => $q->orderByDesc('gross_sales')->orderBy('salesperson'),
         ));
@@ -2634,7 +2634,12 @@ class ReportController extends Controller
             $orderBy($aggregated);
         }
 
-        $summary = $this->aggregateFilteredReportSummary(clone $aggregated, $view);
+        // Wrap the grouped rows before summarizing. Calling SUM() on a builder that
+        // still has GROUP BY makes ->first() return one group (wrong KPI/footer totals).
+        $summary = $this->aggregateFilteredReportSummary(
+            DB::query()->fromSub(clone $aggregated, 'overall_period_rows'),
+            $view,
+        );
         $paginator = $aggregated->paginate(min((int) ($filters['per_page'] ?? 20), 200));
 
         return array_merge($paginator->toArray(), [
