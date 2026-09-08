@@ -56,6 +56,7 @@ class KraAgentController extends Controller
                 'organizationId' => (int) $org->id,
                 'agentId' => (int) $agent->id,
                 'comstoreBaseUrl' => $agent->comstore_base_url,
+                'deviceHardwareIp' => trim((string) ($finance['kra_device_hardware_ip'] ?? '')),
                 'longPollMs' => 2000,
                 'heartbeatIntervalSeconds' => 60,
                 'commandTimeoutSeconds' => 50,
@@ -98,15 +99,27 @@ class KraAgentController extends Controller
             return 'Shop PC agent is disabled. Centrix will call the Device IP / URL directly.';
         }
         if (! ($status['online'] ?? false)) {
-            return 'KRA agent is offline. Start the Windows service on the shop PC.';
+            return 'KRA agent is offline. Start the CentrixKraAgent Windows service on the shop PC.';
         }
         if (! empty($status['manual_start_required']) || ($status['comstore_reachable'] ?? null) === false) {
-            return KraAgentBridge::comstoreManualStartUserMessage(
-                (string) ($status['comstore_base_url'] ?? 'http://localhost:4000'),
-            );
+            return 'KRA agent is online (service running). '
+                .KraAgentBridge::comstoreManualStartUserMessage(
+                    (string) ($status['comstore_base_url'] ?? 'http://localhost:4000'),
+                );
+        }
+        if (($status['device_reachable'] ?? null) === false || ! empty($status['device_network_error'])) {
+            $deviceMsg = trim((string) ($status['device_status_message'] ?? ''));
+            if ($deviceMsg !== '') {
+                return 'KRA agent is online. '.$deviceMsg;
+            }
+            $ip = trim((string) ($status['device_hardware_ip'] ?? ''));
+
+            return 'KRA agent is online, but the fiscal device is not reachable on the LAN'
+                .($ip !== '' ? " ({$ip})" : '')
+                .'. Check device power, network, and Fiscal hardware IP in Finance settings.';
         }
 
-        return 'KRA agent is online.';
+        return 'KRA agent is online; Comstore and fiscal device are reachable.';
     }
 
     public function heartbeat(Request $request)
@@ -131,11 +144,28 @@ class KraAgentController extends Controller
             $comstoreMessage = '';
         }
 
+        $deviceReachable = $request->has('device_reachable')
+            ? $request->boolean('device_reachable')
+            : null;
+        $deviceMessage = $request->has('device_status_message')
+            ? trim((string) $request->input('device_status_message', ''))
+            : null;
+        $deviceHardwareIp = $request->has('device_hardware_ip')
+            ? trim((string) $request->input('device_hardware_ip', ''))
+            : null;
+        $deviceConnection = $request->has('device_connection')
+            ? trim((string) $request->input('device_connection', ''))
+            : null;
+
         $this->bridge->touchAgent(
             $agent,
             $version !== '' ? $version : null,
             $comstoreReachable,
             $comstoreMessage,
+            $deviceReachable,
+            $deviceMessage,
+            $deviceHardwareIp,
+            $deviceConnection,
         );
 
         $comstore = trim((string) $request->input('comstore_base_url', ''));
@@ -173,9 +203,22 @@ class KraAgentController extends Controller
             usleep(50_000);
         } while (true);
 
+        $hardwareIp = trim((string) ($agent->device_hardware_ip ?? ''));
+        $org = \App\Models\Organization::query()->find($agent->organization_id);
+        if ($org) {
+            $finance = is_array($org->module_settings['finance'] ?? null)
+                ? $org->module_settings['finance']
+                : [];
+            $fromFinance = trim((string) ($finance['kra_device_hardware_ip'] ?? ''));
+            if ($fromFinance !== '') {
+                $hardwareIp = $fromFinance;
+            }
+        }
+
         return response()->json([
             'commands' => $commands,
             'comstore_base_url' => $agent->comstore_base_url,
+            'device_hardware_ip' => $hardwareIp,
         ]);
     }
 

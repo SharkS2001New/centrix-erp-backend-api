@@ -16,6 +16,10 @@ class KraAgent extends Model
         'agent_version',
         'comstore_reachable',
         'comstore_status_message',
+        'device_reachable',
+        'device_status_message',
+        'device_hardware_ip',
+        'device_connection',
     ];
 
     protected function casts(): array
@@ -23,6 +27,7 @@ class KraAgent extends Model
         return [
             'agent_last_seen_at' => 'datetime',
             'comstore_reachable' => 'boolean',
+            'device_reachable' => 'boolean',
         ];
     }
 

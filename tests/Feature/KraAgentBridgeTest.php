@@ -259,4 +259,54 @@ class KraAgentBridgeTest extends TestCase
         $this->assertTrue($result['manual_start_required'] ?? false);
         $this->assertStringContainsString('start Comstore manually', (string) $result['message']);
     }
+
+    public function test_agent_heartbeat_records_device_network_error(): void
+    {
+        $org = $this->admin->organization;
+        $settings = $org->module_settings ?? [];
+        $settings['finance'] = array_merge($settings['finance'] ?? [], [
+            'enable_kra_device' => true,
+            'enable_kra_agent' => true,
+            'kra_device_ip' => 'http://127.0.0.1:4000',
+            'kra_device_hardware_ip' => '192.168.1.39',
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        $orgId = (int) $org->id;
+        $bridge = app(KraAgentBridge::class);
+        $agent = $bridge->resolveOrCreateForOrganization($orgId, [
+            'kra_device_ip' => 'http://127.0.0.1:4000',
+        ]);
+
+        $tokenName = KraAgentToken::nameForOrganization($orgId);
+        $this->admin->tokens()->where('name', $tokenName)->delete();
+        $plain = $this->admin->createToken($tokenName, ['*'], null)->plainTextToken;
+        DB::table('personal_access_tokens')
+            ->where('name', $tokenName)
+            ->update(['organization_id' => $orgId, 'expires_at' => null]);
+
+        $this->app['auth']->forgetGuards();
+
+        $this->withToken($plain)
+            ->postJson('/api/v1/kra/agent/heartbeat', [
+                'agent_version' => '1.2.0',
+                'comstore_base_url' => 'http://127.0.0.1:4000',
+                'comstore_healthy' => true,
+                'device_reachable' => false,
+                'device_hardware_ip' => '192.168.1.39',
+                'device_connection' => 'Disconnected',
+                'device_status_message' => 'Fiscal device network error — cannot reach 192.168.1.39.',
+            ])
+            ->assertOk()
+            ->assertJsonPath('agent.comstore_reachable', true)
+            ->assertJsonPath('agent.device_reachable', false)
+            ->assertJsonPath('agent.device_network_error', true)
+            ->assertJsonPath('agent.device_hardware_ip', '192.168.1.39');
+
+        $status = $this->actingAs($this->admin)->getJson('/api/v1/kra/agent/status');
+        $status->assertOk()
+            ->assertJsonPath('device_reachable', false)
+            ->assertJsonPath('device_network_error', true);
+        $this->assertStringContainsString('network', strtolower((string) $status->json('message')));
+    }
 }

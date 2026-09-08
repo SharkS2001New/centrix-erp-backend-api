@@ -38,8 +38,9 @@ class KraAgentBridge
     {
         $url = trim($comstoreUrl) !== '' ? trim($comstoreUrl) : 'http://localhost:4000';
 
-        return 'Could not start Comstore from the shop agent. Please start Comstore manually on the shop PC '
-            .'(Windows service or Comstore application — usually '.$url.'), then click Test connection again.';
+        return 'Centrix KRA Agent is still running. Comstore could not be started from the agent — '
+            .'please start Comstore manually on the shop PC (Windows service or Comstore app — usually '.$url.'). '
+            .'The agent will keep signalling until Comstore is reachable, then click Test connection again.';
     }
 
     public static function isComstoreManualStartRequired(?string $message): bool
@@ -116,6 +117,13 @@ class KraAgentBridge
             'manual_start_required' => self::isComstoreManualStartRequired(
                 (string) ($agent->comstore_status_message ?? ''),
             ) || $agent->comstore_reachable === false,
+            'device_reachable' => $agent->device_reachable,
+            'device_status_message' => $agent->device_status_message,
+            'device_hardware_ip' => $agent->device_hardware_ip,
+            'device_connection' => $agent->device_connection,
+            'device_network_error' => $online
+                && $agent->comstore_reachable !== false
+                && $agent->device_reachable === false,
             'poll_interval_seconds' => 0.05,
             'long_poll_ms' => 2000,
             'online_ttl_seconds' => $this->onlineTtlSeconds(),
@@ -127,6 +135,10 @@ class KraAgentBridge
         ?string $version = null,
         ?bool $comstoreReachable = null,
         ?string $comstoreStatusMessage = null,
+        ?bool $deviceReachable = null,
+        ?string $deviceStatusMessage = null,
+        ?string $deviceHardwareIp = null,
+        ?string $deviceConnection = null,
     ): void {
         $agent->agent_last_seen_at = AppTimezone::now();
         if ($version !== null && $version !== '') {
@@ -137,6 +149,18 @@ class KraAgentBridge
         }
         if ($comstoreStatusMessage !== null) {
             $agent->comstore_status_message = mb_substr(trim($comstoreStatusMessage), 0, 500) ?: null;
+        }
+        if ($deviceReachable !== null) {
+            $agent->device_reachable = $deviceReachable;
+        }
+        if ($deviceStatusMessage !== null) {
+            $agent->device_status_message = mb_substr(trim($deviceStatusMessage), 0, 500) ?: null;
+        }
+        if ($deviceHardwareIp !== null) {
+            $agent->device_hardware_ip = mb_substr(trim($deviceHardwareIp), 0, 100) ?: null;
+        }
+        if ($deviceConnection !== null) {
+            $agent->device_connection = mb_substr(trim($deviceConnection), 0, 80) ?: null;
         }
         $agent->save();
     }
