@@ -76,4 +76,98 @@ class MobileOrderEditKeepsUnpaidTest extends TestCase
         $this->assertSame(0, $sale->payments()->count());
         $this->assertEqualsWithDelta(0.0, (float) ($sale->cash ?? 0), 0.01);
     }
+
+    public function test_office_previous_order_edit_keeps_mobile_rep_cashier_on_revised_sale(): void
+    {
+        $admin = $this->user;
+        $routeId = (int) (\App\Models\RouteModel::query()->value('id') ?? 0);
+        $this->assertGreaterThan(0, $routeId, 'Seed route required for mobile checkout');
+
+        $org = \App\Models\Organization::query()->findOrFail($admin->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['sales'] = array_merge($settings['sales'] ?? [], [
+            'enable_pos_order_edit' => true,
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        $rep = User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $admin->role_id,
+            'username' => 'mobile_rep_'.uniqid(),
+            'email' => null,
+            'password' => bcrypt('password'),
+            'full_name' => 'Field Rep',
+            'is_admin' => false,
+            'access_scope' => 'branch',
+            'login_channels' => ['mobile'],
+            'mobile_order_scope' => 'route_only',
+            'assigned_route_id' => $routeId,
+            'is_active' => true,
+        ]);
+
+        Sanctum::actingAs($rep);
+        $repCartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'mobile',
+            'branch_id' => $rep->branch_id,
+            'route_id' => $routeId,
+        ])->assertCreated()->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$repCartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        $original = $this->postJson("/api/v1/sales/carts/{$repCartId}/checkout", [
+            'save_only' => true,
+            'pay_now' => 0,
+            'route_id' => $routeId,
+        ])->assertCreated()->json();
+
+        $originalSale = Sale::query()->findOrFail($original['id']);
+        $this->assertSame((int) $rep->id, (int) $originalSale->cashier_id);
+        $originalTotal = (float) ($originalSale->order_total ?? 0);
+
+        // Office edits the rep's unpaid mobile order (restore → revise → checkout).
+        Sanctum::actingAs($admin);
+        $editCart = $this->postJson("/api/v1/sales/orders/{$original['id']}/restore-to-cart", [
+            'replace' => true,
+        ])->assertOk()->json();
+
+        $this->assertSame((int) $original['id'], (int) ($editCart['superseded_sale_id'] ?? 0));
+
+        $this->postJson("/api/v1/sales/carts/{$editCart['id']}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 2,
+        ])->assertCreated();
+
+        $edited = $this->postJson("/api/v1/sales/carts/{$editCart['id']}/checkout", [
+            'save_only' => true,
+            'pay_now' => 0,
+            'route_id' => $routeId,
+        ])->assertCreated()->json();
+
+        $editedSale = Sale::query()->findOrFail($edited['id']);
+        $this->assertSame(
+            (int) $rep->id,
+            (int) $editedSale->cashier_id,
+            'Revised sale must stay on the mobile rep so dashboard totals update',
+        );
+        $meta = is_array($editedSale->fulfillment_meta) ? $editedSale->fulfillment_meta : [];
+        $this->assertSame((int) $admin->id, (int) ($meta['edited_by'] ?? 0));
+        $this->assertGreaterThan($originalTotal, (float) $editedSale->order_total);
+
+        $superseded = Sale::query()->findOrFail($original['id']);
+        $this->assertSame('cancelled', (string) $superseded->status);
+        $this->assertSame(1, (int) $superseded->archived);
+
+        Sanctum::actingAs($rep);
+        $dashboard = $this->getJson('/api/v1/mobile/dashboard')->assertOk()->json();
+        $this->assertSame(1, (int) ($dashboard['summary']['NoofOrders'] ?? 0));
+        $this->assertEqualsWithDelta(
+            (float) $editedSale->order_total,
+            (float) ($dashboard['summary']['orderTotals'] ?? 0),
+            0.05,
+        );
+    }
 }

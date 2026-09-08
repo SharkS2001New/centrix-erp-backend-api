@@ -50,7 +50,7 @@ class KraOperationsController extends Controller
         }
 
         try {
-            $testFinance = array_merge($finance, ['enable_kra_device' => true]);
+            $testFinance = array_merge($finance, ['enable_kra_device' => true, 'enable_kra_agent' => true]);
             $result = KraDeviceService::fromSettings($testFinance, $orgId)->checkHealth();
             $status['reachable'] = (bool) ($result['reachable'] ?? false);
             $status['via_agent'] = (bool) ($result['via_agent'] ?? false);
@@ -84,15 +84,13 @@ class KraOperationsController extends Controller
             'enable_kra_agent' => 'sometimes|boolean',
         ]);
 
-        $testFinance = array_merge($finance, $draft, ['enable_kra_device' => true]);
+        $testFinance = array_merge($finance, $draft, [
+            'enable_kra_device' => true,
+            'enable_kra_agent' => true,
+        ]);
 
-        $ip = trim((string) ($testFinance['kra_device_ip'] ?? ''));
-        $agentMode = ! empty($testFinance['enable_kra_agent']);
-        if ($ip === '' && ! $agentMode) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Enter the device IP / URL before testing the connection.',
-            ], 422);
+        if (trim((string) ($testFinance['kra_device_ip'] ?? '')) === '') {
+            $testFinance['kra_device_ip'] = 'http://localhost:4000';
         }
 
         try {
@@ -122,7 +120,7 @@ class KraOperationsController extends Controller
 
         $draft = $this->validateKraDeviceDraft($request);
 
-        $testFinance = array_merge($finance, $draft, ['enable_kra_device' => true]);
+        $testFinance = array_merge($finance, $draft, ['enable_kra_device' => true, 'enable_kra_agent' => true]);
 
         $serial = trim((string) ($testFinance['kra_serial_number'] ?? ''));
         if ($serial === '') {
@@ -166,7 +164,7 @@ class KraOperationsController extends Controller
         $orgId = $gate->organization()?->id ? (int) $gate->organization()->id : null;
 
         $draft = $this->validateKraDeviceDraft($request);
-        $testFinance = array_merge($finance, $draft, ['enable_kra_device' => true]);
+        $testFinance = array_merge($finance, $draft, ['enable_kra_device' => true, 'enable_kra_agent' => true]);
 
         $hardwareIp = KraDeviceService::resolveHardwareIp($testFinance);
         if ($hardwareIp === '') {

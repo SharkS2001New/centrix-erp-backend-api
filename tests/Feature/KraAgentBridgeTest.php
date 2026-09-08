@@ -40,11 +40,51 @@ class KraAgentBridgeTest extends TestCase
         $res = $this->postJson('/api/v1/kra/agent-package')->assertOk();
         $res->assertJsonPath('config.comstoreBaseUrl', 'http://127.0.0.1:4000');
         $res->assertJsonPath('config.longPollMs', 2000);
-        $res->assertJsonPath('config.autoStartComstore', true);
+        $res->assertJsonPath('config.autoStartComstore', false);
+        $res->assertJsonPath('expires_at', null);
         $this->assertNotEmpty($res->json('config.centrixToken'));
         $this->assertDatabaseHas('kra_agents', [
             'organization_id' => $org->id,
         ]);
+        $this->assertDatabaseHas('users', [
+            'organization_id' => $org->id,
+            'username' => strtoupper(\App\Support\KraAgentServiceUser::usernameForOrganization((int) $org->id)),
+        ]);
+        $serviceUser = \App\Models\User::query()
+            ->where('organization_id', $org->id)
+            ->whereUsernameInsensitive(\App\Support\KraAgentServiceUser::usernameForOrganization((int) $org->id))
+            ->first();
+        $this->assertNotNull($serviceUser);
+        $this->assertDatabaseHas('personal_access_tokens', [
+            'tokenable_id' => $serviceUser->id,
+            'name' => \App\Support\KraAgentToken::nameForOrganization((int) $org->id),
+            'expires_at' => null,
+        ]);
+        // Token must not be owned by the admin who clicked Download.
+        $this->assertDatabaseMissing('personal_access_tokens', [
+            'tokenable_id' => $this->admin->id,
+            'name' => \App\Support\KraAgentToken::nameForOrganization((int) $org->id),
+        ]);
+    }
+
+    public function test_agent_package_requires_saved_serial_and_pin(): void
+    {
+        $org = $this->admin->organization;
+        $settings = $org->module_settings ?? [];
+        $settings['finance'] = array_merge($settings['finance'] ?? [], [
+            'enable_kra_device' => true,
+            'enable_kra_agent' => true,
+            'kra_device_ip' => 'http://127.0.0.1:4000',
+            'kra_serial_number' => '',
+            'kra_pin_number' => '',
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        $this->postJson('/api/v1/kra/agent-package')
+            ->assertStatus(422)
+            ->assertJsonFragment([
+                'message' => 'Save KRA settings first (Comstore URL, device serial, and shop PIN), then download Centrix KRA Agent.',
+            ]);
     }
 
     public function test_agent_pending_long_poll_returns_when_command_queued(): void

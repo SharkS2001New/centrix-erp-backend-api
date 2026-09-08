@@ -890,24 +890,20 @@ class ErpSettingsController extends Controller
             $ip = trim((string) ($data['kra_device_ip'] ?? $gate->moduleSettings('finance')['kra_device_ip'] ?? ''));
             $serial = trim((string) ($data['kra_serial_number'] ?? $gate->moduleSettings('finance')['kra_serial_number'] ?? ''));
             $pin = trim((string) ($data['kra_pin_number'] ?? $gate->moduleSettings('finance')['kra_pin_number'] ?? ''));
-            // Honour explicit false when switching back to direct (legacy) mode.
-            $agentMode = array_key_exists('enable_kra_agent', $data)
-                ? ! empty($data['enable_kra_agent'])
-                : ! empty($gate->moduleSettings('finance')['enable_kra_agent']);
-            if ($ip === '' && $agentMode) {
+            // Centrix KRA Agent is the only supported connection path.
+            $agentMode = true;
+            if ($ip === '') {
                 $ip = 'http://localhost:4000';
                 $data['kra_device_ip'] = $ip;
             }
             if ($ip === '' || $serial === '' || $pin === '') {
                 throw ValidationException::withMessages([
-                    'enable_kra_device' => $agentMode
-                        ? 'KRA serial number and shop PIN are required when the device is enabled (local Comstore URL defaults to http://localhost:4000 for the shop agent).'
-                        : 'KRA device IP, serial number, and shop PIN are required when the device is enabled.',
+                    'enable_kra_device' => 'KRA serial number and shop PIN are required when the device is enabled (local Comstore URL defaults to http://localhost:4000 for Centrix KRA Agent).',
                 ]);
             }
             // Persist a clean URL (allows localhost or 127.0.0.1).
             $data['kra_device_ip'] = app(\App\Services\Kra\KraAgentBridge::class)->normalizeComstoreUrl($ip);
-            $data['enable_kra_agent'] = $agentMode;
+            $data['enable_kra_agent'] = true;
             if (array_key_exists('kra_direct_device_ip', $data)) {
                 $direct = trim((string) $data['kra_direct_device_ip']);
                 $data['kra_direct_device_ip'] = $direct === ''
@@ -919,7 +915,7 @@ class ErpSettingsController extends Controller
                 $data['kra_agent_comstore_url'] = $agentUrl === ''
                     ? ''
                     : app(\App\Services\Kra\KraAgentBridge::class)->normalizeComstoreUrl($agentUrl);
-            } elseif ($agentMode) {
+            } else {
                 $data['kra_agent_comstore_url'] = $data['kra_device_ip'];
             }
         }

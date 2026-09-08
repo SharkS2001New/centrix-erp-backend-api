@@ -38,9 +38,7 @@ class KraAgentBridge
     {
         $url = trim($comstoreUrl) !== '' ? trim($comstoreUrl) : 'http://localhost:4000';
 
-        return 'Centrix KRA Agent is still running. Comstore could not be started from the agent — '
-            .'please start Comstore manually on the shop PC (Windows service or Comstore app — usually '.$url.'). '
-            .'The agent will keep signalling until Comstore is reachable, then click Test connection again.';
+        return 'Centrix KRA Agent is still running. Start Comstore on the shop PC (Windows startup or the Comstore service/app — usually '.$url.'), then click Test connection again. The agent keeps pinging Centrix and the fiscal device until Comstore is reachable.';
     }
 
     public static function isComstoreManualStartRequired(?string $message): bool

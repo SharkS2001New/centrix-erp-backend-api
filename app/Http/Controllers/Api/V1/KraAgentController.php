@@ -4,11 +4,12 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\KraAgent;
+use App\Models\PersonalAccessToken;
 use App\Services\Erp\ErpContext;
 use App\Services\Kra\KraAgentBridge;
+use App\Support\KraAgentServiceUser;
 use App\Support\KraAgentToken;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 
 class KraAgentController extends Controller
 {
@@ -30,21 +31,31 @@ class KraAgentController extends Controller
             ], 422);
         }
 
+        $serial = trim((string) ($finance['kra_serial_number'] ?? ''));
+        $pin = trim((string) ($finance['kra_pin_number'] ?? ''));
+        $comstore = trim((string) ($finance['kra_device_ip'] ?? $finance['kra_agent_comstore_url'] ?? ''));
+        if ($serial === '' || $pin === '' || $comstore === '') {
+            return response()->json([
+                'message' => 'Save KRA settings first (Comstore URL, device serial, and shop PIN), then download Centrix KRA Agent.',
+            ], 422);
+        }
+
         $agent = $this->bridge->resolveOrCreateForOrganization((int) $org->id, $finance);
-        $user = $request->user();
         $tokenName = KraAgentToken::nameForOrganization((int) $org->id);
 
-        $user->tokens()->where('name', $tokenName)->delete();
-        $plain = $user->createToken($tokenName, ['*'], null)->plainTextToken;
+        // Org-owned machine user — not the admin who clicked Download (same non-expiring
+        // Sanctum pattern as attendance agents, but tokenable is a dedicated service account).
+        $serviceUser = KraAgentServiceUser::resolve($org);
 
-        DB::table('personal_access_tokens')
-            ->where('tokenable_type', $user->getMorphClass())
-            ->where('tokenable_id', $user->id)
-            ->where('name', $tokenName)
-            ->update([
-                'organization_id' => $org->id,
-                'expires_at' => null,
-            ]);
+        // Drop any prior org agent token (including older tokens issued on admin users).
+        PersonalAccessToken::query()->where('name', $tokenName)->delete();
+
+        $token = $serviceUser->createToken($tokenName, ['*'], null);
+        $token->accessToken->forceFill([
+            'organization_id' => (int) $org->id,
+            'expires_at' => null,
+            'login_channel' => 'backoffice',
+        ])->save();
 
         $apiUrl = rtrim((string) config('app.url'), '/').'/api/v1';
 
@@ -52,7 +63,7 @@ class KraAgentController extends Controller
             'agent' => $this->bridge->agentStatus($agent),
             'config' => [
                 'centrixApiUrl' => $apiUrl,
-                'centrixToken' => $plain,
+                'centrixToken' => $token->plainTextToken,
                 'organizationId' => (int) $org->id,
                 'agentId' => (int) $agent->id,
                 'comstoreBaseUrl' => $agent->comstore_base_url,
@@ -60,7 +71,8 @@ class KraAgentController extends Controller
                 'longPollMs' => 2000,
                 'heartbeatIntervalSeconds' => 60,
                 'commandTimeoutSeconds' => 50,
-                'autoStartComstore' => true,
+                // Comstore is started by Windows; agent only probes + heartbeats.
+                'autoStartComstore' => false,
                 'comstoreWindowsServiceNames' => [],
                 'comstoreExecutablePath' => '',
                 'comstoreExecutableArgs' => '',
@@ -68,6 +80,8 @@ class KraAgentController extends Controller
                 'comstoreStartWorkingDirectory' => '',
                 'comstoreReadyTimeoutSeconds' => 45,
             ],
+            'token_name' => $tokenName,
+            'expires_at' => null,
         ]);
     }
 
@@ -79,27 +93,27 @@ class KraAgentController extends Controller
 
         if (! $agent) {
             return response()->json([
-                'enabled' => (bool) ($finance['enable_kra_agent'] ?? false),
+                'enabled' => (bool) ($finance['enable_kra_device'] ?? false),
                 'online' => false,
-                'message' => 'KRA agent has not been registered yet. Download the agent package from Finance settings.',
+                'message' => 'Centrix KRA Agent has not been registered yet. Save KRA settings, then download the agent package from Finance settings.',
             ]);
         }
 
         $status = $this->bridge->agentStatus($agent);
 
         return response()->json(array_merge($status, [
-            'enabled' => (bool) ($finance['enable_kra_agent'] ?? false),
+            'enabled' => (bool) ($finance['enable_kra_device'] ?? false),
             'message' => $this->statusMessage($status, $finance),
         ]));
     }
 
     protected function statusMessage(array $status, array $finance): string
     {
-        if (empty($finance['enable_kra_agent'])) {
-            return 'Shop PC agent is disabled. Centrix will call the Device IP / URL directly.';
+        if (empty($finance['enable_kra_agent']) && empty($finance['enable_kra_device'])) {
+            return 'Centrix KRA Agent is not enabled. Enable the KRA device in Finance settings.';
         }
         if (! ($status['online'] ?? false)) {
-            return 'KRA agent is offline. Start the CentrixKraAgent Windows service on the shop PC.';
+            return 'Centrix KRA Agent is offline. Start the CentrixKraAgent Windows service on the shop PC.';
         }
         if (! empty($status['manual_start_required']) || ($status['comstore_reachable'] ?? null) === false) {
             return 'KRA agent is online (service running). '

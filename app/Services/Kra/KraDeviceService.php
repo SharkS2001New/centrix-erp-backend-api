@@ -25,12 +25,8 @@ class KraDeviceService
     {
         $base = trim((string) ($financeSettings['kra_device_ip'] ?? ''));
         if ($base === '') {
-            // Agent mode defaults local Comstore URL when not set yet.
-            if (! empty($financeSettings['enable_kra_agent'])) {
-                $base = 'http://localhost:4000';
-            } else {
-                throw new InvalidArgumentException('KRA device IP / URL is not configured.');
-            }
+            // Centrix KRA Agent defaults to local Comstore when not set yet.
+            $base = 'http://localhost:4000';
         }
 
         if (! str_starts_with($base, 'http://') && ! str_starts_with($base, 'https://')) {
@@ -50,8 +46,8 @@ class KraDeviceService
 
         $orgId = $organizationId
             ?? (int) ($financeSettings['_organization_id'] ?? 0);
-        // Direct mode (legacy): cloud HTTP → kra_device_ip. Agent only when explicitly enabled.
-        if (! empty($financeSettings['enable_kra_agent']) && $orgId > 0) {
+        // Centrix KRA Agent is the only supported path when an organization is known.
+        if ($orgId > 0) {
             $bridge = app(KraAgentBridge::class);
             $agent = $bridge->resolveOrCreateForOrganization($orgId, $financeSettings);
             $service->useAgentBridge($bridge, $agent);

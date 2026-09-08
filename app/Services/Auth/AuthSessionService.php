@@ -61,6 +61,12 @@ class AuthSessionService
             ]);
         }
 
+        if (\App\Support\KraAgentServiceUser::isServiceUsername($account->authUser->username)) {
+            throw ValidationException::withMessages([
+                'username' => ['Invalid credentials.'],
+            ]);
+        }
+
         return $this->continueAfterPassword($account, $clientId, $forceLogout, $loginChannel);
     }
 

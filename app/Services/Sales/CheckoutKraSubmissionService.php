@@ -50,7 +50,7 @@ class CheckoutKraSubmissionService
                 $finance,
                 $gate->organization()?->id ? (int) $gate->organization()->id : null,
             );
-            // Agent path: skip health when the shop agent is online — one less round-trip.
+            // Agent path: skip health when Centrix KRA Agent is online — one less round-trip.
             // Direct Comstore path still probes health first (flapping device soft-skip).
             $skipHealth = $service->usesAgentBridge() && $service->agentIsWarm();
             if (! $skipHealth) {

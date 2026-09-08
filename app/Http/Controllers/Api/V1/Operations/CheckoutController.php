@@ -888,32 +888,35 @@ class CheckoutController extends Controller
 
             // Previous-order edit / offline sync: TemporaryCart has no customer columns, so
             // restore the buyer from the sale being superseded when the request omitted them.
+            // Also keep the original salesperson (cashier_id) — mobile KPIs filter by
+            // cashier_id, so office/POS edits must not reattribute the order to the editor.
+            $priorSale = null;
+            if ($cart->superseded_sale_id) {
+                $priorSale = Sale::query()->find((int) $cart->superseded_sale_id);
+            }
             if (
                 ($customerNum === null || $customerNameOverride === '')
-                && $cart->superseded_sale_id
+                && $priorSale
             ) {
-                $priorSale = Sale::query()->find((int) $cart->superseded_sale_id);
-                if ($priorSale) {
-                    if ($customerNum === null && $priorSale->customer_num) {
-                        $customerNum = (int) $priorSale->customer_num;
-                        $customer = app(UserMobileOrderScopeService::class)->findCheckoutCustomer(
-                            $user,
-                            (int) $customerNum,
-                            (string) $cart->channel,
-                        );
-                        if ($customer) {
-                $customerNameOverride = trim((string) ($customer->customer_name ?? ''));
-                        }
+                if ($customerNum === null && $priorSale->customer_num) {
+                    $customerNum = (int) $priorSale->customer_num;
+                    $customer = app(UserMobileOrderScopeService::class)->findCheckoutCustomer(
+                        $user,
+                        (int) $customerNum,
+                        (string) $cart->channel,
+                    );
+                    if ($customer) {
+                        $customerNameOverride = trim((string) ($customer->customer_name ?? ''));
                     }
-                    if ($customerNameOverride === '') {
-                        $fromPrior = trim((string) ($priorSale->customer_name_override ?? ''));
-                        if ($fromPrior === '') {
-                            $priorSale->loadMissing('customer:customer_num,customer_name,organization_id');
-                            $fromPrior = trim((string) ($priorSale->customer?->customer_name ?? ''));
-                        }
-                        if ($fromPrior !== '') {
-                            $customerNameOverride = $fromPrior;
-                        }
+                }
+                if ($customerNameOverride === '') {
+                    $fromPrior = trim((string) ($priorSale->customer_name_override ?? ''));
+                    if ($fromPrior === '') {
+                        $priorSale->loadMissing('customer:customer_num,customer_name,organization_id');
+                        $fromPrior = trim((string) ($priorSale->customer?->customer_name ?? ''));
+                    }
+                    if ($fromPrior !== '') {
+                        $customerNameOverride = $fromPrior;
                     }
                 }
             }
@@ -922,9 +925,14 @@ class CheckoutController extends Controller
             if ($prepared['meta'] !== null) {
                 $fulfillmentMeta['route_markup'] = $prepared['meta'];
             }
-            if ($cart->superseded_sale_id) {
-                $fulfillmentMeta['supersedes_sale_id'] = (int) $cart->superseded_sale_id;
+            $cashierId = (int) $user->id;
+            if ($priorSale) {
+                $fulfillmentMeta['supersedes_sale_id'] = (int) $priorSale->id;
                 $fulfillmentMeta['pos_edit'] = true;
+                $fulfillmentMeta['edited_by'] = (int) $user->id;
+                if ((int) ($priorSale->cashier_id ?? 0) > 0) {
+                    $cashierId = (int) $priorSale->cashier_id;
+                }
             }
             if ($appendPriorSale) {
                 $fulfillmentMeta['same_day_customer_append'] = true;
@@ -948,7 +956,7 @@ class CheckoutController extends Controller
                 'order_source' => $cart->order_source ?? $cart->channel,
                 'till_id' => $cart->till_id,
                 'float_session_id' => $floatSessionId,
-                'cashier_id' => $user->id,
+                'cashier_id' => $cashierId,
                 'customer_num' => $customerNum,
                 'customer_name_override' => $customerNameOverride !== '' ? $customerNameOverride : null,
                 'route_id' => $routeId,
@@ -985,8 +993,18 @@ class CheckoutController extends Controller
                         'completed_at' => $clientCompleted,
                     ])->save();
                 } else {
-                $sale->update(['completed_at' => now()]);
+                    $sale->update(['completed_at' => now()]);
+                    // Keep the original sale day on the rep's mobile dashboard after an edit.
+                    if ($priorSale?->created_at) {
+                        $sale->forceFill([
+                            'created_at' => $priorSale->created_at,
+                        ])->save();
+                    }
                 }
+            } elseif ($priorSale?->created_at) {
+                $sale->forceFill([
+                    'created_at' => $priorSale->created_at,
+                ])->save();
             }
 
             $deductStockRequested = (bool) ($input['deduct_stock'] ?? true);

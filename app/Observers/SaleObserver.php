@@ -61,9 +61,35 @@ class SaleObserver
             $this->syncCustomerInvoice($sale);
         }
 
-        if ($sale->wasChanged(['status', 'order_total', 'amount_paid', 'payment_status', 'customer_num', 'archived', 'deleted_at'])) {
+        if ($sale->wasChanged(['status', 'order_total', 'amount_paid', 'payment_status', 'customer_num', 'archived', 'deleted_at', 'cashier_id', 'created_at', 'channel'])) {
             app(CompletedSalesCacheService::class)->invalidateForSale($sale);
             $this->invalidateMobileRepCaches($sale);
+            // Previous-order edits may move created_at back to the original sale day —
+            // also clear the day the row was first written (usually today).
+            if ($sale->wasChanged('created_at') && $sale->getOriginal('created_at')) {
+                $originalDate = Carbon::parse($sale->getOriginal('created_at'))->startOfDay();
+                $currentDate = $sale->created_at
+                    ? Carbon::parse($sale->created_at)->startOfDay()
+                    : null;
+                if (! $currentDate || ! $originalDate->equalTo($currentDate)) {
+                    if ($sale->cashier_id) {
+                        $cashier = User::query()->find($sale->cashier_id);
+                        if ($cashier) {
+                            app(MobileSalesService::class)->invalidateDashboardForUser($cashier, $originalDate);
+                        }
+                    }
+                }
+            }
+            // If cashier was reassigned, clear the previous rep's dashboard too.
+            if ($sale->wasChanged('cashier_id') && $sale->getOriginal('cashier_id')) {
+                $previousCashier = User::query()->find($sale->getOriginal('cashier_id'));
+                if ($previousCashier) {
+                    $date = $sale->created_at
+                        ? Carbon::parse($sale->created_at)->startOfDay()
+                        : now()->startOfDay();
+                    app(MobileSalesService::class)->invalidateDashboardForUser($previousCashier, $date);
+                }
+            }
         }
     }
 
