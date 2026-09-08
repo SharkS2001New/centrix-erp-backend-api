@@ -258,7 +258,7 @@ class KraAgentBridgeTest extends TestCase
         Sanctum::actingAs($this->admin);
         $status = $this->getJson('/api/v1/kra/agent/status')->assertOk();
         $status->assertJsonPath('manual_start_required', true);
-        $this->assertStringContainsString('start Comstore manually', (string) $status->json('message'));
+        $this->assertStringContainsString('Start Comstore', (string) $status->json('message'));
     }
 
     public function test_device_health_surfaces_manual_comstore_start_when_agent_reports_it(): void
@@ -297,7 +297,7 @@ class KraAgentBridgeTest extends TestCase
         $result = $service->checkHealth();
         $this->assertFalse($result['success']);
         $this->assertTrue($result['manual_start_required'] ?? false);
-        $this->assertStringContainsString('start Comstore manually', (string) $result['message']);
+        $this->assertStringContainsString('Start Comstore', (string) $result['message']);
     }
 
     public function test_agent_heartbeat_records_device_network_error(): void

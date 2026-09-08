@@ -217,10 +217,10 @@ class CheckoutController extends Controller
                 ? $detail
                 : 'Sale created without KRA (skipped).';
         } else {
-            $warning = 'Sale created without KRA due to an error with KRA device.';
-            if ($detail === '') {
-                $detail = 'KRA device submission failed.';
-            }
+            // Prefer the real device/Comstore reason — cashiers need that, not a generic line.
+            $warning = $detail !== ''
+                ? $detail
+                : 'Sale created without KRA due to an error with KRA device.';
         }
 
         return [

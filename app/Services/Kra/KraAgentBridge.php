@@ -21,11 +21,25 @@ class KraAgentBridge
 
     public const RECENT_CHECKIN_GRACE_SECONDS = 7200;
 
-    /** Health probe via agent. */
-    public const HEALTH_WAIT_SECONDS = 15;
+    /** Health probe via agent on checkout (keep short so POS never hangs). */
+    public const HEALTH_WAIT_SECONDS = 8;
 
-    /** complete-workflow / PLU / init / restart. */
+    /** Admin Test connection can wait a bit longer than checkout. */
+    public const ADMIN_HEALTH_WAIT_SECONDS = 12;
+
+    /** complete-workflow / PLU / init / restart (admin / background). */
     public const COMMAND_WAIT_SECONDS = 55;
+
+    /**
+     * Checkout budget: short health gate before complete-workflow (~3s). Soft-skip if down.
+     * When Comstore comes back, the next receipt health-passes and fiscalizes (no sticky lock).
+     */
+    public const CHECKOUT_MAX_SECONDS = 25;
+
+    /** Only used when heartbeat status is unknown — keep short. */
+    public const CHECKOUT_HEALTH_WAIT_SECONDS = 3;
+
+    public const CHECKOUT_COMMAND_WAIT_SECONDS = 20;
 
     public const PING_PATH = '/agent/ping';
 

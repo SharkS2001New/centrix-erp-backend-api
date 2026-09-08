@@ -70,7 +70,8 @@ class KraAgentController extends Controller
                 'deviceHardwareIp' => trim((string) ($finance['kra_device_hardware_ip'] ?? '')),
                 'longPollMs' => 2000,
                 'heartbeatIntervalSeconds' => 60,
-                'commandTimeoutSeconds' => 50,
+                // Keep below checkout soft-skip budget so a dead Comstore cannot pin the agent/worker.
+                'commandTimeoutSeconds' => 25,
                 // Comstore is started by Windows; agent only probes + heartbeats.
                 'autoStartComstore' => false,
                 'comstoreWindowsServiceNames' => [],

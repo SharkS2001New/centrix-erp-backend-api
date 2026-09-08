@@ -46,8 +46,8 @@ class KraDeviceService
 
         $orgId = $organizationId
             ?? (int) ($financeSettings['_organization_id'] ?? 0);
-        // Centrix KRA Agent is the only supported path when an organization is known.
-        if ($orgId > 0) {
+        // Prefer Centrix KRA Agent when enabled for the organization.
+        if (! empty($financeSettings['enable_kra_agent']) && $orgId > 0) {
             $bridge = app(KraAgentBridge::class);
             $agent = $bridge->resolveOrCreateForOrganization($orgId, $financeSettings);
             $service->useAgentBridge($bridge, $agent);
@@ -80,8 +80,63 @@ class KraDeviceService
             || $this->agentBridge->hasRecentCheckIn($this->kraAgent);
     }
 
-    public function sendSale(array $orderItems, float $totalAmount, string $invoiceNumber, ?string $buyerPin = null): array
+    /**
+     * Last agent heartbeat about Comstore / fiscal hardware.
+     *
+     * @return array{ready: bool|null, message: ?string}
+     *   ready=true  → fiscal path looked healthy on last heartbeat (skip extra health)
+     *   ready=false → Comstore/device known down — soft-skip without waiting
+     *   ready=null  → unknown — run a short health probe
+     */
+    public function agentFiscalPreflight(): array
     {
+        // Direct device IP: no agent heartbeat — skip the extra /api/health hop and fiscalize.
+        if (! $this->usesAgentBridge() || $this->kraAgent === null) {
+            return ['ready' => true, 'message' => null];
+        }
+
+        if (! $this->agentIsWarm()) {
+            return ['ready' => null, 'message' => null];
+        }
+
+        $agent = $this->kraAgent;
+        if ($agent->comstore_reachable === false) {
+            $message = trim((string) ($agent->comstore_status_message ?? ''));
+            if ($message === '' || KraAgentBridge::isComstoreManualStartRequired($message)) {
+                $message = KraAgentBridge::comstoreManualStartUserMessage(
+                    (string) ($agent->comstore_base_url ?: $this->deviceBaseUrl),
+                );
+            }
+
+            return ['ready' => false, 'message' => $message];
+        }
+
+        if ($agent->device_reachable === false) {
+            $message = trim((string) ($agent->device_status_message ?? ''));
+            if ($message === '') {
+                $ip = trim((string) ($agent->device_hardware_ip ?? ''));
+                $message = 'Fiscal device is not reachable on the LAN'
+                    .($ip !== '' ? " ({$ip})" : '')
+                    .'.';
+            }
+
+            return ['ready' => false, 'message' => $message];
+        }
+
+        if ($agent->comstore_reachable === true) {
+            return ['ready' => true, 'message' => null];
+        }
+
+        return ['ready' => null, 'message' => null];
+    }
+
+    public function sendSale(
+        array $orderItems,
+        float $totalAmount,
+        string $invoiceNumber,
+        ?string $buyerPin = null,
+        array $context = [],
+    ): array {
         $this->assertDeviceConfigured();
 
         $payload = $this->buildWorkflowPayload(
@@ -94,10 +149,10 @@ class KraDeviceService
             $buyerPin,
         );
 
-        return $this->postToDevice('/api/complete-workflow', $payload, [
+        return $this->postToDevice('/api/complete-workflow', $payload, array_merge([
             'invoice' => $invoiceNumber,
             'document_type' => 'sale',
-        ]);
+        ], $context));
     }
 
     /**
@@ -116,6 +171,7 @@ class KraDeviceService
         string $refundReasonCode,
         ?string $refundMethod = 'CASH',
         ?string $buyerPin = null,
+        array $context = [],
     ): array {
         $this->assertDeviceConfigured();
 
@@ -129,11 +185,11 @@ class KraDeviceService
             $buyerPin,
         );
 
-        return $this->postToDevice('/api/complete-workflow', $payload, [
+        return $this->postToDevice('/api/complete-workflow', $payload, array_merge([
             'invoice' => $invoiceNumber,
             'document_type' => 'credit_note',
             'relevant_invoice' => $relevantInvoiceNumber,
-        ]);
+        ], $context));
     }
 
     /**
@@ -810,9 +866,10 @@ class KraDeviceService
     }
 
     /** Probe the on-prem Comstore device health endpoint (GET /api/health). */
-    public function checkHealth(): array
+    public function checkHealth(?int $waitSeconds = null): array
     {
         $url = $this->deviceBaseUrl.'/api/health';
+        $agentWait = $waitSeconds ?? KraAgentBridge::HEALTH_WAIT_SECONDS;
 
         try {
             if ($this->usesAgentBridge()) {
@@ -823,7 +880,7 @@ class KraDeviceService
                     null,
                     'json',
                     false,
-                    KraAgentBridge::HEALTH_WAIT_SECONDS,
+                    $agentWait,
                 );
                 $body = json_decode($proxied['body'], true);
                 $httpOk = $proxied['status'] >= 200 && $proxied['status'] < 300;
@@ -854,7 +911,7 @@ class KraDeviceService
                 ];
             }
 
-            $response = Http::timeout(8)
+            $response = Http::timeout(min(8, max(3, $agentWait)))
                 ->acceptJson()
                 ->get($url);
 
@@ -995,6 +1052,13 @@ class KraDeviceService
     protected function postToDevice(string $path, array $payload, array $context = []): array
     {
         $url = $this->deviceBaseUrl . $path;
+        $checkout = ! empty($context['checkout']);
+        $agentWait = (int) ($context['agent_wait_seconds']
+            ?? ($checkout
+                ? KraAgentBridge::CHECKOUT_COMMAND_WAIT_SECONDS
+                : KraAgentBridge::COMMAND_WAIT_SECONDS));
+        $httpTimeout = (int) ($context['http_timeout_seconds'] ?? ($checkout ? 20 : 45));
+        $httpConnect = (int) ($context['http_connect_timeout_seconds'] ?? ($checkout ? 3 : 5));
 
         try {
             if ($this->usesAgentBridge()) {
@@ -1005,7 +1069,7 @@ class KraDeviceService
                     $payload,
                     'json',
                     false,
-                    KraAgentBridge::COMMAND_WAIT_SECONDS,
+                    $agentWait,
                 );
                 $responseData = json_decode($proxied['body'], true);
                 $httpSuccessful = $proxied['status'] >= 200 && $proxied['status'] < 300;
@@ -1045,11 +1109,10 @@ class KraDeviceService
                 ];
             }
 
-            // Connect fast-fail: a flapping device IP must not pin PHP workers for
-            // 60s × 3 attempts (~3 min) — that queues every other POS request
-            // (cart save, search, checkout) behind the dead fiscal call.
-            $response = Http::connectTimeout(5)
-                ->timeout(45)
+            // Connect fast-fail: a flapping device IP must not pin PHP workers.
+            // Checkout uses a tighter budget (~30s total including health).
+            $response = Http::connectTimeout($httpConnect)
+                ->timeout($httpTimeout)
                 ->retry(1, 250, function ($exception) {
                     // Never retry connection refused / timeout / aborted — device is down.
                     return ! ($exception instanceof \Illuminate\Http\Client\ConnectionException);

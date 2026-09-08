@@ -31,6 +31,7 @@ class KraDeviceCheckoutTest extends TestCase
         $settings = $org->module_settings ?? [];
         $settings['finance'] = array_merge($settings['finance'] ?? [], [
             'enable_kra_device' => true,
+            'enable_kra_agent' => false,
             'kra_device_ip' => 'http://192.168.1.50:8010',
             'kra_serial_number' => 'DEJA02220240050',
             'kra_pin_number' => 'P052177271G',
@@ -39,18 +40,28 @@ class KraDeviceCheckoutTest extends TestCase
         $org->update(['module_settings' => $settings]);
     }
 
-    public function test_checkout_submits_to_kra_device_when_enabled(): void
+    protected function fakeKraDeviceHttp(array $workflowBody, int $workflowStatus = 200): void
     {
         Http::fake([
-            '192.168.1.50:8010/*' => Http::response([
-                'success' => true,
-                'message' => 'OK',
-                'invoice_number' => 'CU-12345',
-                'Receipt Signature' => 'SIG-ABC',
-                'signature_link' => 'https://example.test/qr',
-                'serial_number' => 'DEJA02220240050',
-                'timestamp' => '2026-06-11T12:00:00',
+            '192.168.1.50:8010/api/health' => Http::response([
+                'status' => 'OK',
+                'deviceConnection' => 'Connected',
+                'apiService' => 'Comstore',
             ], 200),
+            '192.168.1.50:8010/*' => Http::response($workflowBody, $workflowStatus),
+        ]);
+    }
+
+    public function test_checkout_submits_to_kra_device_when_enabled(): void
+    {
+        $this->fakeKraDeviceHttp([
+            'success' => true,
+            'message' => 'OK',
+            'invoice_number' => 'CU-12345',
+            'Receipt Signature' => 'SIG-ABC',
+            'signature_link' => 'https://example.test/qr',
+            'serial_number' => 'DEJA02220240050',
+            'timestamp' => '2026-06-11T12:00:00',
         ]);
 
         $product = Product::with('vat')->first();
@@ -192,11 +203,9 @@ class KraDeviceCheckoutTest extends TestCase
 
     public function test_checkout_saves_sale_when_kra_device_fails(): void
     {
-        Http::fake([
-            '192.168.1.50:8010/*' => Http::response([
-                'success' => false,
-                'message' => 'Device rejected sale',
-            ], 200),
+        $this->fakeKraDeviceHttp([
+            'success' => false,
+            'message' => 'Device rejected sale',
         ]);
 
         $product = Product::with('vat')->first();
@@ -222,10 +231,8 @@ class KraDeviceCheckoutTest extends TestCase
         ])
             ->assertCreated()
             ->assertJsonPath('kra_skipped', true)
-            ->assertJsonPath(
-                'kra_warning',
-                'Sale created without KRA due to an error with KRA device.',
-            )
+            ->assertJsonPath('kra_warning', 'Device rejected sale')
+            ->assertJsonPath('kra_error_detail', 'Device rejected sale')
             ->json();
 
         $this->assertSame($beforeSales + 1, \App\Models\Sale::query()->count());
@@ -283,16 +290,14 @@ class KraDeviceCheckoutTest extends TestCase
 
     public function test_checkout_submits_buyer_kra_pin_from_linked_customer(): void
     {
-        Http::fake([
-            '192.168.1.50:8010/*' => Http::response([
-                'success' => true,
-                'message' => 'OK',
-                'invoice_number' => 'CU-BUYER-PIN',
-                'Receipt Signature' => 'SIG-PIN',
-                'signature_link' => 'https://example.test/qr-pin',
-                'serial_number' => 'DEJA02220240050',
-                'timestamp' => '2026-06-11T12:00:00',
-            ], 200),
+        $this->fakeKraDeviceHttp([
+            'success' => true,
+            'message' => 'OK',
+            'invoice_number' => 'CU-BUYER-PIN',
+            'Receipt Signature' => 'SIG-PIN',
+            'signature_link' => 'https://example.test/qr-pin',
+            'serial_number' => 'DEJA02220240050',
+            'timestamp' => '2026-06-11T12:00:00',
         ]);
 
         $product = Product::with('vat')->first();

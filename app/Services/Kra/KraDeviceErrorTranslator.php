@@ -139,6 +139,11 @@ final class KraDeviceErrorTranslator
     /** Raw middleware strings that should never be shown to cashiers as-is. */
     protected static function looksLikeCrypticDeviceNoise(string $text): bool
     {
+        // Keep clear Centrix / Comstore guidance intact.
+        if (preg_match('/Comstore|Centrix KRA Agent|fiscal device|Smart VSCU|start Comstore/i', $text) === 1) {
+            return false;
+        }
+
         return (bool) preg_match(
             '/\berror\s*code\b|aborted without a reason|signal is aborted|operation was aborted/i',
             $text,

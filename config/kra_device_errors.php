@@ -89,9 +89,11 @@ return [
         '/Device not initialized/i' => 'The fiscal device is not initialized. Use Initialize device in Finance settings or configure it in Comstore desktop.',
         '/deviceConnection.*Disconnected/i' => 'Comstore API is reachable but the fiscal hardware is disconnected. Check power and network to the Smart VSCU device.',
         '/Could not reach KRA device/i' => 'Could not reach the KRA device. Check that it is powered on, on the network, and the URL in settings is correct.',
-        '/cURL error|Connection refused|timed out|Connection timed out|Failed to connect/i' => 'Could not connect to the KRA device. Check network connectivity and the device URL in Finance settings.',
+        '/Start Comstore|Comstore is not|Comstore not reachable|COMSTORE_MANUAL_START/i' => 'Comstore is not running on the shop PC. Start Comstore (Windows startup or Comstore service), then try the sale again. The receipt was saved without a KRA QR.',
+        '/did not respond in time|KRA did not respond/i' => 'KRA / Comstore did not respond in time. Start Comstore on the shop PC if it is stopped. The sale was saved without a KRA QR.',
+        '/cURL error|Connection refused|timed out|Connection timed out|Failed to connect|actively refused|no connection could be made/i' => 'Could not reach Comstore on the shop PC. Start Comstore and confirm the Centrix KRA Agent is online, then try again.',
         '/519\s*error\s*code|error\s*code\s*[,:]?\s*519/i' => 'The KRA fiscal device is not communicating with the system. Check that Comstore is running, the device is powered on and connected, then try again.',
-        '/aborted without a reason|signal is aborted|operation was aborted/i' => 'The KRA fiscal device stopped responding. Check that the device is powered on, connected to the network, and Comstore is running, then try again.',
+        '/aborted without a reason|signal is aborted|operation was aborted/i' => 'Comstore or the KRA fiscal device stopped responding. Start Comstore on the shop PC, check the device, then try again.',
     ],
 
     'fallback' => 'KRA device rejected the request. Check the device connection and product registration, then try again.',

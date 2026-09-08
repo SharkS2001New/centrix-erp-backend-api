@@ -45,55 +45,101 @@ class CheckoutKraSubmissionService
         ])->all();
 
         $invoiceNumber = 'POS-'.$sale->order_num;
+        $startedAt = microtime(true);
+        $maxSeconds = \App\Services\Kra\KraAgentBridge::CHECKOUT_MAX_SECONDS;
         try {
             $service = KraDeviceService::fromSettings(
                 $finance,
                 $gate->organization()?->id ? (int) $gate->organization()->id : null,
             );
-            // Agent path: skip health when Centrix KRA Agent is online — one less round-trip.
-            // Direct Comstore path still probes health first (flapping device soft-skip).
-            $skipHealth = $service->usesAgentBridge() && $service->agentIsWarm();
-            if (! $skipHealth) {
-                $health = $service->checkHealth();
-                if (! ($health['success'] ?? false)) {
-                    $healthMessage = trim((string) ($health['message'] ?? ''));
-                    if ($healthMessage === '') {
-                        $healthMessage = 'KRA device is unreachable or disconnected.';
-                    }
-                    Log::warning('KRA soft-skip on checkout — device health failed before fiscalize', [
-                        'sale_id' => $sale->id,
-                        'message' => $healthMessage,
-                        'reachable' => $health['reachable'] ?? null,
-                        'device_connection' => $health['device_connection'] ?? null,
-                    ]);
-                    $result = [
-                        'success' => false,
-                        'message' => KraDeviceErrorTranslator::userMessage($healthMessage),
-                        'payload' => null,
-                        'response' => is_array($health['response'] ?? null) ? $health['response'] : null,
-                    ];
-                } else {
-                    $invoiceNumber = $service->traderInvoiceForSale($sale, $finance);
-                    $result = $service->sendSale(
-                        $orderItems,
-                        (float) $sale->order_total,
-                        $invoiceNumber,
-                        $buyerPin,
-                    );
+
+            $remaining = static function () use ($startedAt, $maxSeconds): int {
+                return max(1, (int) floor($maxSeconds - (microtime(true) - $startedAt)));
+            };
+
+            $checkoutContext = static function () use ($remaining): array {
+                $left = $remaining();
+
+                return [
+                    'checkout' => true,
+                    'agent_wait_seconds' => min(
+                        \App\Services\Kra\KraAgentBridge::CHECKOUT_COMMAND_WAIT_SECONDS,
+                        $left,
+                    ),
+                    'http_timeout_seconds' => min(18, $left),
+                    'http_connect_timeout_seconds' => 2,
+                ];
+            };
+
+            $result = null;
+            $preflight = $service->agentFiscalPreflight();
+
+            // Always short-gate complete-workflow with /api/health.
+            // If the last heartbeat said Comstore was down, still probe — Comstore may have
+            // just been started and the next receipt should fiscalize without waiting for
+            // the next agent heartbeat.
+            $healthWait = min(
+                \App\Services\Kra\KraAgentBridge::CHECKOUT_HEALTH_WAIT_SECONDS,
+                $remaining(),
+            );
+            $health = $service->checkHealth($healthWait);
+            if (! ($health['success'] ?? false)) {
+                $healthMessage = trim((string) ($health['message'] ?? ''));
+                if ($healthMessage === '' && $preflight['ready'] === false) {
+                    $healthMessage = trim((string) ($preflight['message'] ?? ''));
                 }
-            } else {
+                if ($healthMessage === '') {
+                    $healthMessage = $preflight['ready'] === false
+                        ? 'Comstore or the KRA fiscal device is not available on the shop PC.'
+                        : 'Comstore is not responding. Start Comstore on the shop PC, then try again.';
+                }
+                Log::warning('KRA soft-skip on checkout — health failed; skipping complete-workflow', [
+                    'sale_id' => $sale->id,
+                    'message' => $healthMessage,
+                    'preflight_ready' => $preflight['ready'],
+                    'reachable' => $health['reachable'] ?? null,
+                    'device_connection' => $health['device_connection'] ?? null,
+                    'manual_start_required' => $health['manual_start_required'] ?? null,
+                    'elapsed_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                ]);
+                $result = [
+                    'success' => false,
+                    'message' => KraDeviceErrorTranslator::userMessage($healthMessage),
+                    'payload' => null,
+                    'response' => is_array($health['response'] ?? null) ? $health['response'] : null,
+                ];
+            }
+
+            if ($result === null && (microtime(true) - $startedAt) >= $maxSeconds) {
+                Log::warning('KRA soft-skip on checkout — wall-clock budget exhausted before fiscalize', [
+                    'sale_id' => $sale->id,
+                    'elapsed_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                ]);
+                $result = [
+                    'success' => false,
+                    'message' => KraDeviceErrorTranslator::userMessage(
+                        'KRA did not respond in time. Sale saved without fiscal QR.',
+                    ),
+                    'payload' => null,
+                    'response' => null,
+                ];
+            }
+
+            if ($result === null) {
                 $invoiceNumber = $service->traderInvoiceForSale($sale, $finance);
                 $result = $service->sendSale(
                     $orderItems,
                     (float) $sale->order_total,
                     $invoiceNumber,
                     $buyerPin,
+                    $checkoutContext(),
                 );
             }
         } catch (\Throwable $e) {
             Log::warning('KRA device call threw during checkout — sale kept without fiscalization', [
                 'sale_id' => $sale->id,
                 'message' => $e->getMessage(),
+                'elapsed_ms' => (int) round((microtime(true) - $startedAt) * 1000),
             ]);
             $result = [
                 'success' => false,
