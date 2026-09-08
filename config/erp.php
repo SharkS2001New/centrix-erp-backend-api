@@ -697,9 +697,13 @@ return [
             'enable_equity_bank' => true,
             'enable_kra_integration' => true,
             'enable_kra_device' => false,
-            /** Cloud Centrix → shop CentrixKraAgent → local Comstore (kra_device_ip). */
+            /** Cloud Centrix → shop CentrixKraAgent → local Comstore (kra_device_ip). Mutually exclusive with direct mode. */
             'enable_kra_agent' => false,
             'kra_device_ip' => '',
+            /** Stashed direct Device IP / URL while agent mode is active (inactive until agent is turned off). */
+            'kra_direct_device_ip' => '',
+            /** Stashed local Comstore URL while direct mode is active. */
+            'kra_agent_comstore_url' => '',
             /** Smart VSCU hardware IP for POST /api/init and /api/restart-device (when API URL is a hostname). */
             'kra_device_hardware_ip' => '',
             'kra_serial_number' => '',

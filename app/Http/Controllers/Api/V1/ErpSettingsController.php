@@ -828,6 +828,8 @@ class ErpSettingsController extends Controller
             'enable_kra_device' => 'sometimes|boolean',
             'enable_kra_agent' => 'sometimes|boolean',
             'kra_device_ip' => 'sometimes|nullable|string|max:250',
+            'kra_direct_device_ip' => 'sometimes|nullable|string|max:250',
+            'kra_agent_comstore_url' => 'sometimes|nullable|string|max:250',
             'kra_device_hardware_ip' => 'sometimes|nullable|string|max:100',
             'kra_serial_number' => 'sometimes|nullable|string|max:100',
             'kra_pin_number' => 'sometimes|nullable|string|max:45',
@@ -888,8 +890,10 @@ class ErpSettingsController extends Controller
             $ip = trim((string) ($data['kra_device_ip'] ?? $gate->moduleSettings('finance')['kra_device_ip'] ?? ''));
             $serial = trim((string) ($data['kra_serial_number'] ?? $gate->moduleSettings('finance')['kra_serial_number'] ?? ''));
             $pin = trim((string) ($data['kra_pin_number'] ?? $gate->moduleSettings('finance')['kra_pin_number'] ?? ''));
-            $agentMode = ! empty($data['enable_kra_agent'])
-                || ! empty($gate->moduleSettings('finance')['enable_kra_agent']);
+            // Honour explicit false when switching back to direct (legacy) mode.
+            $agentMode = array_key_exists('enable_kra_agent', $data)
+                ? ! empty($data['enable_kra_agent'])
+                : ! empty($gate->moduleSettings('finance')['enable_kra_agent']);
             if ($ip === '' && $agentMode) {
                 $ip = 'http://localhost:4000';
                 $data['kra_device_ip'] = $ip;
@@ -903,6 +907,21 @@ class ErpSettingsController extends Controller
             }
             // Persist a clean URL (allows localhost or 127.0.0.1).
             $data['kra_device_ip'] = app(\App\Services\Kra\KraAgentBridge::class)->normalizeComstoreUrl($ip);
+            $data['enable_kra_agent'] = $agentMode;
+            if (array_key_exists('kra_direct_device_ip', $data)) {
+                $direct = trim((string) $data['kra_direct_device_ip']);
+                $data['kra_direct_device_ip'] = $direct === ''
+                    ? ''
+                    : app(\App\Services\Kra\KraAgentBridge::class)->normalizeComstoreUrl($direct);
+            }
+            if (array_key_exists('kra_agent_comstore_url', $data)) {
+                $agentUrl = trim((string) $data['kra_agent_comstore_url']);
+                $data['kra_agent_comstore_url'] = $agentUrl === ''
+                    ? ''
+                    : app(\App\Services\Kra\KraAgentBridge::class)->normalizeComstoreUrl($agentUrl);
+            } elseif ($agentMode) {
+                $data['kra_agent_comstore_url'] = $data['kra_device_ip'];
+            }
         }
 
         if (! $user->is_super_admin && array_key_exists('mpesa', $data) && is_array($data['mpesa']) && ! $gate->mpesaStkPlatformEnabled()) {
@@ -1526,7 +1545,8 @@ class ErpSettingsController extends Controller
     {
         if (! $gate->kraIntegrationPlatformEnabled()) {
             foreach ([
-                'enable_kra_device', 'enable_kra_agent', 'kra_device_ip', 'kra_device_hardware_ip', 'kra_serial_number', 'kra_pin_number',
+                'enable_kra_device', 'enable_kra_agent', 'kra_device_ip', 'kra_direct_device_ip',
+                'kra_agent_comstore_url', 'kra_device_hardware_ip', 'kra_serial_number', 'kra_pin_number',
                 'kra_device_test_mode', 'kra_plu_register_path', 'default_submit_kra', 'kra_bypass_above_amount',
             ] as $key) {
                 unset($finance[$key]);

@@ -902,7 +902,15 @@ class OrganizationPlatformConfigService
         }
 
         if (isset($data['enable_kra_device']) && ! $this->kraIntegrationAllowedForPayload($data)) {
-            unset($data['enable_kra_device'], $data['kra_device_ip'], $data['kra_serial_number'], $data['kra_pin_number']);
+            unset(
+                $data['enable_kra_device'],
+                $data['enable_kra_agent'],
+                $data['kra_device_ip'],
+                $data['kra_direct_device_ip'],
+                $data['kra_agent_comstore_url'],
+                $data['kra_serial_number'],
+                $data['kra_pin_number'],
+            );
         }
 
         if (isset($data['mpesa']) && is_array($data['mpesa'])) {
