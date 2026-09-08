@@ -671,6 +671,7 @@ class AttendanceLunchReconcileTest extends TestCase
         );
 
         $this->assertSame(23.0, $summary['expected_days']);
+        $this->assertSame(23.0, $summary['scheduled_work_days']);
         $this->assertSame(17.0, $summary['paid_days']);
         $this->assertSame(6.0, $summary['remaining_days']);
         $this->assertSame(0.0, $summary['absent_days']);

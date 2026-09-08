@@ -166,6 +166,9 @@ class PayrollEarningsService
                 'allowance_lines' => $allowanceBreakdown['lines'],
                 'allowances_period' => $allowances,
                 'expected_work_days' => $expectedDays,
+                'scheduled_work_days' => (float) ($attendanceSummary['scheduled_work_days']
+                    ?? $attendanceSummary['expected_days']
+                    ?? $expectedDays),
                 'paid_work_days' => $useProration ? round($paidDays, 2) : $expectedDays,
                 'calendar_paid_days' => $useProration ? round($paidDays, 2) : $expectedDays,
                 'remaining_days' => $useProration ? round($remainingDays, 2) : 0.0,
@@ -196,6 +199,7 @@ class PayrollEarningsService
     /**
      * @return array{
      *   expected_days: float,
+     *   scheduled_work_days: float,
      *   paid_days: float,
      *   remaining_days: float,
      *   rest_days_paid: float,
@@ -334,10 +338,11 @@ class PayrollEarningsService
             $cursor->addDay();
         }
 
-        // Paid scheduled workdays through yesterday. Off days are excluded from expected and absent.
+        // Paid scheduled workdays through yesterday. Weekly rest days are excluded from expected and absent.
         $paidDays = round($attended + $paidLeave, 2);
         $scheduledDays = round($expected, 2);
         $calendarDays = (float) (Carbon::parse($start)->startOfDay()->diffInDays(Carbon::parse($end)->startOfDay()) + 1);
+        // Pay divisor may be fixed_30; display / absence math still uses real scheduled workdays.
         $expectedForPay = $this->payrollMonthDaysBasis((int) $employee->organization_id) === 'fixed_30'
             ? 30.0
             : $scheduledDays;
@@ -345,6 +350,7 @@ class PayrollEarningsService
 
         return [
             'expected_days' => $expectedForPay,
+            'scheduled_work_days' => $scheduledDays,
             'calendar_days_in_period' => $calendarDays,
             'paid_days' => $paidDays,
             'remaining_days' => round($remaining, 2),
