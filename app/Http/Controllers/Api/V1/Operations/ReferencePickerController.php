@@ -85,7 +85,7 @@ class ReferencePickerController extends Controller
 
         $query = $this->scopeUsersForPicker($request, $query);
 
-        // Sales data / report seller pickers: POS, backoffice sales create, mobile sales.
+        // Sales data / report seller pickers: POS cashiers, hotel POS, mobile sales.
         if ($request->boolean('sales_capable') || $request->input('for') === 'sales') {
             SalesReportUserScope::applyEligibleSalesReportUsers($query);
         }

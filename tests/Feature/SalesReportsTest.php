@@ -670,6 +670,59 @@ class SalesReportsTest extends TestCase
             'is_active' => true,
         ]);
 
+        $backofficeRole = \App\Models\Role::query()->firstOrCreate(
+            ['role_name' => 'Backoffice Sales Only '.uniqid()],
+            ['scope' => 'branch', 'is_active' => true],
+        );
+        $backofficePermId = \App\Models\Permission::query()
+            ->where('permission_code', 'sales.orders.create')
+            ->value('id');
+        $this->assertNotNull($backofficePermId);
+        \Illuminate\Support\Facades\DB::table('role_permissions')->where('role_id', $backofficeRole->id)->delete();
+        \Illuminate\Support\Facades\DB::table('role_permissions')->insert([
+            'role_id' => $backofficeRole->id,
+            'permission_id' => $backofficePermId,
+        ]);
+
+        $backofficeSeller = User::create([
+            'organization_id' => $this->admin->organization_id,
+            'branch_id' => $this->admin->branch_id,
+            'role_id' => $backofficeRole->id,
+            'username' => 'bo_seller_'.uniqid(),
+            'password' => \Illuminate\Support\Facades\Hash::make('password'),
+            'full_name' => 'Backoffice Seller Only',
+            'access_scope' => 'branch',
+            'login_channels' => ['backoffice'],
+            'is_active' => true,
+        ]);
+
+        $mobileRole = \App\Models\Role::query()->firstOrCreate(
+            ['role_name' => 'Mobile Sales Filter '.uniqid()],
+            ['scope' => 'branch', 'is_active' => true],
+        );
+        $mobilePermId = \App\Models\Permission::query()
+            ->where('permission_code', 'mobile_sales.orders.create')
+            ->value('id');
+        $this->assertNotNull($mobilePermId);
+        \Illuminate\Support\Facades\DB::table('role_permissions')->where('role_id', $mobileRole->id)->delete();
+        \Illuminate\Support\Facades\DB::table('role_permissions')->insert([
+            'role_id' => $mobileRole->id,
+            'permission_id' => $mobilePermId,
+        ]);
+
+        $mobileRep = User::create([
+            'organization_id' => $this->admin->organization_id,
+            'branch_id' => $this->admin->branch_id,
+            'role_id' => $mobileRole->id,
+            'username' => 'mobile_rep_'.uniqid(),
+            'password' => \Illuminate\Support\Facades\Hash::make('password'),
+            'full_name' => 'Mobile Sales Rep',
+            'access_scope' => 'branch',
+            'login_channels' => ['mobile'],
+            'is_mobile_user' => true,
+            'is_active' => true,
+        ]);
+
         $cashier = User::where('username', 'cashier')->first();
         $this->assertNotNull($cashier);
 
@@ -679,7 +732,12 @@ class SalesReportsTest extends TestCase
         $ids = collect($response->json('data'))->pluck('id')->map(fn ($id) => (int) $id);
         $this->assertTrue($ids->contains((int) $this->admin->id));
         $this->assertTrue($ids->contains((int) $cashier->id), 'POS cashier should appear');
+        $this->assertTrue($ids->contains((int) $mobileRep->id), 'Mobile sales users should appear');
         $this->assertFalse($ids->contains((int) $stockUser->id), 'Inventory-only users must not appear');
+        $this->assertFalse(
+            $ids->contains((int) $backofficeSeller->id),
+            'Backoffice-only sellers must not appear in Cashier / user filter',
+        );
     }
 
     public function test_report_filter_cashiers_includes_hotel_pos_cashiers(): void
