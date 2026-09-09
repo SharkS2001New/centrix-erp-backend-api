@@ -77,6 +77,7 @@ class KraAgentBridge
         '/api/upload-plu-data',
         '/api/register-plu',
         '/agent/ping',
+        '/agent/device-probe',
     ];
 
     public function onlineTtlSeconds(): int
@@ -281,19 +282,36 @@ class KraAgentBridge
         if (app()->runningUnitTests() && (
             strtoupper($method) === 'PING'
             || (strtoupper($method) === 'GET' && $path === '/api/health')
+            || (strtoupper($method) === 'GET' && $path === '/agent/device-probe')
         )) {
-            $body = strtoupper($method) === 'PING'
-                ? json_encode(['pong' => true, 'agent' => self::AGENT_NAME])
-                : json_encode([
+            $requestBody = $body;
+            if (strtoupper($method) === 'PING') {
+                $responseBody = json_encode(['pong' => true, 'agent' => self::AGENT_NAME]);
+            } elseif ($path === '/agent/device-probe') {
+                $hardware = is_array($requestBody) ? trim((string) ($requestBody['hardware_ip'] ?? '')) : '';
+                $responseBody = json_encode(config('testing.kra_agent_device_probe_response') ?? [
+                    'success' => true,
+                    'reachable' => true,
+                    'hardware_ip' => $hardware,
+                    'device_connection' => 'Connected',
+                    'ping_ok' => true,
+                    'comstore_healthy' => true,
+                    'message' => $hardware !== ''
+                        ? "Fiscal device reachable at {$hardware} (ICMP OK)"
+                        : 'Comstore healthy.',
+                ]);
+            } else {
+                $responseBody = json_encode(config('testing.kra_agent_health_response') ?? [
                     'status' => 'OK',
                     'deviceConnection' => 'Connected',
                     'apiService' => 'Comstore',
                     'version' => 'test',
                 ]);
+            }
             $this->submitCommandResult($agent, $commandId, [
                 'success' => true,
                 'status' => 200,
-                'body' => $body,
+                'body' => $responseBody,
                 'headers' => ['Content-Type' => ['application/json']],
                 'agent_version' => '1.0.0',
             ]);

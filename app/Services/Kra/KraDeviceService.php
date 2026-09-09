@@ -14,6 +14,8 @@ class KraDeviceService
 
     protected ?\App\Models\KraAgent $kraAgent = null;
 
+    protected string $hardwareIp = '';
+
     public function __construct(
         protected string $deviceBaseUrl,
         protected string $serialNumber,
@@ -43,6 +45,7 @@ class KraDeviceService
             trim((string) ($financeSettings['kra_pin_number'] ?? '')),
             (bool) ($financeSettings['kra_device_test_mode'] ?? config('app.env') !== 'production'),
         );
+        $service->hardwareIp = trim((string) ($financeSettings['kra_device_hardware_ip'] ?? ''));
 
         $orgId = $organizationId
             ?? (int) ($financeSettings['_organization_id'] ?? 0);
@@ -960,6 +963,11 @@ class KraDeviceService
                 );
             }
 
+            // Keep the real agent/Comstore reason — do not collapse to a vague connectivity line.
+            $message = $manual
+                ? KraAgentBridge::comstoreManualStartUserMessage((string) $comstoreUrl)
+                : KraDeviceErrorTranslator::userMessage($raw);
+
             return [
                 'success' => false,
                 'reachable' => false,
@@ -967,13 +975,135 @@ class KraDeviceService
                 'manual_start_required' => $manual,
                 'http_status' => null,
                 'url' => $url,
-                'message' => $manual
-                    ? KraAgentBridge::comstoreManualStartUserMessage((string) $comstoreUrl)
-                    : KraDeviceErrorTranslator::userMessage('Could not reach KRA device: '.$raw),
+                'message' => $message,
+                'detail' => $raw,
                 'device_connection' => null,
                 'api_service' => null,
                 'device_version' => null,
                 'response' => null,
+            ];
+        }
+    }
+
+    /**
+     * Finance "Test connection": Comstore /api/health + optional Fiscal hardware IP ping via agent.
+     *
+     * @return array<string, mixed>
+     */
+    public function testConnection(?int $waitSeconds = null): array
+    {
+        $wait = $waitSeconds ?? KraAgentBridge::ADMIN_HEALTH_WAIT_SECONDS;
+        $health = $this->checkHealth($wait);
+        $hardwareIp = trim($this->hardwareIp);
+        if ($hardwareIp === '' && $this->kraAgent) {
+            $hardwareIp = trim((string) ($this->kraAgent->device_hardware_ip ?? ''));
+        }
+
+        $deviceProbe = null;
+        if ($this->usesAgentBridge() && $hardwareIp !== '') {
+            $deviceProbe = $this->probeFiscalHardwareViaAgent($hardwareIp, min(10, $wait));
+        }
+
+        $parts = [];
+        $comstoreOk = (bool) ($health['success'] ?? false);
+        if ($comstoreOk) {
+            $parts[] = (string) ($health['message'] ?? 'Comstore health OK.');
+        } else {
+            $parts[] = (string) ($health['message'] ?? 'Comstore health failed.');
+            if (! empty($health['detail']) && is_string($health['detail'])
+                && ! str_contains((string) $health['message'], $health['detail'])) {
+                $parts[] = 'Detail: '.$health['detail'];
+            }
+        }
+
+        $deviceOk = true;
+        if (is_array($deviceProbe)) {
+            $deviceOk = (bool) ($deviceProbe['success'] ?? false);
+            $parts[] = (string) ($deviceProbe['message'] ?? (
+                $deviceOk ? 'Fiscal hardware reachable.' : 'Fiscal hardware not reachable.'
+            ));
+            if ($this->kraAgent) {
+                $this->agentBridge->touchAgent(
+                    $this->kraAgent,
+                    null,
+                    $comstoreOk ? true : null,
+                    $comstoreOk ? '' : (string) ($health['message'] ?? ''),
+                    $deviceOk,
+                    (string) ($deviceProbe['message'] ?? ''),
+                    $hardwareIp !== '' ? $hardwareIp : null,
+                    isset($deviceProbe['device_connection']) ? (string) $deviceProbe['device_connection'] : null,
+                );
+            }
+        } elseif ($hardwareIp !== '') {
+            $deviceOk = false;
+            $parts[] = 'Fiscal hardware IP is set ('.$hardwareIp.') but could not be probed — Centrix KRA Agent must be online.';
+        }
+
+        $success = $comstoreOk && $deviceOk;
+
+        return array_merge($health, [
+            'success' => $success,
+            'message' => implode(' ', array_filter($parts)),
+            'comstore_ok' => $comstoreOk,
+            'device_ok' => $deviceOk,
+            'device_hardware_ip' => $hardwareIp !== '' ? $hardwareIp : null,
+            'device_reachable' => is_array($deviceProbe) ? (bool) ($deviceProbe['success'] ?? false) : null,
+            'device_ping_ok' => is_array($deviceProbe) ? ($deviceProbe['ping_ok'] ?? null) : null,
+            'device_status_message' => is_array($deviceProbe) ? ($deviceProbe['message'] ?? null) : null,
+            'manual_start_required' => (bool) ($health['manual_start_required'] ?? false),
+            'expose_detail' => true,
+        ]);
+    }
+
+    /**
+     * Ask CentrixKraAgent to ICMP/TCP-ping the Smart VSCU hardware IP.
+     *
+     * @return array<string, mixed>|null
+     */
+    protected function probeFiscalHardwareViaAgent(string $hardwareIp, int $waitSeconds): ?array
+    {
+        if (! $this->usesAgentBridge()) {
+            return null;
+        }
+
+        try {
+            $proxied = $this->agentBridge->executeViaAgent(
+                $this->kraAgent,
+                'GET',
+                '/agent/device-probe',
+                $hardwareIp !== '' ? ['hardware_ip' => $hardwareIp] : null,
+                'json',
+                false,
+                max(5, $waitSeconds),
+            );
+            $body = json_decode($proxied['body'], true);
+            if (! is_array($body)) {
+                return [
+                    'success' => false,
+                    'message' => trim((string) ($proxied['body'] ?: 'Device probe returned an empty response.')),
+                    'ping_ok' => null,
+                    'device_connection' => null,
+                ];
+            }
+
+            return [
+                'success' => (bool) ($body['success'] ?? $body['reachable'] ?? false),
+                'message' => (string) ($body['message'] ?? 'Device probe completed.'),
+                'ping_ok' => array_key_exists('ping_ok', $body) ? $body['ping_ok'] : null,
+                'device_connection' => $body['device_connection'] ?? null,
+                'hardware_ip' => $body['hardware_ip'] ?? $hardwareIp,
+                'comstore_healthy' => $body['comstore_healthy'] ?? null,
+                'response' => $body,
+            ];
+        } catch (\Throwable $e) {
+            Log::warning('KRA fiscal hardware probe failed: '.$e->getMessage());
+
+            return [
+                'success' => false,
+                'message' => KraDeviceErrorTranslator::userMessage($e->getMessage()),
+                'detail' => $e->getMessage(),
+                'ping_ok' => false,
+                'device_connection' => null,
             ];
         }
     }

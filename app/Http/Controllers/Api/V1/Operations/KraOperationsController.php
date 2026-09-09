@@ -94,11 +94,12 @@ class KraOperationsController extends Controller
         }
 
         try {
-            $result = KraDeviceService::fromSettings($testFinance, $orgId)->checkHealth();
+            $result = KraDeviceService::fromSettings($testFinance, $orgId)->testConnection();
         } catch (InvalidArgumentException $e) {
             return response()->json([
                 'success' => false,
                 'message' => $e->getMessage(),
+                'expose_detail' => true,
             ], 422);
         } catch (\Throwable $e) {
             report($e);
@@ -106,10 +107,15 @@ class KraOperationsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'KRA device health check failed: '.$e->getMessage(),
-            ], 502);
+                'detail' => $e->getMessage(),
+                'expose_detail' => true,
+            ], 200);
         }
 
-        return response()->json($result, ($result['success'] ?? false) ? 200 : 502);
+        // Always 200 so the UI can show the real Comstore/device message (not a generic network toast).
+        return response()->json(array_merge($result, [
+            'expose_detail' => true,
+        ]));
     }
 
     public function deviceInit(Request $request)
