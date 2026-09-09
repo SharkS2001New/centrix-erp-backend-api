@@ -146,7 +146,7 @@ class KraAgentBridge
                 && $agent->comstore_reachable !== false
                 && $agent->device_reachable === false,
             'poll_interval_seconds' => 0.05,
-            'long_poll_ms' => 750,
+            'long_poll_ms' => 400,
             'online_ttl_seconds' => $this->onlineTtlSeconds(),
         ];
     }
@@ -348,7 +348,16 @@ class KraAgentBridge
 
         do {
             /** @var KraAgentCommand|null $command */
-            $command = KraAgentCommand::query()->find($commandId);
+            $command = KraAgentCommand::query()
+                ->select([
+                    'id',
+                    'status',
+                    'response_status',
+                    'response_body',
+                    'response_headers',
+                    'error_message',
+                ])
+                ->find($commandId);
 
             if ($command === null) {
                 throw new RuntimeException('KRA agent command disappeared unexpectedly.');
@@ -369,7 +378,9 @@ class KraAgentBridge
                 );
             }
 
-            usleep(25_000);
+            // Poll faster at first so QR returns as soon as the agent posts; ease off later.
+            $elapsed = microtime(true) - ($deadline - $waitSeconds);
+            usleep($elapsed < 2.0 ? 10_000 : 20_000);
         } while (microtime(true) < $deadline);
 
         KraAgentCommand::query()
@@ -385,10 +396,19 @@ class KraAgentBridge
     /**
      * @return list<array<string, mixed>>
      */
-    public function pullPendingCommands(KraAgent $agent, int $limit = self::PULL_COMMAND_LIMIT, ?string $agentVersion = null): array
-    {
-        $this->touchAgent($agent, $agentVersion);
-        $this->reclaimStaleProcessingCommands($agent);
+    public function pullPendingCommands(
+        KraAgent $agent,
+        int $limit = self::PULL_COMMAND_LIMIT,
+        ?string $agentVersion = null,
+        bool $touch = true,
+        bool $reclaim = true,
+    ): array {
+        if ($touch) {
+            $this->touchAgent($agent, $agentVersion);
+        }
+        if ($reclaim) {
+            $this->reclaimStaleProcessingCommands($agent);
+        }
 
         $limit = max(1, min(self::PULL_COMMAND_LIMIT, $limit));
         $now = AppTimezone::now()->format('Y-m-d H:i:s');

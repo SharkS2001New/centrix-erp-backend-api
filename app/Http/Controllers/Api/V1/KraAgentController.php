@@ -68,7 +68,7 @@ class KraAgentController extends Controller
                 'agentId' => (int) $agent->id,
                 'comstoreBaseUrl' => $agent->comstore_base_url,
                 'deviceHardwareIp' => trim((string) ($finance['kra_device_hardware_ip'] ?? '')),
-                'longPollMs' => 750,
+                'longPollMs' => 400,
                 // Fresher Comstore status in the background so checkout never needs /api/health.
                 'heartbeatIntervalSeconds' => 30,
                 // Keep below checkout soft-skip budget so a dead Comstore cannot pin the agent/worker.
@@ -202,13 +202,23 @@ class KraAgentController extends Controller
         $version = trim((string) $request->input('agent_version', $request->query('agent_version', '')));
         $waitMs = min(10_000, max(0, (int) $request->input('wait_ms', $request->query('wait_ms', 0))));
         $deadline = microtime(true) + ($waitMs / 1000);
-        $commands = [];
+        $limit = min(
+            \App\Services\Kra\KraAgentBridge::PULL_COMMAND_LIMIT,
+            max(1, (int) $request->input('limit', 1)),
+        );
 
+        // Touch + reclaim once per long-poll request — not every 10–25ms empty spin.
+        $this->bridge->touchAgent($agent, $version !== '' ? $version : null);
+        $this->bridge->reclaimStaleProcessingCommands($agent);
+
+        $commands = [];
         do {
             $commands = $this->bridge->pullPendingCommands(
                 $agent,
-                min(\App\Services\Kra\KraAgentBridge::PULL_COMMAND_LIMIT, max(1, (int) $request->input('limit', 1))),
-                $version !== '' ? $version : null,
+                $limit,
+                null,
+                touch: false,
+                reclaim: false,
             );
             if ($commands !== []) {
                 break;
@@ -216,18 +226,20 @@ class KraAgentController extends Controller
             if ($waitMs <= 0 || microtime(true) >= $deadline) {
                 break;
             }
-            usleep(25_000);
+            usleep(15_000);
         } while (true);
 
         $hardwareIp = trim((string) ($agent->device_hardware_ip ?? ''));
-        $org = \App\Models\Organization::query()->find($agent->organization_id);
-        if ($org) {
-            $finance = is_array($org->module_settings['finance'] ?? null)
-                ? $org->module_settings['finance']
-                : [];
-            $fromFinance = trim((string) ($finance['kra_device_hardware_ip'] ?? ''));
-            if ($fromFinance !== '') {
-                $hardwareIp = $fromFinance;
+        if ($hardwareIp === '') {
+            $org = \App\Models\Organization::query()->find($agent->organization_id);
+            if ($org) {
+                $finance = is_array($org->module_settings['finance'] ?? null)
+                    ? $org->module_settings['finance']
+                    : [];
+                $fromFinance = trim((string) ($finance['kra_device_hardware_ip'] ?? ''));
+                if ($fromFinance !== '') {
+                    $hardwareIp = $fromFinance;
+                }
             }
         }
 
