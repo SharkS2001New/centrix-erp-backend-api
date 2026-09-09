@@ -72,7 +72,7 @@ class KraAgentController extends Controller
                 // Fresher Comstore status in the background so checkout never needs /api/health.
                 'heartbeatIntervalSeconds' => 30,
                 // Keep below checkout soft-skip budget so a dead Comstore cannot pin the agent/worker.
-                'commandTimeoutSeconds' => 25,
+                'commandTimeoutSeconds' => 22,
                 // Comstore is started by Windows; agent only probes + heartbeats.
                 'autoStartComstore' => false,
                 'comstoreWindowsServiceNames' => [],
@@ -207,7 +207,7 @@ class KraAgentController extends Controller
         do {
             $commands = $this->bridge->pullPendingCommands(
                 $agent,
-                min(10, max(1, (int) $request->input('limit', 5))),
+                min(\App\Services\Kra\KraAgentBridge::PULL_COMMAND_LIMIT, max(1, (int) $request->input('limit', 1))),
                 $version !== '' ? $version : null,
             );
             if ($commands !== []) {

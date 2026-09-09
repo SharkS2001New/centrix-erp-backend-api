@@ -107,6 +107,12 @@ class KraDeviceService
 
         $agent = $this->kraAgent;
         if ($agent->comstore_reachable === false) {
+            // Under continuous sales, a concurrent heartbeat probe can falsely flip Comstore
+            // down while the agent is mid complete-workflow. Keep fiscalizing if work is active.
+            if ($this->agentBridge->hasActiveCommands($agent)) {
+                return ['ready' => true, 'message' => null];
+            }
+
             $message = trim((string) ($agent->comstore_status_message ?? ''));
             if ($message === '' || KraAgentBridge::isComstoreManualStartRequired($message)) {
                 $message = KraAgentBridge::comstoreManualStartUserMessage(
@@ -117,18 +123,8 @@ class KraDeviceService
             return ['ready' => false, 'message' => $message];
         }
 
-        if ($agent->device_reachable === false) {
-            $message = trim((string) ($agent->device_status_message ?? ''));
-            if ($message === '') {
-                $ip = trim((string) ($agent->device_hardware_ip ?? ''));
-                $message = 'Fiscal device is not reachable on the LAN'
-                    .($ip !== '' ? " ({$ip})" : '')
-                    .'.';
-            }
-
-            return ['ready' => false, 'message' => $message];
-        }
-
+        // Never soft-skip solely on device ICMP — fiscal hardware often looks unreachable
+        // while it is busy signing the previous receipt. Still attempt complete-workflow.
         if ($agent->comstore_reachable === true) {
             return ['ready' => true, 'message' => null];
         }

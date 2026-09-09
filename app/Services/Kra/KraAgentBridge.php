@@ -32,15 +32,22 @@ class KraAgentBridge
 
     /**
      * Checkout: no per-receipt health. Agent heartbeats probe Comstore in the background.
-     * Soft-skip only when heartbeat already says down; otherwise one complete-workflow for the QR.
+     * Soft-skip only when heartbeat already says Comstore is down; otherwise one complete-workflow.
+     * Budget must cover one sequential Comstore sale under light queueing.
      */
-    public const CHECKOUT_MAX_SECONDS = 22;
+    public const CHECKOUT_MAX_SECONDS = 30;
 
     /** Unused on checkout (heartbeat replaces it). Kept for admin Test connection helpers. */
     public const CHECKOUT_HEALTH_WAIT_SECONDS = 3;
 
     /** Full budget goes to complete-workflow so the receipt can print with eTIMS QR. */
-    public const CHECKOUT_COMMAND_WAIT_SECONDS = 20;
+    public const CHECKOUT_COMMAND_WAIT_SECONDS = 28;
+
+    /** Reclaim processing rows that never got a result (agent crash / kill mid-batch). */
+    public const STALE_PROCESSING_SECONDS = 90;
+
+    /** Claim at most one pending command so continuous sales do not starve later waiters. */
+    public const PULL_COMMAND_LIMIT = 1;
 
     public const PING_PATH = '/agent/ping';
 
@@ -378,10 +385,12 @@ class KraAgentBridge
     /**
      * @return list<array<string, mixed>>
      */
-    public function pullPendingCommands(KraAgent $agent, int $limit = 5, ?string $agentVersion = null): array
+    public function pullPendingCommands(KraAgent $agent, int $limit = self::PULL_COMMAND_LIMIT, ?string $agentVersion = null): array
     {
         $this->touchAgent($agent, $agentVersion);
+        $this->reclaimStaleProcessingCommands($agent);
 
+        $limit = max(1, min(self::PULL_COMMAND_LIMIT, $limit));
         $now = AppTimezone::now()->format('Y-m-d H:i:s');
         $ids = KraAgentCommand::query()
             ->where('kra_agent_id', $agent->id)
@@ -411,6 +420,43 @@ class KraAgentBridge
                 'accept' => $c->accept,
             ])
             ->all();
+    }
+
+    /**
+     * Stuck "processing" rows block the queue after an agent restart mid-sale.
+     * Expired → expired; still within expires_at → pending so the agent can retry.
+     */
+    public function reclaimStaleProcessingCommands(KraAgent $agent): int
+    {
+        $now = AppTimezone::now();
+        $staleBefore = $now->copy()->subSeconds(self::STALE_PROCESSING_SECONDS)->format('Y-m-d H:i:s');
+        $nowStr = $now->format('Y-m-d H:i:s');
+
+        $expired = KraAgentCommand::query()
+            ->where('kra_agent_id', $agent->id)
+            ->where('status', 'processing')
+            ->where('expires_at', '<=', $nowStr)
+            ->update(['status' => 'expired']);
+
+        $reclaimed = KraAgentCommand::query()
+            ->where('kra_agent_id', $agent->id)
+            ->where('status', 'processing')
+            ->where('created_at', '<', $staleBefore)
+            ->where('expires_at', '>', $nowStr)
+            ->update(['status' => 'pending']);
+
+        return (int) $expired + (int) $reclaimed;
+    }
+
+    public function hasActiveCommands(KraAgent $agent): bool
+    {
+        $now = AppTimezone::now()->format('Y-m-d H:i:s');
+
+        return KraAgentCommand::query()
+            ->where('kra_agent_id', $agent->id)
+            ->whereIn('status', ['pending', 'processing'])
+            ->where('expires_at', '>', $now)
+            ->exists();
     }
 
     /**
