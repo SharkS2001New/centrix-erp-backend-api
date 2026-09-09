@@ -733,11 +733,11 @@ class SalesReportsTest extends TestCase
         $this->assertTrue($ids->contains((int) $this->admin->id));
         $this->assertTrue($ids->contains((int) $cashier->id), 'POS cashier should appear');
         $this->assertTrue($ids->contains((int) $mobileRep->id), 'Mobile sales users should appear');
-        $this->assertFalse($ids->contains((int) $stockUser->id), 'Inventory-only users must not appear');
-        $this->assertFalse(
+        $this->assertTrue(
             $ids->contains((int) $backofficeSeller->id),
-            'Backoffice-only sellers must not appear in Cashier / user filter',
+            'Users with sales.orders.create must appear in Cashier / user filter',
         );
+        $this->assertFalse($ids->contains((int) $stockUser->id), 'Inventory-only users must not appear');
     }
 
     public function test_report_filter_cashiers_includes_hotel_pos_cashiers(): void

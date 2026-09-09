@@ -7,11 +7,14 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 
 /**
- * Users eligible for sales report / sales-data cashier & salesperson filters:
- * retail POS cashiers, Hotel POS cashiers, and mobile field sales.
+ * Users eligible for sales report / sales-data cashier & salesperson filters.
  *
- * Backoffice-only order creators (sales.orders.create alone) are excluded so
- * End of Day and similar pickers stay limited to Cashiers + Mobile Sales users.
+ * Driven by each user's effective permissions (role + overrides), not by the
+ * logged-in session permission list:
+ * - backoffice create order (`sales.orders.create`)
+ * - retail POS checkout / terminal
+ * - Hotel / bar POS checks
+ * - mobile field sales (`mobile_sales.orders.create`)
  */
 class SalesReportUserScope
 {
@@ -19,6 +22,7 @@ class SalesReportUserScope
     public static function permissionCodes(): array
     {
         return [
+            'sales.orders.create',
             'pos.checkout.create',
             'pos.terminal.view',
             // Hotel / bar POS cashiers settle checks — must appear on hospitality EOD filters.
@@ -39,43 +43,39 @@ class SalesReportUserScope
             ->map(fn ($id) => (int) $id)
             ->all();
 
-        $query->where(function ($eligible) use ($permissionIds) {
-            if ($permissionIds !== []) {
-                // Eligible when at least one POS / hotel POS / mobile-sales permission is
-                // effectively granted (role or grant override), and not denied.
-                $eligible->where(function ($outer) use ($permissionIds) {
-                    foreach ($permissionIds as $permissionId) {
-                        $outer->orWhere(function ($one) use ($permissionId) {
-                            $one->where(function ($has) use ($permissionId) {
-                                $has->whereExists(function ($sub) use ($permissionId) {
-                                    $sub->selectRaw('1')
-                                        ->from('role_permissions as rp')
-                                        ->whereColumn('rp.role_id', 'users.role_id')
-                                        ->where('rp.permission_id', $permissionId);
-                                })->orWhereExists(function ($sub) use ($permissionId) {
-                                    $sub->selectRaw('1')
-                                        ->from('user_permission_overrides as upo')
-                                        ->whereColumn('upo.user_id', 'users.id')
-                                        ->where('upo.effect', 'grant')
-                                        ->where('upo.permission_id', $permissionId);
-                                });
-                            })->whereNotExists(function ($sub) use ($permissionId) {
-                                $sub->selectRaw('1')
-                                    ->from('user_permission_overrides as upo')
-                                    ->whereColumn('upo.user_id', 'users.id')
-                                    ->where('upo.effect', 'deny')
-                                    ->where('upo.permission_id', $permissionId);
-                            });
+        if ($permissionIds === []) {
+            $query->whereRaw('0 = 1');
+
+            return;
+        }
+
+        // Eligible when at least one create-order / POS / mobile-sales permission is
+        // effectively granted (role or grant override), and that same permission is not denied.
+        $query->where(function ($outer) use ($permissionIds) {
+            foreach ($permissionIds as $permissionId) {
+                $outer->orWhere(function ($one) use ($permissionId) {
+                    $one->where(function ($has) use ($permissionId) {
+                        $has->whereExists(function ($sub) use ($permissionId) {
+                            $sub->selectRaw('1')
+                                ->from('role_permissions as rp')
+                                ->whereColumn('rp.role_id', 'users.role_id')
+                                ->where('rp.permission_id', $permissionId);
+                        })->orWhereExists(function ($sub) use ($permissionId) {
+                            $sub->selectRaw('1')
+                                ->from('user_permission_overrides as upo')
+                                ->whereColumn('upo.user_id', 'users.id')
+                                ->where('upo.effect', 'grant')
+                                ->where('upo.permission_id', $permissionId);
                         });
-                    }
+                    })->whereNotExists(function ($sub) use ($permissionId) {
+                        $sub->selectRaw('1')
+                            ->from('user_permission_overrides as upo')
+                            ->whereColumn('upo.user_id', 'users.id')
+                            ->where('upo.effect', 'deny')
+                            ->where('upo.permission_id', $permissionId);
+                    });
                 });
             }
-
-            // Also include users explicitly tagged for POS or Mobile login,
-            // even if their permission matrix is incomplete.
-            $eligible->orWhere('is_mobile_user', true)
-                ->orWhereJsonContains('login_channels', 'pos')
-                ->orWhereJsonContains('login_channels', 'mobile');
         });
     }
 }

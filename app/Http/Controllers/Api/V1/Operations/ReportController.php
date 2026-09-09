@@ -67,8 +67,9 @@ class ReportController extends Controller
             return response()->json($row);
         }
 
-        // Cashiers + mobile sales only — not warehouse, HR, or backoffice-only sellers.
+        // Create-order / POS / mobile-sales permission holders only (not stock/HR-only).
         SalesReportUserScope::applyEligibleSalesReportUsers($query);
+        $query->where('is_active', true);
 
         $q = trim((string) $request->input('q', ''));
         if ($q !== '') {
