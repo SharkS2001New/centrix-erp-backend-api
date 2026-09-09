@@ -68,8 +68,9 @@ class KraAgentController extends Controller
                 'agentId' => (int) $agent->id,
                 'comstoreBaseUrl' => $agent->comstore_base_url,
                 'deviceHardwareIp' => trim((string) ($finance['kra_device_hardware_ip'] ?? '')),
-                'longPollMs' => 2000,
-                'heartbeatIntervalSeconds' => 60,
+                'longPollMs' => 750,
+                // Fresher Comstore status in the background so checkout never needs /api/health.
+                'heartbeatIntervalSeconds' => 30,
                 // Keep below checkout soft-skip budget so a dead Comstore cannot pin the agent/worker.
                 'commandTimeoutSeconds' => 25,
                 // Comstore is started by Windows; agent only probes + heartbeats.
@@ -114,7 +115,7 @@ class KraAgentController extends Controller
             return 'Centrix KRA Agent is not enabled. Enable the KRA device in Finance settings.';
         }
         if (! ($status['online'] ?? false)) {
-            return 'Centrix KRA Agent is offline. Start the CentrixKraAgent Windows service on the shop PC.';
+            return 'Centrix KRA Agent is offline. Start the CentrixKraAgent Windows service where Comstore runs.';
         }
         if (! empty($status['manual_start_required']) || ($status['comstore_reachable'] ?? null) === false) {
             return 'KRA agent is online (service running). '
@@ -215,7 +216,7 @@ class KraAgentController extends Controller
             if ($waitMs <= 0 || microtime(true) >= $deadline) {
                 break;
             }
-            usleep(50_000);
+            usleep(25_000);
         } while (true);
 
         $hardwareIp = trim((string) ($agent->device_hardware_ip ?? ''));

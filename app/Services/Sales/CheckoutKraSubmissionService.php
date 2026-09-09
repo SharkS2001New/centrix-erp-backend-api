@@ -8,6 +8,7 @@ use App\Services\Erp\CapabilityGate;
 use App\Services\Kra\KraDeviceErrorTranslator;
 use App\Services\Kra\KraDeviceService;
 use App\Services\Kra\KraFiscalPolicy;
+use App\Services\Sales\OrderNumberAllocator;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\Log;
 
@@ -44,7 +45,10 @@ class CheckoutKraSubmissionService
             'product_vat' => (float) ($line->product_vat ?? 0),
         ])->all();
 
-        $invoiceNumber = 'POS-'.$sale->order_num;
+        // Sale-scoped placeholder — never POS-{order_num}. Order edits reuse the
+        // customer-facing order # while the superseded sale keeps its kra_responses row;
+        // that collision is Duplicate entry 'org-POS-16423' on uq_org_kra_invoice_number.
+        $invoiceNumber = $this->placeholderInvoiceNumber($sale);
         $startedAt = microtime(true);
         $maxSeconds = \App\Services\Kra\KraAgentBridge::CHECKOUT_MAX_SECONDS;
         try {
@@ -66,7 +70,7 @@ class CheckoutKraSubmissionService
                         \App\Services\Kra\KraAgentBridge::CHECKOUT_COMMAND_WAIT_SECONDS,
                         $left,
                     ),
-                    'http_timeout_seconds' => min(18, $left),
+                    'http_timeout_seconds' => min(20, $left),
                     'http_connect_timeout_seconds' => 2,
                 ];
             };
@@ -74,47 +78,24 @@ class CheckoutKraSubmissionService
             $result = null;
             $preflight = $service->agentFiscalPreflight();
 
-            // Speed path: when the agent heartbeat already says Comstore is up, skip the
-            // extra /api/health hop and go straight to complete-workflow (one agent RTT).
-            // Otherwise run a short health gate — recovers when Comstore was just started,
-            // and avoids queuing complete-workflow while Comstore is still down.
-            $needsHealthGate = $preflight['ready'] !== true;
-            if ($needsHealthGate) {
-                $healthWait = min(
-                    \App\Services\Kra\KraAgentBridge::CHECKOUT_HEALTH_WAIT_SECONDS,
-                    $remaining(),
-                );
-                $health = $service->checkHealth($healthWait);
-                if (! ($health['success'] ?? false)) {
-                    $healthMessage = trim((string) ($health['message'] ?? ''));
-                    if ($healthMessage === '' && $preflight['ready'] === false) {
-                        $healthMessage = trim((string) ($preflight['message'] ?? ''));
-                    }
-                    if ($healthMessage === '') {
-                        $healthMessage = $preflight['ready'] === false
-                            ? 'Comstore or the KRA fiscal device is not available on the shop PC.'
-                            : 'Comstore is not responding. Start Comstore on the shop PC, then try again.';
-                    }
-                    Log::warning('KRA soft-skip on checkout — health failed; skipping complete-workflow', [
-                        'sale_id' => $sale->id,
-                        'message' => $healthMessage,
-                        'preflight_ready' => $preflight['ready'],
-                        'reachable' => $health['reachable'] ?? null,
-                        'device_connection' => $health['device_connection'] ?? null,
-                        'manual_start_required' => $health['manual_start_required'] ?? null,
-                        'elapsed_ms' => (int) round((microtime(true) - $startedAt) * 1000),
-                    ]);
-                    $result = [
-                        'success' => false,
-                        'message' => KraDeviceErrorTranslator::userMessage($healthMessage),
-                        'payload' => null,
-                        'response' => is_array($health['response'] ?? null) ? $health['response'] : null,
-                    ];
+            // No /api/health on checkout — agent heartbeats keep Comstore status fresh in the
+            // background. Receipts must wait for complete-workflow so the eTIMS QR can print.
+            // Soft-skip only when the last heartbeat already says Comstore/device is down.
+            if ($preflight['ready'] === false) {
+                $healthMessage = trim((string) ($preflight['message'] ?? ''));
+                if ($healthMessage === '') {
+                    $healthMessage = 'Comstore or the KRA fiscal device is not available via Centrix KRA Agent.';
                 }
-            } else {
-                Log::debug('KRA checkout skipping health gate — agent heartbeat reports Comstore OK', [
+                Log::warning('KRA soft-skip on checkout — agent heartbeat reports fiscal unavailable', [
                     'sale_id' => $sale->id,
+                    'message' => $healthMessage,
                 ]);
+                $result = [
+                    'success' => false,
+                    'message' => KraDeviceErrorTranslator::userMessage($healthMessage),
+                    'payload' => null,
+                    'response' => null,
+                ];
             }
 
             if ($result === null && (microtime(true) - $startedAt) >= $maxSeconds) {
@@ -151,7 +132,7 @@ class CheckoutKraSubmissionService
             $result = [
                 'success' => false,
                 'message' => KraDeviceErrorTranslator::userMessage(
-                    'Could not reach KRA device: '.$e->getMessage(),
+                    'Centrix KRA Agent / Comstore error: '.$e->getMessage(),
                 ),
                 'payload' => null,
                 'response' => null,
@@ -234,7 +215,7 @@ class CheckoutKraSubmissionService
 
         return $this->persistResponse($sale, [
             'order_no' => $this->displayOrderNo($sale),
-            'invoice_number' => 'BYPASS-'.$sale->order_num,
+            'invoice_number' => $this->bypassInvoiceNumber($sale),
             'receipt_signature' => null,
             'signature_link' => null,
             'serial_number' => null,
@@ -281,23 +262,106 @@ class CheckoutKraSubmissionService
         try {
             return KraResponse::create($attributes);
         } catch (UniqueConstraintViolationException $e) {
-            $invoiceNumber = trim((string) ($attributes['invoice_number'] ?? ''));
-            $conflict = $invoiceNumber !== ''
-                ? KraResponse::query()
-                    ->where('organization_id', (int) $sale->organization_id)
-                    ->where('invoice_number', $invoiceNumber)
-                    ->first()
-                : null;
+            return $this->resolveInvoiceConflict($sale, $attributes, $e);
+        }
+    }
 
-            if ($conflict && (int) $conflict->sale_id === (int) $sale->id) {
-                $conflict->fill($attributes);
-                $conflict->save();
+    /**
+     * @param  array<string, mixed>  $attributes
+     */
+    protected function resolveInvoiceConflict(
+        Sale $sale,
+        array $attributes,
+        UniqueConstraintViolationException $e,
+    ): KraResponse {
+        $invoiceNumber = trim((string) ($attributes['invoice_number'] ?? ''));
+        $conflict = $invoiceNumber !== ''
+            ? KraResponse::query()
+                ->where('organization_id', (int) $sale->organization_id)
+                ->where('invoice_number', $invoiceNumber)
+                ->first()
+            : null;
 
-                return $conflict;
-            }
-
+        if (! $conflict) {
             throw $e;
         }
+
+        // Concurrent retry for the same sale.
+        if ((int) $conflict->sale_id === (int) $sale->id) {
+            $conflict->fill($attributes);
+            $conflict->save();
+
+            return $conflict;
+        }
+
+        // Order edit reused POS-{order_num} while the superseded sale still owns that
+        // placeholder (legacy soft-fails). Reclaim only non-success rows.
+        if ($this->canReclaimKraResponse($conflict)) {
+            Log::info('KRA reclaiming stale invoice_number for revised sale', [
+                'sale_id' => (int) $sale->id,
+                'previous_sale_id' => (int) $conflict->sale_id,
+                'invoice_number' => $invoiceNumber,
+            ]);
+            $conflict->fill($attributes);
+            $conflict->save();
+
+            return $conflict;
+        }
+
+        // Live fiscal success on another sale — never steal it; use a sale-scoped key.
+        $attributes['invoice_number'] = $this->placeholderInvoiceNumber($sale);
+        try {
+            return KraResponse::create($attributes);
+        } catch (UniqueConstraintViolationException $retry) {
+            $fallback = KraResponse::query()
+                ->where('sale_id', $sale->id)
+                ->orderByDesc('id')
+                ->first();
+            if ($fallback) {
+                $fallback->fill($attributes);
+                $fallback->save();
+
+                return $fallback;
+            }
+
+            throw $retry;
+        }
+    }
+
+    protected function canReclaimKraResponse(KraResponse $conflict): bool
+    {
+        $status = strtolower((string) ($conflict->status ?? ''));
+        if (! in_array($status, ['failed', 'skipped', 'pending'], true)) {
+            return false;
+        }
+
+        $other = Sale::query()->find((int) $conflict->sale_id);
+        if (! $other) {
+            return true;
+        }
+
+        $otherStatus = strtolower((string) ($other->status ?? ''));
+        if (in_array($otherStatus, ['cancelled', 'archived'], true) || (int) ($other->archived ?? 0) === 1) {
+            return true;
+        }
+
+        $meta = is_array($other->fulfillment_meta) ? $other->fulfillment_meta : [];
+        if (! empty($meta['superseded_by_edit'])) {
+            return true;
+        }
+
+        // Tombstoned order_num after previous-order edit.
+        return (int) $other->order_num >= OrderNumberAllocator::SUPERSEDED_ORDER_NUM_BASE;
+    }
+
+    public function placeholderInvoiceNumber(Sale $sale): string
+    {
+        return 'POS-S'.(int) $sale->id;
+    }
+
+    public function bypassInvoiceNumber(Sale $sale): string
+    {
+        return 'BYPASS-S'.(int) $sale->id;
     }
 
     public function displayOrderNo(Sale $sale): int

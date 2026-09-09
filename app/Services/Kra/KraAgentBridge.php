@@ -31,14 +31,15 @@ class KraAgentBridge
     public const COMMAND_WAIT_SECONDS = 55;
 
     /**
-     * Checkout budget: when heartbeat says Comstore OK, fiscalize immediately (no extra health).
-     * Otherwise short health gate (~3s), then complete-workflow or soft-skip.
+     * Checkout: no per-receipt health. Agent heartbeats probe Comstore in the background.
+     * Soft-skip only when heartbeat already says down; otherwise one complete-workflow for the QR.
      */
-    public const CHECKOUT_MAX_SECONDS = 25;
+    public const CHECKOUT_MAX_SECONDS = 22;
 
-    /** Only used when heartbeat status is unknown — keep short. */
+    /** Unused on checkout (heartbeat replaces it). Kept for admin Test connection helpers. */
     public const CHECKOUT_HEALTH_WAIT_SECONDS = 3;
 
+    /** Full budget goes to complete-workflow so the receipt can print with eTIMS QR. */
     public const CHECKOUT_COMMAND_WAIT_SECONDS = 20;
 
     public const PING_PATH = '/agent/ping';
@@ -52,7 +53,7 @@ class KraAgentBridge
     {
         $url = trim($comstoreUrl) !== '' ? trim($comstoreUrl) : 'http://localhost:4000';
 
-        return 'Centrix KRA Agent is still running. Start Comstore on the shop PC (Windows startup or the Comstore service/app — usually '.$url.'), then click Test connection again. The agent keeps pinging Centrix and the fiscal device until Comstore is reachable.';
+        return 'Centrix KRA Agent is still running. Start Comstore (Windows startup or the Comstore service/app — usually '.$url.'), then click Test connection again. The agent keeps pinging Centrix and the fiscal device until Comstore is reachable.';
     }
 
     public static function isComstoreManualStartRequired(?string $message): bool
@@ -138,7 +139,7 @@ class KraAgentBridge
                 && $agent->comstore_reachable !== false
                 && $agent->device_reachable === false,
             'poll_interval_seconds' => 0.05,
-            'long_poll_ms' => 2000,
+            'long_poll_ms' => 750,
             'online_ttl_seconds' => $this->onlineTtlSeconds(),
         ];
     }
@@ -253,8 +254,8 @@ class KraAgentBridge
         if (! $canProxy) {
             throw new RuntimeException(
                 $this->hasCheckedIn($agent)
-                    ? self::AGENT_NAME.' has not checked in recently. On the shop PC open http://127.0.0.1:9261 and confirm the Windows service is running.'
-                    : self::AGENT_NAME.' has never checked in. Download the KRA agent from Finance settings and install it on the shop PC.',
+                    ? self::AGENT_NAME.' has not checked in recently. On the PC where Comstore runs, open http://127.0.0.1:9261 and confirm the CentrixKraAgent Windows service is running.'
+                    : self::AGENT_NAME.' has never checked in. Download Centrix KRA Agent from Finance settings and install it where Comstore runs.',
             );
         }
 
@@ -283,8 +284,15 @@ class KraAgentBridge
             strtoupper($method) === 'PING'
             || (strtoupper($method) === 'GET' && $path === '/api/health')
             || (strtoupper($method) === 'GET' && $path === '/agent/device-probe')
+            || (strtoupper($method) === 'POST' && (
+                $path === '/api/complete-workflow'
+                || str_starts_with($path, '/api/register')
+                || $path === '/api/init'
+                || $path === '/api/restart-device'
+            ))
         )) {
             $requestBody = $body;
+            $resultStatus = 200;
             if (strtoupper($method) === 'PING') {
                 $responseBody = json_encode(['pong' => true, 'agent' => self::AGENT_NAME]);
             } elseif ($path === '/agent/device-probe') {
@@ -300,17 +308,29 @@ class KraAgentBridge
                         ? "Fiscal device reachable at {$hardware} (ICMP OK)"
                         : 'Comstore healthy.',
                 ]);
-            } else {
+            } elseif ($path === '/api/health') {
                 $responseBody = json_encode(config('testing.kra_agent_health_response') ?? [
                     'status' => 'OK',
                     'deviceConnection' => 'Connected',
                     'apiService' => 'Comstore',
                     'version' => 'test',
                 ]);
+            } else {
+                // complete-workflow / register / init / restart — configurable for checkout tests.
+                $responseBody = json_encode(config('testing.kra_agent_workflow_response') ?? [
+                    'success' => true,
+                    'message' => 'OK',
+                    'invoice_number' => 'CU-TEST',
+                    'Receipt Signature' => 'SIG-TEST',
+                    'signature_link' => 'https://example.test/qr',
+                    'serial_number' => 'TEST-SERIAL',
+                    'timestamp' => '2026-06-11T12:00:00',
+                ]);
+                $resultStatus = (int) (config('testing.kra_agent_workflow_status') ?? 200);
             }
             $this->submitCommandResult($agent, $commandId, [
-                'success' => true,
-                'status' => 200,
+                'success' => $resultStatus >= 200 && $resultStatus < 300,
+                'status' => $resultStatus,
                 'body' => $responseBody,
                 'headers' => ['Content-Type' => ['application/json']],
                 'agent_version' => '1.0.0',
@@ -342,7 +362,7 @@ class KraAgentBridge
                 );
             }
 
-            usleep(50_000);
+            usleep(25_000);
         } while (microtime(true) < $deadline);
 
         KraAgentCommand::query()
@@ -351,7 +371,7 @@ class KraAgentBridge
             ->update(['status' => 'expired']);
 
         throw new RuntimeException(
-            self::AGENT_NAME.' did not respond in time. Check the shop PC service and that Comstore is running on '.$agent->comstore_base_url.'.',
+            self::AGENT_NAME.' did not respond in time. Confirm CentrixKraAgent is running and Comstore is up on '.$agent->comstore_base_url.'.',
         );
     }
 

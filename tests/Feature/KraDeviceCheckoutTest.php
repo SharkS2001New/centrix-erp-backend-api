@@ -3,12 +3,14 @@
 namespace Tests\Feature;
 
 use App\Models\Customer;
+use App\Models\KraAgentCommand;
 use App\Models\KraResponse;
 use App\Models\Organization;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\User;
 use App\Models\Vat;
+use App\Services\Kra\KraAgentBridge;
 use App\Services\Sales\CheckoutKraSubmissionService;
 use Illuminate\Support\Facades\Http;
 use Laravel\Sanctum\Sanctum;
@@ -31,24 +33,25 @@ class KraDeviceCheckoutTest extends TestCase
         $settings = $org->module_settings ?? [];
         $settings['finance'] = array_merge($settings['finance'] ?? [], [
             'enable_kra_device' => true,
-            'enable_kra_agent' => false,
+            'enable_kra_agent' => true,
             'kra_device_ip' => 'http://192.168.1.50:8010',
             'kra_serial_number' => 'DEJA02220240050',
             'kra_pin_number' => 'P052177271G',
             'default_submit_kra' => true,
         ]);
         $org->update(['module_settings' => $settings]);
+
+        // Warm Centrix KRA Agent so checkout fiscalizes through the bridge (not direct HTTP).
+        $bridge = app(KraAgentBridge::class);
+        $agent = $bridge->resolveOrCreateForOrganization((int) $org->id, $settings['finance']);
+        $bridge->touchAgent($agent, '1.3.4-test', true, '');
     }
 
     protected function fakeKraDeviceHttp(array $workflowBody, int $workflowStatus = 200): void
     {
-        Http::fake([
-            '192.168.1.50:8010/api/health' => Http::response([
-                'status' => 'OK',
-                'deviceConnection' => 'Connected',
-                'apiService' => 'Comstore',
-            ], 200),
-            '192.168.1.50:8010/*' => Http::response($workflowBody, $workflowStatus),
+        config([
+            'testing.kra_agent_workflow_response' => $workflowBody,
+            'testing.kra_agent_workflow_status' => $workflowStatus,
         ]);
     }
 
@@ -94,7 +97,66 @@ class KraDeviceCheckoutTest extends TestCase
         $this->assertSame('https://example.test/qr', $sale['kra_response']['signature_link'] ?? null);
         $this->assertSame('CU-12345', $sale['kra_response']['invoice_number'] ?? null);
 
-        Http::assertSent(fn ($request) => str_contains($request->url(), '/api/complete-workflow'));
+        $this->assertTrue(
+            KraAgentCommand::query()->where('path', '/api/complete-workflow')->exists(),
+            'Checkout should fiscalize via Centrix KRA Agent complete-workflow',
+        );
+        Http::assertNothingSent();
+    }
+
+    public function test_mobile_checkout_fiscalizes_via_centrix_kra_agent(): void
+    {
+        $this->fakeKraDeviceHttp([
+            'success' => true,
+            'message' => 'OK',
+            'invoice_number' => 'CU-MOBILE',
+            'Receipt Signature' => 'SIG-MOB',
+            'signature_link' => 'https://example.test/qr-mobile',
+            'serial_number' => 'DEJA02220240050',
+            'timestamp' => '2026-06-11T12:00:00',
+        ]);
+
+        $product = Product::with('vat')->first();
+        if (! $product->vat_id) {
+            $product->update(['vat_id' => Vat::first()->id]);
+        }
+
+        $template = Sale::query()
+            ->where('organization_id', $this->user->organization_id)
+            ->where('channel', 'mobile')
+            ->whereNotNull('route_id')
+            ->whereNotNull('customer_num')
+            ->first();
+        $this->assertNotNull($template, 'Demo org needs a mobile sale with route + customer');
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'mobile',
+            'branch_id' => $this->user->branch_id,
+            'route_id' => (int) $template->route_id,
+        ])->assertCreated()->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $product->product_code,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'completed',
+            'submit_kra' => true,
+            'customer_num' => (int) $template->customer_num,
+            'save_only' => true,
+            'pay_now' => 0,
+        ])->assertCreated()->json();
+
+        $this->assertDatabaseHas('kra_responses', [
+            'sale_id' => $sale['id'],
+            'status' => 'success',
+        ]);
+        $this->assertTrue(
+            KraAgentCommand::query()->where('path', '/api/complete-workflow')->exists(),
+            'Mobile checkout must fiscalize through Centrix KRA Agent',
+        );
+        Http::assertNothingSent();
     }
 
     public function test_checkout_skips_kra_when_device_disabled(): void
@@ -335,15 +397,13 @@ class KraDeviceCheckoutTest extends TestCase
             'pos_order_date' => now()->toDateString(),
         ])->assertCreated();
 
-        Http::assertSent(function ($request) {
-            if (! str_contains($request->url(), '/api/complete-workflow')) {
-                return false;
-            }
-            $payload = $request->data();
-            $sign = $payload['sign_structure'] ?? [];
-
-            return ($sign['pinOfBuyer'] ?? null) === 'P051234567X';
-        });
+        $command = KraAgentCommand::query()
+            ->where('path', '/api/complete-workflow')
+            ->orderByDesc('created_at')
+            ->first();
+        $this->assertNotNull($command);
+        $sign = is_array($command->body_json) ? ($command->body_json['sign_structure'] ?? []) : [];
+        $this->assertSame('P051234567X', $sign['pinOfBuyer'] ?? null);
 
         $this->assertDatabaseHas('kra_responses', [
             'order_no' => 42,
@@ -429,5 +489,61 @@ class KraDeviceCheckoutTest extends TestCase
         $this->assertSame($failed->id, $updated->id);
         $this->assertSame('success', $updated->fresh()->status);
         $this->assertSame(1, KraResponse::query()->where('sale_id', $sale->id)->where('invoice_number', $invoiceNumber)->count());
+    }
+
+    public function test_kra_persist_reclaims_legacy_pos_invoice_from_superseded_sale(): void
+    {
+        $orgId = (int) $this->user->organization_id;
+        $prior = Sale::query()->where('organization_id', $orgId)->firstOrFail();
+        $orderNum = (int) $prior->order_num;
+        $legacyInvoice = 'POS-'.$orderNum;
+
+        KraResponse::create([
+            'sale_id' => $prior->id,
+            'organization_id' => $orgId,
+            'order_no' => $orderNum,
+            'invoice_number' => $legacyInvoice,
+            'status' => 'failed',
+            'error_message' => 'Device busy',
+        ]);
+
+        $prior->update([
+            'order_num' => 9_000_000 + (int) $prior->id,
+            'status' => 'cancelled',
+            'fulfillment_meta' => array_merge(
+                is_array($prior->fulfillment_meta) ? $prior->fulfillment_meta : [],
+                ['superseded_by_edit' => true, 'original_order_num' => $orderNum],
+            ),
+        ]);
+
+        $revised = Sale::query()->create([
+            'organization_id' => $orgId,
+            'branch_id' => $prior->branch_id,
+            'order_num' => $orderNum,
+            'channel' => 'pos',
+            'cashier_id' => $this->user->id,
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => 100,
+            'total_vat' => 0,
+            'amount_paid' => 100,
+            'archived' => 0,
+            'completed_at' => now(),
+        ]);
+
+        $service = app(CheckoutKraSubmissionService::class);
+        $persist = new \ReflectionMethod(CheckoutKraSubmissionService::class, 'persistResponse');
+
+        // Mimic the production collision: revised sale soft-fails with legacy POS-{order_num}.
+        $row = $persist->invoke($service, $revised, [
+            'order_no' => $orderNum,
+            'invoice_number' => $legacyInvoice,
+            'status' => 'failed',
+            'error_message' => 'Device busy again',
+        ]);
+
+        $this->assertSame((int) $revised->id, (int) $row->sale_id);
+        $this->assertSame($legacyInvoice, $row->invoice_number);
+        $this->assertSame(1, KraResponse::query()->where('organization_id', $orgId)->where('invoice_number', $legacyInvoice)->count());
     }
 }

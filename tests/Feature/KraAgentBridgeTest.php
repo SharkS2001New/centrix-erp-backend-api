@@ -39,7 +39,7 @@ class KraAgentBridgeTest extends TestCase
 
         $res = $this->postJson('/api/v1/kra/agent-package')->assertOk();
         $res->assertJsonPath('config.comstoreBaseUrl', 'http://127.0.0.1:4000');
-        $res->assertJsonPath('config.longPollMs', 2000);
+        $res->assertJsonPath('config.longPollMs', 750);
         $res->assertJsonPath('config.autoStartComstore', false);
         $res->assertJsonPath('expires_at', null);
         $this->assertNotEmpty($res->json('config.centrixToken'));

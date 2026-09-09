@@ -49,8 +49,8 @@ class KraDeviceService
 
         $orgId = $organizationId
             ?? (int) ($financeSettings['_organization_id'] ?? 0);
-        // Prefer Centrix KRA Agent when enabled for the organization.
-        if (! empty($financeSettings['enable_kra_agent']) && $orgId > 0) {
+        // Centrix KRA Agent is the only fiscal path (POS, mobile, backoffice).
+        if (! empty($financeSettings['enable_kra_device']) && $orgId > 0) {
             $bridge = app(KraAgentBridge::class);
             $agent = $bridge->resolveOrCreateForOrganization($orgId, $financeSettings);
             $service->useAgentBridge($bridge, $agent);
@@ -93,9 +93,12 @@ class KraDeviceService
      */
     public function agentFiscalPreflight(): array
     {
-        // Direct device IP: no agent heartbeat — skip the extra /api/health hop and fiscalize.
+        // Centrix KRA Agent is required — cloud never talks to Comstore directly.
         if (! $this->usesAgentBridge() || $this->kraAgent === null) {
-            return ['ready' => true, 'message' => null];
+            return [
+                'ready' => false,
+                'message' => 'Centrix KRA Agent is required for fiscalization. Install CentrixKraAgent where Comstore runs, then try again.',
+            ];
         }
 
         if (! $this->agentIsWarm()) {
@@ -963,10 +966,13 @@ class KraDeviceService
                 );
             }
 
-            // Keep the real agent/Comstore reason — do not collapse to a vague connectivity line.
             $message = $manual
                 ? KraAgentBridge::comstoreManualStartUserMessage((string) $comstoreUrl)
-                : KraDeviceErrorTranslator::userMessage($raw);
+                : KraDeviceErrorTranslator::userMessage(
+                    $this->usesAgentBridge()
+                        ? 'Centrix KRA Agent / Comstore: '.$raw
+                        : $raw
+                );
 
             return [
                 'success' => false,
