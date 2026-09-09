@@ -195,31 +195,31 @@ class CreditNoteService
             if ($return->return_kind === 'pos_edit') {
                 // Keep POS edits snappy: same soft-skip budget as checkout, never use the 55s admin wait.
                 $preflight = $service->agentFiscalPreflight();
-                // Same gate as checkout: probe health so a just-started Comstore can fiscalize
-                // even if the last heartbeat still said it was down.
-                $health = $service->checkHealth(
-                    \App\Services\Kra\KraAgentBridge::CHECKOUT_HEALTH_WAIT_SECONDS,
-                );
-                if (! ($health['success'] ?? false)) {
-                    $message = trim((string) ($health['message'] ?? ''));
-                    if ($message === '' && $preflight['ready'] === false) {
-                        $message = trim((string) ($preflight['message'] ?? ''));
-                    }
-                    if ($message === '') {
-                        $message = 'Comstore is not responding.';
-                    }
-                    $creditNote->update([
-                        'kra_status' => 'failed',
-                        'kra_relevant_invoice_number' => $relevantInvoice,
-                        'kra_error_message' => $message,
-                    ]);
-                    Log::warning('KRA soft-skip on POS edit void — health failed; skipping complete-workflow', [
-                        'sale_id' => $return->sale_id,
-                        'credit_note_id' => $creditNote->id,
-                        'message' => $message,
-                    ]);
+                if ($preflight['ready'] !== true) {
+                    $health = $service->checkHealth(
+                        \App\Services\Kra\KraAgentBridge::CHECKOUT_HEALTH_WAIT_SECONDS,
+                    );
+                    if (! ($health['success'] ?? false)) {
+                        $message = trim((string) ($health['message'] ?? ''));
+                        if ($message === '' && $preflight['ready'] === false) {
+                            $message = trim((string) ($preflight['message'] ?? ''));
+                        }
+                        if ($message === '') {
+                            $message = 'Comstore is not responding.';
+                        }
+                        $creditNote->update([
+                            'kra_status' => 'failed',
+                            'kra_relevant_invoice_number' => $relevantInvoice,
+                            'kra_error_message' => $message,
+                        ]);
+                        Log::warning('KRA soft-skip on POS edit void — health failed; skipping complete-workflow', [
+                            'sale_id' => $return->sale_id,
+                            'credit_note_id' => $creditNote->id,
+                            'message' => $message,
+                        ]);
 
-                    return $creditNote->fresh() ?? $creditNote;
+                        return $creditNote->fresh() ?? $creditNote;
+                    }
                 }
 
                 $deviceContext = [

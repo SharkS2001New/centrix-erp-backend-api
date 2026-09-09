@@ -74,40 +74,47 @@ class CheckoutKraSubmissionService
             $result = null;
             $preflight = $service->agentFiscalPreflight();
 
-            // Always short-gate complete-workflow with /api/health.
-            // If the last heartbeat said Comstore was down, still probe — Comstore may have
-            // just been started and the next receipt should fiscalize without waiting for
-            // the next agent heartbeat.
-            $healthWait = min(
-                \App\Services\Kra\KraAgentBridge::CHECKOUT_HEALTH_WAIT_SECONDS,
-                $remaining(),
-            );
-            $health = $service->checkHealth($healthWait);
-            if (! ($health['success'] ?? false)) {
-                $healthMessage = trim((string) ($health['message'] ?? ''));
-                if ($healthMessage === '' && $preflight['ready'] === false) {
-                    $healthMessage = trim((string) ($preflight['message'] ?? ''));
+            // Speed path: when the agent heartbeat already says Comstore is up, skip the
+            // extra /api/health hop and go straight to complete-workflow (one agent RTT).
+            // Otherwise run a short health gate — recovers when Comstore was just started,
+            // and avoids queuing complete-workflow while Comstore is still down.
+            $needsHealthGate = $preflight['ready'] !== true;
+            if ($needsHealthGate) {
+                $healthWait = min(
+                    \App\Services\Kra\KraAgentBridge::CHECKOUT_HEALTH_WAIT_SECONDS,
+                    $remaining(),
+                );
+                $health = $service->checkHealth($healthWait);
+                if (! ($health['success'] ?? false)) {
+                    $healthMessage = trim((string) ($health['message'] ?? ''));
+                    if ($healthMessage === '' && $preflight['ready'] === false) {
+                        $healthMessage = trim((string) ($preflight['message'] ?? ''));
+                    }
+                    if ($healthMessage === '') {
+                        $healthMessage = $preflight['ready'] === false
+                            ? 'Comstore or the KRA fiscal device is not available on the shop PC.'
+                            : 'Comstore is not responding. Start Comstore on the shop PC, then try again.';
+                    }
+                    Log::warning('KRA soft-skip on checkout — health failed; skipping complete-workflow', [
+                        'sale_id' => $sale->id,
+                        'message' => $healthMessage,
+                        'preflight_ready' => $preflight['ready'],
+                        'reachable' => $health['reachable'] ?? null,
+                        'device_connection' => $health['device_connection'] ?? null,
+                        'manual_start_required' => $health['manual_start_required'] ?? null,
+                        'elapsed_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                    ]);
+                    $result = [
+                        'success' => false,
+                        'message' => KraDeviceErrorTranslator::userMessage($healthMessage),
+                        'payload' => null,
+                        'response' => is_array($health['response'] ?? null) ? $health['response'] : null,
+                    ];
                 }
-                if ($healthMessage === '') {
-                    $healthMessage = $preflight['ready'] === false
-                        ? 'Comstore or the KRA fiscal device is not available on the shop PC.'
-                        : 'Comstore is not responding. Start Comstore on the shop PC, then try again.';
-                }
-                Log::warning('KRA soft-skip on checkout — health failed; skipping complete-workflow', [
+            } else {
+                Log::debug('KRA checkout skipping health gate — agent heartbeat reports Comstore OK', [
                     'sale_id' => $sale->id,
-                    'message' => $healthMessage,
-                    'preflight_ready' => $preflight['ready'],
-                    'reachable' => $health['reachable'] ?? null,
-                    'device_connection' => $health['device_connection'] ?? null,
-                    'manual_start_required' => $health['manual_start_required'] ?? null,
-                    'elapsed_ms' => (int) round((microtime(true) - $startedAt) * 1000),
                 ]);
-                $result = [
-                    'success' => false,
-                    'message' => KraDeviceErrorTranslator::userMessage($healthMessage),
-                    'payload' => null,
-                    'response' => is_array($health['response'] ?? null) ? $health['response'] : null,
-                ];
             }
 
             if ($result === null && (microtime(true) - $startedAt) >= $maxSeconds) {

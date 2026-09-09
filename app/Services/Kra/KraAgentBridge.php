@@ -31,8 +31,8 @@ class KraAgentBridge
     public const COMMAND_WAIT_SECONDS = 55;
 
     /**
-     * Checkout budget: short health gate before complete-workflow (~3s). Soft-skip if down.
-     * When Comstore comes back, the next receipt health-passes and fiscalizes (no sticky lock).
+     * Checkout budget: when heartbeat says Comstore OK, fiscalize immediately (no extra health).
+     * Otherwise short health gate (~3s), then complete-workflow or soft-skip.
      */
     public const CHECKOUT_MAX_SECONDS = 25;
 
