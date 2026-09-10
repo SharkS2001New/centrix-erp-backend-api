@@ -45,6 +45,21 @@ class EmployeeLeaveDayController extends HrOrgResourceController
             $query->where('approval_status', $status);
         }
 
+        // Who is on leave on a given day (approved leave covering that date).
+        if ($onDate = $request->input('on_date')) {
+            $date = Carbon::parse($onDate)->toDateString();
+            $query->whereDate('start_date', '<=', $date)
+                ->whereRaw('COALESCE(end_date, start_date) >= ?', [$date]);
+        }
+
+        if ($fromDate = $request->input('from_date')) {
+            $query->whereRaw('COALESCE(end_date, start_date) >= ?', [Carbon::parse($fromDate)->toDateString()]);
+        }
+
+        if ($toDate = $request->input('to_date')) {
+            $query->whereDate('start_date', '<=', Carbon::parse($toDate)->toDateString());
+        }
+
         $perPage = min((int) $request->input('per_page', 25), 200);
         $paginator = $query->orderByDesc('start_date')->paginate($perPage);
         $viewer = $request->user();
