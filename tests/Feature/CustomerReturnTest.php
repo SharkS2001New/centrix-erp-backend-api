@@ -173,6 +173,21 @@ class CustomerReturnTest extends TestCase
         $sale->refresh();
         $this->assertSame(0.0, (float) $sale->order_total);
         $this->assertSame('cancelled', (string) $sale->status);
+
+        // Full return = cancel order → AR invoice must be voided / hidden from Accounting.
+        $invoice = \App\Models\CustomerInvoice::query()
+            ->where('sale_id', $sale->id)
+            ->orderByDesc('id')
+            ->first();
+        if ($invoice) {
+            $this->assertNotNull($invoice->deleted_at, 'Full-return AR invoice should be soft-deleted');
+        }
+
+        $listed = $this->getJson('/api/v1/customer-invoices?per_page=200')
+            ->assertOk()
+            ->json('data');
+        $listedSaleIds = collect($listed)->pluck('sale_id')->map(fn ($id) => (int) $id)->all();
+        $this->assertNotContains((int) $sale->id, $listedSaleIds);
     }
 
     public function test_approve_customer_return_restocks_even_when_shop_stock_is_negative(): void

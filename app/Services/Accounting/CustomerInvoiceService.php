@@ -29,6 +29,9 @@ class CustomerInvoiceService
 
         $total = round((float) ($invoiceTotal ?? $sale->order_total), 2);
         if ($total <= 0.01) {
+            // Net total wiped (full return) — never leave a live AR row as "Paid".
+            $this->voidForCancelledSale($sale, $user);
+
             return null;
         }
 
@@ -123,12 +126,22 @@ class CustomerInvoiceService
 
     public function syncPaidTotalsFromPayments(CustomerInvoice $invoice): CustomerInvoice
     {
-        $paid = $this->paidTotalFromPayments($invoice);
+        $paymentsSum = $this->paidTotalFromPayments($invoice);
+        $hasPaymentRows = $paymentsSum > 0.01
+            || CustomerInvoicePayment::query()
+                ->where('customer_invoice_id', $invoice->id)
+                ->exists();
+        $paid = $hasPaymentRows
+            ? $paymentsSum
+            : round((float) ($invoice->amount_paid ?? 0), 2);
+
         $invoiceTotal = round((float) $invoice->invoice_total, 2);
+        // Returns keep gross invoice_total + credit_notes; settle status from paid + credits.
+        $credits = $this->creditTotalForInvoice($invoice);
 
         $invoice->update([
             'amount_paid' => $paid,
-            'payment_status' => $this->paymentStatus($invoiceTotal, $paid),
+            'payment_status' => $this->paymentStatus($invoiceTotal, $paid + $credits),
         ]);
 
         return $invoice->fresh();
@@ -146,16 +159,103 @@ class CustomerInvoiceService
         return "(SELECT COALESCE(SUM(cip.amount_paid), 0) FROM customer_invoice_payments cip WHERE cip.customer_invoice_id = {$invoiceAlias}.id)";
     }
 
+    /**
+     * Approved return credit notes for the invoice's sale (excludes POS-edit soft returns).
+     */
+    public static function creditsForInvoiceSaleSql(string $invoiceAlias = 'ci'): string
+    {
+        if (! Schema::hasTable('credit_notes')) {
+            return '0';
+        }
+
+        $excludePosEdit = '';
+        if (Schema::hasTable('customer_returns') && Schema::hasColumn('customer_returns', 'return_kind')) {
+            $excludePosEdit = ' AND (cn.customer_return_id IS NULL OR NOT EXISTS ('
+                .'SELECT 1 FROM customer_returns cr '
+                .'WHERE cr.id = cn.customer_return_id AND cr.return_kind = \'pos_edit\''
+                .'))';
+        }
+
+        return '(SELECT COALESCE(SUM(cn.total_amount), 0) FROM credit_notes cn '
+            ."WHERE cn.sale_id = {$invoiceAlias}.sale_id{$excludePosEdit})";
+    }
+
     public static function balanceDueFromPaymentsSql(string $invoiceAlias = 'ci'): string
     {
         $paid = self::paidFromPaymentsSql($invoiceAlias);
+        $credits = self::creditsForInvoiceSaleSql($invoiceAlias);
 
-        return "GREATEST(0, ROUND({$invoiceAlias}.invoice_total - {$paid}, 2))";
+        return "GREATEST(0, ROUND({$invoiceAlias}.invoice_total - {$paid} - {$credits}, 2))";
+    }
+
+    public function creditTotalForInvoice(CustomerInvoice $invoice): float
+    {
+        if (! $invoice->sale_id) {
+            return 0.0;
+        }
+
+        return $this->statementCreditTotalForSale((int) $invoice->sale_id);
     }
 
     public function balanceDueFromPayments(CustomerInvoice $invoice): float
     {
-        return round(max(0, (float) $invoice->invoice_total - $this->paidTotalFromPayments($invoice)), 2);
+        $paid = $this->paidTotalFromPayments($invoice);
+        $credits = $this->creditTotalForInvoice($invoice);
+
+        return round(max(0, (float) $invoice->invoice_total - $paid - $credits), 2);
+    }
+
+    /**
+     * @param  array<int, float>|null  $creditsBySale  Optional preloaded map sale_id => credit total
+     * @return array{amount_paid: float, return_credit_total: float, balance_due: float, payment_status: int}
+     */
+    public function presentInvoiceBalances(CustomerInvoice $invoice, ?array $creditsBySale = null): array
+    {
+        $paymentsSum = isset($invoice->paid_from_payments_sum)
+            ? round((float) $invoice->paid_from_payments_sum, 2)
+            : $this->paidTotalFromPayments($invoice);
+
+        // POS / sale-synced invoices often have amount_paid on the row with no
+        // customer_invoice_payments yet. Prefer payment rows when any exist.
+        $hasPaymentRows = $paymentsSum > 0.01
+            || CustomerInvoicePayment::query()
+                ->where('customer_invoice_id', $invoice->id)
+                ->exists();
+        $amountPaid = $hasPaymentRows
+            ? $paymentsSum
+            : round((float) ($invoice->amount_paid ?? 0), 2);
+
+        $credits = 0.0;
+        if ($invoice->sale_id) {
+            $saleId = (int) $invoice->sale_id;
+            $credits = $creditsBySale !== null
+                ? round((float) ($creditsBySale[$saleId] ?? 0), 2)
+                : $this->statementCreditTotalForSale($saleId);
+        }
+
+        $invoiceTotal = round((float) $invoice->invoice_total, 2);
+        $balanceDue = round(max(0, $invoiceTotal - $amountPaid - $credits), 2);
+        $paymentStatus = $this->paymentStatus($invoiceTotal, $amountPaid + $credits);
+
+        // Repair stale DB badges (e.g. Paid with amount_paid=0 after a return).
+        if (
+            (int) $invoice->payment_status !== $paymentStatus
+            || abs(round((float) $invoice->amount_paid, 2) - $amountPaid) > 0.001
+        ) {
+            CustomerInvoice::query()->where('id', $invoice->id)->update([
+                'amount_paid' => $amountPaid,
+                'payment_status' => $paymentStatus,
+            ]);
+            $invoice->amount_paid = $amountPaid;
+            $invoice->payment_status = $paymentStatus;
+        }
+
+        return [
+            'amount_paid' => $amountPaid,
+            'return_credit_total' => $credits,
+            'balance_due' => $balanceDue,
+            'payment_status' => $paymentStatus,
+        ];
     }
 
     public function finalizeRecordedPayment(CustomerInvoicePayment $payment, User $user): CustomerInvoice
@@ -313,12 +413,41 @@ class CustomerInvoiceService
     }
 
     /**
+     * After a customer return: full return (sale cancelled / net ~0) voids the AR
+     * invoice so it disappears from Customer invoices. Partial return keeps the
+     * gross invoice total and applies credit notes to the open balance.
+     */
+    public function reconcileAfterCustomerReturn(Sale $sale, User $user): void
+    {
+        $sale->refresh();
+        $netTotal = round((float) $sale->order_total, 2);
+        $cancelled = in_array((string) $sale->status, ['cancelled'], true);
+
+        if ($cancelled || $netTotal <= 0.01) {
+            $this->voidForCancelledSale($sale, $user);
+
+            return;
+        }
+
+        $this->preserveOriginalTotalAfterReturn($sale);
+    }
+
+    /**
      * Customer returns shrink sale.order_total (and the observer may sync that into AR).
      * Restore the invoice to the original gross so statements can show Invoice + Credit note separately.
      */
     public function preserveOriginalTotalAfterReturn(Sale $sale): void
     {
         if (! $sale->customer_num) {
+            return;
+        }
+
+        $sale->refresh();
+        // Full returns must void — never leave a "Paid" invoice with no cash receipt.
+        if (
+            in_array((string) $sale->status, ['cancelled'], true)
+            || round((float) $sale->order_total, 2) <= 0.01
+        ) {
             return;
         }
 
@@ -338,6 +467,7 @@ class CustomerInvoiceService
         }
 
         $paid = round((float) ($sale->amount_paid ?? $invoice->amount_paid), 2);
+        // Due tracks remaining sale net (gross − credits − cash) = order_total − paid.
         $effectiveDue = max(0, round($gross - $paid - $credits, 2));
         $paymentStatus = $effectiveDue <= 0.01 ? 2 : ($paid > 0.01 ? 1 : 0);
         $updates = [];

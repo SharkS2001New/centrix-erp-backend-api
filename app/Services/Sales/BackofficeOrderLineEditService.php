@@ -256,7 +256,7 @@ class BackofficeOrderLineEditService
                 $lineChanged = true;
                 $qtyChanged = $qtyChanged || $itemQtyChanged;
 
-                $product = Product::query()
+                $product = Product::withTrashed()
                     ->where('organization_id', $user->organization_id)
                     ->where('product_code', $saleItem->product_code)
                     ->first();
@@ -610,7 +610,7 @@ class BackofficeOrderLineEditService
             return;
         }
 
-        $product = Product::query()
+        $product = Product::withTrashed()
             ->where('organization_id', $user->organization_id)
             ->where('product_code', $saleItem->product_code)
             ->first();

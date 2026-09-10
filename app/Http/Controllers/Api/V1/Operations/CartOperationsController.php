@@ -1696,12 +1696,11 @@ class CartOperationsController extends Controller
         );
         $amount = $this->applyCashRoundingIfNeeded($cart, $gate, $salesSettings, $line, $amount);
 
-        // Mobile never runs the POS client merge; POS normally PATCHes merges client-side.
-        // Combine identical SKUs server-side for mobile and POS so duplicate POST races
-        // (e.g. pending-fresh bootstrap) don't stack the same SKU as two lines.
+        // Combine identical SKUs server-side for mobile, POS, and backoffice so
+        // duplicate POST races (delete→add, pending-fresh bootstrap) don't stack twins.
         $combineIdentical = ($salesSettings['pos_combine_identical_lines'] ?? true) !== false;
         $channel = strtolower(trim((string) ($cart->channel ?? '')));
-        if ($combineIdentical && in_array($channel, ['mobile', 'pos'], true)) {
+        if ($combineIdentical && in_array($channel, ['mobile', 'pos', 'backend', 'backoffice'], true)) {
             $existing = CartLine::query()
                 ->where('cart_id', $cart->id)
                 ->where('product_code', $product->product_code)

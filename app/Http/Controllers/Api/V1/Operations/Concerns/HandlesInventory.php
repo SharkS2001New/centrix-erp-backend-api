@@ -143,29 +143,50 @@ trait HandlesInventory
         }
 
         $allowBelowStock = $this->organizationAllowsBelowStock($user->organization_id);
+        // Net every ledger movement for this sale (original deduct, dispatch, line edits,
+        // and prior cancel returns) so cancel/restore posts the exact inverse once.
         $txns = InventoryTransaction::query()
-            ->where('quantity_change', '<', 0)
-            ->where(function ($query) use ($sale) {
-                $query->where(function ($sub) use ($sale) {
-                    $sub->where('reference_type', 'sale')
-                        ->where('reference_id', $sale->id);
-                })->orWhere(function ($sub) use ($sale) {
-                    $sub->where('reference_type', 'dispatch_trip')
-                        ->where('reference_id', $sale->id);
-                });
-            })
+            ->where('reference_id', $sale->id)
+            ->whereIn('reference_type', ['sale', 'dispatch_trip', 'sale_line_edit', 'sale_cancel'])
             ->get();
 
+        /** @var array<string, array{branch_id: int, product_code: string, stock_location: string, net: float, unit_cost: mixed}> $nets */
+        $nets = [];
         foreach ($txns as $txn) {
+            $key = (int) $txn->branch_id
+                .'|'.(string) $txn->product_code
+                .'|'.(string) $txn->stock_location;
+            if (! isset($nets[$key])) {
+                $nets[$key] = [
+                    'branch_id' => (int) $txn->branch_id,
+                    'product_code' => (string) $txn->product_code,
+                    'stock_location' => (string) $txn->stock_location,
+                    'net' => 0.0,
+                    'unit_cost' => $txn->unit_cost,
+                ];
+            }
+            $nets[$key]['net'] += (float) $txn->quantity_change;
+            if ($nets[$key]['unit_cost'] === null && $txn->unit_cost !== null) {
+                $nets[$key]['unit_cost'] = $txn->unit_cost;
+            }
+        }
+
+        foreach ($nets as $row) {
+            $net = (float) $row['net'];
+            if (abs($net) < 0.0001) {
+                continue;
+            }
+
             $this->postStockLedger([
-                'branch_id' => (int) $txn->branch_id,
-                'product_code' => (string) $txn->product_code,
-                'stock_location' => (string) $txn->stock_location,
+                'branch_id' => $row['branch_id'],
+                'product_code' => $row['product_code'],
+                'stock_location' => $row['stock_location'],
                 'transaction_type' => 'RETURN',
                 'reference_type' => 'sale_cancel',
                 'reference_id' => $sale->id,
-                'quantity_change' => abs((float) $txn->quantity_change),
-                'unit_cost' => $txn->unit_cost,
+                // Inverse of the net movement left on this sale.
+                'quantity_change' => -$net,
+                'unit_cost' => $row['unit_cost'],
                 'notes' => 'Sale restored to cart for editing',
                 'created_by' => $user->id,
             ], $allowBelowStock);

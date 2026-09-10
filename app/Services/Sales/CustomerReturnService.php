@@ -391,8 +391,10 @@ class CustomerReturnService
             if ($return->sale_id) {
                 $sale = Sale::query()->find($return->sale_id);
                 if ($sale) {
+                    // Full return cancels the sale (stock returned) — remove AR invoice
+                    // from Customer invoices. Partial return keeps gross invoice + credit note.
                     app(CustomerInvoiceService::class)
-                        ->preserveOriginalTotalAfterReturn($sale);
+                        ->reconcileAfterCustomerReturn($sale->fresh(), $user);
                 }
             }
 

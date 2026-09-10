@@ -57,7 +57,7 @@ class SaleObserver
 
     public function updated(Sale $sale): void
     {
-        if ($sale->wasChanged(['customer_num', 'order_total', 'amount_paid', 'payment_status', 'total_vat'])) {
+        if ($sale->wasChanged(['customer_num', 'order_total', 'amount_paid', 'payment_status', 'total_vat', 'status'])) {
             $this->syncCustomerInvoice($sale);
         }
 
@@ -118,7 +118,7 @@ class SaleObserver
 
     protected function syncCustomerInvoice(Sale $sale): void
     {
-        if (! $sale->customer_num || (float) $sale->order_total <= 0.01) {
+        if (! $sale->customer_num) {
             return;
         }
 
@@ -129,6 +129,16 @@ class SaleObserver
 
         $user = User::query()->find($userId);
         if (! $user) {
+            return;
+        }
+
+        // Full return / cancel: hide AR invoice from Customer invoices (not "Paid").
+        if (
+            in_array((string) $sale->status, ['cancelled'], true)
+            || (float) $sale->order_total <= 0.01
+        ) {
+            app(CustomerInvoiceService::class)->voidForCancelledSale($sale, $user);
+
             return;
         }
 

@@ -151,6 +151,13 @@ class OrganizationPlatformConfigService
             );
         }
 
+        if (array_key_exists('backoffice_product_search_mode', $salesPlatform)) {
+            $mode = strtolower((string) $salesPlatform['backoffice_product_search_mode']);
+            $nextSales['backoffice_product_search_mode'] = in_array($mode, ['live', 'indexeddb'], true)
+                ? $mode
+                : 'indexeddb';
+        }
+
         if (array_key_exists('backoffice_order_edit_layout', $salesPlatform)) {
             $nextSales['backoffice_order_edit_layout'] = $this->normalizePosUiLayout(
                 $salesPlatform['backoffice_order_edit_layout'],
@@ -589,6 +596,7 @@ class OrganizationPlatformConfigService
             'enable_pos_cash_rounding' => false,
             'receipt_show_all_payment_methods' => true,
             'external_pos_layout' => 'modern',
+            'backoffice_product_search_mode' => $isDistribution ? 'live' : 'indexeddb',
             'classic_pos_theme_template' => ClassicPosThemeSettings::THEME_TEMPLATE_DEFAULT,
             'classic_pos_theme_colors' => [],
             'hotel_pos_grid_columns' => 4,
@@ -683,6 +691,13 @@ class OrganizationPlatformConfigService
             'external_pos_layout' => in_array(($sales['external_pos_layout'] ?? 'modern'), ['modern', 'classic'], true)
                 ? (string) $sales['external_pos_layout']
                 : 'modern',
+            'backoffice_product_search_mode' => in_array(
+                strtolower((string) ($sales['backoffice_product_search_mode'] ?? 'indexeddb')),
+                ['live', 'indexeddb'],
+                true,
+            )
+                ? strtolower((string) $sales['backoffice_product_search_mode'])
+                : 'indexeddb',
             'backoffice_order_edit_layout' => $this->normalizePosUiLayout(
                 $sales['backoffice_order_edit_layout'] ?? 'modern',
             ),

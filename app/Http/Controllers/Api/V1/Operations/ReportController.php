@@ -585,7 +585,7 @@ class ReportController extends Controller
             $filters,
             ['sale_date', 'branch_id', 'cashier_id', 'channel'],
             ['organization_id', 'branch_id', 'cashier_id', 'salesperson', 'channel'],
-            ['order_count', 'gross_sales', 'total_vat', 'net_sales', 'amount_collected', 'fully_paid_sales', 'cogs', 'gross_profit'],
+            ['order_count', 'gross_sales', 'total_vat', 'net_sales', 'amount_collected', 'fully_paid_sales', 'unpaid_sales', 'outstanding_balance', 'cogs', 'gross_profit'],
             [],
             fn ($q) => $q->orderByDesc('gross_sales')->orderBy('salesperson'),
         ));

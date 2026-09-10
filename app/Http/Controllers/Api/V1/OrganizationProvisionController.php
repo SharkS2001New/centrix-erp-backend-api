@@ -723,6 +723,7 @@ class OrganizationProvisionController extends Controller
             'sales_platform.enable_pos_cash_rounding' => 'sometimes|boolean',
             'sales_platform.receipt_show_all_payment_methods' => 'sometimes|boolean',
             'sales_platform.external_pos_layout' => 'sometimes|in:modern,classic',
+            'sales_platform.backoffice_product_search_mode' => 'sometimes|in:live,indexeddb',
             'sales_platform.backoffice_order_edit_layout' => 'sometimes|in:modern,classic',
             'sales_platform.hotel_pos_grid_columns' => 'sometimes|integer|in:4,5',
             'sales_platform.hotel_pos_collect_payment' => 'sometimes|boolean',
