@@ -45,11 +45,36 @@ class StockOnHandReportService
             ];
         }
 
-        $totalSql = '(COALESCE(cs.shop_quantity, 0) + COALESCE(cs.store_quantity, 0))';
+        // Physical on-hand (ledger). Screen columns show available (= on-hand − reserved).
+        $shopOnHandSql = 'COALESCE(cs.shop_quantity, 0)';
+        $storeOnHandSql = 'COALESCE(cs.store_quantity, 0)';
+        $onHandTotalSql = "({$shopOnHandSql} + {$storeOnHandSql})";
+
+        // Cost must use the same qty the UI shows (available). Otherwise fully reserved
+        // lines show 0 available with a non-zero stock cost.
+        $shopAvailableSql = "GREATEST(0, {$shopOnHandSql} - COALESCE(rsrv.reserved_shop, 0))";
+        $storeAvailableSql = "GREATEST(0, {$storeOnHandSql} - COALESCE(rsrv.reserved_store, 0))";
+        $availableTotalSql = "({$shopAvailableSql} + {$storeAvailableSql})";
+
         $unitCostSql = $this->valuation->effectiveUnitCostExpression('p', 'br', 'lrc');
-        $shopCostValueSql = $this->valuation->stockCostValueSql('COALESCE(cs.shop_quantity, 0)', 'p', 'br', 'u', 'lrc');
-        $storeCostValueSql = $this->valuation->stockCostValueSql('COALESCE(cs.store_quantity, 0)', 'p', 'br', 'u', 'lrc');
-        $totalCostValueSql = $this->valuation->stockCostValueSql($totalSql, 'p', 'br', 'u', 'lrc');
+        $shopCostValueSql = $this->valuation->stockCostValueSql($shopAvailableSql, 'p', 'br', 'u', 'lrc');
+        $storeCostValueSql = $this->valuation->stockCostValueSql($storeAvailableSql, 'p', 'br', 'u', 'lrc');
+        $totalCostValueSql = $this->valuation->stockCostValueSql($availableTotalSql, 'p', 'br', 'u', 'lrc');
+
+        $reservedSub = DB::table('stock_reservations')
+            ->whereNull('released_at')
+            ->where(function ($query) {
+                $query->whereNull('expires_at')
+                    ->orWhere('expires_at', '>', now());
+            })
+            ->whereIn('branch_id', $branchIds)
+            ->groupBy('branch_id', 'product_code')
+            ->select([
+                'branch_id',
+                'product_code',
+                DB::raw("SUM(CASE WHEN stock_location = 'shop' THEN quantity ELSE 0 END) as reserved_shop"),
+                DB::raw("SUM(CASE WHEN stock_location = 'store' THEN quantity ELSE 0 END) as reserved_store"),
+            ]);
 
         $query = DB::table('products as p')
             ->join('uoms as u', 'u.id', '=', 'p.unit_id')
@@ -60,6 +85,10 @@ class StockOnHandReportService
             ->leftJoin('current_stock as cs', function ($join) {
                 $join->on('cs.product_code', '=', 'p.product_code')
                     ->on('cs.branch_id', '=', 'br.id');
+            })
+            ->leftJoinSub($reservedSub, 'rsrv', function ($join) {
+                $join->on('rsrv.product_code', '=', 'p.product_code')
+                    ->on('rsrv.branch_id', '=', 'br.id');
             })
             ->leftJoin('retail_package_settings as rps', 'rps.product_code', '=', 'p.product_code')
             ->where('p.organization_id', $organizationId)
@@ -83,15 +112,15 @@ class StockOnHandReportService
                 'u.middle_factor',
                 'u.uom_type',
                 'u.uses_small_packaging',
-                DB::raw('COALESCE(cs.shop_quantity, 0) as shop_quantity'),
-                DB::raw('COALESCE(cs.store_quantity, 0) as store_quantity'),
-                DB::raw("{$totalSql} as total_base_units"),
+                DB::raw("{$shopOnHandSql} as shop_quantity"),
+                DB::raw("{$storeOnHandSql} as store_quantity"),
+                DB::raw("{$onHandTotalSql} as total_base_units"),
                 DB::raw("{$shopCostValueSql} as shop_cost_value"),
                 DB::raw("{$storeCostValueSql} as store_cost_value"),
                 DB::raw("{$totalCostValueSql} as total_cost_value"),
                 'p.reorder_point',
                 'p.low_stock_alert_enabled',
-                DB::raw("CASE WHEN {$totalSql} <= COALESCE(p.reorder_point, 0) THEN 'REORDER' ELSE 'OK' END as product_alert"),
+                DB::raw("CASE WHEN {$availableTotalSql} <= COALESCE(p.reorder_point, 0) THEN 'REORDER' ELSE 'OK' END as product_alert"),
                 'rps.max_qty_measure',
                 'rps.markup_price',
                 'rps.wholesale_markup_price',
@@ -110,23 +139,23 @@ class StockOnHandReportService
 
         if ($location = (string) $request->input('location', '')) {
             if ($location === 'shop') {
-                $query->whereRaw('COALESCE(cs.shop_quantity, 0) > 0');
+                $query->whereRaw("{$shopAvailableSql} > 0");
             } elseif ($location === 'store') {
-                $query->whereRaw('COALESCE(cs.store_quantity, 0) > 0');
+                $query->whereRaw("{$storeAvailableSql} > 0");
             }
         }
 
         if ($request->boolean('in_stock_only')) {
-            $query->whereRaw("{$totalSql} > 0");
+            $query->whereRaw("{$availableTotalSql} > 0");
         }
 
         if ($request->boolean('out_of_stock_only')) {
-            $query->whereRaw("{$totalSql} <= 0");
+            $query->whereRaw("{$availableTotalSql} <= 0");
         }
 
         $sort = strtolower(trim((string) $request->input('sort', '')));
         if ($sort === 'available_desc') {
-            $query->orderByRaw("{$totalSql} desc")->orderBy('p.product_name');
+            $query->orderByRaw("{$availableTotalSql} desc")->orderBy('p.product_name');
         } else {
             $query->orderBy('p.product_name');
         }

@@ -177,6 +177,84 @@ class StockValuationSummaryTest extends TestCase
         $this->assertSame(2400.0, (float) $response->json('shop_cost_value'));
     }
 
+    public function test_stock_on_hand_cost_uses_available_qty_not_reserved(): void
+    {
+        $product = Product::query()->with('unit')->firstOrFail();
+        $branchId = (int) $this->user->branch_id;
+
+        $product->unit?->update(['conversion_factor' => 1]);
+        $product->update(['last_cost_price' => 100, 'unit_price' => 150]);
+
+        CurrentStock::query()->updateOrCreate(
+            [
+                'product_code' => $product->product_code,
+                'branch_id' => $branchId,
+            ],
+            [
+                'shop_quantity' => 0,
+                'store_quantity' => 50,
+            ],
+        );
+
+        StockReservation::query()->create([
+            'branch_id' => $branchId,
+            'product_code' => $product->product_code,
+            'stock_location' => 'store',
+            'quantity' => 50,
+            'reserved_by' => $this->user->id,
+            'released_at' => null,
+            'expires_at' => now()->addHour(),
+        ]);
+
+        $row = $this->getJson(
+            '/api/v1/reports/stock-on-hand?branch_id='.$branchId.'&product_code='.$product->product_code,
+        )->json('data.0');
+
+        $this->assertNotNull($row);
+        $this->assertSame(50.0, (float) $row['store_quantity']);
+        $this->assertSame(0.0, (float) $row['available_store_quantity']);
+        $this->assertSame(0.0, (float) $row['store_cost_value']);
+        $this->assertSame(0.0, (float) $row['total_cost_value']);
+    }
+
+    public function test_stock_on_hand_cost_scales_with_partial_reservation(): void
+    {
+        $product = Product::query()->with('unit')->firstOrFail();
+        $branchId = (int) $this->user->branch_id;
+
+        $product->unit?->update(['conversion_factor' => 1]);
+        $product->update(['last_cost_price' => 100]);
+
+        CurrentStock::query()->updateOrCreate(
+            [
+                'product_code' => $product->product_code,
+                'branch_id' => $branchId,
+            ],
+            [
+                'shop_quantity' => 0,
+                'store_quantity' => 40,
+            ],
+        );
+
+        StockReservation::query()->create([
+            'branch_id' => $branchId,
+            'product_code' => $product->product_code,
+            'stock_location' => 'store',
+            'quantity' => 10,
+            'reserved_by' => $this->user->id,
+            'released_at' => null,
+            'expires_at' => now()->addHour(),
+        ]);
+
+        $row = $this->getJson(
+            '/api/v1/reports/stock-on-hand?branch_id='.$branchId.'&product_code='.$product->product_code,
+        )->json('data.0');
+
+        $this->assertNotNull($row);
+        $this->assertSame(30.0, (float) $row['available_store_quantity']);
+        $this->assertSame(3000.0, (float) $row['store_cost_value']);
+    }
+
     public function test_stock_valuation_report_shows_available_qty_and_on_hand_value(): void
     {
         $product = Product::query()->with('unit')->firstOrFail();
