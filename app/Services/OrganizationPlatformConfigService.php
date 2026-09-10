@@ -596,7 +596,7 @@ class OrganizationPlatformConfigService
             'enable_pos_cash_rounding' => false,
             'receipt_show_all_payment_methods' => true,
             'external_pos_layout' => 'modern',
-            'backoffice_product_search_mode' => $isDistribution ? 'live' : 'indexeddb',
+            'backoffice_product_search_mode' => 'indexeddb',
             'classic_pos_theme_template' => ClassicPosThemeSettings::THEME_TEMPLATE_DEFAULT,
             'classic_pos_theme_colors' => [],
             'hotel_pos_grid_columns' => 4,
