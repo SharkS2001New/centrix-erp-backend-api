@@ -51,6 +51,8 @@ class SalesReportUserScope
 
         // Eligible when at least one create-order / POS / mobile-sales permission is
         // effectively granted (role or grant override), and that same permission is not denied.
+        CentrixAgentServiceUser::excludeFromQuery($query);
+
         $query->where(function ($outer) use ($permissionIds) {
             foreach ($permissionIds as $permissionId) {
                 $outer->orWhere(function ($one) use ($permissionId) {

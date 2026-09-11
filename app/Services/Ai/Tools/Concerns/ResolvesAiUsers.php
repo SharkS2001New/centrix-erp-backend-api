@@ -60,6 +60,8 @@ trait ResolvesAiUsers
             ->where('organization_id', $organizationId)
             ->whereNull('deleted_at');
 
+        \App\Support\CentrixAgentServiceUser::excludeFromQuery($query);
+
         if ($withRelations) {
             $query->with([
                 'role:id,role_name',
@@ -93,6 +95,8 @@ trait ResolvesAiUsers
         $query = User::query()
             ->where('organization_id', $organizationId)
             ->whereNull('deleted_at');
+
+        \App\Support\CentrixAgentServiceUser::excludeFromQuery($query);
 
         if ($withRelations) {
             $query->with([

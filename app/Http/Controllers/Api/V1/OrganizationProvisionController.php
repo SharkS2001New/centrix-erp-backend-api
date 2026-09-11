@@ -456,8 +456,11 @@ class OrganizationProvisionController extends Controller
             ->where('organization_id', $org->id)
             ->where('is_super_admin', false)
             ->orderBy('full_name')
-            ->orderBy('username')
-            ->get([
+            ->orderBy('username');
+
+        \App\Support\CentrixAgentServiceUser::excludeFromQuery($users);
+
+        $users = $users->get([
                 'id', 'username', 'email', 'full_name', 'is_admin',
                 'login_channels', 'is_active', 'must_change_password', 'last_login', 'created_at',
             ]);

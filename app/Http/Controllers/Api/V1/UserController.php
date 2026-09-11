@@ -432,6 +432,8 @@ class UserController extends BaseResourceController
     {
         $query = $this->baseQuery($request)->whereNull('deleted_at');
 
+        \App\Support\CentrixAgentServiceUser::excludeFromQuery($query);
+
         foreach ((array) $request->input('filter', []) as $col => $val) {
             if (in_array($col, $this->filterableColumns(), true)) {
                 $query->where($col, $val);

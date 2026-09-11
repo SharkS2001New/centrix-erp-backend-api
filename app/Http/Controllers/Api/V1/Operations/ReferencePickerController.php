@@ -83,6 +83,8 @@ class ReferencePickerController extends Controller
             ->where('organization_id', $orgId)
             ->orderBy('full_name');
 
+        \App\Support\CentrixAgentServiceUser::excludeFromQuery($query);
+
         $query = $this->scopeUsersForPicker($request, $query);
 
         // Sales data / report seller pickers: create-order, POS, hotel POS, mobile sales.

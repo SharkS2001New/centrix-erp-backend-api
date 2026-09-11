@@ -24,6 +24,12 @@ class UsernameValidator
             return;
         }
 
+        if (\App\Support\CentrixAgentServiceUser::isServiceUsername($username)) {
+            throw ValidationException::withMessages([
+                'username' => ['This username is reserved for Centrix system agents.'],
+            ]);
+        }
+
         // Include soft-deleted rows — uq_org_username still applies to them.
         $userQuery = User::withTrashed()
             ->where('organization_id', $organizationId)

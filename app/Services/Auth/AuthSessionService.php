@@ -61,7 +61,7 @@ class AuthSessionService
             ]);
         }
 
-        if (\App\Support\KraAgentServiceUser::isServiceUsername($account->authUser->username)) {
+        if (\App\Support\CentrixAgentServiceUser::isServiceUsername($account->authUser->username)) {
             throw ValidationException::withMessages([
                 'username' => ['Invalid credentials.'],
             ]);

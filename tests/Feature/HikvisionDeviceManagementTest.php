@@ -178,6 +178,29 @@ class HikvisionDeviceManagementTest extends TestCase
         $this->assertNull(
             \App\Models\PersonalAccessToken::query()->where('name', $tokenName)->value('expires_at')
         );
+
+        $serviceUser = \App\Models\User::query()
+            ->where('organization_id', $this->org->id)
+            ->whereUsernameInsensitive(
+                \App\Support\AttendanceAgentServiceUser::usernameForOrganization((int) $this->org->id)
+            )
+            ->first();
+        $this->assertNotNull($serviceUser);
+        $this->assertDatabaseHas('users', [
+            'organization_id' => $this->org->id,
+            'username' => strtoupper(
+                \App\Support\AttendanceAgentServiceUser::usernameForOrganization((int) $this->org->id)
+            ),
+        ]);
+        $this->assertDatabaseHas('personal_access_tokens', [
+            'tokenable_id' => $serviceUser->id,
+            'name' => $tokenName,
+            'expires_at' => null,
+        ]);
+        $this->assertDatabaseMissing('personal_access_tokens', [
+            'tokenable_id' => $this->admin->id,
+            'name' => $tokenName,
+        ]);
     }
 
     public function test_test_connection_after_overnight_pc_off_does_not_force_redownload(): void

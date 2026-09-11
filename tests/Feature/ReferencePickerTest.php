@@ -128,6 +128,27 @@ class ReferencePickerTest extends TestCase
         }
     }
 
+    public function test_reference_users_excludes_centrix_agent_service_accounts(): void
+    {
+        PermissionMatrixService::ensure();
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $this->seedLicense($admin);
+        Sanctum::actingAs($admin);
+
+        $kra = \App\Support\KraAgentServiceUser::resolve($admin->organization);
+        $attendance = \App\Support\AttendanceAgentServiceUser::resolve($admin->organization);
+
+        $all = $this->getJson('/api/v1/reference/users?per_page=200')->assertOk();
+        $allIds = collect($all->json('data'))->pluck('id')->map(fn ($id) => (int) $id);
+        $this->assertFalse($allIds->contains((int) $kra->id));
+        $this->assertFalse($allIds->contains((int) $attendance->id));
+
+        $usersCrud = $this->getJson('/api/v1/users?per_page=200')->assertOk();
+        $crudIds = collect($usersCrud->json('data'))->pluck('id')->map(fn ($id) => (int) $id);
+        $this->assertFalse($crudIds->contains((int) $kra->id));
+        $this->assertFalse($crudIds->contains((int) $attendance->id));
+    }
+
     public function test_reference_routes_search_by_name_and_default_active(): void
     {
         PermissionMatrixService::ensure();

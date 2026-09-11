@@ -131,6 +131,9 @@ class AiEntitySchemaCatalog
         if ($table === 'customers') {
             $query->whereNull("{$table}.deleted_at");
         }
+        if ($table === 'users') {
+            \App\Support\CentrixAgentServiceUser::excludeFromQuery($query, "{$table}.username");
+        }
 
         foreach ($relation['where'] ?? [] as $where) {
             if (is_array($where) && count($where) === 3) {

@@ -92,6 +92,8 @@ class PinLoginService
                 $inner->where('is_super_admin', false)->orWhereNull('is_super_admin');
             });
 
+        \App\Support\CentrixAgentServiceUser::excludeFromQuery($query);
+
         $this->access->scopeBranchIfLimited($query, $actor);
 
         return $query

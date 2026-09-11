@@ -642,6 +642,19 @@ class SalesReportsTest extends TestCase
             ->assertJsonPath('id', $this->admin->id);
     }
 
+    public function test_report_filter_cashiers_excludes_centrix_agent_service_accounts(): void
+    {
+        $kra = \App\Support\KraAgentServiceUser::resolve($this->admin->organization);
+        $attendance = \App\Support\AttendanceAgentServiceUser::resolve($this->admin->organization);
+
+        $response = $this->getJson('/api/v1/reports/filter-cashiers?per_page=50')->assertOk();
+        $ids = collect($response->json('data'))->pluck('id')->map(fn ($id) => (int) $id);
+
+        $this->assertFalse($ids->contains((int) $kra->id));
+        $this->assertFalse($ids->contains((int) $attendance->id));
+        $this->assertTrue($ids->contains((int) $this->admin->id));
+    }
+
     public function test_report_filter_cashiers_excludes_users_without_sales_permissions(): void
     {
         $stockRole = \App\Models\Role::query()->firstOrCreate(

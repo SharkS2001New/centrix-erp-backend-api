@@ -47,6 +47,8 @@ class ReportController extends Controller
             ->whereNull('deleted_at')
             ->where('organization_id', $orgId);
 
+        \App\Support\CentrixAgentServiceUser::excludeFromQuery($query);
+
         if (! $access->isOrgWide($user)) {
             $branchId = $access->branchId($user);
             if ($branchId !== null) {

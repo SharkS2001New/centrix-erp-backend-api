@@ -2,6 +2,10 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Models\Organization;
+use App\Models\PersonalAccessToken;
+use App\Support\AttendanceAgentServiceUser;
+use App\Support\AttendanceAgentToken;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Crypt;
 
@@ -118,14 +122,20 @@ class AttendanceClockDeviceController extends HrOrgResourceController
             }
         }
 
-        $tokenName = \App\Support\AttendanceAgentToken::nameForDevice((string) $device->device_no);
-        $user->tokens()->where('name', $tokenName)->delete();
+        $organization = Organization::query()->findOrFail((int) $device->organization_id);
+        // Org-owned machine user — not the admin who clicked Download (same pattern as KRA agent).
+        $serviceUser = AttendanceAgentServiceUser::resolve($organization);
+
+        $tokenName = AttendanceAgentToken::nameForDevice((string) $device->device_no);
+        // Drop any prior device token (including older tokens issued on human users).
+        PersonalAccessToken::query()->where('name', $tokenName)->delete();
         // Null expires_at = never expire. Global Sanctum TTL is bypassed for these tokens
         // in AppServiceProvider so the office agent keeps checking in unattended.
-        $token = $user->createToken($tokenName, ['*'], null);
+        $token = $serviceUser->createToken($tokenName, ['*'], null);
         $token->accessToken->forceFill([
             'organization_id' => (int) $device->organization_id,
             'expires_at' => null,
+            'login_channel' => 'backoffice',
         ])->save();
 
         $apiUrl = filled($data['centrix_api_url'] ?? null)

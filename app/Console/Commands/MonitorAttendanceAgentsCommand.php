@@ -3,8 +3,10 @@
 namespace App\Console\Commands;
 
 use App\Models\AttendanceClockDevice;
+use App\Models\Organization;
 use App\Services\Attendance\Hikvision\HikvisionAgentBridge;
 use App\Support\AppTimezone;
+use App\Support\AttendanceAgentServiceUser;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
@@ -22,6 +24,15 @@ class MonitorAttendanceAgentsCommand extends Command
             ->where('provider', 'hikvision')
             ->where('is_active', true)
             ->get();
+
+        // Ensure legacy human-owned attendance-agent tokens sit on the org machine user.
+        $orgIds = $devices->pluck('organization_id')->unique()->filter()->map(fn ($id) => (int) $id);
+        foreach ($orgIds as $orgId) {
+            $org = Organization::query()->find($orgId);
+            if ($org) {
+                AttendanceAgentServiceUser::resolve($org);
+            }
+        }
 
         $offline = [];
         foreach ($devices as $device) {
