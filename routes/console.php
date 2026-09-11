@@ -137,3 +137,11 @@ Schedule::command('erp:monitor-attendance-agents')
     ->everyMinute()
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/monitor-attendance-agents.log'));
+
+/** Soft-failed return credit notes — retry often during business daytime (sales-style recovery). */
+Schedule::command('erp:retry-pending-kra-credit-notes')
+    ->everyFifteenMinutes()
+    ->between('8:00', '18:59')
+    ->timezone(config('app.timezone', 'Africa/Nairobi'))
+    ->withoutOverlapping(50)
+    ->appendOutputTo(storage_path('logs/retry-pending-kra-credit-notes.log'));

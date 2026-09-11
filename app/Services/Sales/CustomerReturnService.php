@@ -298,7 +298,7 @@ class CustomerReturnService
             ]);
         }
 
-        return DB::transaction(function () use ($return, $user) {
+        $result = DB::transaction(function () use ($return, $user) {
             $return->load(['lines', 'sale.items']);
 
             $isCreditNote = $this->isCreditNoteReturn($return);
@@ -386,7 +386,8 @@ class CustomerReturnService
                 ? (new CapabilityGate($organization))
                 : null;
             $finance = $gate?->moduleSettings('finance') ?? [];
-            $this->creditNoteService->createForReturn($return, $user, $finance);
+            // Defer device I/O out of this transaction (checkout-style soft path).
+            $creditNote = $this->creditNoteService->createForReturn($return, $user, $finance, deferKra: true);
 
             if ($return->sale_id) {
                 $sale = Sale::query()->find($return->sale_id);
@@ -402,8 +403,19 @@ class CustomerReturnService
                 $this->returnJournal->postIfEnabled($return->fresh(['sale']), $user, $gate);
             }
 
-            return $return->fresh(['lines', 'sale', 'customer', 'returnedByUser', 'approvedByUser', 'creditNote']);
+            return [
+                'return' => $return->fresh(['lines', 'sale', 'customer', 'returnedByUser', 'approvedByUser', 'creditNote']),
+                'credit_note_id' => (string) ($creditNote->kra_status ?? '') === 'pending'
+                    ? (int) $creditNote->id
+                    : null,
+            ];
         });
+
+        if (! empty($result['credit_note_id'])) {
+            \App\Jobs\FinalizeReturnKraCreditJob::dispatch((int) $result['credit_note_id'])->afterResponse();
+        }
+
+        return $result['return'];
     }
 
     /**
@@ -490,7 +502,11 @@ class CustomerReturnService
 
             $this->syncLines($return, $linePayloads);
             $return = $return->fresh(['lines', 'sale', 'customer']);
-            $this->creditNoteService->createForReturn($return, $user, $finance);
+            $creditNote = $this->creditNoteService->createForReturn($return, $user, $finance, deferKra: true);
+            // Already running afterResponse for POS edit — attempt KRA here (no second hop).
+            if ((string) ($creditNote->kra_status ?? '') === 'pending') {
+                $this->creditNoteService->attemptKraForCreditNote($creditNote);
+            }
         });
     }
 

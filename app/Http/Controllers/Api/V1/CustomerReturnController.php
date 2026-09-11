@@ -218,6 +218,31 @@ class CustomerReturnController extends Controller
         return response()->json($this->service->withActionFlags($approved, $user));
     }
 
+    /** Manual Retry for pending/failed KRA credit notes (same idea as KRA receipts Retry). */
+    public function retryKra(Request $request, string $id)
+    {
+        $return = $this->findForUser($id)->load('creditNote');
+        $creditNote = $return->creditNote;
+        abort_unless($creditNote, 404);
+
+        if (! in_array((string) $creditNote->kra_status, ['pending', 'failed'], true)) {
+            return response()->json([
+                'message' => 'This return has no pending KRA credit to retry.',
+                'credit_note' => $creditNote,
+            ], 422);
+        }
+
+        $updated = app(\App\Services\Sales\CreditNoteService::class)
+            ->attemptKraForCreditNote($creditNote);
+
+        return response()->json(
+            $this->service->withActionFlags(
+                $return->fresh(['lines', 'sale', 'customer', 'returnedByUser', 'approvedByUser', 'creditNote']),
+                $request->user(),
+            ),
+        );
+    }
+
     public function reject(Request $request, string $id)
     {
         $data = $request->validate([

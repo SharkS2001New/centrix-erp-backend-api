@@ -157,7 +157,7 @@ class LegacyReturnService
         $finance ??= $gate->moduleSettings('finance') ?? [];
         $this->assertKraDeviceEnabled($finance);
 
-        return DB::transaction(function () use ($return, $user, $finance) {
+        $result = DB::transaction(function () use ($return, $user, $finance) {
             $return->load(['lines', 'sale.items']);
 
             if ($return->sale_id) {
@@ -188,10 +188,21 @@ class LegacyReturnService
             ]);
 
             $return = $return->fresh(['lines', 'sale', 'customer']);
-            $this->creditNoteService->createForReturn($return, $user, $finance);
+            $creditNote = $this->creditNoteService->createForReturn($return, $user, $finance, deferKra: true);
 
-            return $return->fresh(['lines', 'sale', 'customer', 'returnedByUser', 'approvedByUser', 'creditNote']);
+            return [
+                'return' => $return->fresh(['lines', 'sale', 'customer', 'returnedByUser', 'approvedByUser', 'creditNote']),
+                'credit_note_id' => (string) ($creditNote->kra_status ?? '') === 'pending'
+                    ? (int) $creditNote->id
+                    : null,
+            ];
         });
+
+        if (! empty($result['credit_note_id'])) {
+            \App\Jobs\FinalizeReturnKraCreditJob::dispatch((int) $result['credit_note_id'])->afterResponse();
+        }
+
+        return $result['return'];
     }
 
     public function linesFromSale(User $user, int $saleId): array

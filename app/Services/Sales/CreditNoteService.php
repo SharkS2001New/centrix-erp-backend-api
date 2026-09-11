@@ -5,8 +5,11 @@ namespace App\Services\Sales;
 use App\Models\CreditNote;
 use App\Models\CustomerReturn;
 use App\Models\KraResponse;
+use App\Models\Organization;
 use App\Models\Sale;
 use App\Models\User;
+use App\Services\Erp\CapabilityGate;
+use App\Services\Kra\KraDeviceErrorTranslator;
 use App\Services\Kra\KraDeviceFailure;
 use App\Services\Kra\KraDeviceService;
 use App\Services\Kra\KraRefundReasonMapper;
@@ -59,8 +62,19 @@ class CreditNoteService
             ->exists();
     }
 
-    public function createForReturn(CustomerReturn $return, User $user, array $financeSettings): CreditNote
-    {
+    /**
+     * Create the Centrix credit note for an approved return.
+     *
+     * @param  bool  $deferKra  When true (default), do not call the device inside the approve
+     *                          DB transaction — mark pending and let afterResponse / cron retry
+     *                          (same smoothness as checkout soft-fail).
+     */
+    public function createForReturn(
+        CustomerReturn $return,
+        User $user,
+        array $financeSettings,
+        bool $deferKra = true,
+    ): CreditNote {
         $return->loadMissing(['lines.product.vat', 'sale', 'customer']);
 
         $creditNote = CreditNote::create([
@@ -104,26 +118,120 @@ class CreditNoteService
             }
         }
 
-        $creditNote = $this->submitToKra($creditNote, $return, $financeSettings);
+        if ($deferKra) {
+            $creditNote->update([
+                'kra_status' => 'pending',
+                'kra_relevant_invoice_number' => $relevantInvoice,
+                'kra_error_message' => self::pendingRetryMessage('Fiscalization runs after approve so the till is not blocked.'),
+            ]);
 
-        if ($creditNote->kra_status === 'failed') {
-            // POS order-edit voids must not block External POS when the device is down —
-            // same soft-fail posture as checkout fiscalization. Normal returns still abort.
-            if ($return->return_kind === 'pos_edit') {
-                Log::warning('KRA soft-fail on POS edit void — edit continues without fiscal credit', [
-                    'sale_id' => $return->sale_id,
-                    'customer_return_id' => $return->id,
-                    'credit_note_id' => $creditNote->id,
-                    'message' => $creditNote->kra_error_message,
-                ]);
-
-                return $creditNote;
-            }
-
-            KraDeviceFailure::abort((string) ($creditNote->kra_error_message ?: 'KRA device rejected the credit note.'));
+            return $creditNote->fresh() ?? $creditNote;
         }
 
-        return $creditNote;
+        return $this->submitToKra($creditNote, $return, $financeSettings);
+    }
+
+    /**
+     * User-facing copy when credit note fiscalization is deferred.
+     */
+    public static function pendingRetryMessage(?string $detail = null): string
+    {
+        $base = 'Return approved. KRA credit note is queued and will retry automatically until Centrix KRA Agent / Comstore succeed.';
+        $detail = trim((string) $detail);
+        if ($detail === '') {
+            return $base;
+        }
+
+        return $base.' ('.$detail.')';
+    }
+
+    /**
+     * One-shot KRA attempt for a credit note (afterResponse job, manual Retry, or cron).
+     */
+    public function attemptKraForCreditNote(CreditNote|int $creditNote): CreditNote
+    {
+        $creditNote = $creditNote instanceof CreditNote
+            ? $creditNote
+            : CreditNote::query()->findOrFail((int) $creditNote);
+
+        if ((string) $creditNote->kra_status === 'success') {
+            return $creditNote;
+        }
+
+        if ((string) $creditNote->kra_status === 'skipped') {
+            return $creditNote;
+        }
+
+        $return = CustomerReturn::query()
+            ->with(['lines.product.vat', 'sale', 'customer'])
+            ->find($creditNote->customer_return_id);
+        if (! $return || $return->status !== 'approved') {
+            return $creditNote;
+        }
+
+        $organization = Organization::query()->find($creditNote->organization_id);
+        if (! $organization) {
+            return $creditNote;
+        }
+
+        $finance = (new CapabilityGate($organization))->moduleSettings('finance') ?? [];
+        if (empty($finance['enable_kra_device'])) {
+            return $creditNote;
+        }
+
+        $updated = $this->submitToKra($creditNote, $return, $finance);
+
+        if (in_array((string) $updated->kra_status, ['failed', 'pending'], true)) {
+            Log::warning('KRA soft-fail on return credit note — return stays approved', [
+                'sale_id' => $return->sale_id,
+                'customer_return_id' => $return->id,
+                'credit_note_id' => $updated->id,
+                'return_kind' => $return->return_kind,
+                'kra_status' => $updated->kra_status,
+                'message' => $updated->kra_error_message,
+            ]);
+        }
+
+        return $updated;
+    }
+
+    /**
+     * Retry credit notes waiting on KRA (pending / transient failed).
+     *
+     * @return array{attempted: int, succeeded: int, still_pending: int, skipped: int}
+     */
+    public function retryPendingKraCredits(int $limit = 50, ?int $organizationId = null): array
+    {
+        $stats = ['attempted' => 0, 'succeeded' => 0, 'still_pending' => 0, 'skipped' => 0];
+
+        $query = CreditNote::query()
+            ->whereIn('kra_status', ['pending', 'failed'])
+            ->whereNotNull('customer_return_id')
+            ->whereNotNull('kra_relevant_invoice_number')
+            ->where('kra_relevant_invoice_number', '!=', '')
+            ->when($organizationId, fn ($q) => $q->where('organization_id', $organizationId))
+            ->orderBy('id')
+            ->limit(max(1, $limit));
+
+        $notes = $query->get();
+        foreach ($notes as $creditNote) {
+            if ((string) $creditNote->kra_status === 'failed'
+                && ! KraDeviceErrorTranslator::isTransientConnectivityFailure($creditNote->kra_error_message)) {
+                $stats['skipped']++;
+
+                continue;
+            }
+
+            $stats['attempted']++;
+            $updated = $this->attemptKraForCreditNote($creditNote);
+            if ((string) $updated->kra_status === 'success') {
+                $stats['succeeded']++;
+            } else {
+                $stats['still_pending']++;
+            }
+        }
+
+        return $stats;
     }
 
     public function submitToKra(CreditNote $creditNote, CustomerReturn $return, array $financeSettings): CreditNote
@@ -147,6 +255,9 @@ class CreditNoteService
                 return $this->attachExistingFiscalCredit($creditNote, $existingCredit, $relevantInvoice, $return);
             }
         }
+
+        $startedAt = microtime(true);
+        $maxSeconds = \App\Services\Kra\KraAgentBridge::CHECKOUT_MAX_SECONDS;
 
         try {
             $service = KraDeviceService::fromSettings(
@@ -191,32 +302,58 @@ class CreditNoteService
             $invoiceNumber = $service->traderInvoiceForCreditNote($creditNote, $financeSettings);
             $buyerPin = $return->customer?->kra_pin ?? $return->sale?->customer?->kra_pin ?? null;
 
-            $deviceContext = [];
-            if ($return->return_kind === 'pos_edit') {
-                // Same as checkout: no per-request health — heartbeat only; then fiscalize for QR.
-                $preflight = $service->agentFiscalPreflight();
-                if ($preflight['ready'] === false) {
-                    $message = trim((string) ($preflight['message'] ?? 'KRA device or Comstore is unavailable.'));
-                    $creditNote->update([
-                        'kra_status' => 'failed',
-                        'kra_relevant_invoice_number' => $relevantInvoice,
-                        'kra_error_message' => $message,
-                    ]);
-                    Log::warning('KRA soft-skip on POS edit void — agent heartbeat reports fiscal unavailable', [
-                        'sale_id' => $return->sale_id,
-                        'credit_note_id' => $creditNote->id,
-                        'message' => $message,
-                    ]);
+            $remaining = static function () use ($startedAt, $maxSeconds): int {
+                return max(1, (int) floor($maxSeconds - (microtime(true) - $startedAt)));
+            };
+            $deviceContext = static function () use ($remaining): array {
+                $left = $remaining();
 
-                    return $creditNote->fresh() ?? $creditNote;
-                }
-
-                $deviceContext = [
+                return [
                     'checkout' => true,
-                    'agent_wait_seconds' => \App\Services\Kra\KraAgentBridge::CHECKOUT_COMMAND_WAIT_SECONDS,
-                    'http_timeout_seconds' => 18,
+                    'agent_wait_seconds' => min(
+                        \App\Services\Kra\KraAgentBridge::CHECKOUT_COMMAND_WAIT_SECONDS,
+                        $left,
+                    ),
+                    'http_timeout_seconds' => min(20, $left),
                     'http_connect_timeout_seconds' => 2,
                 ];
+            };
+
+            // Soft path: fail fast when agent/Comstore known down — same as checkout.
+            $preflight = $service->agentFiscalPreflight();
+            if ($preflight['ready'] === false
+                || ($preflight['ready'] === null && ! $service->agentIsWarm())) {
+                $detail = KraDeviceErrorTranslator::userMessageForDocument(
+                    $preflight['message'] ?? 'Centrix KRA Agent / Comstore is not available.',
+                    'credit_note',
+                );
+
+                return $this->markCreditNoteSoftOutcome(
+                    $creditNote,
+                    $return,
+                    $relevantInvoice,
+                    'pending',
+                    self::pendingRetryMessage($detail),
+                    null,
+                    null,
+                );
+            }
+
+            if ((microtime(true) - $startedAt) >= $maxSeconds) {
+                return $this->markCreditNoteSoftOutcome(
+                    $creditNote,
+                    $return,
+                    $relevantInvoice,
+                    'pending',
+                    self::pendingRetryMessage(
+                        KraDeviceErrorTranslator::userMessageForDocument(
+                            'KRA did not respond in time.',
+                            'credit_note',
+                        ),
+                    ),
+                    null,
+                    null,
+                );
             }
 
             $result = $service->sendCreditNote(
@@ -227,26 +364,25 @@ class CreditNoteService
                 KraRefundReasonMapper::fromReturnReason($return->reason),
                 $return->refund_method,
                 $buyerPin,
-                $deviceContext,
+                $deviceContext(),
             );
 
             $mapped = $result['response'] ?? [];
 
             if (! ($result['success'] ?? false)) {
-                $creditNote->update([
-                    'kra_status' => 'failed',
-                    'kra_relevant_invoice_number' => $relevantInvoice,
-                    'kra_request_payload' => $result['payload'] ?? null,
-                    'kra_response_payload' => $mapped,
-                    'kra_error_message' => $result['message'] ?? 'KRA credit note failed',
-                ]);
+                $rawMessage = (string) ($result['message'] ?? 'KRA credit note failed');
+                $userMessage = KraDeviceErrorTranslator::userMessageForDocument($rawMessage, 'credit_note');
+                $queued = KraDeviceErrorTranslator::isTransientConnectivityFailure($rawMessage);
 
-                Log::warning('KRA credit note failed for return ' . $return->return_no, [
-                    'credit_note_id' => $creditNote->id,
-                    'message' => $result['message'] ?? null,
-                ]);
-
-                return $creditNote->fresh();
+                return $this->markCreditNoteSoftOutcome(
+                    $creditNote,
+                    $return,
+                    $relevantInvoice,
+                    $queued ? 'pending' : 'failed',
+                    $queued ? self::pendingRetryMessage($userMessage) : $userMessage,
+                    $result['payload'] ?? null,
+                    $mapped,
+                );
             }
 
             $creditNote->update([
@@ -263,10 +399,7 @@ class CreditNoteService
                 'kra_error_message' => null,
             ]);
 
-            KraResponse::create([
-                'sale_id' => $return->sale_id,
-                'organization_id' => (int) $return->organization_id,
-                'order_no' => $return->sale?->order_num ?? 0,
+            $this->persistCreditKraResponse($return, $creditNote->fresh() ?? $creditNote, [
                 'invoice_number' => $mapped['invoice_number'] ?? $invoiceNumber,
                 'receipt_signature' => $mapped['receipt_signature'] ?? $mapped['signature'] ?? null,
                 'signature_link' => $mapped['signature_link'] ?? null,
@@ -280,24 +413,132 @@ class CreditNoteService
                     'credit_note_id' => $creditNote->id,
                 ]),
                 'status' => 'success',
+                'error_message' => null,
             ]);
         } catch (InvalidArgumentException $e) {
-            $creditNote->update([
-                'kra_status' => 'failed',
-                'kra_error_message' => $e->getMessage(),
-            ]);
+            return $this->markCreditNoteSoftOutcome(
+                $creditNote,
+                $return,
+                $relevantInvoice,
+                'failed',
+                $e->getMessage(),
+                null,
+                null,
+            );
         } catch (\Throwable $e) {
-            $creditNote->update([
-                'kra_status' => 'failed',
-                'kra_error_message' => 'Could not save the KRA credit note response. Please try again or contact support.',
-            ]);
             Log::error('KRA credit note exception: ' . $e->getMessage(), [
                 'credit_note_id' => $creditNote->id,
                 'exception' => $e,
             ]);
+
+            return $this->markCreditNoteSoftOutcome(
+                $creditNote,
+                $return,
+                $relevantInvoice,
+                'pending',
+                self::pendingRetryMessage(
+                    'Could not complete the KRA credit note response. Will retry automatically.',
+                ),
+                null,
+                null,
+            );
         }
 
         return $creditNote->fresh();
+    }
+
+    /**
+     * @param  array<string, mixed>|null  $requestPayload
+     * @param  array<string, mixed>|null  $responsePayload
+     */
+    protected function markCreditNoteSoftOutcome(
+        CreditNote $creditNote,
+        CustomerReturn $return,
+        string $relevantInvoice,
+        string $status,
+        string $message,
+        ?array $requestPayload,
+        ?array $responsePayload,
+    ): CreditNote {
+        $creditNote->update([
+            'kra_status' => $status,
+            'kra_relevant_invoice_number' => $relevantInvoice,
+            'kra_request_payload' => $requestPayload,
+            'kra_response_payload' => $responsePayload,
+            'kra_error_message' => $message,
+        ]);
+
+        $fresh = $creditNote->fresh() ?? $creditNote;
+        $this->persistCreditKraResponse($return, $fresh, [
+            'invoice_number' => $fresh->kra_invoice_number
+                ?: ('CN-PENDING-'.$fresh->id),
+            'receipt_signature' => null,
+            'signature_link' => null,
+            'serial_number' => null,
+            'kra_timestamp' => null,
+            'request_payload' => $requestPayload,
+            'response_payload' => array_merge(is_array($responsePayload) ? $responsePayload : [], [
+                'document_type' => 'credit_note',
+                'relevant_invoice_number' => $relevantInvoice,
+                'customer_return_id' => $return->id,
+                'credit_note_id' => $fresh->id,
+                'soft_failed' => true,
+            ]),
+            'status' => $status === 'pending' ? 'failed' : $status,
+            'error_message' => $message,
+        ]);
+
+        Log::warning('KRA credit note soft outcome for return ' . $return->return_no, [
+            'credit_note_id' => $fresh->id,
+            'kra_status' => $status,
+            'message' => $message,
+        ]);
+
+        return $fresh;
+    }
+
+    /**
+     * Keep one soft-fail / success kra_responses row linked to this credit note for Retry UI.
+     *
+     * @param  array<string, mixed>  $attributes
+     */
+    protected function persistCreditKraResponse(
+        CustomerReturn $return,
+        CreditNote $creditNote,
+        array $attributes,
+    ): void {
+        if (! $return->sale_id) {
+            return;
+        }
+
+        $attributes['sale_id'] = (int) $return->sale_id;
+        $attributes['organization_id'] = (int) $return->organization_id;
+        $attributes['order_no'] = $return->sale?->order_num ?? 0;
+
+        $existing = KraResponse::query()
+            ->where('sale_id', $return->sale_id)
+            ->where(function ($q) use ($creditNote) {
+                $q->where('response_payload->credit_note_id', $creditNote->id)
+                    ->orWhere('response_payload->customer_return_id', $creditNote->customer_return_id);
+            })
+            ->orderByDesc('id')
+            ->first();
+
+        if ($existing) {
+            $existing->fill($attributes);
+            $existing->save();
+
+            return;
+        }
+
+        try {
+            KraResponse::create($attributes);
+        } catch (\Throwable $e) {
+            Log::warning('Could not persist kra_responses row for credit note soft-fail', [
+                'credit_note_id' => $creditNote->id,
+                'message' => $e->getMessage(),
+            ]);
+        }
     }
 
     public function relevantInvoiceFromKraResponse(KraResponse $kra): string

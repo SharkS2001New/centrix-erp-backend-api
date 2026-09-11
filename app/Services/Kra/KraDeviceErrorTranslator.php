@@ -50,6 +50,43 @@ final class KraDeviceErrorTranslator
         return self::translate($raw)['message'];
     }
 
+    /**
+     * Same as userMessage, but replace checkout soft-fail phrasing when the document
+     * is a credit note / return (return may already be approved and queued).
+     */
+    public static function userMessageForDocument(mixed $raw, string $documentType = 'sale'): string
+    {
+        $message = self::userMessage($raw);
+        if ($documentType !== 'credit_note' && $documentType !== 'return') {
+            return $message;
+        }
+
+        $replacements = [
+            'The sale was saved without a KRA QR.' => 'The return was approved; KRA credit will retry automatically while Centrix KRA Agent is online.',
+            'The receipt was saved without a KRA QR.' => 'The return was approved; KRA credit will retry automatically while Centrix KRA Agent is online.',
+            'then try the sale again. The receipt was saved without a KRA QR.' => 'then retry will run automatically. The return was already approved.',
+        ];
+
+        return str_replace(array_keys($replacements), array_values($replacements), $message);
+    }
+
+    /** Connectivity / agent-offline failures that should auto-retry as kra_status=pending. */
+    public static function isTransientConnectivityFailure(mixed $raw): bool
+    {
+        $translated = self::translate($raw);
+        $code = $translated['code'];
+        if (in_array($code, ['90', '96', '518', '519', '520'], true)) {
+            return true;
+        }
+
+        $haystack = trim($translated['technical_message'].' '.$translated['message']);
+
+        return $haystack !== '' && (bool) preg_match(
+            '/did not respond|not respond in time|Could not reach|Comstore is not|Comstore not reachable|has not checked in|has never checked in|timed out|Connection refused|cURL error|aborted without|not online|not available|unavailable|Start Comstore|fiscal unavailable|Device offline/i',
+            $haystack,
+        );
+    }
+
     public static function normalizeTechnicalMessage(mixed $raw): string
     {
         $text = trim(is_string($raw) ? $raw : (json_encode($raw, JSON_UNESCAPED_UNICODE) ?: ''));

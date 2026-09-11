@@ -1078,6 +1078,8 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['store', 'destroy'], ['erp.permission:sales.manage']);
             Route::post('customer-returns/{id}/approve', [CustomerReturnController::class, 'approve'])
                 ->middleware('erp.permission:sales.manage');
+            Route::post('customer-returns/{id}/retry-kra', [CustomerReturnController::class, 'retryKra'])
+                ->middleware('erp.permission:sales.manage');
             Route::post('customer-returns/{id}/reject', [CustomerReturnController::class, 'reject'])
                 ->middleware('erp.permission:sales.manage');
             Route::get('customer-returns/{id}/proof/file', [CustomerReturnController::class, 'proofFile'])

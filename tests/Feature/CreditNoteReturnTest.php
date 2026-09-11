@@ -199,7 +199,7 @@ class CreditNoteReturnTest extends TestCase
         $this->assertSame('CN-0002', $service->nextCreditNoteNo((int) $orgA->id));
     }
 
-    public function test_approve_return_submits_kra_credit_note_when_original_sale_fiscalized(): void
+    public function test_approve_return_queues_kra_credit_when_agent_offline(): void
     {
         $org = Organization::findOrFail($this->user->organization_id);
         $settings = $org->module_settings ?? [];
@@ -210,19 +210,6 @@ class CreditNoteReturnTest extends TestCase
             'kra_pin_number' => 'P052177271G',
         ]);
         $org->update(['module_settings' => $settings]);
-
-        Http::fake([
-            '192.168.1.50:8010/*' => Http::response([
-                'success' => true,
-                'message' => 'OK',
-                'invoice_number' => 'CN-CU-99',
-                'cu-inv-no' => '00001234',
-                'Receipt Signature' => 'SIG-CREDIT',
-                'signature_link' => 'https://example.test/credit-qr',
-                'serial_number' => 'DEJA02220240050',
-                'timestamp' => '2026-06-11T14:00:00',
-            ], 200),
-        ]);
 
         $product = Product::firstOrFail();
         $sale = Sale::query()->firstOrFail();
@@ -270,29 +257,16 @@ class CreditNoteReturnTest extends TestCase
 
         $returnId = $created->json('id');
 
+        // Agent never checked in → soft-approve + queue (no 55s hang, no rollback).
         $this->postJson("/api/v1/customer-returns/{$returnId}/approve")
             ->assertOk()
-            ->assertJsonPath('credit_note.kra_status', 'success');
+            ->assertJsonPath('status', 'approved')
+            ->assertJsonPath('credit_note.kra_status', 'pending');
 
         $creditNote = CreditNote::query()->where('customer_return_id', $returnId)->firstOrFail();
         $this->assertSame('03', $creditNote->kra_refund_reason_code);
         $this->assertSame('5678', $creditNote->kra_relevant_invoice_number);
-
-        Http::assertSent(function ($request) {
-            if (! str_contains($request->url(), '/api/complete-workflow')) {
-                return false;
-            }
-
-            $body = $request->data();
-            $sign = $body['sign_structure'] ?? [];
-
-            return ($sign['InvoiceType'] ?? '') === 'credit'
-                && ($sign['relevantInvoiceNumber'] ?? '') === '5678'
-                && ($sign['rfdRsnCd'] ?? '') === '03'
-                && ($sign['CashAmt'] ?? '') === '100.00'
-                && ($sign['CardAmt'] ?? '') === '0.00'
-                && (($body['plu_data'][0]['Barcode'] ?? null) === '');
-        });
+        $this->assertStringContainsString('queued', strtolower((string) $creditNote->kra_error_message));
     }
 
     public function test_approve_return_reuses_existing_kra_credit_without_resending(): void
@@ -398,7 +372,7 @@ class CreditNoteReturnTest extends TestCase
         Http::assertNothingSent();
     }
 
-    public function test_approve_return_rolls_back_when_kra_device_fails(): void
+    public function test_approve_return_soft_approves_when_kra_unavailable_and_queues_credit(): void
     {
         $org = Organization::findOrFail($this->user->organization_id);
         $settings = $org->module_settings ?? [];
@@ -409,13 +383,6 @@ class CreditNoteReturnTest extends TestCase
             'kra_pin_number' => 'P052177271G',
         ]);
         $org->update(['module_settings' => $settings]);
-
-        Http::fake([
-            '192.168.1.50:8010/*' => Http::response([
-                'success' => false,
-                'message' => 'Credit note rejected by device',
-            ], 200),
-        ]);
 
         $product = Product::firstOrFail();
         $sale = Sale::query()->firstOrFail();
@@ -462,15 +429,26 @@ class CreditNoteReturnTest extends TestCase
         $returnId = $created->json('id');
 
         $this->postJson("/api/v1/customer-returns/{$returnId}/approve")
-            ->assertStatus(422)
-            ->assertJsonValidationErrors(['kra']);
+            ->assertOk()
+            ->assertJsonPath('status', 'approved')
+            ->assertJsonPath('credit_note.kra_status', 'pending');
 
         $this->assertDatabaseHas('customer_returns', [
             'id' => $returnId,
-            'status' => 'pending',
+            'status' => 'approved',
         ]);
-        $this->assertDatabaseMissing('credit_notes', [
+        $this->assertDatabaseHas('credit_notes', [
             'customer_return_id' => $returnId,
+            'kra_status' => 'pending',
+        ]);
+
+        $this->artisan('erp:retry-pending-kra-credit-notes', ['--force' => true])
+            ->assertSuccessful();
+
+        // Agent still offline — stays pending for the next daytime hourly run.
+        $this->assertDatabaseHas('credit_notes', [
+            'customer_return_id' => $returnId,
+            'kra_status' => 'pending',
         ]);
     }
 
