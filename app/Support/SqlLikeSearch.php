@@ -317,7 +317,7 @@ class SqlLikeSearch
     }
 
     /**
-     * Parse a money-like search term (1500, 1,500.00, KES 2500).
+     * Parse a money-like search term (1500, 1,500.00, KES 2500, 5480 KES, 5 480).
      */
     public static function parseAmountSearchTerm(string $term): ?float
     {
@@ -326,16 +326,57 @@ class SqlLikeSearch
             return null;
         }
 
-        if (! preg_match('/^(?:kes|ksh|sh|usd|\$)?\s*[\d,]+(?:\.\d{1,2})?$/i', $trimmed)) {
+        $stripped = preg_replace('/[\x{00A0}\x{202F}\x{2009}]/u', ' ', $trimmed) ?? $trimmed;
+        $stripped = preg_replace('/^(?:kes|kshs?\.?|sh\.?|usd|\$)\s*/iu', '', $stripped) ?? $stripped;
+        $stripped = preg_replace('/\s*(?:kes|kshs?\.?|sh\.?|usd|\$)$/iu', '', $stripped) ?? $stripped;
+        $stripped = trim($stripped);
+        if ($stripped === '') {
             return null;
         }
 
-        $normalized = preg_replace('/[^\d.]/', '', str_replace(',', '', $trimmed));
-        if ($normalized === null || $normalized === '' || ! is_numeric($normalized)) {
+        // Whole shillings, optional thousands separators (comma or space), optional cents.
+        if (! preg_match('/^[\d, ]+(?:\.\d{0,2})?$/', $stripped)) {
+            return null;
+        }
+
+        $normalized = preg_replace('/[^\d.]/', '', $stripped);
+        if ($normalized === null || $normalized === '' || $normalized === '.' || ! is_numeric($normalized)) {
             return null;
         }
 
         return round((float) $normalized, 2);
+    }
+
+    /**
+     * Exact + display-format match for money columns (order total, amount paid, tender).
+     * Binds a decimal string so PHP floats do not miss ROUND(order_total, 2) = 5480.00.
+     *
+     * @param  EloquentBuilder<mixed>|QueryBuilder  $inner
+     * @param  list<string>  $columns  Trusted SQL column expressions
+     */
+    public static function orWhereMoneyColumns(
+        EloquentBuilder|QueryBuilder $inner,
+        array $columns,
+        string $term,
+    ): void {
+        $amount = self::parseAmountSearchTerm($term);
+        if ($amount === null || $columns === []) {
+            return;
+        }
+
+        $exact = number_format($amount, 2, '.', '');
+        $plain = rtrim(rtrim($exact, '0'), '.');
+        $needles = array_values(array_unique(array_filter([$exact, $plain], fn ($v) => $v !== '')));
+
+        foreach ($columns as $column) {
+            $inner->orWhereRaw('ABS(ROUND('.$column.', 2) - ?) < 0.009', [$exact]);
+            foreach ($needles as $needle) {
+                $inner->orWhereRaw(
+                    "REPLACE(REPLACE(CAST(ROUND({$column}, 2) AS CHAR), ',', ''), ' ', '') LIKE ?",
+                    ['%'.self::escape($needle).'%'],
+                );
+            }
+        }
     }
 
     /**
@@ -407,8 +448,10 @@ class SqlLikeSearch
             }
 
             if ($amount !== null) {
-                $sub->orWhereRaw('ROUND(sales.order_total, 2) = ?', [$amount])
-                    ->orWhereRaw('ROUND(COALESCE(sales.amount_paid, 0), 2) = ?', [$amount]);
+                self::orWhereMoneyColumns($sub, [
+                    'sales.order_total',
+                    'COALESCE(sales.amount_paid, 0)',
+                ], $term);
             }
 
             if ($includeCustomerRelation && $isEloquent) {

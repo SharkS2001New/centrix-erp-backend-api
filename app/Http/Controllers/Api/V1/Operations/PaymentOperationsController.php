@@ -19,18 +19,39 @@ class PaymentOperationsController extends Controller
     {
         $sale = $this->findScopedSale($saleId, $request->user());
         $data = $request->validate([
-            'payment_method_id' => 'required|integer',
-            'amount' => 'required|numeric|min:0.01',
+            'payment_method_id' => 'required_without:payments|integer',
+            'amount' => 'required_without:payments|numeric|min:0.01',
             'reference_number' => 'nullable|string',
             'float_session_id' => 'nullable|integer',
+            'payments' => 'required_without:payment_method_id|array|min:1',
+            'payments.*.payment_method_id' => 'required|integer',
+            'payments.*.amount' => 'required|numeric|min:0.01',
+            'payments.*.reference_number' => 'nullable|string',
+            'payments.*.float_session_id' => 'nullable|integer',
         ]);
-        $data['received_by'] = $request->user()->id;
 
-        $sale = app(SalePaymentAllocationService::class)->allocate(
-            $sale,
-            $data,
-            $request->user(),
-        );
+        $user = $request->user();
+        $sessionId = isset($data['float_session_id']) ? (int) $data['float_session_id'] : null;
+        $allocator = app(SalePaymentAllocationService::class);
+
+        if (! empty($data['payments'])) {
+            $payments = array_map(static function (array $row) use ($user, $sessionId): array {
+                return [
+                    'payment_method_id' => (int) $row['payment_method_id'],
+                    'amount' => $row['amount'],
+                    'reference_number' => $row['reference_number'] ?? null,
+                    'float_session_id' => isset($row['float_session_id'])
+                        ? (int) $row['float_session_id']
+                        : $sessionId,
+                    'received_by' => $user->id,
+                ];
+            }, $data['payments']);
+
+            $sale = $allocator->allocateMany($sale, $payments, $user);
+        } else {
+            $data['received_by'] = $user->id;
+            $sale = $allocator->allocate($sale, $data, $user);
+        }
 
         return response()->json($sale);
     }

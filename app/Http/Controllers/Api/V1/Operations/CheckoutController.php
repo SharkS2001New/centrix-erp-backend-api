@@ -1273,7 +1273,15 @@ class CheckoutController extends Controller
                     isset($input['discount_approval_reason']) ? (string) $input['discount_approval_reason'] : null,
                 );
             } elseif (! in_array($orderStatus, ['held', 'draft'], true)) {
-                $invoice = app(CustomerInvoiceService::class)->ensureForSale($sale, $user, $total, $amountPaid);
+                $invoiceService = app(CustomerInvoiceService::class);
+                $invoice = $invoiceService->ensureForSale($sale, $user, $total, $amountPaid);
+                if ($invoice) {
+                    $invoice = $invoiceService->settleSaleTendersOntoInvoice(
+                        $invoice,
+                        $sale->fresh() ?? $sale,
+                        $user,
+                    );
+                }
             }
 
             // Link cart-applied STK/till payments to this sale so reconciliation

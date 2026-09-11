@@ -6,8 +6,11 @@ use App\Models\CreditNote;
 use App\Models\Customer;
 use App\Models\CustomerInvoice;
 use App\Models\CustomerInvoicePayment;
+use App\Models\PaymentMethod;
 use App\Models\Sale;
+use App\Models\SalePayment;
 use App\Models\User;
+use App\Support\SalePaymentStatus;
 use App\Services\Accounting\CustomerPaymentJournalService;
 use App\Services\Erp\ErpContext;
 use App\Services\Fulfillment\TripAutoCloseService;
@@ -60,11 +63,11 @@ class CustomerInvoiceService
                 $updates['total_vat'] = $sale->total_vat;
             }
             if (! $hasPayments) {
-            if (round((float) $existing->amount_paid, 2) !== $paid) {
-                $updates['amount_paid'] = $paid;
-            }
-            if ((int) $existing->payment_status !== $paymentStatus) {
-                $updates['payment_status'] = $paymentStatus;
+                if (round((float) $existing->amount_paid, 2) !== $paid) {
+                    $updates['amount_paid'] = $paid;
+                }
+                if ((int) $existing->payment_status !== $paymentStatus) {
+                    $updates['payment_status'] = $paymentStatus;
                 }
             }
             if ($updates !== []) {
@@ -82,7 +85,7 @@ class CustomerInvoiceService
             }
 
             $invoice = $existing->fresh();
-            if ($hasPayments) {
+            if ($this->invoiceHasCashLedger($invoice)) {
                 $invoice = $this->syncPaidTotalsFromPayments($invoice);
             }
             $this->refreshCustomerBalance((int) $sale->organization_id, $newCustomerNum);
@@ -107,6 +110,9 @@ class CustomerInvoiceService
             'payment_status' => $paymentStatus,
         ]);
 
+        if ($this->invoiceHasCashLedger($invoice)) {
+            $invoice = $this->syncPaidTotalsFromPayments($invoice);
+        }
         $this->refreshCustomerBalance((int) $sale->organization_id, (int) $sale->customer_num);
 
         return $invoice;
@@ -126,17 +132,11 @@ class CustomerInvoiceService
 
     public function syncPaidTotalsFromPayments(CustomerInvoice $invoice): CustomerInvoice
     {
-        $paymentsSum = $this->paidTotalFromPayments($invoice);
-        $hasPaymentRows = $paymentsSum > 0.01
-            || CustomerInvoicePayment::query()
-                ->where('customer_invoice_id', $invoice->id)
-                ->exists();
-        $paid = $hasPaymentRows
-            ? $paymentsSum
-            : round((float) ($invoice->amount_paid ?? 0), 2);
-
+        $paid = round(max(
+            $this->paidTotalFromPayments($invoice),
+            $invoice->sale_id ? $this->saleTenderTotal((int) $invoice->sale_id) : 0.0,
+        ), 2);
         $invoiceTotal = round((float) $invoice->invoice_total, 2);
-        // Returns keep gross invoice_total + credit_notes; settle status from paid + credits.
         $credits = $this->creditTotalForInvoice($invoice);
 
         $invoice->update([
@@ -154,9 +154,75 @@ class CustomerInvoiceService
             ->sum('amount_paid'), 2);
     }
 
+    /**
+     * Cash on an AR invoice: max(invoice payment rows, sale_payments tenders).
+     * Mixed checkout writes Cash + M-Pesa on the sale; a later M-Pesa-only invoice
+     * row must not hide the cash tender and reopen a 44,800-style balance.
+     */
+    public function cashCollectedForInvoice(CustomerInvoice $invoice): float
+    {
+        $cip = $this->paidTotalFromPayments($invoice);
+        $tenders = $invoice->sale_id
+            ? $this->saleTenderTotal((int) $invoice->sale_id)
+            : 0.0;
+        $hasRows = $cip > 0.01 || $tenders > 0.01
+            || CustomerInvoicePayment::query()
+                ->where('customer_invoice_id', $invoice->id)
+                ->exists();
+
+        if ($hasRows) {
+            return round(max($cip, $tenders), 2);
+        }
+
+        return round((float) ($invoice->amount_paid ?? 0), 2);
+    }
+
+    /**
+     * True when invoice payment rows or sale_payments exist (even if amounts are 0).
+     */
+    protected function invoiceHasCashLedger(CustomerInvoice $invoice): bool
+    {
+        if (CustomerInvoicePayment::query()->where('customer_invoice_id', $invoice->id)->exists()) {
+            return true;
+        }
+
+        return (int) ($invoice->sale_id ?? 0) > 0
+            && Schema::hasTable('sale_payments')
+            && SalePayment::query()->where('sale_id', $invoice->sale_id)->exists();
+    }
+
+    public function saleTenderTotal(int $saleId): float
+    {
+        if ($saleId <= 0 || ! Schema::hasTable('sale_payments')) {
+            return 0.0;
+        }
+
+        return round((float) SalePayment::query()->where('sale_id', $saleId)->sum('amount'), 2);
+    }
+
     public static function paidFromPaymentsSql(string $invoiceAlias = 'ci'): string
     {
         return "(SELECT COALESCE(SUM(cip.amount_paid), 0) FROM customer_invoice_payments cip WHERE cip.customer_invoice_id = {$invoiceAlias}.id)";
+    }
+
+    public static function saleTendersSql(string $invoiceAlias = 'ci'): string
+    {
+        return "(SELECT COALESCE(SUM(sp.amount), 0) FROM sale_payments sp WHERE sp.sale_id = {$invoiceAlias}.sale_id)";
+    }
+
+    /**
+     * Cash collected for list/report SQL — same max(invoice rows, sale tenders) as PHP.
+     */
+    public static function cashCollectedSql(string $invoiceAlias = 'ci'): string
+    {
+        $cip = self::paidFromPaymentsSql($invoiceAlias);
+        $tenders = self::saleTendersSql($invoiceAlias);
+        $cipOrColumn = 'CASE WHEN EXISTS ('
+            .'SELECT 1 FROM customer_invoice_payments cip '
+            ."WHERE cip.customer_invoice_id = {$invoiceAlias}.id"
+            .") THEN {$cip} ELSE {$invoiceAlias}.amount_paid END";
+
+        return "GREATEST({$cipOrColumn}, {$tenders})";
     }
 
     /**
@@ -182,7 +248,7 @@ class CustomerInvoiceService
 
     public static function balanceDueFromPaymentsSql(string $invoiceAlias = 'ci'): string
     {
-        $paid = self::paidFromPaymentsSql($invoiceAlias);
+        $paid = self::cashCollectedSql($invoiceAlias);
         $credits = self::creditsForInvoiceSaleSql($invoiceAlias);
 
         return "GREATEST(0, ROUND({$invoiceAlias}.invoice_total - {$paid} - {$credits}, 2))";
@@ -199,10 +265,160 @@ class CustomerInvoiceService
 
     public function balanceDueFromPayments(CustomerInvoice $invoice): float
     {
-        $paid = $this->paidTotalFromPayments($invoice);
+        $paid = $this->cashCollectedForInvoice($invoice);
         $credits = $this->creditTotalForInvoice($invoice);
 
         return round(max(0, (float) $invoice->invoice_total - $paid - $credits), 2);
+    }
+
+    protected function cashCollectedFromPreloaded(CustomerInvoice $invoice): float
+    {
+        $cip = isset($invoice->paid_from_payments_sum)
+            ? round((float) $invoice->paid_from_payments_sum, 2)
+            : $this->paidTotalFromPayments($invoice);
+        $tenders = isset($invoice->sale_tenders_sum)
+            ? round((float) $invoice->sale_tenders_sum, 2)
+            : ($invoice->sale_id ? $this->saleTenderTotal((int) $invoice->sale_id) : 0.0);
+
+        if ($cip > 0.01 || $tenders > 0.01) {
+            return round(max($cip, $tenders), 2);
+        }
+
+        if (
+            $invoice->id
+            && CustomerInvoicePayment::query()->where('customer_invoice_id', $invoice->id)->exists()
+        ) {
+            return 0.0;
+        }
+
+        return round((float) ($invoice->amount_paid ?? 0), 2);
+    }
+
+    /**
+     * Copy POS tenders that never became invoice payment rows, then refresh paid/status.
+     */
+    public function settleSaleTendersOntoInvoice(CustomerInvoice $invoice, Sale $sale, User $user): CustomerInvoice
+    {
+        $this->mirrorUnrecordedSaleTenders($invoice, $sale, $user);
+
+        return $this->syncPaidTotalsFromPayments($invoice->fresh());
+    }
+
+    /**
+     * Checkout writes sale_payments (Cash + M-Pesa) without invoice payment rows.
+     * Copy any shortfall onto the invoice so Accounting matches the order.
+     */
+    public function mirrorUnrecordedSaleTenders(CustomerInvoice $invoice, Sale $sale, User $user): void
+    {
+        if (! $sale->id || ! Schema::hasTable('sale_payments') || ! Schema::hasTable('customer_invoice_payments')) {
+            return;
+        }
+
+        $tenderSum = $this->saleTenderTotal((int) $sale->id);
+        $cipSum = $this->paidTotalFromPayments($invoice);
+        $gap = round($tenderSum - $cipSum, 2);
+        if ($gap <= 0.01) {
+            return;
+        }
+
+        $methodId = SalePayment::query()
+            ->where('sale_id', $sale->id)
+            ->orderByDesc('id')
+            ->value('payment_method_id');
+        if (! $methodId) {
+            $methodId = PaymentMethod::query()->where('method_code', 'CASH')->value('id');
+        }
+        if (! $methodId) {
+            return;
+        }
+
+        CustomerInvoicePayment::create([
+            'customer_invoice_id' => $invoice->id,
+            'customer_num' => $sale->customer_num,
+            'payment_method_id' => $methodId,
+            'amount_paid' => $gap,
+            'date_paid' => now()->toDateString(),
+            'received_by' => $user->id,
+            'organization_id' => $sale->organization_id,
+            'branch_id' => $sale->branch_id ? (int) $sale->branch_id : null,
+            'notes' => 'Order tenders not yet on the invoice',
+        ]);
+    }
+
+    /**
+     * Same paid / balance / payment bucket Accounting uses, keyed by sale id.
+     *
+     * @param  list<int>  $saleIds
+     * @return array<int, array{amount_paid: float, return_credit_total: float, balance_due: float, payment_status: string}>
+     */
+    public function settlementsBySaleId(array $saleIds): array
+    {
+        $saleIds = array_values(array_unique(array_map('intval', array_filter($saleIds))));
+        if ($saleIds === []) {
+            return [];
+        }
+
+        $sales = Sale::query()
+            ->whereIn('id', $saleIds)
+            ->get(['id', 'order_total', 'amount_paid', 'status'])
+            ->keyBy('id');
+        $invoices = CustomerInvoice::query()
+            ->whereIn('sale_id', $saleIds)
+            ->whereNull('deleted_at')
+            ->withSum('payments as paid_from_payments_sum', 'amount_paid')
+            ->get()
+            ->keyBy('sale_id');
+        $tendersBySale = Schema::hasTable('sale_payments')
+            ? SalePayment::query()
+                ->whereIn('sale_id', $saleIds)
+                ->selectRaw('sale_id, COALESCE(SUM(amount), 0) as tender_total')
+                ->groupBy('sale_id')
+                ->pluck('tender_total', 'sale_id')
+            : collect();
+        $creditsBySale = $this->statementCreditsBySaleId($saleIds);
+
+        $out = [];
+        foreach ($saleIds as $saleId) {
+            $sale = $sales->get($saleId);
+            if (! $sale) {
+                continue;
+            }
+            $invoice = $invoices->get($saleId);
+            $tenders = round((float) ($tendersBySale[$saleId] ?? 0), 2);
+            if ($invoice) {
+                $invoice->setAttribute('sale_tenders_sum', $tenders);
+                $balances = $this->presentInvoiceBalances($invoice, $creditsBySale);
+                $out[$saleId] = [
+                    'amount_paid' => $balances['amount_paid'],
+                    'return_credit_total' => $balances['return_credit_total'],
+                    'balance_due' => $balances['balance_due'],
+                    'payment_status' => SalePaymentStatus::resolve(
+                        (string) ($sale->status ?? ''),
+                        (float) ($invoice->invoice_total ?? $sale->order_total),
+                        (float) $balances['amount_paid'] + (float) $balances['return_credit_total'],
+                    ),
+                ];
+                continue;
+            }
+
+            $credits = round((float) ($creditsBySale[$saleId] ?? 0), 2);
+            $cash = $tenders > 0.01
+                ? round(max($tenders, (float) ($sale->amount_paid ?? 0)), 2)
+                : round((float) ($sale->amount_paid ?? 0), 2);
+            $total = round((float) ($sale->order_total ?? 0), 2);
+            $out[$saleId] = [
+                'amount_paid' => $cash,
+                'return_credit_total' => $credits,
+                'balance_due' => round(max(0, $total - $cash - $credits), 2),
+                'payment_status' => SalePaymentStatus::resolve(
+                    (string) ($sale->status ?? ''),
+                    $total,
+                    $cash + $credits,
+                ),
+            ];
+        }
+
+        return $out;
     }
 
     /**
@@ -211,19 +427,9 @@ class CustomerInvoiceService
      */
     public function presentInvoiceBalances(CustomerInvoice $invoice, ?array $creditsBySale = null): array
     {
-        $paymentsSum = isset($invoice->paid_from_payments_sum)
-            ? round((float) $invoice->paid_from_payments_sum, 2)
-            : $this->paidTotalFromPayments($invoice);
-
-        // POS / sale-synced invoices often have amount_paid on the row with no
-        // customer_invoice_payments yet. Prefer payment rows when any exist.
-        $hasPaymentRows = $paymentsSum > 0.01
-            || CustomerInvoicePayment::query()
-                ->where('customer_invoice_id', $invoice->id)
-                ->exists();
-        $amountPaid = $hasPaymentRows
-            ? $paymentsSum
-            : round((float) ($invoice->amount_paid ?? 0), 2);
+        $amountPaid = isset($invoice->paid_from_payments_sum) || isset($invoice->sale_tenders_sum)
+            ? $this->cashCollectedFromPreloaded($invoice)
+            : $this->cashCollectedForInvoice($invoice);
 
         $credits = 0.0;
         if ($invoice->sale_id) {
@@ -237,7 +443,6 @@ class CustomerInvoiceService
         $balanceDue = round(max(0, $invoiceTotal - $amountPaid - $credits), 2);
         $paymentStatus = $this->paymentStatus($invoiceTotal, $amountPaid + $credits);
 
-        // Repair stale DB badges (e.g. Paid with amount_paid=0 after a return).
         if (
             (int) $invoice->payment_status !== $paymentStatus
             || abs(round((float) $invoice->amount_paid, 2) - $amountPaid) > 0.001
@@ -380,11 +585,14 @@ class CustomerInvoiceService
             return $this->ensureForSale($sale, $user, $total, $paid);
         }
 
-        $voided = CustomerInvoice::query()
+        $voidedRows = CustomerInvoice::query()
             ->where('sale_id', $sale->id)
             ->whereNotNull('deleted_at')
             ->orderByDesc('id')
-            ->first();
+            ->get();
+        $voided = $voidedRows->first(
+            fn (CustomerInvoice $invoice) => str_ends_with((string) $invoice->invoice_number, '-VOID-'.$invoice->id),
+        ) ?? $voidedRows->first();
 
         if ($voided) {
             $voided->update([
@@ -515,7 +723,8 @@ class CustomerInvoiceService
                 ? (float) ($saleTotals[$saleId] ?? $invoice->invoice_total)
                 : (float) $invoice->invoice_total;
             $gross = round(max((float) $invoice->invoice_total, $netSale + $credits), 2);
-            $balance += max(0, round($gross - (float) $invoice->amount_paid - $credits, 2));
+            $cash = $this->cashCollectedForInvoice($invoice);
+            $balance += max(0, round($gross - $cash - $credits, 2));
         }
 
         Customer::query()

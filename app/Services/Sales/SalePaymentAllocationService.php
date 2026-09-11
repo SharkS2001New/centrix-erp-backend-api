@@ -29,124 +29,200 @@ class SalePaymentAllocationService
      */
     public function allocate(Sale $sale, array $payment, User $user): Sale
     {
-        $amount = round((float) $payment['amount'], 2);
-        if ($amount <= 0) {
-            throw ValidationException::withMessages([
-                'amount' => ['Payment amount must be positive.'],
+        return $this->allocateMany($sale, [$payment], $user);
+    }
+
+    /**
+     * Record one or more tenders in a single transaction.
+     *
+     * Split methods (cash + M-Pesa) must succeed or fail together. Posting them
+     * one request at a time left the first tender on the sale when the next 422'd,
+     * so cashiers saw "Payment failed" on an order that was already partial/paid.
+     *
+     * Partial-vs-full is judged on the batch total, not each line — otherwise a
+     * full settlement of 4,000 cash + 6,000 M-Pesa is rejected as a 4,000 partial.
+     *
+     * @param  list<array{payment_method_id: int, amount: float, reference_number?: ?string, float_session_id?: ?int, received_by?: ?int}>  $payments
+     */
+    public function allocateMany(Sale $sale, array $payments, User $user): Sale
+    {
+        $normalized = $this->normalizePaymentBatch($payments);
+        $batchTotal = round(array_sum(array_column($normalized, 'amount')), 2);
+
+        $sale = $sale->fresh() ?? $sale;
+        $this->assertAmountWithinBalanceDue($sale, $batchTotal);
+        $this->assertPartialPaymentAllowed($sale, $batchTotal, $user);
+
+        return DB::transaction(function () use ($sale, $normalized, $batchTotal, $user) {
+            $sale = Sale::query()->lockForUpdate()->findOrFail($sale->id);
+            $this->assertAmountWithinBalanceDue($sale, $batchTotal);
+            $this->assertPartialPaymentAllowed($sale, $batchTotal, $user);
+
+            foreach ($normalized as $payment) {
+                $sale = $this->applyLockedPayment($sale, $payment, $user);
+            }
+
+            return $sale->fresh() ?? $sale;
+        });
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $payments
+     * @return list<array{payment_method_id: int, amount: float, reference_number?: ?string, float_session_id?: ?int, received_by?: ?int}>
+     */
+    protected function normalizePaymentBatch(array $payments): array
+    {
+        $normalized = [];
+        foreach ($payments as $payment) {
+            $amount = round((float) ($payment['amount'] ?? 0), 2);
+            if ($amount <= 0) {
+                throw ValidationException::withMessages([
+                    'amount' => ['Payment amount must be positive.'],
+                ]);
+            }
+            $methodId = (int) ($payment['payment_method_id'] ?? 0);
+            if ($methodId <= 0) {
+                throw ValidationException::withMessages([
+                    'payment_method_id' => ['Select a payment method.'],
+                ]);
+            }
+            $normalized[] = array_merge($payment, [
+                'amount' => $amount,
+                'payment_method_id' => $methodId,
             ]);
         }
 
-        // Validate before opening the write transaction so 422s are not wrapped.
-        $sale = $sale->fresh() ?? $sale;
-        $this->assertAmountWithinBalanceDue($sale, $amount);
-        $this->assertPartialPaymentAllowed($sale, $amount, $user);
-
-        return DB::transaction(function () use ($sale, $payment, $amount, $user) {
-            $sale = Sale::query()->lockForUpdate()->findOrFail($sale->id);
-            $this->assertAmountWithinBalanceDue($sale, $amount);
-            $this->assertPartialPaymentAllowed($sale, $amount, $user);
-
-            $priorPaid = (float) $sale->amount_paid;
-            $collectsReceivable = (bool) $sale->is_credit_sale
-                || $sale->customer_num
-                || $priorPaid + 0.01 < (float) $sale->order_total;
-
-            SalePayment::create([
-                'sale_id' => $sale->id,
-                'payment_method_id' => $payment['payment_method_id'],
-                'amount' => $amount,
-                'reference_number' => $payment['reference_number'] ?? null,
-                'float_session_id' => $this->resolvePaymentFloatSessionId($payment, $user),
+        if ($normalized === []) {
+            throw ValidationException::withMessages([
+                'amount' => ['Enter a payment amount greater than zero.'],
             ]);
+        }
 
-            $newPaid = (float) $sale->amount_paid + $amount;
-            $paymentStatus = $this->derivePaymentStatus((float) $sale->order_total, $newPaid);
-
-            $gate = $this->erp->gateForUser($user);
-            $workflow = OrderWorkflowService::forGate($gate);
-            $salesSettings = $gate->moduleSettings('sales');
-            $method = PaymentMethod::find($payment['payment_method_id']);
-            $paymentMethodCode = $method?->method_code ?? 'CASH';
-
-            $orderStatus = $workflow->resolveStatusAfterPayment(
-                (string) $sale->channel,
-                (string) $sale->status,
-                $newPaid,
-                (float) $sale->order_total,
-                (bool) $sale->is_credit_sale,
-                $paymentMethodCode,
-                // Backoffice collect installments only — not External POS checkout.
-                ! empty($salesSettings['allow_credit_pay_now']),
-            );
-
-            $updates = [
-                'amount_paid' => $newPaid,
-                'payment_status' => $paymentStatus,
-                // Keep primary method in sync for Orders/Sales Method column — cheque/bank
-                // tenders do not write cash/mpesa buckets, so the list UI relies on this code.
-                'payment_method_code' => $paymentMethodCode,
-            ];
-
-            if ($sale->status !== 'cancelled' && $sale->status !== 'held') {
-                $updates['status'] = $orderStatus;
-                if ($workflow->isTerminalStatus($orderStatus, (string) $sale->channel)) {
-                    $updates['completed_at'] = $sale->completed_at ?? now();
-                }
+        $methodIds = array_values(array_unique(array_map(
+            static fn (array $row): int => (int) $row['payment_method_id'],
+            $normalized,
+        )));
+        $found = PaymentMethod::query()->whereIn('id', $methodIds)->pluck('id')->all();
+        $found = array_map('intval', $found);
+        foreach ($methodIds as $methodId) {
+            if (! in_array($methodId, $found, true)) {
+                throw ValidationException::withMessages([
+                    'payment_method_id' => ['Payment method is not set up.'],
+                ]);
             }
+        }
 
-            $sale->update($updates);
-            SalePaymentColumnMapper::applyToSale($sale->fresh(), $paymentMethodCode, $amount);
+        return $normalized;
+    }
 
-            if ($sale->customer_num) {
-                $invoice = app(CustomerInvoiceService::class)->ensureForSale(
-                    $sale->fresh(),
-                    $user,
-                    (float) $sale->order_total,
-                    $newPaid,
-                );
-                if ($invoice) {
-                    CustomerInvoicePayment::create([
-                        'customer_invoice_id' => $invoice->id,
-                        'customer_num' => $sale->customer_num,
-                        'payment_method_id' => $payment['payment_method_id'],
-                        'amount_paid' => $amount,
-                        'date_paid' => now()->toDateString(),
-                        'received_by' => $payment['received_by'] ?? $user->id,
-                        'organization_id' => $sale->organization_id,
-                        'branch_id' => $sale->branch_id ? (int) $sale->branch_id : null,
-                        'reference_number' => $payment['reference_number'] ?? null,
-                    ]);
-                }
+    /**
+     * @param  array{payment_method_id: int, amount: float, reference_number?: ?string, float_session_id?: ?int, received_by?: ?int}  $payment
+     */
+    protected function applyLockedPayment(Sale $sale, array $payment, User $user): Sale
+    {
+        $amount = round((float) $payment['amount'], 2);
+        $this->assertAmountWithinBalanceDue($sale, $amount);
+
+        $priorPaid = (float) $sale->amount_paid;
+        $collectsReceivable = (bool) $sale->is_credit_sale
+            || $sale->customer_num
+            || $priorPaid + 0.01 < (float) $sale->order_total;
+
+        SalePayment::create([
+            'sale_id' => $sale->id,
+            'payment_method_id' => $payment['payment_method_id'],
+            'amount' => $amount,
+            'reference_number' => $payment['reference_number'] ?? null,
+            'float_session_id' => $this->resolvePaymentFloatSessionId($payment, $user),
+        ]);
+
+        $newPaid = (float) $sale->amount_paid + $amount;
+        $paymentStatus = $this->derivePaymentStatus((float) $sale->order_total, $newPaid);
+
+        $gate = $this->erp->gateForUser($user);
+        $workflow = OrderWorkflowService::forGate($gate);
+        $salesSettings = $gate->moduleSettings('sales');
+        $method = PaymentMethod::find($payment['payment_method_id']);
+        $paymentMethodCode = $method?->method_code ?? 'CASH';
+
+        $orderStatus = $workflow->resolveStatusAfterPayment(
+            (string) $sale->channel,
+            (string) $sale->status,
+            $newPaid,
+            (float) $sale->order_total,
+            (bool) $sale->is_credit_sale,
+            $paymentMethodCode,
+            // Backoffice collect installments only — not External POS checkout.
+            ! empty($salesSettings['allow_credit_pay_now']),
+        );
+
+        $updates = [
+            'amount_paid' => $newPaid,
+            'payment_status' => $paymentStatus,
+            // Keep primary method in sync for Orders/Sales Method column — cheque/bank
+            // tenders do not write cash/mpesa buckets, so the list UI relies on this code.
+            'payment_method_code' => $paymentMethodCode,
+        ];
+
+        if ($sale->status !== 'cancelled' && $sale->status !== 'held') {
+            $updates['status'] = $orderStatus;
+            if ($workflow->isTerminalStatus($orderStatus, (string) $sale->channel)) {
+                $updates['completed_at'] = $sale->completed_at ?? now();
             }
+        }
 
-            $sale = $sale->fresh();
-            app(TripAutoCloseService::class)->tryAutoCloseTripsForSale($sale, $user);
+        $sale->update($updates);
+        SalePaymentColumnMapper::applyToSale($sale->fresh(), $paymentMethodCode, $amount);
 
-            app(\App\Services\Audit\OperationalAuditService::class)->logSalePayment(
+        if ($sale->customer_num) {
+            $invoice = app(CustomerInvoiceService::class)->ensureForSale(
+                $sale->fresh(),
                 $user,
-                $sale,
-                $amount,
-                isset($payment['payment_method_id']) ? (int) $payment['payment_method_id'] : null,
+                (float) $sale->order_total,
+                $newPaid,
             );
-
-            if ($collectsReceivable) {
-                $gate = $this->erp->gateForUser($user);
-                app(CustomerPaymentJournalService::class)->postIfEnabled(
-                    $sale,
-                    $user,
-                    $gate,
-                    $amount,
-                    (int) $payment['payment_method_id'],
-                );
+            if ($invoice) {
+                CustomerInvoicePayment::create([
+                    'customer_invoice_id' => $invoice->id,
+                    'customer_num' => $sale->customer_num,
+                    'payment_method_id' => $payment['payment_method_id'],
+                    'amount_paid' => $amount,
+                    'date_paid' => now()->toDateString(),
+                    'received_by' => $payment['received_by'] ?? $user->id,
+                    'organization_id' => $sale->organization_id,
+                    'branch_id' => $sale->branch_id ? (int) $sale->branch_id : null,
+                    'reference_number' => $payment['reference_number'] ?? null,
+                ]);
             }
+        }
 
-            $organization = Organization::find($user->organization_id);
-            if ($organization) {
-                app(CustomerNotificationService::class)->notifyDebtorPayment($sale, $organization, $amount);
-            }
+        $sale = $sale->fresh();
+        app(TripAutoCloseService::class)->tryAutoCloseTripsForSale($sale, $user);
 
-            return $sale;
-        });
+        app(\App\Services\Audit\OperationalAuditService::class)->logSalePayment(
+            $user,
+            $sale,
+            $amount,
+            isset($payment['payment_method_id']) ? (int) $payment['payment_method_id'] : null,
+        );
+
+        if ($collectsReceivable) {
+            $gate = $this->erp->gateForUser($user);
+            app(CustomerPaymentJournalService::class)->postIfEnabled(
+                $sale,
+                $user,
+                $gate,
+                $amount,
+                (int) $payment['payment_method_id'],
+            );
+        }
+
+        $organization = Organization::find($user->organization_id);
+        if ($organization) {
+            app(CustomerNotificationService::class)->notifyDebtorPayment($sale, $organization, $amount);
+        }
+
+        return $sale->fresh() ?? $sale;
     }
 
     public function assertAmountWithinBalanceDue(Sale $sale, float $amount): void

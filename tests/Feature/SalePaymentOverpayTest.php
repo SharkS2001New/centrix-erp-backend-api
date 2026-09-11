@@ -251,4 +251,146 @@ class SalePaymentOverpayTest extends TestCase
         $this->getJson("/api/v1/sale-payments?sale_ids={$sale->id}")
             ->assertOk();
     }
+
+    public function test_split_payments_roll_back_when_a_method_is_invalid(): void
+    {
+        $user = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($user);
+
+        $sale = Sale::create([
+            'order_num' => 880006,
+            'branch_id' => $user->branch_id,
+            'organization_id' => $user->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $user->id,
+            'status' => 'unpaid',
+            'total_vat' => 0,
+            'order_total' => 10000,
+            'payment_status' => 'unpaid',
+            'amount_paid' => 0,
+            'is_credit_sale' => 1,
+            'stock_balanced' => 1,
+        ]);
+
+        $cash = PaymentMethod::where('method_code', 'CASH')->firstOrFail();
+
+        $this->postJson("/api/v1/sales/{$sale->id}/payments", [
+            'payments' => [
+                [
+                    'payment_method_id' => $cash->id,
+                    'amount' => 7000,
+                ],
+                [
+                    'payment_method_id' => 999999001,
+                    'amount' => 3000,
+                ],
+            ],
+        ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['payment_method_id']);
+
+        $fresh = $sale->fresh();
+        $this->assertSame(0.0, (float) $fresh->amount_paid);
+        $this->assertSame('unpaid', $fresh->payment_status);
+        $this->assertSame(0, $sale->payments()->count());
+    }
+
+    public function test_split_payments_covering_full_balance_succeed_when_partial_is_disabled(): void
+    {
+        $user = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($user);
+        $this->setAllowCreditPayNow($user, false);
+
+        $sale = Sale::create([
+            'order_num' => 880007,
+            'branch_id' => $user->branch_id,
+            'organization_id' => $user->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $user->id,
+            'status' => 'unpaid',
+            'total_vat' => 0,
+            'order_total' => 10000,
+            'payment_status' => 'unpaid',
+            'amount_paid' => 0,
+            'is_credit_sale' => 1,
+            'stock_balanced' => 1,
+        ]);
+
+        $cash = PaymentMethod::where('method_code', 'CASH')->firstOrFail();
+        $mpesa = PaymentMethod::where('method_code', 'MPESA')->first()
+            ?? PaymentMethod::where('id', '!=', $cash->id)->firstOrFail();
+
+        $this->postJson("/api/v1/sales/{$sale->id}/payments", [
+            'payments' => [
+                [
+                    'payment_method_id' => $cash->id,
+                    'amount' => 4000,
+                ],
+                [
+                    'payment_method_id' => $mpesa->id,
+                    'amount' => 6000,
+                    'reference_number' => 'SPLITFULL001',
+                ],
+            ],
+        ])->assertOk();
+
+        $fresh = $sale->fresh();
+        $this->assertEqualsWithDelta(10000.0, (float) $fresh->amount_paid, 0.01);
+        $this->assertSame('paid', $fresh->payment_status);
+        $this->assertSame(2, $sale->payments()->count());
+    }
+
+    public function test_partial_split_batch_is_rejected_when_partial_is_disabled(): void
+    {
+        $user = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($user);
+        $this->setAllowCreditPayNow($user, false);
+
+        $sale = Sale::create([
+            'order_num' => 880008,
+            'branch_id' => $user->branch_id,
+            'organization_id' => $user->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $user->id,
+            'status' => 'unpaid',
+            'total_vat' => 0,
+            'order_total' => 10000,
+            'payment_status' => 'unpaid',
+            'amount_paid' => 0,
+            'is_credit_sale' => 1,
+            'stock_balanced' => 1,
+        ]);
+
+        $cash = PaymentMethod::where('method_code', 'CASH')->firstOrFail();
+        $mpesa = PaymentMethod::where('method_code', 'MPESA')->first() ?? $cash;
+
+        $this->postJson("/api/v1/sales/{$sale->id}/payments", [
+            'payments' => [
+                [
+                    'payment_method_id' => $cash->id,
+                    'amount' => 4000,
+                ],
+                [
+                    'payment_method_id' => $mpesa->id,
+                    'amount' => 2000,
+                ],
+            ],
+        ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['amount']);
+
+        $fresh = $sale->fresh();
+        $this->assertSame(0.0, (float) $fresh->amount_paid);
+        $this->assertSame(0, $sale->payments()->count());
+    }
+
+    protected function setAllowCreditPayNow(User $user, bool $allowed): void
+    {
+        $org = $user->organization()->firstOrFail();
+        $settings = $org->module_settings ?? [];
+        $settings['sales'] = array_merge($settings['sales'] ?? [], [
+            'allow_credit_pay_now' => $allowed,
+        ]);
+        $org->update(['module_settings' => $settings]);
+    }
 }

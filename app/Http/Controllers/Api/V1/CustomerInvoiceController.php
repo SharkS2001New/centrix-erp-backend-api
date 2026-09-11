@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Models\CustomerInvoice;
+use App\Models\Sale;
 use App\Services\Accounting\CustomerInvoiceService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
@@ -96,13 +97,8 @@ class CustomerInvoiceController extends BaseResourceController
 
         if ($request->filled('payment_status')) {
             $wanted = (int) $request->input('payment_status');
-            $paidSql = CustomerInvoiceService::paidFromPaymentsSql('customer_invoices');
+            $cashSql = CustomerInvoiceService::cashCollectedSql('customer_invoices');
             $creditsSql = CustomerInvoiceService::creditsForInvoiceSaleSql('customer_invoices');
-            // Cash: payment rows when present, otherwise the denormalized amount_paid column.
-            $cashSql = 'CASE WHEN EXISTS ('
-                .'SELECT 1 FROM customer_invoice_payments cip '
-                .'WHERE cip.customer_invoice_id = customer_invoices.id'
-                .") THEN {$paidSql} ELSE customer_invoices.amount_paid END";
             $settledSql = "({$cashSql} + {$creditsSql})";
             $balanceSql = "GREATEST(0, ROUND(customer_invoices.invoice_total - {$settledSql}, 2))";
 
@@ -166,8 +162,19 @@ class CustomerInvoiceController extends BaseResourceController
         $invoice = $this->findScopedModel($request, $id)
             ->load($this->customerEagerLoad($request));
 
-        // Always refresh paid/status from payments + return credits (repairs stale "Paid").
-        $invoice = app(CustomerInvoiceService::class)->syncPaidTotalsFromPayments($invoice);
+        $invoiceService = app(CustomerInvoiceService::class);
+        $saleForSettle = $invoice->sale_id
+            ? Sale::query()->find($invoice->sale_id)
+            : null;
+        if ($saleForSettle && $request->user()) {
+            $invoice = $invoiceService->settleSaleTendersOntoInvoice(
+                $invoice,
+                $saleForSettle,
+                $request->user(),
+            );
+        } else {
+            $invoice = $invoiceService->syncPaidTotalsFromPayments($invoice);
+        }
 
         $invoice->load($this->customerEagerLoad($request));
         $invoice->loadSum('payments as paid_from_payments_sum', 'amount_paid');

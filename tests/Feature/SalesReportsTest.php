@@ -853,4 +853,45 @@ class SalesReportsTest extends TestCase
         $this->assertEqualsWithDelta(900.0, $scaled['order_total'], 0.01);
         $this->assertLessThan($lineVat, $scaled['total_vat']);
     }
+
+    public function test_payments_breakdown_search_finds_orders_by_formatted_total(): void
+    {
+        $today = now()->toDateString();
+        $uniqueTotal = 77881.25;
+
+        $sale = Sale::query()->create([
+            'order_num' => 996701,
+            'branch_id' => $this->admin->branch_id,
+            'organization_id' => $this->admin->organization_id,
+            'channel' => 'pos',
+            'cashier_id' => $this->admin->id,
+            'customer_name_override' => 'Breakdown Amount Search',
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => $uniqueTotal,
+            'amount_paid' => $uniqueTotal,
+            'cash' => $uniqueTotal,
+            'payment_method_code' => 'CASH',
+            'archived' => 0,
+            'completed_at' => now(),
+            'created_at' => now(),
+        ]);
+
+        $idsFor = function (string $q) use ($today, $sale) {
+            $response = $this->getJson(
+                '/api/v1/reports/payments-breakdown?from_date='.$today
+                .'&to_date='.$today
+                .'&method_code=CASH'
+                .'&q='.rawurlencode($q)
+                .'&per_page=50'
+            );
+            $response->assertOk();
+
+            return collect($response->json('data'))->pluck('sale_id');
+        };
+
+        $this->assertTrue($idsFor('77881.25')->contains($sale->id));
+        $this->assertTrue($idsFor('77,881.25')->contains($sale->id));
+        $this->assertTrue($idsFor('77881.25 KES')->contains($sale->id));
+    }
 }

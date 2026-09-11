@@ -111,18 +111,17 @@ class HospitalityPaymentsBreakdownService
             ->whereRaw('UPPER(TRIM(COALESCE(p.method_code, ""))) = ?', [$methodCode]);
 
         if ($search !== '') {
-            $like = '%'.$search.'%';
-            $amount = SqlLikeSearch::parseAmountSearchTerm($search);
-            $listQuery->where(function ($inner) use ($like, $amount) {
+            $like = '%'.SqlLikeSearch::escape($search).'%';
+            $listQuery->where(function ($inner) use ($like, $search) {
                 $inner->where('c.check_number', 'like', $like)
                     ->orWhere('c.guest_name', 'like', $like)
                     ->orWhere('p.reference', 'like', $like)
                     ->orWhere('o.name', 'like', $like);
-                if ($amount !== null) {
-                    $inner->orWhereRaw('ROUND(p.amount, 2) = ?', [$amount])
-                        ->orWhereRaw('ROUND(COALESCE(c.total, 0), 2) = ?', [$amount])
-                        ->orWhereRaw('ROUND(COALESCE(c.amount_paid, 0), 2) = ?', [$amount]);
-                }
+                SqlLikeSearch::orWhereMoneyColumns($inner, [
+                    'p.amount',
+                    'COALESCE(c.total, 0)',
+                    'COALESCE(c.amount_paid, 0)',
+                ], $search);
             });
         }
 

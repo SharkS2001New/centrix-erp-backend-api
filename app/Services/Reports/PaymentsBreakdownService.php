@@ -238,34 +238,44 @@ class PaymentsBreakdownService
         }
 
         if ($search !== '') {
+            $like = '%'.SqlLikeSearch::escape($search).'%';
             $amount = SqlLikeSearch::parseAmountSearchTerm($search);
-            $listQuery->where(function ($inner) use ($search, $amount) {
-                $inner->where('s.order_num', 'like', "%{$search}%")
-                    ->orWhere('s.customer_name_override', 'like', "%{$search}%")
-                    ->orWhere('c.customer_name', 'like', "%{$search}%")
-                    ->orWhere('s.customer_num', 'like', "%{$search}%")
-                    ->orWhereExists(function ($sub) use ($search) {
+            $amountSql = $amount !== null ? number_format($amount, 2, '.', '') : null;
+            $listQuery->where(function ($inner) use ($search, $like, $amountSql) {
+                $inner->where('s.order_num', 'like', $like)
+                    ->orWhere('s.customer_name_override', 'like', $like)
+                    ->orWhere('c.customer_name', 'like', $like)
+                    ->orWhere('s.customer_num', 'like', $like)
+                    ->orWhereExists(function ($sub) use ($like) {
                         $sub->select(DB::raw(1))
                             ->from('sale_payments as sp')
                             ->whereColumn('sp.sale_id', 's.id')
-                            ->where('sp.reference_number', 'like', "%{$search}%");
+                            ->where('sp.reference_number', 'like', $like);
                     });
                 if (Schema::hasColumn('sales', 'pos_order_num')) {
                     if (ctype_digit($search)) {
                         $inner->orWhere('s.pos_order_num', (int) $search);
                     } else {
-                        $inner->orWhereRaw('CAST(s.pos_order_num AS CHAR) LIKE ?', ["%{$search}%"]);
+                        $inner->orWhereRaw('CAST(s.pos_order_num AS CHAR) LIKE ?', [$like]);
                     }
                 }
-                if ($amount !== null) {
-                    $inner->orWhereRaw('ROUND(s.order_total, 2) = ?', [$amount])
-                        ->orWhereRaw('ROUND(COALESCE(s.amount_paid, 0), 2) = ?', [$amount])
-                        ->orWhereExists(function ($sub) use ($amount) {
-                            $sub->select(DB::raw(1))
-                                ->from('sale_payments as sp')
-                                ->whereColumn('sp.sale_id', 's.id')
-                                ->whereRaw('ROUND(sp.amount, 2) = ?', [$amount]);
-                        });
+                SqlLikeSearch::orWhereMoneyColumns($inner, [
+                    's.order_total',
+                    'COALESCE(s.amount_paid, 0)',
+                ], $search);
+                if ($amountSql !== null) {
+                    $inner->orWhereExists(function ($sub) use ($amountSql) {
+                        $sub->select(DB::raw(1))
+                            ->from('sale_payments as sp')
+                            ->whereColumn('sp.sale_id', 's.id')
+                            ->where(function ($pay) use ($amountSql) {
+                                $pay->whereRaw('ABS(ROUND(sp.amount, 2) - ?) < 0.009', [$amountSql])
+                                    ->orWhereRaw(
+                                        "REPLACE(REPLACE(CAST(ROUND(sp.amount, 2) AS CHAR), ',', ''), ' ', '') LIKE ?",
+                                        ['%'.SqlLikeSearch::escape($amountSql).'%'],
+                                    );
+                            });
+                    });
                 }
             });
         }

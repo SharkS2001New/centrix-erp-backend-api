@@ -8,6 +8,7 @@ use App\Models\Product;
 use App\Models\Sale;
 use App\Models\User;
 use App\Services\Accounting\CustomerInvoiceService;
+use Illuminate\Support\Facades\DB;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
@@ -67,6 +68,10 @@ class CustomerInvoiceFromSaleObserverTest extends TestCase
 
         $this->assertDatabaseMissing('customer_invoices', ['sale_id' => $sale->id]);
 
+        DB::table('migrations')
+            ->where('migration', '2026_07_03_000001_backfill_customer_invoices_from_sales')
+            ->delete();
+
         $this->artisan('migrate', [
             '--path' => 'database/migrations/2026_07_03_000001_backfill_customer_invoices_from_sales.php',
             '--force' => true,
@@ -118,6 +123,8 @@ class CustomerInvoiceFromSaleObserverTest extends TestCase
         $voidedInvoice->refresh();
         $this->assertNotNull($voidedInvoice->deleted_at);
         $this->assertSame('AR-33-VOID-'.$voidedInvoice->id, $voidedInvoice->invoice_number);
+
+        $firstSale->update(['status' => 'cancelled', 'order_num' => 330001]);
 
         $secondSale = Sale::create([
             'order_num' => 33,
@@ -177,6 +184,8 @@ class CustomerInvoiceFromSaleObserverTest extends TestCase
             'deleted_at' => now()->toDateString(),
             'deleted_by' => $admin->id,
         ]);
+
+        $oldSale->forceFill(['order_num' => 44001])->saveQuietly();
 
         $newSale = Sale::withoutEvents(function () use ($admin, $customer) {
             return Sale::create([

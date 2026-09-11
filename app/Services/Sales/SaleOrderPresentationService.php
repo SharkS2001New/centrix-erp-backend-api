@@ -7,6 +7,7 @@ use App\Models\Product;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\User;
+use App\Services\Accounting\CustomerInvoiceService;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Notifications\ActionRequestService;
@@ -28,17 +29,24 @@ class SaleOrderPresentationService
         }
 
         $pendingRequests = $this->pendingDiscountRequestsForSales($sales, $user);
+        $settlements = app(CustomerInvoiceService::class)->settlementsBySaleId($sales->pluck('id')->all());
 
-        return $sales->map(function (Sale $sale) use ($user, $pendingRequests) {
-            return $this->enrichSaleItems($this->applyPresentationAttributes($sale, $user, $pendingRequests->get($sale->id)));
+        return $sales->map(function (Sale $sale) use ($user, $pendingRequests, $settlements) {
+            return $this->enrichSaleItems($this->applyPresentationAttributes(
+                $sale,
+                $user,
+                $pendingRequests->get($sale->id),
+                $settlements[$sale->id] ?? null,
+            ));
         });
     }
 
     public function enrichSale(Sale $sale, User $user, CapabilityGate $gate): Sale
     {
         $pending = $this->pendingDiscountRequestsForSales(collect([$sale]), $user)->get($sale->id);
+        $settlement = app(CustomerInvoiceService::class)->settlementsBySaleId([(int) $sale->id])[(int) $sale->id] ?? null;
 
-        return $this->enrichSaleItems($this->applyPresentationAttributes($sale, $user, $pending));
+        return $this->enrichSaleItems($this->applyPresentationAttributes($sale, $user, $pending, $settlement));
     }
 
     public function enrichSaleItems(Sale $sale): Sale
@@ -172,17 +180,27 @@ class SaleOrderPresentationService
         return app(ActionRequestService::class)->presentForViewer($request, $viewer);
     }
 
-    protected function applyPresentationAttributes(Sale $sale, User $user, ?ActionRequest $pendingRequest): Sale
+    protected function applyPresentationAttributes(Sale $sale, User $user, ?ActionRequest $pendingRequest, ?array $settlement = null): Sale
     {
-        // API clients always see amount-derived payment_status, even if the column lagged.
-        $sale->setAttribute(
-            'payment_status',
-            SalePaymentStatus::resolve(
-                (string) ($sale->status ?? ''),
-                (float) ($sale->order_total ?? 0),
-                (float) ($sale->amount_paid ?? 0),
-            ),
-        );
+        if (is_array($settlement)) {
+            $sale->setAttribute('amount_paid', $settlement['amount_paid']);
+            $sale->setAttribute('balance_due', $settlement['balance_due']);
+            $sale->setAttribute('return_credit_total', $settlement['return_credit_total']);
+            $sale->setAttribute('payment_status', $settlement['payment_status']);
+        } else {
+            $sale->setAttribute(
+                'payment_status',
+                SalePaymentStatus::resolve(
+                    (string) ($sale->status ?? ''),
+                    (float) ($sale->order_total ?? 0),
+                    (float) ($sale->amount_paid ?? 0),
+                ),
+            );
+            $sale->setAttribute(
+                'balance_due',
+                round(max(0, (float) ($sale->order_total ?? 0) - (float) ($sale->amount_paid ?? 0)), 2),
+            );
+        }
         $sale->setAttribute('total_discount', $this->totalDiscount($sale));
         $sale->setAttribute('action_request', $this->presentActionRequest($pendingRequest, $user));
         $sale->setAttribute('discount_approval_reason', $this->discountApprovalReason($sale, $pendingRequest));

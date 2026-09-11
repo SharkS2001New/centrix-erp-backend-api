@@ -107,7 +107,7 @@ class SqlLikeSearchTest extends TestCase
         $this->assertContains(42, $bindings);
         $this->assertContains('42%', $bindings);
         // Amount match for the same digits (e.g. order total 42.00).
-        $this->assertContains(42.0, $bindings);
+        $this->assertContains('42.00', $bindings);
     }
 
     public function test_apply_sales_order_search_s_prefix_is_exact_order_num(): void
@@ -177,7 +177,27 @@ class SqlLikeSearchTest extends TestCase
         $this->assertSame(1500.0, SqlLikeSearch::parseAmountSearchTerm('1500'));
         $this->assertSame(1500.5, SqlLikeSearch::parseAmountSearchTerm('1,500.50'));
         $this->assertSame(2500.0, SqlLikeSearch::parseAmountSearchTerm('KES 2500'));
+        $this->assertSame(5480.0, SqlLikeSearch::parseAmountSearchTerm('5,480.00'));
+        $this->assertSame(5480.0, SqlLikeSearch::parseAmountSearchTerm('5480 KES'));
+        $this->assertSame(5480.0, SqlLikeSearch::parseAmountSearchTerm('5 480'));
+        $this->assertSame(5480.0, SqlLikeSearch::parseAmountSearchTerm('Ksh. 5,480'));
         $this->assertNull(SqlLikeSearch::parseAmountSearchTerm('cooking oil'));
+    }
+
+    public function test_or_where_money_columns_binds_decimal_string(): void
+    {
+        $query = DB::table('sales');
+        $query->where(function ($inner) {
+            SqlLikeSearch::orWhereMoneyColumns($inner, ['sales.order_total'], '5,480.00');
+        });
+
+        $bindings = $query->getBindings();
+        $this->assertContains('5480.00', $bindings);
+        $this->assertTrue(
+            collect($bindings)->contains(fn ($b) => is_string($b) && str_contains($b, '5480')),
+        );
+        $sql = strtolower($query->toSql());
+        $this->assertStringContainsString('round(sales.order_total, 2)', $sql);
     }
 
     public function test_apply_product_search_uses_ngram_fulltext_when_forced(): void
