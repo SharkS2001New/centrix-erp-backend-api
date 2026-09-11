@@ -844,6 +844,40 @@ class AttendanceClockPunchTest extends TestCase
         ]);
     }
 
+    public function test_evening_out_after_lunch_out_without_return_applies_not_missed(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-11T08:10:00+03:00',
+            'direction' => 'auto',
+        ])->assertCreated()->assertJsonPath('action', 'in');
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-11T12:45:00+03:00',
+            'direction' => 'auto',
+        ])->assertOk()->assertJsonPath('action', 'out');
+
+        $evening = $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-11T18:30:00+03:00',
+            'direction' => 'auto',
+        ]);
+        $evening->assertOk()->assertJsonPath('action', 'out');
+
+        $this->assertSame(2, EmployeeClockSession::query()->where('employee_id', $this->employee->id)->count());
+        $this->assertDatabaseHas('employee_attendance', [
+            'employee_id' => $this->employee->id,
+            'attendance_date' => '2026-08-11',
+            'check_out' => '18:30:00',
+        ]);
+    }
+
     public function test_hr_can_apply_unapplied_terminal_punch_as_applied_by_hr(): void
     {
         Sanctum::actingAs($this->admin);

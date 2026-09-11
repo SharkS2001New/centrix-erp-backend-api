@@ -54,6 +54,13 @@ class AttendancePunchWindowResolver
             return self::ACTION_MISSED;
         }
 
+        // No open session: evening outs must still map to OUT (lunch-out already closed the
+        // morning leg, or forgotten auto-close). Without this, 17:00–22:00 scans show as
+        // "Outside punch window" even though they sit inside Admin evening windows.
+        if ($this->inWindow($minutes, $windows['evening_clock_out_from'], $windows['evening_clock_out_to'])) {
+            return self::ACTION_OUT;
+        }
+
         if ($this->inWindow($minutes, $windows['lunch_clock_in_from'], $windows['lunch_clock_in_to'])) {
             return self::ACTION_IN;
         }

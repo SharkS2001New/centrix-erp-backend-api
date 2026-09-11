@@ -180,6 +180,18 @@ class AttendanceClockPunchService
         }
 
         if ($direction === 'out' && $open === null) {
+            $closedDay = $this->applyEveningOutWithoutOpenSession(
+                $employee,
+                $punchedAt,
+                $deviceNo,
+                $hrOverride,
+                $source,
+                $payload['branch_id'] ?? null,
+            );
+            if ($closedDay !== null) {
+                return $closedDay;
+            }
+
             return [
                 'action' => 'missed',
                 'session' => null,
@@ -192,6 +204,91 @@ class AttendanceClockPunchService
         }
 
         return $this->clockOut($employee, $punchedAt, $deviceNo, $open, $source);
+    }
+
+    /**
+     * Evening OUT arrived with no open session (morning already lunch-out, or only a
+     * closed morning leg). Open an afternoon session so the day gets a real clock-out.
+     *
+     * @return array{action: string, session: EmployeeClockSession, attendance?: mixed}|null
+     */
+    protected function applyEveningOutWithoutOpenSession(
+        Employee $employee,
+        Carbon $punchedAt,
+        ?string $deviceNo,
+        bool $hrOverride,
+        string $source,
+        mixed $branchId,
+    ): ?array {
+        $punchLocal = $punchedAt->copy()->timezone(AppTimezone::name());
+        if (! $this->windows->isInNamedWindow(
+            $employee,
+            $punchLocal,
+            'evening_clock_out_from',
+            'evening_clock_out_to',
+        ) && ! $hrOverride) {
+            return null;
+        }
+
+        $date = $punchLocal->toDateString();
+        $last = EmployeeClockSession::query()
+            ->where('employee_id', $employee->id)
+            ->whereDate('clock_in_at', $date)
+            ->orderByDesc('clock_in_at')
+            ->first();
+
+        if (! $last || ! $last->clock_out_at) {
+            return null;
+        }
+
+        $lastOut = AppTimezone::normalize($last->clock_out_at);
+        $lastIn = AppTimezone::normalize($last->clock_in_at);
+        if (! $lastOut || ! $lastIn || ! $punchLocal->gt($lastOut)) {
+            return null;
+        }
+
+        // Already closed in the evening window — do not invent another afternoon leg.
+        if ($this->windows->isInNamedWindow(
+            $employee,
+            $lastOut->copy()->timezone(AppTimezone::name()),
+            'evening_clock_out_from',
+            'evening_clock_out_to',
+        )) {
+            return null;
+        }
+
+        // Afternoon leg: lunch return was never scanned — use prior out as the return time.
+        $afternoon = EmployeeClockSession::query()->create([
+            'organization_id' => $employee->organization_id,
+            'employee_id' => $employee->id,
+            'branch_id' => $last->branch_id
+                ?? ($branchId !== null && $branchId !== '' ? (int) $branchId : $employee->branch_id),
+            'attendance_id' => null,
+            'clock_in_at' => $lastOut,
+            'clock_out_at' => $punchedAt,
+            'clock_out_kind' => $hrOverride
+                ? EmployeeClockSession::CLOCK_OUT_KIND_HR
+                : EmployeeClockSession::CLOCK_OUT_KIND_DEVICE,
+            'device_identifier' => $deviceNo ?: $last->device_identifier,
+            'source' => $source === 'hr_applied' ? 'hr_applied' : ($last->source ?: 'clock_device'),
+            'needs_reconciliation' => false,
+        ]);
+
+        $attendance = $this->reconciler->reconcileFromSessions(
+            $employee,
+            $date,
+            $source,
+            $deviceNo ?: $last->device_identifier,
+            $afternoon->branch_id ? (int) $afternoon->branch_id : null,
+        );
+        $afternoon->attendance_id = $attendance->id;
+        $afternoon->save();
+
+        return [
+            'action' => 'out',
+            'session' => $afternoon->fresh()->load(['employee', 'attendance']),
+            'attendance' => $attendance,
+        ];
     }
 
     protected ?array $attendanceSourceCache = null;

@@ -175,4 +175,60 @@ class AttendancePunchWindowResolverTest extends TestCase
         $this->assertSame('11:30', $weekday['lunch_clock_out_from']);
         $this->assertSame('16:00', $weekday['evening_clock_out_from']);
     }
+
+    public function test_evening_punch_with_no_open_session_resolves_to_out(): void
+    {
+        $org = Organization::where('company_code', 'DEMO')->firstOrFail();
+        $shift = WorkShift::query()->create([
+            'organization_id' => $org->id,
+            'shift_code' => 'NOO'.uniqid(),
+            'shift_name' => 'No open evening',
+            'start_time' => '08:00:00',
+            'end_time' => '17:00:00',
+            'lunch_minutes' => 60,
+            'lunch_required' => true,
+            'works_saturday' => true,
+            'works_sunday' => true,
+            'works_public_holidays' => true,
+            'is_active' => true,
+        ]);
+        $template = Employee::query()->where('organization_id', $org->id)->firstOrFail();
+        $employee = Employee::query()->create([
+            'organization_id' => $org->id,
+            'branch_id' => $template->branch_id,
+            'department_id' => $template->department_id,
+            'position_id' => $template->position_id,
+            'shift_id' => $shift->id,
+            'employee_code' => 'NOO'.uniqid(),
+            'first_name' => 'No',
+            'last_name' => 'Open',
+            'full_name' => 'No Open',
+            'employment_status' => 'active',
+            'employment_type' => 'permanent',
+            'pay_frequency' => 'monthly',
+            'hire_date' => '2024-01-01',
+            'base_salary' => 1,
+            'country' => 'Kenya',
+            'is_active' => true,
+        ]);
+        $employee->setRelation('shift', $shift);
+
+        \App\Models\EmployeeClockSession::query()->create([
+            'organization_id' => $org->id,
+            'employee_id' => $employee->id,
+            'branch_id' => $employee->branch_id,
+            'clock_in_at' => '2026-08-11 08:10:00',
+            'clock_out_at' => '2026-08-11 12:45:00',
+            'source' => 'clock_device',
+            'needs_reconciliation' => false,
+        ]);
+
+        $action = app(AttendancePunchWindowResolver::class)->resolve(
+            $employee,
+            Carbon::parse('2026-08-11 18:30:00', AppTimezone::name()),
+            null,
+        );
+
+        $this->assertSame(AttendancePunchWindowResolver::ACTION_OUT, $action);
+    }
 }
