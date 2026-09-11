@@ -66,6 +66,45 @@ class PosOrderEditTest extends TestCase
         $this->assertEquals((int) $sale['id'], (int) ($cart['restored_from_sale']['id'] ?? 0));
     }
 
+    public function test_offline_sync_restore_does_not_replace_sticky_till_cart(): void
+    {
+        $this->setPosOrderEditEnabled(true);
+
+        $sale = $this->completePosSale($this->productCodeA, 2);
+
+        $stickyId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->assertCreated()->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$stickyId}/lines", [
+            'product_code' => $this->productCodeB,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        $dedicatedId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+            'offline_sync' => true,
+        ])->assertCreated()->json('id');
+
+        $this->assertNotSame((int) $stickyId, (int) $dedicatedId);
+
+        $restored = $this->postJson("/api/v1/sales/orders/{$sale['id']}/restore-to-cart", [
+            'replace' => true,
+            'offline_sync' => true,
+            'cart_id' => $dedicatedId,
+        ])->assertOk()->json();
+
+        $this->assertSame((int) $dedicatedId, (int) ($restored['id'] ?? 0));
+        $this->assertEquals((int) $sale['id'], (int) ($restored['superseded_sale_id'] ?? 0));
+        $this->assertSame($this->productCodeA, (string) ($restored['lines'][0]['product_code'] ?? ''));
+
+        $sticky = $this->getJson("/api/v1/sales/carts/{$stickyId}")->assertOk()->json();
+        $this->assertSame($this->productCodeB, (string) ($sticky['lines'][0]['product_code'] ?? ''));
+        $this->assertSame(0, (int) ($sticky['superseded_sale_id'] ?? 0));
+    }
+
     public function test_restore_same_sale_again_resumes_without_replacing_lines(): void
     {
         $this->setPosOrderEditEnabled(true);

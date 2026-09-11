@@ -2626,7 +2626,11 @@ class CheckoutController extends Controller
     {
         $request = request();
         $orgId = (int) ($this->userAccess()->organizationId($user, $request) ?? $user->organization_id ?? 0);
-        $branchId = (int) ($cart->branch_id ?? $user->branch_id ?? 0);
+        $isOrderEdit = (int) ($cart->superseded_sale_id ?? 0) > 0
+            || filter_var($request->input('offline_order'), FILTER_VALIDATE_BOOLEAN);
+        // Previous-order / offline replay may include SKUs later assigned to another
+        // branch. Live new-sale adds still enforce branch visibility.
+        $branchId = $isOrderEdit ? 0 : (int) ($cart->branch_id ?? $user->branch_id ?? 0);
         $catalog = app(ProductCatalogScopeService::class);
         $byCode = collect();
 

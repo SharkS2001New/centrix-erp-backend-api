@@ -483,12 +483,26 @@ class CartOperationsController extends Controller
             'order_source' => $sale->order_source ?? ($saleChannel === 'mobile' ? 'mobile' : 'backoffice'),
         ], $user->currentAccessToken());
 
-        $cart = $this->getOrCreateCart($user, [
+        $cartInput = [
             'channel' => $channel,
             'order_source' => $sale->order_source ?? $channel,
             'branch_id' => $sale->branch_id ?? $user->branch_id,
             'route_id' => $sale->route_id,
-        ]);
+        ];
+        // Outbox sync of a previous-order edit must not reuse the cashier's sticky
+        // till cart — Alt+P / a new sale would otherwise block upload or overwrite lines.
+        if ($request->boolean('offline_sync')) {
+            $cartInput['offline_sync'] = true;
+            $requestedCartId = $request->input('cart_id');
+            $cart = $requestedCartId !== null && $requestedCartId !== ''
+                ? $this->findOwnedCart($requestedCartId, $user)
+                : $this->getOrCreateCart($user, $cartInput);
+        } else {
+            $cart = $this->getOrCreateCart($user, $cartInput);
+        }
+
+        $editMeta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
+        $alreadyEditing = ! empty($editMeta['pos_editing_in_progress']);
 
         // Resume an in-progress edit of the same sale — skip KRA void + stock reverse.
         if (
@@ -524,10 +538,11 @@ class CartOperationsController extends Controller
 
         // Cart lines return immediately. Stock reverse + KRA credit note run after the
         // HTTP response so the till unlocks as soon as lines are painted.
-        $needsKraVoid = app(PosOrderEditService::class)->saleNeedsFiscalVoidBeforeEdit($sale, $gate);
+        $needsKraVoid = ! $alreadyEditing
+            && app(PosOrderEditService::class)->saleNeedsFiscalVoidBeforeEdit($sale, $gate);
         $needsStockReverse = false;
 
-        $cart = DB::transaction(function () use ($cart, $sale, $user, $gate, &$needsStockReverse) {
+        $cart = DB::transaction(function () use ($cart, $sale, $user, $gate, $alreadyEditing, &$needsStockReverse) {
             if ($cart->lines()->exists()) {
                 $this->clearCart($cart, $user);
             }
@@ -536,7 +551,10 @@ class CartOperationsController extends Controller
                 && $this->saleHasActiveReservations((int) $sale->id);
 
             // Defer ledger reverse to afterResponse — keep stock_balanced until then.
-            $needsStockReverse = (bool) $sale->stock_balanced && ! $hadReservations;
+            // A second restore (outbox sync onto a dedicated cart) must not reverse twice.
+            $needsStockReverse = ! $alreadyEditing
+                && (bool) $sale->stock_balanced
+                && ! $hadReservations;
             if (! $sale->stock_balanced && ! $hadReservations) {
                 $this->releaseSaleReservations((int) $sale->id);
             }
@@ -1352,16 +1370,10 @@ class CartOperationsController extends Controller
         }
 
         $request = request();
-        $orgId = (int) ($this->userAccess()->organizationId($user, $request) ?? 0);
+        $orgId = (int) ($this->userAccess()->organizationId($user, $request) ?? $user->organization_id ?? 0);
         $branchId = (int) ($cart->branch_id ?? $user->branch_id ?? 0);
         $codes = $items->pluck('product_code')->filter()->map(fn ($c) => trim((string) $c))->unique()->values()->all();
-        $products = Product::query()
-            ->with('unit')
-            ->where('organization_id', $orgId)
-            ->whereNull('deleted_at')
-            ->whereIn('product_code', $codes)
-            ->get()
-            ->keyBy(fn (Product $product) => strtolower((string) $product->product_code));
+        $products = $this->productsKeyedByCode($orgId, $codes, withVat: false);
 
         $inventorySettings = $gate->moduleSettings('inventory');
         $salesSettings = $gate->moduleSettings('sales');
@@ -1482,7 +1494,7 @@ class CartOperationsController extends Controller
         }
 
         $request = request();
-        $orgId = (int) ($this->userAccess()->organizationId($user, $request) ?? 0);
+        $orgId = (int) ($this->userAccess()->organizationId($user, $request) ?? $user->organization_id ?? 0);
         $codes = collect($lines)
             ->pluck('product_code')
             ->filter()
@@ -1494,13 +1506,7 @@ class CartOperationsController extends Controller
             return;
         }
 
-        $products = Product::query()
-            ->with(['unit', 'vat'])
-            ->where('organization_id', $orgId)
-            ->whereNull('deleted_at')
-            ->whereIn('product_code', $codes)
-            ->get()
-            ->keyBy(fn (Product $product) => strtolower((string) $product->product_code));
+        $products = $this->productsKeyedByCode($orgId, $codes, withVat: true);
 
         $inventorySettings = $gate->moduleSettings('inventory');
         $salesSettings = $gate->moduleSettings('sales');
@@ -2368,6 +2374,10 @@ class CartOperationsController extends Controller
             );
         }
 
+        if ($orgId <= 0) {
+            $orgId = (int) ($user->organization_id ?? 0);
+        }
+
         $product = app(ProductCatalogScopeService::class)->findAccessibleProduct(
             trim($productCode),
             $orgId,
@@ -2375,5 +2385,37 @@ class CartOperationsController extends Controller
         );
 
         return $product->loadMissing('unit');
+    }
+
+    /**
+     * Case-insensitive catalog lookup for cart restore / PUT lines.
+     *
+     * @param  list<string>  $codes
+     * @return \Illuminate\Support\Collection<string, Product>
+     */
+    protected function productsKeyedByCode(int $orgId, array $codes, bool $withVat = false)
+    {
+        $codes = array_values(array_unique(array_filter(array_map(
+            static fn ($code) => trim((string) $code),
+            $codes,
+        ))));
+        if ($codes === [] || $orgId <= 0) {
+            return collect();
+        }
+
+        $lower = array_map('strtolower', $codes);
+        $placeholders = implode(',', array_fill(0, count($lower), '?'));
+        $relations = $withVat ? ['unit', 'vat'] : ['unit'];
+
+        return Product::query()
+            ->with($relations)
+            ->where('organization_id', $orgId)
+            ->whereNull('deleted_at')
+            ->where(function ($query) use ($codes, $lower, $placeholders) {
+                $query->whereIn('product_code', $codes)
+                    ->orWhereRaw('LOWER(product_code) in ('.$placeholders.')', $lower);
+            })
+            ->get()
+            ->keyBy(fn (Product $product) => strtolower((string) $product->product_code));
     }
 }
