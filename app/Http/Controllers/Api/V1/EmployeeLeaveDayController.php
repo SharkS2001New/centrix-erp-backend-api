@@ -125,8 +125,9 @@ class EmployeeLeaveDayController extends HrOrgResourceController
             'employee_id' => 'required|integer|exists:employees,id',
             'start_date' => 'required|date',
             'end_date' => 'required|date',
-            'duration_type' => 'required|in:full_day,half_day',
+            'duration_type' => 'required|in:full_day,half_day,hourly',
             'half_day_period' => 'nullable|in:morning,afternoon',
+            'hours' => 'nullable|numeric|min:0.25|max:24',
             'deduct_from' => 'nullable|in:annual,sick,off_days,unpaid',
             'assignment_kind' => 'nullable|in:leave,off_day',
             'except_leave_id' => 'nullable|integer|exists:employee_leave_days,id',
@@ -143,6 +144,7 @@ class EmployeeLeaveDayController extends HrOrgResourceController
                 $data['end_date'],
                 $data['duration_type'],
                 $data['half_day_period'] ?? null,
+                isset($data['hours']) ? (float) $data['hours'] : null,
             );
         } catch (\InvalidArgumentException $e) {
             throw ValidationException::withMessages(['dates' => [$e->getMessage()]]);
@@ -236,7 +238,7 @@ class EmployeeLeaveDayController extends HrOrgResourceController
         $employee = $this->findOrgEmployee($data['employee_id'] ?? $row->employee_id);
         $merged = array_merge($row->only([
             'employee_id', 'start_date', 'end_date', 'duration_type', 'half_day_period',
-            'leave_type', 'assignment_kind', 'deduct_from', 'notes',
+            'leave_type', 'assignment_kind', 'deduct_from', 'notes', 'total_hours',
         ]), $data);
         $merged['start_date'] = Carbon::parse($merged['start_date'])->toDateString();
         $merged['end_date'] = Carbon::parse($merged['end_date'])->toDateString();
@@ -266,15 +268,21 @@ class EmployeeLeaveDayController extends HrOrgResourceController
     /** @param array<string, mixed> $data */
     protected function applyTotals(Employee $employee, array $data): array
     {
+        $requestedHours = isset($data['hours'])
+            ? (float) $data['hours']
+            : (($data['duration_type'] ?? '') === 'hourly' ? (float) ($data['total_hours'] ?? 0) : null);
+
         $calc = app(LeaveRequestCalculator::class)->calculate(
             $employee,
             $data['start_date'],
             $data['end_date'],
             $data['duration_type'] ?? 'full_day',
             $data['half_day_period'] ?? null,
+            $requestedHours,
         );
         $data['total_days'] = $calc['total_days'];
         $data['total_hours'] = $calc['total_hours'];
+        unset($data['hours']);
 
         return $data;
     }
@@ -365,13 +373,24 @@ class EmployeeLeaveDayController extends HrOrgResourceController
             'leave_type' => 'nullable|in:annual,sick,unpaid,other',
             'assignment_kind' => 'nullable|in:leave,off_day',
             'deduct_from' => 'nullable|in:annual,sick,off_days,unpaid',
-            'duration_type' => 'nullable|in:full_day,half_day',
+            'duration_type' => 'nullable|in:full_day,half_day,hourly',
             'half_day_period' => 'nullable|in:morning,afternoon',
+            'hours' => 'nullable|numeric|min:0.25|max:24',
             'notes' => 'nullable|string|max:500',
         ]);
 
         $data['duration_type'] = $data['duration_type'] ?? 'full_day';
         $data['assignment_kind'] = $data['assignment_kind'] ?? 'leave';
+
+        if ($data['duration_type'] === 'half_day' || $data['duration_type'] === 'hourly') {
+            $data['start_date'] = $data['start_date'] ?? $request->input('start_date');
+            $data['end_date'] = $data['end_date'] ?? $data['start_date'];
+            if ($data['start_date'] !== $data['end_date']) {
+                throw ValidationException::withMessages([
+                    'end_date' => [($data['duration_type'] === 'hourly' ? 'Hourly' : 'Half day').' leave must use the same start and end date.'],
+                ]);
+            }
+        }
 
         if ($data['duration_type'] === 'half_day') {
             if (empty($data['half_day_period'])) {
@@ -379,15 +398,19 @@ class EmployeeLeaveDayController extends HrOrgResourceController
                     'half_day_period' => ['Select morning or afternoon for half day leave.'],
                 ]);
             }
-            $data['start_date'] = $data['start_date'] ?? $request->input('start_date');
-            $data['end_date'] = $data['end_date'] ?? $data['start_date'];
-            if ($data['start_date'] !== $data['end_date']) {
+        } else {
+            $data['half_day_period'] = null;
+        }
+
+        if ($data['duration_type'] === 'hourly') {
+            $hours = isset($data['hours']) ? (float) $data['hours'] : null;
+            if ($hours === null || $hours < 0.25) {
                 throw ValidationException::withMessages([
-                    'end_date' => ['Half day leave must use the same start and end date.'],
+                    'hours' => ['Enter how many hours of leave to apply for.'],
                 ]);
             }
         } else {
-            $data['half_day_period'] = null;
+            unset($data['hours']);
         }
 
         if ($data['assignment_kind'] === 'off_day') {

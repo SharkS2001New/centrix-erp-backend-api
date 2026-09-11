@@ -182,6 +182,8 @@ class PayrollEarningsService
                 'attendance' => $attendanceSummary,
                 'absent_days' => $absentDays,
                 'unpaid_leave_days' => $unpaidLeaveDays,
+                'unpaid_leave_hours' => (float) ($attendanceSummary['unpaid_leave_hours'] ?? 0),
+                'paid_leave_hours' => (float) ($attendanceSummary['paid_leave_hours'] ?? 0),
                 'late_minutes_total' => $lateMinutesTotal,
                 // Explicit holds for payroll sheet display (full contract basic − these = period basic effect).
                 'absent_amount' => $absentAmount,
@@ -208,6 +210,7 @@ class PayrollEarningsService
      *   assumed_future_days: float,
      *   paid_leave_days: float,
      *   unpaid_leave_days: float,
+     *   unpaid_leave_hours: float,
      *   absent_days: float,
      *   expected_hours: float,
      *   paid_hours: float,
@@ -258,6 +261,7 @@ class PayrollEarningsService
         $expectedHours = 0.0;
         $paidHours = 0.0;
         $paidLeaveHours = 0.0;
+        $unpaidLeaveHours = 0.0;
         $lateMinutesTotal = 0;
         $clockInLateMinutesTotal = 0;
         $lunchLateMinutesTotal = 0;
@@ -292,14 +296,15 @@ class PayrollEarningsService
                 continue;
             }
 
-            $dayFraction = 1.0;
+            $leaveHours = 0.0;
             $leave = $leaves->first(fn (EmployeeLeaveDay $l) => $l->coversDate($date));
             if ($leave) {
-                $dayFraction = $leave->duration_type === 'half_day' ? 0.5 : 1.0;
-                $leaveHours = round($dayExpectedHours * $dayFraction, 2);
+                $dayFraction = $leave->dayFraction($dayExpectedHours);
+                $leaveHours = $leave->hoursOnCoveredDay($dayExpectedHours);
                 $isOff = ($leave->assignment_kind ?? 'leave') === 'off_day';
                 if ($this->leaveIsUnpaid($leave)) {
                     $unpaidLeave += $dayFraction;
+                    $unpaidLeaveHours += $leaveHours;
                     if ($isOff) {
                         $deductibleOffDays += $dayFraction;
                     }
@@ -311,19 +316,29 @@ class PayrollEarningsService
                         $nonDeductibleOffDays += $dayFraction;
                     }
                 }
-                $cursor->addDay();
-
-                continue;
+                // Full-day leave is the whole shift. Hourly / half-day still pay the hours worked.
+                if (! $leave->isPartialDay()) {
+                    $cursor->addDay();
+                    continue;
+                }
             }
 
             $att = $attendanceByDate->get($date);
             if ($att && $this->attendanceCountsAsPaid($att->status)) {
-                $attended += $att->status === 'half_day' ? 0.5 : 1.0;
+                $remainingExpected = max(0.0, round($dayExpectedHours - $leaveHours, 2));
                 $dayPaid = (float) ($att->hours_worked ?? 0);
                 if ($att->expected_hours !== null && (float) $att->expected_hours > 0) {
                     $dayPaid = min($dayPaid, (float) $att->expected_hours);
                 } else {
                     $dayPaid = min($dayPaid, $dayExpectedHours);
+                }
+                $dayPaid = min($dayPaid, $remainingExpected);
+                if ($leaveHours <= 0 && $att->status === 'half_day') {
+                    $attended += 0.5;
+                } elseif ($dayExpectedHours > 0) {
+                    $attended += $dayPaid / $dayExpectedHours;
+                } elseif ($dayPaid > 0) {
+                    $attended += 1.0;
                 }
                 $paidHours += $dayPaid;
                 $clockInLate = (int) ($att->late_minutes ?? 0);
@@ -360,6 +375,7 @@ class PayrollEarningsService
             'assumed_future_days' => round($remaining, 2),
             'paid_leave_days' => round($paidLeave, 2),
             'unpaid_leave_days' => round($unpaidLeave, 2),
+            'unpaid_leave_hours' => round($unpaidLeaveHours, 2),
             'deductible_off_days' => round($deductibleOffDays, 2),
             'non_deductible_off_days' => round($nonDeductibleOffDays, 2),
             'absent_days' => $absent,

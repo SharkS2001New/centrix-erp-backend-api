@@ -39,6 +39,41 @@ class EmployeeLeaveDay extends Model
         'days_deducted' => 'decimal:2',
     ];
 
+    public function isPartialDay(): bool
+    {
+        if ($this->duration_type === 'half_day') {
+            return true;
+        }
+        if ($this->duration_type === 'hourly') {
+            return (float) $this->total_days + 0.01 < 1.0;
+        }
+
+        return false;
+    }
+
+    /** Hours this leave covers on a scheduled workday it includes. */
+    public function hoursOnCoveredDay(float $dayExpectedHours): float
+    {
+        $expected = max(0.0, $dayExpectedHours);
+        if ($this->duration_type === 'hourly') {
+            return round(min(max(0.0, (float) $this->total_hours), $expected), 2);
+        }
+
+        return round($expected * $this->dayFraction($expected), 2);
+    }
+
+    /** Fraction of a scheduled workday this leave covers on a date it includes. */
+    public function dayFraction(?float $dayExpectedHours = null): float
+    {
+        return match ($this->duration_type) {
+            'half_day' => 0.5,
+            'hourly' => $dayExpectedHours !== null && $dayExpectedHours > 0
+                ? min(1.0, max(0.0, (float) $this->total_hours / $dayExpectedHours))
+                : min(1.0, max(0.0, (float) $this->total_days)),
+            default => 1.0,
+        };
+    }
+
     public function employee()
     {
         return $this->belongsTo(Employee::class, 'employee_id');

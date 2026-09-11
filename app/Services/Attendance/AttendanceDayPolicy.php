@@ -138,28 +138,32 @@ class AttendanceDayPolicy
             ->first();
 
         if ($leave) {
-            $isHalf = $leave->duration_type === 'half_day';
+            $isPartial = $leave->isPartialDay();
             $period = $leave->half_day_period
                 ? ' ('.$leave->half_day_period.')'
+                : '';
+            $hoursNote = $leave->duration_type === 'hourly' && $leave->total_hours
+                ? ' ('.$leave->total_hours.' h)'
                 : '';
             $isOff = ($leave->assignment_kind ?? 'leave') === 'off_day';
             $kindLabel = $isOff ? 'off day' : 'leave';
             $salaryNote = ($leave->deduct_from === 'unpaid' || $leave->leave_type === 'unpaid')
                 ? ' (deductible from salary)'
                 : '';
+            $partialKind = $leave->duration_type === 'hourly' ? 'Hourly' : 'Half-day';
 
             return [
-                'should_work' => $isHalf,
-                'suggested_status' => $isHalf ? 'half_day' : 'leave',
-                'reason' => $isHalf
-                    ? 'Half-day '.$kindLabel.' assigned'.$period.$salaryNote
+                'should_work' => $isPartial,
+                'suggested_status' => $isPartial ? 'half_day' : 'leave',
+                'reason' => $isPartial
+                    ? $partialKind.' '.$kindLabel.' assigned'.$period.$hoursNote.$salaryNote
                     : 'This employee has an '.$kindLabel.' assigned for this date'
                         .$salaryNote.'. Attendance cannot be created.',
                 'is_weekend' => false,
                 'is_holiday' => false,
                 'is_leave' => true,
                 'assignment_kind' => $leave->assignment_kind ?? 'leave',
-                'blocks_attendance' => ! $isHalf,
+                'blocks_attendance' => ! $isPartial,
                 'leave_id' => (int) $leave->id,
             ];
         }

@@ -31,6 +31,7 @@ class LeaveRequestCalculator
         string $endDate,
         string $durationType = 'full_day',
         ?string $halfDayPeriod = null,
+        ?float $requestedHours = null,
     ): array {
         $start = Carbon::parse($startDate)->startOfDay();
         $end = Carbon::parse($endDate)->startOfDay();
@@ -42,6 +43,10 @@ class LeaveRequestCalculator
         $sameDay = $start->isSameDay($end);
         $calendarDays = (int) $start->diffInDays($end) + 1;
         $shiftHours = $this->shiftHoursForEmployee($employee);
+
+        if ($durationType === 'hourly') {
+            return $this->calculateHourly($employee, $start, $sameDay, $shiftHours, $requestedHours);
+        }
 
         if ($durationType === 'half_day') {
             if (! $sameDay) {
@@ -80,6 +85,53 @@ class LeaveRequestCalculator
             'calendar_days' => $calendarDays,
             'working_days' => $workingDays,
             'same_day' => $sameDay,
+        ];
+    }
+
+    /**
+     * @return array{
+     *   total_days: float,
+     *   total_hours: float,
+     *   shift_hours_per_day: float,
+     *   calendar_days: int,
+     *   working_days: float,
+     *   same_day: bool
+     * }
+     */
+    protected function calculateHourly(
+        Employee $employee,
+        Carbon $start,
+        bool $sameDay,
+        float $shiftHours,
+        ?float $requestedHours,
+    ): array {
+        if (! $sameDay) {
+            throw new \InvalidArgumentException('Hourly leave applies to a single date only.');
+        }
+
+        $hours = round((float) $requestedHours, 2);
+        if ($hours < 0.25) {
+            throw new \InvalidArgumentException('Enter leave hours of at least 0.25 (15 minutes).');
+        }
+        if ($hours - $shiftHours > 0.01) {
+            throw new \InvalidArgumentException(sprintf(
+                'Hours cannot exceed the shift length (%.2f h). Use full day(s) instead.',
+                $shiftHours,
+            ));
+        }
+        if (! $this->dayPolicy->isScheduledWorkday($employee, $start->toDateString())) {
+            throw new \InvalidArgumentException('Hourly leave must fall on a scheduled working day.');
+        }
+
+        $days = $shiftHours > 0 ? round($hours / $shiftHours, 4) : 0.0;
+
+        return [
+            'total_days' => $days,
+            'total_hours' => $hours,
+            'shift_hours_per_day' => $shiftHours,
+            'calendar_days' => 1,
+            'working_days' => $days,
+            'same_day' => true,
         ];
     }
 
