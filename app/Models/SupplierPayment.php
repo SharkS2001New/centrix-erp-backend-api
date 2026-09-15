@@ -14,6 +14,7 @@ class SupplierPayment extends Model
         'branch_id',
         'supplier_id',
         'lpo_no',
+        'lpo_supplier_invoice_id',
         'payment_method_id',
         'amount_paid',
         'manual_amount',
@@ -50,5 +51,10 @@ class SupplierPayment extends Model
     public function paidByUser(): BelongsTo
     {
         return $this->belongsTo(User::class, 'paid_by');
+    }
+
+    public function supplierInvoice(): BelongsTo
+    {
+        return $this->belongsTo(LpoSupplierInvoice::class, 'lpo_supplier_invoice_id');
     }
 }

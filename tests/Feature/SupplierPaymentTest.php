@@ -15,20 +15,22 @@ class SupplierPaymentTest extends TestCase
 {
     use RefreshesErpDatabase;
 
-    public function test_admin_can_record_supplier_payment_against_lpo(): void
+    protected function createReceivedLpo(User $admin, Supplier $supplier, string $reference): LpoMst
     {
-        $admin = User::where('username', 'admin')->firstOrFail();
-        Sanctum::actingAs($admin);
+        $orgId = (int) $admin->organization_id;
+        $nextSeq = (int) LpoMst::query()->where('organization_id', $orgId)->max('lpo_seq') + 1;
 
-        $supplier = Supplier::where('supplier_code', 'SUP-001')->firstOrFail();
         $lpo = LpoMst::create([
+            'organization_id' => $orgId,
+            'lpo_seq' => $nextSeq,
             'supplier_id' => $supplier->id,
-            'reference_number' => 'PO-TEST-001',
+            'reference_number' => $reference,
             'total_amount' => 1000,
             'net_amount' => 1000,
             'created_by' => $admin->id,
             'created_at' => now(),
-            'lpo_status_code' => 4,
+            'lpo_status_code' => 1,
+            'cleared_flag' => 0,
         ]);
 
         LpoTxn::create([
@@ -39,6 +41,17 @@ class SupplierPaymentTest extends TestCase
             'cost_price' => 100,
             'uom' => 'kg',
         ]);
+
+        return $lpo;
+    }
+
+    public function test_admin_can_record_supplier_payment_against_lpo(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $supplier = Supplier::where('supplier_code', 'SUP-001')->firstOrFail();
+        $lpo = $this->createReceivedLpo($admin, $supplier, 'PO-TEST-001');
 
         $method = PaymentMethod::query()->firstOrFail();
 
@@ -83,25 +96,7 @@ class SupplierPaymentTest extends TestCase
         Sanctum::actingAs($admin);
 
         $supplier = Supplier::where('supplier_code', 'SUP-001')->firstOrFail();
-        $lpo = LpoMst::create([
-            'supplier_id' => $supplier->id,
-            'reference_number' => 'PO-TEST-FULL',
-            'total_amount' => 1000,
-            'net_amount' => 1000,
-            'created_by' => $admin->id,
-            'created_at' => now(),
-            'lpo_status_code' => 4,
-            'cleared_flag' => 0,
-        ]);
-
-        LpoTxn::create([
-            'lpo_no' => $lpo->lpo_no,
-            'product_code' => '6161100100015',
-            'ordered_qty' => 10,
-            'received_qty' => 10,
-            'cost_price' => 100,
-            'uom' => 'kg',
-        ]);
+        $lpo = $this->createReceivedLpo($admin, $supplier, 'PO-TEST-FULL');
 
         $method = PaymentMethod::query()->firstOrFail();
 
@@ -116,8 +111,53 @@ class SupplierPaymentTest extends TestCase
 
         $lpo->refresh();
         $this->assertSame(1, (int) $lpo->cleared_flag);
-        $this->assertSame(5, (int) $lpo->lpo_status_code);
+        $this->assertSame(6, (int) $lpo->lpo_status_code);
         $this->assertNotNull($lpo->cleared_at);
+    }
+
+    public function test_future_date_paid_is_rejected(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $supplier = Supplier::where('supplier_code', 'SUP-001')->firstOrFail();
+        $method = PaymentMethod::query()->firstOrFail();
+
+        $this->postJson("/api/v1/suppliers/{$supplier->id}/payments", [
+            'payment_method_id' => $method->id,
+            'amount_paid' => 100,
+            'manual_amount' => true,
+            'declared_payable' => 100,
+            'date_paid' => now()->addDays(10)->toDateString(),
+        ])->assertStatus(422)
+            ->assertJsonValidationErrors(['date_paid']);
+    }
+
+    public function test_supplier_payment_can_be_deleted(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $supplier = Supplier::where('supplier_code', 'SUP-001')->firstOrFail();
+        $method = PaymentMethod::query()->firstOrFail();
+
+        $payment = $this->postJson("/api/v1/suppliers/{$supplier->id}/payments", [
+            'payment_method_id' => $method->id,
+            'amount_paid' => 250,
+            'manual_amount' => true,
+            'declared_payable' => 250,
+            'amount_due_snapshot' => 250,
+            'date_paid' => now()->toDateString(),
+            'notes' => 'Mistaken payment',
+        ])->assertCreated()->json();
+
+        $this->assertDatabaseHas('supplier_payments', ['id' => $payment['id']]);
+
+        $this->deleteJson('/api/v1/supplier-payments/'.$payment['id'])
+            ->assertOk()
+            ->assertJsonPath('ok', true);
+
+        $this->assertDatabaseMissing('supplier_payments', ['id' => $payment['id']]);
     }
 
     public function test_supplier_payments_index_returns_recorded_payment(): void

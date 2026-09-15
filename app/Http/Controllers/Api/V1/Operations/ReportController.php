@@ -952,11 +952,21 @@ class ReportController extends Controller
 
     public function stockValuation(Request $request)
     {
-        return response()->json($this->paginatedStockReport(
-            $request,
-            'v_stock_valuation',
-            ['branch_id', 'product_code'],
-        ));
+        $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
+        if (! $orgId) {
+            return response()->json([
+                'data' => [],
+                'total' => 0,
+                'per_page' => (int) $request->input('per_page', 25),
+                'current_page' => 1,
+                'last_page' => 1,
+                'summary' => ['row_count' => 0, 'cost_value' => 0.0, 'stock_value' => 0.0],
+            ]);
+        }
+
+        return response()->json(
+            app(\App\Services\Inventory\StockValuationReportService::class)->paginate($request, $orgId),
+        );
     }
 
     public function inventoryValuationSummary(Request $request)

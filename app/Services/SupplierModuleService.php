@@ -4,8 +4,10 @@ namespace App\Services;
 
 use App\Models\LpoAttachment;
 use App\Models\LpoMst;
+use App\Models\LpoSupplierInvoice;
 use App\Models\Supplier;
 use App\Models\SupplierPayment;
+use App\Models\User;
 use App\Services\Auth\UserAccessService;
 use Carbon\Carbon;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -117,6 +119,7 @@ class SupplierModuleService
 
         $purchases = [];
         $documents = [];
+        $invoices = [];
         $totalPurchases = 0.0;
         $totalPaid = 0.0;
         $openLpoCount = 0;
@@ -199,6 +202,37 @@ class SupplierModuleService
                     'total_amount' => (float) ($purchase['net_amount'] ?? $purchase['total_amount'] ?? 0),
                     'balance_due' => (float) ($purchase['balance_due'] ?? 0),
                 ];
+                $invoices[] = [
+                    'id' => (int) $inv->id,
+                    'lpo_no' => $lpoNo,
+                    'lpo_seq' => $purchase['lpo_seq'] ?? null,
+                    'po_number' => $purchase['po_number'] ?? null,
+                    'supplier_invoice_number' => (string) ($inv->supplier_invoice_number ?? ''),
+                    'invoice_date' => $inv->invoice_date ?? null,
+                    'invoice_amount' => $inv->invoice_amount !== null ? (float) $inv->invoice_amount : null,
+                    'balance_due' => (float) ($purchase['balance_due'] ?? 0),
+                    'amount_paid' => (float) ($purchase['amount_paid'] ?? 0),
+                    'can_pay' => (bool) ($purchase['can_pay'] ?? false),
+                    'total_amount' => (float) ($purchase['net_amount'] ?? $purchase['total_amount'] ?? 0),
+                ];
+            }
+
+            // LPOs with an invoice number typed on the header but no uploaded invoice row.
+            $headerInvoice = trim((string) ($lpo->supplier_invoice_no ?? ''));
+            if ($headerInvoice !== '' && $lpoInvoices->isEmpty()) {
+                $invoices[] = [
+                    'id' => null,
+                    'lpo_no' => $lpoNo,
+                    'lpo_seq' => $purchase['lpo_seq'] ?? null,
+                    'po_number' => $purchase['po_number'] ?? null,
+                    'supplier_invoice_number' => $headerInvoice,
+                    'invoice_date' => null,
+                    'invoice_amount' => null,
+                    'balance_due' => (float) ($purchase['balance_due'] ?? 0),
+                    'amount_paid' => (float) ($purchase['amount_paid'] ?? 0),
+                    'can_pay' => (bool) ($purchase['can_pay'] ?? false),
+                    'total_amount' => (float) ($purchase['net_amount'] ?? $purchase['total_amount'] ?? 0),
+                ];
             }
         }
 
@@ -231,7 +265,7 @@ class SupplierModuleService
         $supplierPayload['current_balance'] = $currentBalance;
 
         $payments = SupplierPayment::query()
-            ->with(['paymentMethod', 'paidByUser'])
+            ->with(['paymentMethod', 'paidByUser', 'supplierInvoice'])
             ->where('supplier_id', $supplier->id)
             ->orderByDesc('date_paid')
             ->orderByDesc('id')
@@ -256,13 +290,14 @@ class SupplierModuleService
             'purchases' => $purchases,
             'payments' => $payments,
             'documents' => $documents,
+            'invoices' => $invoices,
         ];
     }
 
     public function paymentsForSupplier(int $supplierId): array
     {
         return SupplierPayment::query()
-            ->with(['paymentMethod', 'paidByUser'])
+            ->with(['paymentMethod', 'paidByUser', 'supplierInvoice'])
             ->where('supplier_id', $supplierId)
             ->orderByDesc('date_paid')
             ->orderByDesc('id')
@@ -275,7 +310,7 @@ class SupplierModuleService
     public function listPayments(Request $request, int $organizationId): LengthAwarePaginator
     {
         $query = SupplierPayment::query()
-            ->with(['supplier', 'paymentMethod', 'paidByUser'])
+            ->with(['supplier', 'paymentMethod', 'paidByUser', 'supplierInvoice'])
             ->where('organization_id', $organizationId)
             ->orderByDesc('date_paid')
             ->orderByDesc('id');
@@ -305,6 +340,10 @@ class SupplierModuleService
                     ->orWhereHas(
                         'supplier',
                         fn ($supplier) => $supplier->where('supplier_name', 'like', "%{$q}%"),
+                    )
+                    ->orWhereHas(
+                        'supplierInvoice',
+                        fn ($invoice) => $invoice->where('supplier_invoice_number', 'like', "%{$q}%"),
                     );
             });
         }
@@ -324,6 +363,7 @@ class SupplierModuleService
     {
         $data = $request->validate([
             'lpo_no' => 'nullable|integer',
+            'lpo_supplier_invoice_id' => 'nullable|integer',
             'branch_id' => 'nullable|integer|exists:branches,id',
             'payment_method_id' => 'required|integer|exists:payment_methods,id',
             'amount_paid' => 'required|numeric|min:0.01',
@@ -332,7 +372,7 @@ class SupplierModuleService
             'amount_due_snapshot' => 'nullable|numeric|min:0',
             'cheque_number' => 'nullable|string|max:45',
             'reference_number' => 'nullable|string|max:100',
-            'date_paid' => 'required|date',
+            'date_paid' => 'required|date|before_or_equal:today',
             'notes' => 'nullable|string',
         ]);
 
@@ -341,7 +381,37 @@ class SupplierModuleService
         $manual = (bool) ($data['manual_amount'] ?? false);
         $amount = (float) $data['amount_paid'];
         $lpoNo = isset($data['lpo_no']) ? (int) $data['lpo_no'] : null;
+        $invoiceId = isset($data['lpo_supplier_invoice_id']) ? (int) $data['lpo_supplier_invoice_id'] : null;
+        $invoice = null;
         $lpo = null;
+
+        if ($invoiceId) {
+            $invoice = LpoSupplierInvoice::query()
+                ->whereKey($invoiceId)
+                ->where('supplier_id', $supplier->id)
+                ->first();
+
+            if (! $invoice) {
+                throw ValidationException::withMessages([
+                    'lpo_supplier_invoice_id' => ['The selected supplier invoice does not belong to this supplier.'],
+                ]);
+            }
+
+            $invoiceLpoNo = (int) ($invoice->lpo_no ?? 0);
+            if ($invoiceLpoNo <= 0) {
+                throw ValidationException::withMessages([
+                    'lpo_supplier_invoice_id' => ['This supplier invoice is not linked to an LPO.'],
+                ]);
+            }
+
+            if ($lpoNo && $lpoNo !== $invoiceLpoNo) {
+                throw ValidationException::withMessages([
+                    'lpo_no' => ['LPO does not match the selected supplier invoice.'],
+                ]);
+            }
+
+            $lpoNo = $invoiceLpoNo;
+        }
 
         if ($lpoNo) {
             $lpo = LpoMst::query()
@@ -399,12 +469,13 @@ class SupplierModuleService
             $access->assertBranchAccess($user, $branchId);
         }
 
-        return DB::transaction(function () use ($request, $supplier, $data, $manual, $amount, $lpoNo, $branchId) {
+        return DB::transaction(function () use ($request, $supplier, $data, $manual, $amount, $lpoNo, $invoiceId, $branchId) {
             $payment = SupplierPayment::create([
                 'organization_id' => $supplier->organization_id,
                 'branch_id' => $branchId,
                 'supplier_id' => $supplier->id,
                 'lpo_no' => $lpoNo,
+                'lpo_supplier_invoice_id' => $invoiceId,
                 'payment_method_id' => (int) $data['payment_method_id'],
                 'amount_paid' => $amount,
                 'manual_amount' => $manual,
@@ -425,12 +496,46 @@ class SupplierModuleService
         });
     }
 
+    /**
+     * Delete a mistaken supplier payment, reverse the AP journal, and reopen LPO if needed.
+     */
+    public function voidPayment(SupplierPayment $payment, User $user, $gate): void
+    {
+        DB::transaction(function () use ($payment, $user, $gate) {
+            $payment->loadMissing(['supplier', 'paymentMethod']);
+            $lpoNo = $payment->lpo_no ? (int) $payment->lpo_no : null;
+            $paymentId = (int) $payment->id;
+
+            $payment->delete();
+
+            if ($lpoNo) {
+                $this->syncLpoClearedStatus($lpoNo);
+            }
+
+            app(\App\Services\Accounting\ReferenceJournalReversalService::class)->reverseIfEnabled(
+                'supplier_payment',
+                $paymentId,
+                $user,
+                $gate,
+            );
+        });
+    }
+
     protected function syncLpoClearedStatus(int $lpoNo): void
     {
         $summary = $this->lpoModule->summary($lpoNo);
         $balanceDue = (float) ($summary['balance_due'] ?? 0);
 
         if ($balanceDue > 0.01) {
+            LpoMst::query()
+                ->where('lpo_no', $lpoNo)
+                ->where('cleared_flag', 1)
+                ->update([
+                    'cleared_flag' => 0,
+                    'cleared_at' => null,
+                    'lpo_status_code' => LpoModuleService::STATUS_FULLY_RECEIVED,
+                ]);
+
             return;
         }
 
@@ -494,6 +599,11 @@ class SupplierModuleService
             'supplier_id' => (int) $payment->supplier_id,
             'supplier_name' => $payment->supplier?->supplier_name,
             'lpo_no' => $payment->lpo_no ? (int) $payment->lpo_no : null,
+            'lpo_supplier_invoice_id' => $payment->lpo_supplier_invoice_id
+                ? (int) $payment->lpo_supplier_invoice_id
+                : null,
+            'supplier_invoice_number' => $payment->supplierInvoice?->supplier_invoice_number
+                ?? ($lpoDisplay['supplier_invoice_no'] ?? null),
             'lpo_seq' => $lpoDisplay['lpo_seq'],
             'po_number' => $lpoDisplay['po_number'],
             'amount_paid' => $amountPaid,

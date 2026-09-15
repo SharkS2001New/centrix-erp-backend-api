@@ -162,10 +162,30 @@ SQL;
             return $empty;
         }
 
-        $shopRetailValueSql = $this->stockRetailValueSql('cs.shop_quantity');
-        $storeRetailValueSql = $this->stockRetailValueSql('cs.store_quantity');
-        $shopCostValueSql = $this->stockCostValueSql('cs.shop_quantity', 'p', 'b', 'u', 'lrc');
-        $storeCostValueSql = $this->stockCostValueSql('cs.store_quantity', 'p', 'b', 'u', 'lrc');
+        $shopOnHandSql = 'COALESCE(cs.shop_quantity, 0)';
+        $storeOnHandSql = 'COALESCE(cs.store_quantity, 0)';
+        $shopAvailableSql = "GREATEST(0, {$shopOnHandSql} - COALESCE(rsrv.reserved_shop, 0))";
+        $storeAvailableSql = "GREATEST(0, {$storeOnHandSql} - COALESCE(rsrv.reserved_store, 0))";
+
+        $shopRetailValueSql = $this->stockRetailValueSql($shopAvailableSql);
+        $storeRetailValueSql = $this->stockRetailValueSql($storeAvailableSql);
+        $shopCostValueSql = $this->stockCostValueSql($shopAvailableSql, 'p', 'b', 'u', 'lrc');
+        $storeCostValueSql = $this->stockCostValueSql($storeAvailableSql, 'p', 'b', 'u', 'lrc');
+
+        $reservedSub = DB::table('stock_reservations')
+            ->whereNull('released_at')
+            ->where(function ($query) {
+                $query->whereNull('expires_at')
+                    ->orWhere('expires_at', '>', now());
+            })
+            ->when($branchId !== null, fn ($q) => $q->where('branch_id', $branchId))
+            ->groupBy('branch_id', 'product_code')
+            ->select([
+                'branch_id',
+                'product_code',
+                DB::raw("SUM(CASE WHEN stock_location = 'shop' THEN quantity ELSE 0 END) as reserved_shop"),
+                DB::raw("SUM(CASE WHEN stock_location = 'store' THEN quantity ELSE 0 END) as reserved_store"),
+            ]);
 
         $query = DB::table('current_stock as cs')
             ->join('branches as b', 'b.id', '=', 'cs.branch_id')
@@ -174,6 +194,10 @@ SQL;
                     ->on('p.organization_id', '=', 'b.organization_id');
             })
             ->join('uoms as u', 'u.id', '=', 'p.unit_id')
+            ->leftJoinSub($reservedSub, 'rsrv', function ($join) {
+                $join->on('rsrv.product_code', '=', 'cs.product_code')
+                    ->on('rsrv.branch_id', '=', 'cs.branch_id');
+            })
             ->where('b.organization_id', $organizationId)
             ->whereNull('p.deleted_at');
 
@@ -195,7 +219,7 @@ SQL;
         $shopCostValue = round((float) ($totals->shop_cost_value ?? 0), 2);
         $storeCostValue = round((float) ($totals->store_cost_value ?? 0), 2);
 
-        // Catalog-wide health (includes zero-stock products missing from current_stock).
+        // Catalog-wide health uses live available (on-hand − active reservations).
         $branchIds = $branchId !== null
             ? [$branchId]
             : DB::table('branches')->where('organization_id', $organizationId)->pluck('id')->map(fn ($id) => (int) $id)->all();
@@ -208,7 +232,23 @@ SQL;
         ];
 
         if ($branchIds !== []) {
-            $qtySql = '(COALESCE(cs.shop_quantity, 0) + COALESCE(cs.store_quantity, 0))';
+            $healthReservedSub = DB::table('stock_reservations')
+                ->whereNull('released_at')
+                ->where(function ($query) {
+                    $query->whereNull('expires_at')
+                        ->orWhere('expires_at', '>', now());
+                })
+                ->whereIn('branch_id', $branchIds)
+                ->groupBy('branch_id', 'product_code')
+                ->select([
+                    'branch_id',
+                    'product_code',
+                    DB::raw("SUM(CASE WHEN stock_location = 'shop' THEN quantity ELSE 0 END) as reserved_shop"),
+                    DB::raw("SUM(CASE WHEN stock_location = 'store' THEN quantity ELSE 0 END) as reserved_store"),
+                ]);
+
+            $qtySql = '(GREATEST(0, COALESCE(cs.shop_quantity, 0) - COALESCE(rsrv.reserved_shop, 0))'
+                .' + GREATEST(0, COALESCE(cs.store_quantity, 0) - COALESCE(rsrv.reserved_store, 0)))';
             $healthRow = DB::table('products as p')
                 ->join('branches as br', function ($join) use ($organizationId, $branchIds) {
                     $join->where('br.organization_id', '=', $organizationId)
@@ -217,6 +257,10 @@ SQL;
                 ->leftJoin('current_stock as cs', function ($join) {
                     $join->on('cs.product_code', '=', 'p.product_code')
                         ->on('cs.branch_id', '=', 'br.id');
+                })
+                ->leftJoinSub($healthReservedSub, 'rsrv', function ($join) {
+                    $join->on('rsrv.product_code', '=', 'p.product_code')
+                        ->on('rsrv.branch_id', '=', 'br.id');
                 })
                 ->where('p.organization_id', $organizationId)
                 ->whereNull('p.deleted_at')

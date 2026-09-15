@@ -674,6 +674,96 @@ class SalesCartCheckoutStockTest extends TestCase
         );
     }
 
+    public function test_checkout_rejects_expired_cart_holds_when_stock_is_gone(): void
+    {
+        \App\Models\SystemSetting::query()
+            ->where('organization_id', $this->user->organization_id)
+            ->update(['allow_below_stock' => 0]);
+
+        CurrentStock::query()->updateOrCreate(
+            [
+                'product_code' => $this->productCode,
+                'branch_id' => $this->user->branch_id,
+            ],
+            [
+                'shop_quantity' => 10,
+                'store_quantity' => 0,
+            ],
+        );
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->assertCreated()->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 10,
+        ])->assertCreated();
+
+        // Simulate TTL expiry without the release job having run yet.
+        StockReservation::query()
+            ->where('cart_id', $cartId)
+            ->whereNull('released_at')
+            ->update(['expires_at' => now()->subMinute()]);
+
+        // Another sale already consumed the freed stock.
+        CurrentStock::query()
+            ->where('product_code', $this->productCode)
+            ->where('branch_id', $this->user->branch_id)
+            ->update(['shop_quantity' => 0]);
+
+        $response = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'completed',
+            'payment_method_code' => 'CASH',
+        ]);
+
+        $response->assertStatus(422);
+        $this->assertStringContainsString(
+            'Cannot reserve',
+            (string) $response->json('message').' '.json_encode($response->json('errors')),
+        );
+
+        $this->assertSame(0, StockReservation::query()
+            ->where('cart_id', $cartId)
+            ->whereNull('released_at')
+            ->where(function ($q) {
+                $q->whereNull('expires_at')->orWhere('expires_at', '>', now());
+            })
+            ->count());
+    }
+
+    public function test_transfer_from_cart_releases_expired_holds_instead_of_resurrecting(): void
+    {
+        $service = app(\App\Services\Inventory\SaleStockReservationService::class);
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->assertCreated()->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 2,
+        ])->assertCreated();
+
+        StockReservation::query()
+            ->where('cart_id', $cartId)
+            ->whereNull('released_at')
+            ->update(['expires_at' => now()->subMinutes(5)]);
+
+        $reservation = StockReservation::query()
+            ->where('cart_id', $cartId)
+            ->whereNull('released_at')
+            ->firstOrFail();
+
+        $service->transferFromCart((int) $cartId, 888001);
+
+        $reservation->refresh();
+        $this->assertNotNull($reservation->released_at);
+        $this->assertNull($reservation->sale_id);
+    }
+
     protected function onHandShop(): float
     {
         return (float) CurrentStock::where('product_code', $this->productCode)

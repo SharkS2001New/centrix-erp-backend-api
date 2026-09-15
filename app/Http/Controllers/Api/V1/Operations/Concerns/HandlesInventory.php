@@ -713,8 +713,20 @@ trait HandlesInventory
         $this->runInventoryDeadlockSafe(function () use ($cartId, $saleId): void {
             $this->lockStockForCartReservations($cartId);
 
+            // Timed-out cart holds must not be resurrected by clearing expires_at.
+            // Release them first so checkout can re-reserve against live available stock.
             StockReservation::where('cart_id', $cartId)
                 ->whereNull('released_at')
+                ->whereNotNull('expires_at')
+                ->where('expires_at', '<=', now())
+                ->update(['released_at' => now()]);
+
+            StockReservation::where('cart_id', $cartId)
+                ->whereNull('released_at')
+                ->where(function ($query) {
+                    $query->whereNull('expires_at')
+                        ->orWhere('expires_at', '>', now());
+                })
                 ->update([
                     'sale_id' => $saleId,
                     'cart_id' => null,

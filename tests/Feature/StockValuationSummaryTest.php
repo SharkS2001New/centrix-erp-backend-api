@@ -42,6 +42,8 @@ class StockValuationSummaryTest extends TestCase
         $product = Product::query()->with('unit')->firstOrFail();
         $branchId = (int) $this->user->branch_id;
 
+        $this->isolateBranchStock($branchId);
+
         $product->unit?->update(['conversion_factor' => 1]);
         $product->update(['last_cost_price' => 80, 'unit_price' => 120]);
 
@@ -149,6 +151,8 @@ class StockValuationSummaryTest extends TestCase
         $product = Product::query()->with('unit')->firstOrFail();
         $branchId = (int) $this->user->branch_id;
 
+        $this->isolateBranchStock($branchId);
+
         $product->unit?->update(['conversion_factor' => 24]);
         $product->update(['last_cost_price' => 1200, 'unit_price' => 1500]);
 
@@ -255,7 +259,7 @@ class StockValuationSummaryTest extends TestCase
         $this->assertSame(3000.0, (float) $row['store_cost_value']);
     }
 
-    public function test_stock_valuation_report_shows_available_qty_and_on_hand_value(): void
+    public function test_stock_valuation_report_shows_available_qty_and_available_value(): void
     {
         $product = Product::query()->with('unit')->firstOrFail();
         $branchId = (int) $this->user->branch_id;
@@ -294,7 +298,66 @@ class StockValuationSummaryTest extends TestCase
         $this->assertSame(197.0, (float) $row['store_quantity']);
         $this->assertSame(197.0, (float) $row['store_qty']);
         $this->assertSame(207.0, (float) $row['store_on_hand']);
-        $this->assertEqualsWithDelta((207 / $factor) * 100, (float) $row['cost_value'], 0.01);
-        $this->assertEqualsWithDelta((207 / $factor) * 100, (float) $row['stock_value'], 0.01);
+        // Value follows live available stock (not physical on-hand).
+        $this->assertEqualsWithDelta((197 / $factor) * 100, (float) $row['cost_value'], 0.01);
+        $this->assertEqualsWithDelta((197 / $factor) * 100, (float) $row['stock_value'], 0.01);
+    }
+
+    public function test_inventory_valuation_summary_uses_available_qty_for_cost(): void
+    {
+        $product = Product::query()->with('unit')->firstOrFail();
+        $branchId = (int) $this->user->branch_id;
+
+        $this->isolateBranchStock($branchId);
+
+        $product->unit?->update(['conversion_factor' => 1]);
+        $product->update(['last_cost_price' => 80, 'unit_price' => 120]);
+
+        CurrentStock::query()->updateOrCreate(
+            [
+                'product_code' => $product->product_code,
+                'branch_id' => $branchId,
+            ],
+            [
+                'shop_quantity' => 10,
+                'store_quantity' => 5,
+            ],
+        );
+
+        StockReservation::query()->create([
+            'branch_id' => $branchId,
+            'product_code' => $product->product_code,
+            'stock_location' => 'shop',
+            'quantity' => 4,
+            'reserved_by' => $this->user->id,
+            'released_at' => null,
+            'expires_at' => now()->addHour(),
+        ]);
+
+        $response = $this->getJson('/api/v1/reports/inventory-valuation-summary?branch_id='.$branchId)
+            ->assertOk();
+
+        // Available: shop 6, store 5 → retail 6*120 + 5*120; cost 6*80 + 5*80
+        $this->assertSame(720.0, (float) $response->json('shop_value'));
+        $this->assertSame(600.0, (float) $response->json('store_value'));
+        $this->assertSame(1320.0, (float) $response->json('value'));
+        $this->assertSame(480.0, (float) $response->json('shop_cost_value'));
+        $this->assertSame(400.0, (float) $response->json('store_cost_value'));
+        $this->assertSame(880.0, (float) $response->json('cost_value'));
+    }
+
+    protected function isolateBranchStock(int $branchId): void
+    {
+        CurrentStock::query()
+            ->where('branch_id', $branchId)
+            ->update([
+                'shop_quantity' => 0,
+                'store_quantity' => 0,
+            ]);
+
+        StockReservation::query()
+            ->where('branch_id', $branchId)
+            ->whereNull('released_at')
+            ->update(['released_at' => now()]);
     }
 }

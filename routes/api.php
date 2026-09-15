@@ -955,6 +955,9 @@ Route::prefix('v1')->group(function () {
         Route::middleware(['erp.module:customers_suppliers'])->group(function () {
             Route::get('supplier-payments', [SupplierPaymentController::class, 'index'])
                 ->middleware('erp.permission:purchasing.view');
+            Route::delete('supplier-payments/{supplier_payment}', [SupplierPaymentController::class, 'destroy'])
+                ->middleware('erp.permission:purchasing.manage')
+                ->whereNumber('supplier_payment');
 
             // Static paths must register before {supplier}/{customer} resource routes.
             Route::get('suppliers/dashboard', [SupplierController::class, 'dashboard'])

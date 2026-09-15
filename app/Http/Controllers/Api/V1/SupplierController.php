@@ -156,7 +156,7 @@ class SupplierController extends BaseResourceController
     {
         $model = $this->findScopedModel($request, $supplier);
         $payment = $this->supplierModule->recordPayment($request, $model);
-        $payment->load(['paymentMethod', 'paidByUser', 'supplier']);
+        $payment->load(['paymentMethod', 'paidByUser', 'supplier', 'supplierInvoice']);
 
         app(SupplierPaymentJournalService::class)->postIfEnabled(
             $payment,

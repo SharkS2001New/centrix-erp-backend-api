@@ -1066,13 +1066,15 @@ class CheckoutController extends Controller
             }
 
             if ($pendingStockDeduct || $gate->shouldHoldStockOnCheckout($workflow, $orderStatus, (string) $cart->channel)) {
-                $transferred = StockReservation::query()
+                // Drop timed-out cart holds before deciding transfer vs re-reserve.
+                $this->releaseExpiredReservations((int) $cart->id);
+                $hasActiveCartHolds = $this->activeStockReservationQuery()
                     ->where('cart_id', $cart->id)
-                    ->whereNull('released_at')
                     ->exists();
-                if ($transferred) {
+                if ($hasActiveCartHolds) {
                     $this->transferCartReservationsToSale((int) $cart->id, (int) $sale->id);
                 } else {
+                    // Re-check live available stock (blocks oversell when holds expired).
                     $this->reserveSaleStockIfNeeded($sale->fresh(['items']), $user, $gate);
                 }
                 if ($pendingStockDeduct) {
