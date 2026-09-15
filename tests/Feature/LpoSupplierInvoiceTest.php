@@ -30,6 +30,22 @@ class LpoSupplierInvoiceTest extends TestCase
 
     protected function createLpo(Supplier $supplier): LpoMst
     {
+        foreach ([
+            0 => 'Awaiting check',
+            1 => 'Awaiting approval',
+            2 => 'Awaiting send',
+            3 => 'Awaiting receive',
+            4 => 'Partially received',
+            5 => 'Fully received',
+            6 => 'Cleared',
+            7 => 'Cancelled / returned',
+        ] as $code => $name) {
+            \Illuminate\Support\Facades\DB::table('lpo_statuses')->updateOrInsert(
+                ['status_code' => $code],
+                ['status_name' => $name],
+            );
+        }
+
         $orgId = (int) $this->user->organization_id;
         $nextSeq = (int) LpoMst::query()->where('organization_id', $orgId)->max('lpo_seq') + 1;
 
@@ -71,6 +87,32 @@ class LpoSupplierInvoiceTest extends TestCase
 
         $this->get("/api/v1/lpo-supplier-invoices/{$invoiceId}/file")
             ->assertOk();
+    }
+
+    public function test_invoice_number_cannot_be_used_on_a_second_lpo(): void
+    {
+        $supplier = Supplier::where('supplier_code', 'SUP-001')->firstOrFail();
+        $lpoA = $this->createLpo($supplier);
+        $lpoB = $this->createLpo($supplier);
+
+        $this->post('/api/v1/lpo-supplier-invoices', [
+            'lpo_no' => $lpoA->lpo_no,
+            'supplier_id' => $supplier->id,
+            'supplier_invoice_number' => 'INV-UNIQUE-77',
+            'invoice_date' => '2026-07-13',
+            'file' => UploadedFile::fake()->create('a.pdf', 40, 'application/pdf'),
+        ])->assertCreated();
+
+        $this->post('/api/v1/lpo-supplier-invoices', [
+            'lpo_no' => $lpoB->lpo_no,
+            'supplier_id' => $supplier->id,
+            'supplier_invoice_number' => 'inv-unique-77',
+            'invoice_date' => '2026-07-14',
+            'file' => UploadedFile::fake()->create('b.pdf', 40, 'application/pdf'),
+        ], [
+            'Accept' => 'application/json',
+        ])->assertStatus(422)
+            ->assertJsonValidationErrors(['supplier_invoice_number']);
     }
 
     public function test_lpo_receive_allows_quantity_over_ordered_for_offers(): void

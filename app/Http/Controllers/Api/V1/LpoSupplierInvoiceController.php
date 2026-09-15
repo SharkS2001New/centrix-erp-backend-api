@@ -10,6 +10,7 @@ use App\Support\StoredPublicFile;
 use App\Support\UploadedImageProcessor;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\Response;
 
 class LpoSupplierInvoiceController extends Controller
@@ -114,11 +115,17 @@ class LpoSupplierInvoiceController extends Controller
         ]);
 
         $this->assertLpoInOrganization($request, (int) $data['lpo_no']);
+        $number = trim($data['supplier_invoice_number']);
+        $this->assertInvoiceNumberUniqueToOneLpo(
+            supplierId: (int) $data['supplier_id'],
+            invoiceNumber: $number,
+            lpoNo: (int) $data['lpo_no'],
+        );
 
         $invoice = LpoSupplierInvoice::create([
             'lpo_no' => (int) $data['lpo_no'],
             'supplier_id' => (int) $data['supplier_id'],
-            'supplier_invoice_number' => trim($data['supplier_invoice_number']),
+            'supplier_invoice_number' => $number,
             'invoice_date' => $data['invoice_date'] ?? null,
             'invoice_amount' => $data['invoice_amount'] ?? null,
             ...$this->storeUploadedFile($request, (int) $data['lpo_no']),
@@ -143,11 +150,67 @@ class LpoSupplierInvoiceController extends Controller
 
         if (array_key_exists('supplier_invoice_number', $data)) {
             $data['supplier_invoice_number'] = trim($data['supplier_invoice_number']);
+            $this->assertInvoiceNumberUniqueToOneLpo(
+                supplierId: (int) $invoice->supplier_id,
+                invoiceNumber: $data['supplier_invoice_number'],
+                lpoNo: (int) $invoice->lpo_no,
+                ignoreInvoiceId: (int) $invoice->id,
+            );
         }
 
         $invoice->update($data);
 
         return response()->json($invoice->fresh());
+    }
+
+    /**
+     * A supplier invoice number may only exist on one LPO for that supplier
+     * (so accounts can search the number and land on a single purchase order).
+     */
+    protected function assertInvoiceNumberUniqueToOneLpo(
+        int $supplierId,
+        string $invoiceNumber,
+        int $lpoNo,
+        ?int $ignoreInvoiceId = null,
+    ): void {
+        $normalized = mb_strtolower(trim($invoiceNumber));
+        if ($normalized === '') {
+            return;
+        }
+
+        $conflict = LpoSupplierInvoice::query()
+            ->where('supplier_id', $supplierId)
+            ->when($ignoreInvoiceId, fn ($q) => $q->where('id', '!=', $ignoreInvoiceId))
+            ->whereRaw('LOWER(TRIM(supplier_invoice_number)) = ?', [$normalized])
+            ->orderByDesc('id')
+            ->first(['id', 'lpo_no', 'supplier_invoice_number']);
+
+        if ($conflict) {
+            $message = (int) $conflict->lpo_no !== $lpoNo
+                ? "Invoice number {$invoiceNumber} is already linked to another LPO. Each invoice number can only belong to one LPO."
+                : "Invoice number {$invoiceNumber} is already attached on this LPO.";
+
+            throw ValidationException::withMessages([
+                'supplier_invoice_number' => [$message],
+            ]);
+        }
+
+        // Same number on a different LPO via the LPO header field.
+        $headerConflict = LpoMst::query()
+            ->where('supplier_id', $supplierId)
+            ->whereNull('deleted_at')
+            ->where('lpo_no', '!=', $lpoNo)
+            ->whereRaw('LOWER(TRIM(supplier_invoice_no)) = ?', [$normalized])
+            ->orderByDesc('lpo_no')
+            ->first(['lpo_no', 'supplier_invoice_no']);
+
+        if ($headerConflict) {
+            throw ValidationException::withMessages([
+                'supplier_invoice_number' => [
+                    "Invoice number {$invoiceNumber} is already used on another LPO. Each invoice number can only belong to one LPO.",
+                ],
+            ]);
+        }
     }
 
     public function destroy(Request $request, string $lpo_supplier_invoice)

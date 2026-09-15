@@ -109,6 +109,24 @@ class SupplierModuleService
                 ->map(fn ($total) => (float) $total)
                 ->all();
 
+        $invoiceIds = $lpoNos === []
+            ? []
+            : DB::table('lpo_supplier_invoices')
+                ->whereIn('lpo_no', $lpoNos)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+
+        $paidByInvoice = $invoiceIds === []
+            ? []
+            : DB::table('supplier_payments')
+                ->whereIn('lpo_supplier_invoice_id', $invoiceIds)
+                ->groupBy('lpo_supplier_invoice_id')
+                ->selectRaw('lpo_supplier_invoice_id, COALESCE(SUM(amount_paid), 0) AS total')
+                ->pluck('total', 'lpo_supplier_invoice_id')
+                ->map(fn ($total) => (float) $total)
+                ->all();
+
         $invoicesByLpo = $lpoNos === []
             ? collect()
             : DB::table('lpo_supplier_invoices')
@@ -189,6 +207,14 @@ class SupplierModuleService
             }
 
             foreach ($lpoInvoices as $inv) {
+                $invoiceAmount = $inv->invoice_amount !== null ? (float) $inv->invoice_amount : null;
+                $invoicePaid = (float) ($paidByInvoice[(int) $inv->id] ?? 0);
+                $invoiceBalance = $invoiceAmount !== null
+                    ? max(0, round($invoiceAmount - $invoicePaid, 2))
+                    : (float) ($purchase['balance_due'] ?? 0);
+                // Never show more due on an invoice than remains on the LPO received stock.
+                $invoiceBalance = min($invoiceBalance, (float) ($purchase['balance_due'] ?? 0));
+
                 $documents[] = [
                     'id' => 'inv-' . $inv->id,
                     'lpo_no' => $lpoNo,
@@ -199,8 +225,8 @@ class SupplierModuleService
                     'file_name' => $inv->supplier_invoice_number ?? $inv->file_name ?? 'Supplier invoice',
                     'status_name' => $purchase['status_name'],
                     'supplier_invoice_no' => $inv->supplier_invoice_number ?? null,
-                    'total_amount' => (float) ($purchase['net_amount'] ?? $purchase['total_amount'] ?? 0),
-                    'balance_due' => (float) ($purchase['balance_due'] ?? 0),
+                    'total_amount' => $invoiceAmount ?? (float) ($purchase['net_amount'] ?? $purchase['total_amount'] ?? 0),
+                    'balance_due' => $invoiceBalance,
                 ];
                 $invoices[] = [
                     'id' => (int) $inv->id,
@@ -209,11 +235,11 @@ class SupplierModuleService
                     'po_number' => $purchase['po_number'] ?? null,
                     'supplier_invoice_number' => (string) ($inv->supplier_invoice_number ?? ''),
                     'invoice_date' => $inv->invoice_date ?? null,
-                    'invoice_amount' => $inv->invoice_amount !== null ? (float) $inv->invoice_amount : null,
-                    'balance_due' => (float) ($purchase['balance_due'] ?? 0),
-                    'amount_paid' => (float) ($purchase['amount_paid'] ?? 0),
-                    'can_pay' => (bool) ($purchase['can_pay'] ?? false),
-                    'total_amount' => (float) ($purchase['net_amount'] ?? $purchase['total_amount'] ?? 0),
+                    'invoice_amount' => $invoiceAmount,
+                    'balance_due' => $invoiceBalance,
+                    'amount_paid' => round($invoicePaid, 2),
+                    'can_pay' => (bool) ($purchase['can_pay'] ?? false) && $invoiceBalance > 0.009,
+                    'total_amount' => $invoiceAmount ?? (float) ($purchase['net_amount'] ?? $purchase['total_amount'] ?? 0),
                 ];
             }
 
@@ -434,7 +460,24 @@ class SupplierModuleService
                         'amount_paid' => ['This LPO has no balance on record. Use manual payable amount if needed.'],
                     ]);
                 }
-                if ($amount > $balanceDue + 0.01) {
+
+                if ($invoice && $invoice->invoice_amount !== null) {
+                    $invoicePaid = (float) DB::table('supplier_payments')
+                        ->where('lpo_supplier_invoice_id', $invoice->id)
+                        ->sum('amount_paid');
+                    $invoiceRemaining = max(0, (float) $invoice->invoice_amount - $invoicePaid);
+                    $cap = min($balanceDue, $invoiceRemaining);
+                    if ($invoiceRemaining <= 0.009) {
+                        throw ValidationException::withMessages([
+                            'amount_paid' => ['This supplier invoice is already fully paid.'],
+                        ]);
+                    }
+                    if ($amount > $cap + 0.01) {
+                        throw ValidationException::withMessages([
+                            'amount_paid' => ["Amount exceeds balance due on this invoice ({$cap})."],
+                        ]);
+                    }
+                } elseif ($amount > $balanceDue + 0.01) {
                     throw ValidationException::withMessages([
                         'amount_paid' => ["Amount exceeds balance due ({$balanceDue})."],
                     ]);

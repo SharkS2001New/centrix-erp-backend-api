@@ -3,10 +3,12 @@
 namespace Tests\Feature;
 
 use App\Models\LpoMst;
+use App\Models\LpoSupplierInvoice;
 use App\Models\LpoTxn;
 use App\Models\PaymentMethod;
 use App\Models\Supplier;
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
@@ -15,8 +17,28 @@ class SupplierPaymentTest extends TestCase
 {
     use RefreshesErpDatabase;
 
+    protected function ensureLpoStatuses(): void
+    {
+        foreach ([
+            0 => 'Awaiting check',
+            1 => 'Awaiting approval',
+            2 => 'Awaiting send',
+            3 => 'Awaiting receive',
+            4 => 'Partially received',
+            5 => 'Fully received',
+            6 => 'Cleared',
+            7 => 'Cancelled / returned',
+        ] as $code => $name) {
+            DB::table('lpo_statuses')->updateOrInsert(
+                ['status_code' => $code],
+                ['status_name' => $name],
+            );
+        }
+    }
+
     protected function createReceivedLpo(User $admin, Supplier $supplier, string $reference): LpoMst
     {
+        $this->ensureLpoStatuses();
         $orgId = (int) $admin->organization_id;
         $nextSeq = (int) LpoMst::query()->where('organization_id', $orgId)->max('lpo_seq') + 1;
 
@@ -29,7 +51,7 @@ class SupplierPaymentTest extends TestCase
             'net_amount' => 1000,
             'created_by' => $admin->id,
             'created_at' => now(),
-            'lpo_status_code' => 1,
+            'lpo_status_code' => 5,
             'cleared_flag' => 0,
         ]);
 
@@ -160,26 +182,71 @@ class SupplierPaymentTest extends TestCase
         $this->assertDatabaseMissing('supplier_payments', ['id' => $payment['id']]);
     }
 
-    public function test_supplier_payments_index_returns_recorded_payment(): void
+    public function test_payment_against_invoice_is_capped_to_invoice_remaining(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();
         Sanctum::actingAs($admin);
 
         $supplier = Supplier::where('supplier_code', 'SUP-001')->firstOrFail();
+        $lpo = $this->createReceivedLpo($admin, $supplier, 'PO-INV-SPLIT');
         $method = PaymentMethod::query()->firstOrFail();
 
-        $this->postJson("/api/v1/suppliers/{$supplier->id}/payments", [
-            'payment_method_id' => $method->id,
-            'amount_paid' => 200,
-            'manual_amount' => true,
-            'declared_payable' => 200,
-            'amount_due_snapshot' => 200,
-            'date_paid' => '2026-06-10',
-        ])->assertCreated();
+        $invoiceA = LpoSupplierInvoice::query()->create([
+            'lpo_no' => $lpo->lpo_no,
+            'supplier_id' => $supplier->id,
+            'supplier_invoice_number' => 'INV-A-100',
+            'invoice_date' => '2026-06-01',
+            'invoice_amount' => 400,
+            'file_path' => 'lpo/test/a.pdf',
+            'file_name' => 'a.pdf',
+            'mime_type' => 'application/pdf',
+            'file_size' => 10,
+            'uploaded_by' => $admin->id,
+        ]);
+        LpoSupplierInvoice::query()->create([
+            'lpo_no' => $lpo->lpo_no,
+            'supplier_id' => $supplier->id,
+            'supplier_invoice_number' => 'INV-B-200',
+            'invoice_date' => '2026-06-02',
+            'invoice_amount' => 600,
+            'file_path' => 'lpo/test/b.pdf',
+            'file_name' => 'b.pdf',
+            'mime_type' => 'application/pdf',
+            'file_size' => 10,
+            'uploaded_by' => $admin->id,
+        ]);
 
-        $this->getJson('/api/v1/supplier-payments?supplier_id='.$supplier->id)
-            ->assertOk()
-            ->assertJsonPath('current_page', 1)
-            ->assertJsonFragment(['supplier_id' => $supplier->id, 'amount_paid' => 200]);
+        $summary = $this->getJson("/api/v1/suppliers/{$supplier->id}/summary")->assertOk()->json();
+        $invRow = collect($summary['invoices'])->firstWhere('id', $invoiceA->id);
+        $this->assertNotNull($invRow);
+        $this->assertEquals(400.0, $invRow['invoice_amount']);
+        $this->assertEquals(400.0, $invRow['balance_due']);
+
+        $this->postJson("/api/v1/suppliers/{$supplier->id}/payments", [
+            'lpo_no' => $lpo->lpo_no,
+            'lpo_supplier_invoice_id' => $invoiceA->id,
+            'payment_method_id' => $method->id,
+            'amount_paid' => 500,
+            'manual_amount' => false,
+            'amount_due_snapshot' => 400,
+            'date_paid' => '2026-06-10',
+        ])->assertStatus(422);
+
+        $this->postJson("/api/v1/suppliers/{$supplier->id}/payments", [
+            'lpo_no' => $lpo->lpo_no,
+            'lpo_supplier_invoice_id' => $invoiceA->id,
+            'payment_method_id' => $method->id,
+            'amount_paid' => 400,
+            'manual_amount' => false,
+            'amount_due_snapshot' => 400,
+            'date_paid' => '2026-06-10',
+        ])->assertCreated()
+            ->assertJsonPath('lpo_supplier_invoice_id', $invoiceA->id);
+
+        $summaryAfter = $this->getJson("/api/v1/suppliers/{$supplier->id}/summary")->assertOk()->json();
+        $invAfter = collect($summaryAfter['invoices'])->firstWhere('id', $invoiceA->id);
+        $this->assertEquals(0.0, (float) ($invAfter['balance_due'] ?? -1));
+        $purchase = collect($summaryAfter['purchases'])->firstWhere('lpo_no', $lpo->lpo_no);
+        $this->assertEquals(600.0, (float) ($purchase['balance_due'] ?? 0));
     }
 }
