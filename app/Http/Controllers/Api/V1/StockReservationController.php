@@ -66,7 +66,11 @@ class StockReservationController extends BaseResourceController
         }
 
         if ($request->boolean('active') || $request->boolean('only_active')) {
-            $query->whereNull('released_at');
+            $query->whereNull('released_at')
+                ->where(function ($inner) {
+                    $inner->whereNull('expires_at')
+                        ->orWhere('expires_at', '>', now());
+                });
         }
 
         $this->applyCreatedAtDateRange($query, $request);

@@ -74,6 +74,7 @@ class OrderExpiryService
         }
 
         DB::transaction(function () use ($sale, $actor, $gate) {
+            // Release sale holds + reverse any deducted ledger so qty returns to live available.
             $this->inventoryRestorer->restore($sale, $actor);
 
             $sale->update([

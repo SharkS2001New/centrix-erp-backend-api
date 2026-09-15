@@ -461,6 +461,16 @@ class BranchStockService
             return [];
         }
 
+        // Stamp released_at on timed-out cart holds so live available updates immediately
+        // (not only after the every-minute release job).
+        DB::table('stock_reservations')
+            ->where('branch_id', $branchId)
+            ->whereIn('product_code', $productCodes)
+            ->whereNull('released_at')
+            ->whereNotNull('expires_at')
+            ->where('expires_at', '<=', now())
+            ->update(['released_at' => now()]);
+
         $rows = DB::table('stock_reservations')
             ->whereNull('released_at')
             ->where(function ($query) {

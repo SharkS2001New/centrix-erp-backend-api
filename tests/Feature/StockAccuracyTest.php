@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Services\Catalog\ProductCatalogScopeService;
 use App\Services\Inventory\BranchStockService;
 use App\Support\SqlLikeSearch;
+use Illuminate\Support\Facades\Artisan;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
@@ -146,6 +147,45 @@ class StockAccuracyTest extends TestCase
 
         $this->assertSame(2.0, (float) $payload['stock_reserved_shop']);
         $this->assertSame(18.0, (float) $payload['stock_available_shop']);
+
+        // Timed-out hold is stamped released when live stock is read.
+        $this->assertNotNull(
+            StockReservation::query()
+                ->where('branch_id', $branchId)
+                ->where('product_code', $product->product_code)
+                ->where('quantity', 3)
+                ->whereNotNull('released_at')
+                ->first(),
+        );
+    }
+
+    public function test_release_expired_command_returns_qty_to_live_available(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $branchId = (int) $admin->branch_id;
+        $product = Product::query()->whereNull('deleted_at')->firstOrFail();
+        $service = app(BranchStockService::class);
+
+        CurrentStock::query()->updateOrCreate(
+            ['branch_id' => $branchId, 'product_code' => $product->product_code],
+            ['shop_quantity' => 50, 'store_quantity' => 0],
+        );
+
+        StockReservation::query()->create([
+            'branch_id' => $branchId,
+            'product_code' => $product->product_code,
+            'stock_location' => 'shop',
+            'quantity' => 20,
+            'reserved_by' => $admin->id,
+            'released_at' => null,
+            'expires_at' => now()->subMinutes(2),
+        ]);
+
+        $this->assertSame(0, Artisan::call('erp:release-expired-stock-reservations'));
+
+        $payload = $service->overlayPayload(['product_code' => $product->product_code], $branchId);
+        $this->assertSame(0.0, (float) $payload['stock_reserved_shop']);
+        $this->assertSame(50.0, (float) $payload['stock_available_shop']);
     }
 
     public function test_batch_reservation_map_matches_per_product_queries(): void

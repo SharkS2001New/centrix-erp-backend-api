@@ -797,6 +797,10 @@ trait HandlesInventory
         return StockReservation::query()
             ->where('sale_id', $saleId)
             ->whereNull('released_at')
+            ->where(function ($query) {
+                $query->whereNull('expires_at')
+                    ->orWhere('expires_at', '>', now());
+            })
             ->exists();
     }
 

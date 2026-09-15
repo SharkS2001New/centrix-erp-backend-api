@@ -35,7 +35,6 @@ class OrderExpiryTest extends TestCase
 
         Sale::query()->whereKey($sale->id)->update([
             'created_at' => now()->subDays(6),
-            'updated_at' => now()->subDays(6),
         ]);
 
         return $sale->fresh();
@@ -55,6 +54,52 @@ class OrderExpiryTest extends TestCase
         $this->assertSame('expired', $sale->status);
         $this->assertNotNull($sale->expired_at);
         $this->assertSame($admin->id, (int) $sale->expired_by);
+    }
+
+    public function test_expired_order_releases_sale_reservation_back_to_live_stock(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $product = \App\Models\Product::query()->whereNull('deleted_at')->firstOrFail();
+        $branchId = (int) ($admin->branch_id ?? 1);
+
+        \App\Models\CurrentStock::query()->updateOrCreate(
+            ['branch_id' => $branchId, 'product_code' => $product->product_code],
+            ['shop_quantity' => 0, 'store_quantity' => 40],
+        );
+
+        $sale = $this->createStaleBookedSale($admin, 96006);
+
+        \App\Models\StockReservation::query()->create([
+            'branch_id' => $branchId,
+            'product_code' => $product->product_code,
+            'stock_location' => 'store',
+            'quantity' => 15,
+            'sale_id' => $sale->id,
+            'reserved_by' => $admin->id,
+            'released_at' => null,
+            'expires_at' => null,
+        ]);
+
+        $stock = app(\App\Services\Inventory\BranchStockService::class);
+        $before = $stock->overlayPayload(['product_code' => $product->product_code], $branchId);
+        $this->assertSame(25.0, (float) $before['stock_available_store']);
+
+        $gate = app(\App\Services\Erp\CapabilityGate::class)->forOrganization(
+            Organization::findOrFail((int) $admin->organization_id),
+        );
+        $expired = app(OrderExpiryService::class)->expireSale($sale, $admin, $gate);
+        $this->assertTrue($expired);
+
+        $this->assertNotNull(
+            \App\Models\StockReservation::query()
+                ->where('sale_id', $sale->id)
+                ->whereNotNull('released_at')
+                ->first(),
+        );
+
+        $after = $stock->overlayPayload(['product_code' => $product->product_code], $branchId);
+        $this->assertSame(40.0, (float) $after['stock_available_store']);
+        $this->assertSame(0.0, (float) $after['stock_reserved_store']);
     }
 
     public function test_order_expiry_service_respects_disabled_setting(): void
