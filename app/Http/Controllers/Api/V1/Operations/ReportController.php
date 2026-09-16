@@ -2579,6 +2579,29 @@ class ReportController extends Controller
             }
         }
 
+        // Stock / catalog reports are point-in-time — skip hot-window defaults.
+        $path = $request->path();
+        $skipDateGuard = str_contains($path, 'stock-on-hand')
+            || str_contains($path, 'stock-valuation')
+            || str_contains($path, 'inventory-valuation')
+            || str_contains($path, 'low-stock')
+            || str_contains($path, 'stock-chain')
+            || str_contains($path, 'price-list');
+
+        if (! $skipDateGuard) {
+            $defaultDays = null;
+            if ($user?->organization_id) {
+                $org = \App\Models\Organization::query()->find($user->organization_id);
+                if ($org) {
+                    $gate = app(\App\Services\Erp\CapabilityGate::class)->forOrganization($org);
+                    $sales = $gate->moduleSettings('sales');
+                    $defaultDays = (int) ($sales['reports_default_date_range_days'] ?? 0) ?: null;
+                }
+            }
+
+            $filters = \App\Support\ReportDateRangeGuard::enforce($filters, $defaultDays);
+        }
+
         return $filters;
     }
 

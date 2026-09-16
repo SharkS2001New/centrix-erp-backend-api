@@ -32,7 +32,7 @@ class BackupScheduleSettingsResolver
             'enabled' => (bool) config('backup.enabled', true),
             'frequency' => $frequency,
             'schedule_time' => $time,
-            'retention_days' => max(1, (int) config('backup.retention_days', 7)),
+            'retention_days' => max(1, (int) config('backup.retention_days', 3)),
         ];
     }
 
@@ -179,7 +179,7 @@ class BackupScheduleSettingsResolver
             'enabled' => (bool) ($settings['enabled'] ?? true),
             'frequency' => $frequency,
             'schedule_time' => $time,
-            'retention_days' => max(1, min(90, (int) ($settings['retention_days'] ?? 7))),
+            'retention_days' => max(1, min(90, (int) ($settings['retention_days'] ?? 3))),
         ];
     }
 

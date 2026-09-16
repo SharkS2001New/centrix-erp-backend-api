@@ -34,9 +34,13 @@ class AttendanceMissedPunchesService
     {
         $this->forgottenClockOuts->closeDueSessions($organizationId);
 
+        $eventRetentionDays = max(1, (int) config('data_retention.hikvision_access_events_days', 7));
+        $eventsSince = AppTimezone::now()->subDays($eventRetentionDays)->format('Y-m-d H:i:s');
+
         $events = HikvisionAccessEvent::query()
             ->with(['device:id,device_no,location,provider'])
             ->where('organization_id', $organizationId)
+            ->where('event_time', '>=', $eventsSince)
             ->whereNull('processed_at')
             ->orderByDesc('event_time')
             ->limit(400)
@@ -45,6 +49,7 @@ class AttendanceMissedPunchesService
         $outsideWindow = HikvisionAccessEvent::query()
             ->with(['device:id,device_no,location,provider'])
             ->where('organization_id', $organizationId)
+            ->where('event_time', '>=', $eventsSince)
             ->where('process_error', HikvisionAccessEvent::OUTSIDE_WINDOW)
             ->orderByDesc('event_time')
             ->limit(200)
@@ -53,6 +58,7 @@ class AttendanceMissedPunchesService
         $loggedDuplicates = HikvisionAccessEvent::query()
             ->with(['device:id,device_no,location,provider'])
             ->where('organization_id', $organizationId)
+            ->where('event_time', '>=', $eventsSince)
             ->where('process_error', HikvisionAccessEvent::DUPLICATE_PUNCH)
             ->orderByDesc('event_time')
             ->limit(200)
@@ -120,6 +126,7 @@ class AttendanceMissedPunchesService
             ->with('employee.shift')
             ->where('organization_id', $organizationId)
             ->whereIn('source', ['clock_device', 'company_mobile'])
+            ->where('clock_in_at', '>=', $eventsSince)
             ->where(function ($q) use ($todayStart, $staleCutoff) {
                 $q->where('needs_reconciliation', true)
                     ->orWhere(function ($inner) use ($todayStart, $staleCutoff) {

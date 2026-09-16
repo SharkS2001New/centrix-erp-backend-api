@@ -439,6 +439,16 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::post('admin/database-backup-settings/test-upload', [PlatformDatabaseBackupController::class, 'testR2Upload'])
             ->middleware(['erp.super_admin']);
+        Route::get('admin/slow-queries', [\App\Http\Controllers\Api\V1\PlatformSlowQueryController::class, 'index'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/slow-queries/advise', [\App\Http\Controllers\Api\V1\PlatformSlowQueryController::class, 'advise'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/slow-queries/run-fix', [\App\Http\Controllers\Api\V1\PlatformSlowQueryController::class, 'runFix'])
+            ->middleware(['erp.super_admin']);
+        Route::get('admin/operational-prune', [\App\Http\Controllers\Api\V1\PlatformOperationalPruneController::class, 'show'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/operational-prune', [\App\Http\Controllers\Api\V1\PlatformOperationalPruneController::class, 'run'])
+            ->middleware(['erp.super_admin']);
         Route::post('admin/legacy-import-converter/convert', [LegacyImportConverterController::class, 'convert'])
             ->middleware(['erp.super_admin']);
         Route::get('admin/legacy-import-converter/tasks/{taskId}/download', [LegacyImportConverterController::class, 'download'])

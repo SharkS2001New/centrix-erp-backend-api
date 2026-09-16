@@ -7,7 +7,7 @@ return [
 
     'path' => env('BACKUP_PATH', 'backups/database'),
 
-    'retention_days' => (int) env('BACKUP_RETENTION_DAYS', 7),
+    'retention_days' => (int) env('BACKUP_RETENTION_DAYS', 3),
 
     /** hourly | every_6_hours | every_12_hours | daily — overridden by Platform UI when saved. */
     'schedule_frequency' => env('BACKUP_SCHEDULE_FREQUENCY', 'daily'),

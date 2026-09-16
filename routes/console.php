@@ -81,6 +81,11 @@ Schedule::command('erp:prune-platform-mail')
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/prune-platform-mail.log'));
 
+Schedule::command('erp:prune-operational-data')
+    ->dailyAt(config('data_retention.prune_time', '03:40'))
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/prune-operational-data.log'));
+
 Schedule::command('erp:send-subscription-renewal-reminders')
     ->dailyAt(config('platform_billing.renewal_reminder_time', '09:00'))
     ->withoutOverlapping()

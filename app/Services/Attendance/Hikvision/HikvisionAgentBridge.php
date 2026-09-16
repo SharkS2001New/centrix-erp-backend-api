@@ -333,12 +333,16 @@ class HikvisionAgentBridge
             }
 
             if ($command->status === 'completed') {
-                return new HikvisionIsapiResponse(
+                $response = new HikvisionIsapiResponse(
                     (int) $command->response_status,
                     (string) ($command->response_body ?? ''),
                     is_array($command->response_headers) ? $command->response_headers : [],
                     viaAgent: true,
                 );
+                // Attendance / ISAPI result is already in the caller's hands — drop the queue row.
+                HikvisionAgentCommand::query()->where('id', $commandId)->delete();
+
+                return $response;
             }
 
             if ($command->status === 'failed') {
@@ -424,6 +428,7 @@ class HikvisionAgentBridge
             $command->status = 'completed';
             $command->response_status = (int) ($data['status'] ?? 200);
             $command->response_headers = is_array($data['headers'] ?? null) ? $data['headers'] : [];
+            // Cap while the API poller reads the body; row is deleted after delivery.
             $command->response_body = mb_substr($body, 0, 500_000);
             $command->error_message = null;
         } else {
