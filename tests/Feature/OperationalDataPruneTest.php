@@ -121,7 +121,7 @@ class OperationalDataPruneTest extends TestCase
         foreach ([
             [$oldCompleted, 'completed', now()->subDays(40)],
             [$oldFailed, 'failed', now()->subDays(10)],
-            [$recentCompleted, 'completed', now()->subDays(5)],
+            [$recentCompleted, 'completed', now()->subHours(12)],
         ] as [$id, $status, $when]) {
             KraAgentCommand::query()->create([
                 'id' => $id,
@@ -248,7 +248,12 @@ class OperationalDataPruneTest extends TestCase
 
         $this->getJson('/api/v1/admin/slow-queries')
             ->assertOk()
-            ->assertJsonStructure(['available', 'queries']);
+            ->assertJsonStructure([
+                'available',
+                'database',
+                'queries',
+                'slow_tables',
+            ]);
     }
 
     public function test_platform_operational_prune_status_and_dry_run(): void
@@ -278,5 +283,26 @@ class OperationalDataPruneTest extends TestCase
 
         $this->getJson('/api/v1/admin/operational-prune')->assertForbidden();
         $this->postJson('/api/v1/admin/operational-prune', ['dry_run' => true])->assertForbidden();
+    }
+
+    public function test_platform_admin_can_update_retention_timers_and_optimize_table(): void
+    {
+        Sanctum::actingAs(User::where('username', 'superadmin')->firstOrFail());
+
+        $this->putJson('/api/v1/admin/operational-prune/settings', [
+            'kra_agent_commands_completed_days' => 1,
+            'kra_agent_commands_failed_days' => 2,
+            'hikvision_agent_commands_completed_days' => 1,
+            'hikvision_access_events_days' => 7,
+        ])
+            ->assertOk()
+            ->assertJsonPath('retention.kra_agent_commands_completed_days', 1)
+            ->assertJsonPath('retention.hikvision_agent_commands_completed_days', 1);
+
+        $this->postJson('/api/v1/admin/operational-prune/optimize', [
+            'tables' => ['audit_logs'],
+        ])
+            ->assertOk()
+            ->assertJsonPath('optimized_tables.0', 'audit_logs');
     }
 }

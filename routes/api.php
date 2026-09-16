@@ -447,7 +447,11 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::get('admin/operational-prune', [\App\Http\Controllers\Api\V1\PlatformOperationalPruneController::class, 'show'])
             ->middleware(['erp.super_admin']);
+        Route::put('admin/operational-prune/settings', [\App\Http\Controllers\Api\V1\PlatformOperationalPruneController::class, 'updateSettings'])
+            ->middleware(['erp.super_admin']);
         Route::post('admin/operational-prune', [\App\Http\Controllers\Api\V1\PlatformOperationalPruneController::class, 'run'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/operational-prune/optimize', [\App\Http\Controllers\Api\V1\PlatformOperationalPruneController::class, 'optimize'])
             ->middleware(['erp.super_admin']);
         Route::post('admin/legacy-import-converter/convert', [LegacyImportConverterController::class, 'convert'])
             ->middleware(['erp.super_admin']);

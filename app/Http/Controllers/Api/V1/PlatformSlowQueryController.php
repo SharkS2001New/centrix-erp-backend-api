@@ -46,8 +46,12 @@ class PlatformSlowQueryController extends Controller
 
         $system = 'You are Centrix ERP MySQL performance assistant for platform admins. '
             .'Return JSON only with keys fast_fix (string array), permanent_fix (string array), '
-            .'safe_sql (string array of ONLY ANALYZE TABLE or CREATE/ADD INDEX statements). '
-            .'Never suggest DROP, DELETE, UPDATE, TRUNCATE, or SET GLOBAL. '
+            .'safe_sql (string array of ONLY ANALYZE TABLE, OPTIMIZE TABLE on retention tables, or CREATE/ADD INDEX), '
+            .'and platform_actions (array of {id, label, kind} where kind is operational_prune or safe_sql; '
+            .'if kind is safe_sql include sql). '
+            .'Never suggest DROP DATABASE, unrestricted DELETE, UPDATE, TRUNCATE of live sales, or SET GLOBAL. '
+            .'For hikvision_agent_commands / hikvision_access_events bloat, recommend Platform Data retention prune '
+            .'(delete expired agent data) before OPTIMIZE TABLE. '
             .'Prefer Centrix hot windows of 14–90 days for reports and sales lists.';
 
         $userPrompt = 'avg_sec='.($data['avg_sec'] ?? 'n/a')
@@ -97,7 +101,12 @@ class PlatformSlowQueryController extends Controller
     }
 
     /**
-     * @param  array{fast_fix: list<string>, permanent_fix: list<string>, safe_sql: list<string>}  $fallback
+     * @param  array{
+     *   fast_fix: list<string>,
+     *   permanent_fix: list<string>,
+     *   safe_sql: list<string>,
+     *   platform_actions?: list<array<string, mixed>>
+     * }  $fallback
      * @return array<string, mixed>
      */
     protected function parseAiAdvice(string $content, array $fallback): array
@@ -118,11 +127,17 @@ class PlatformSlowQueryController extends Controller
             ];
         }
 
+        $actions = $json['platform_actions'] ?? $fallback['platform_actions'] ?? [];
+        if (! is_array($actions)) {
+            $actions = $fallback['platform_actions'] ?? [];
+        }
+
         return [
             'source' => 'ai',
             'fast_fix' => array_values(array_filter(array_map('strval', $json['fast_fix'] ?? $fallback['fast_fix']))),
             'permanent_fix' => array_values(array_filter(array_map('strval', $json['permanent_fix'] ?? $fallback['permanent_fix']))),
             'safe_sql' => array_values(array_filter(array_map('strval', $json['safe_sql'] ?? $fallback['safe_sql']))),
+            'platform_actions' => array_values(array_filter($actions, 'is_array')),
             'raw' => $content,
         ];
     }

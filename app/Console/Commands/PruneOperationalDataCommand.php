@@ -14,6 +14,8 @@ class PruneOperationalDataCommand extends Command
 
     public function handle(OperationalDataPruneService $pruner): int
     {
+        \App\Services\Retention\DataRetentionSettingsResolver::applyToRuntime();
+
         $dryRun = (bool) $this->option('dry-run');
         $results = $pruner->pruneAll($dryRun);
 

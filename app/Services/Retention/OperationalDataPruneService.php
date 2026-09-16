@@ -23,6 +23,8 @@ class OperationalDataPruneService
      */
     public function pruneAll(bool $dryRun = false): array
     {
+        DataRetentionSettingsResolver::applyToRuntime();
+
         return [
             'released_stock_reservations' => $this->pruneReleasedStockReservations($dryRun),
             'kra_agent_commands_completed' => $this->pruneKraAgentCommands('completed', $this->completedKraDays(), $dryRun),
@@ -320,6 +322,8 @@ class OperationalDataPruneService
      */
     public function platformStatus(): array
     {
+        DataRetentionSettingsResolver::applyToRuntime();
+
         $tables = [
             'hikvision_agent_commands',
             'hikvision_access_events',
@@ -351,30 +355,25 @@ class OperationalDataPruneService
 
         usort($sizes, fn ($a, $b) => $b['mb'] <=> $a['mb']);
 
+        $retention = DataRetentionSettingsResolver::resolve();
+
         return [
-            'retention' => [
-                'hikvision_access_events_days' => (int) config('data_retention.hikvision_access_events_days', 7),
-                'attendance_days' => (int) config('data_retention.attendance_days', 60),
-                'hikvision_agent_commands_completed_days' => (int) config('data_retention.hikvision_agent_commands_completed_days', 1),
-                'hikvision_agent_commands_failed_days' => (int) config('data_retention.hikvision_agent_commands_failed_days', 2),
-                'kra_agent_commands_completed_days' => (int) config('data_retention.kra_agent_commands_completed_days', 30),
-                'released_stock_reservations_days' => (int) config('data_retention.released_stock_reservations_days', 14),
-                'audit_logs_days' => (int) config('data_retention.audit_logs_days', 10),
-            ],
-            'schedule_time' => (string) config('data_retention.prune_time', '03:40'),
+            'retention' => $retention,
+            'schedule_time' => (string) ($retention['prune_time'] ?? config('data_retention.prune_time', '03:40')),
             'tables' => $sizes,
+            'optimizable_tables' => array_values(array_map(fn ($t) => $t['name'], $sizes)),
         ];
     }
 
     /**
      * Reclaim disk after large deletes (optional; can lock tables briefly).
      *
+     * @param  list<string>|null  $onlyTables  When set, only these tables are optimized.
      * @return list<string>
      */
-    public function optimizeRetentionTables(): array
+    public function optimizeRetentionTables(?array $onlyTables = null): array
     {
-        $optimized = [];
-        foreach ([
+        $allowed = [
             'hikvision_agent_commands',
             'hikvision_access_events',
             'employee_attendance',
@@ -382,7 +381,14 @@ class OperationalDataPruneService
             'kra_agent_commands',
             'stock_reservations',
             'audit_logs',
-        ] as $table) {
+        ];
+
+        $targets = $onlyTables !== null && $onlyTables !== []
+            ? array_values(array_intersect($allowed, $onlyTables))
+            : $allowed;
+
+        $optimized = [];
+        foreach ($targets as $table) {
             if (! Schema::hasTable($table)) {
                 continue;
             }
@@ -402,12 +408,12 @@ class OperationalDataPruneService
 
     protected function completedKraDays(): int
     {
-        return max(1, (int) config('data_retention.kra_agent_commands_completed_days', 30));
+        return max(1, (int) config('data_retention.kra_agent_commands_completed_days', 1));
     }
 
     protected function failedKraDays(): int
     {
-        return max(1, (int) config('data_retention.kra_agent_commands_failed_days', 7));
+        return max(1, (int) config('data_retention.kra_agent_commands_failed_days', 2));
     }
 
     protected function completedHikvisionDays(): int

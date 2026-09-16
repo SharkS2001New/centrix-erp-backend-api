@@ -11,9 +11,9 @@ return [
     */
     'released_stock_reservations_days' => (int) env('RETENTION_RELEASED_STOCK_RESERVATIONS_DAYS', 14),
 
-    'kra_agent_commands_completed_days' => (int) env('RETENTION_KRA_COMMANDS_COMPLETED_DAYS', 30),
+    'kra_agent_commands_completed_days' => (int) env('RETENTION_KRA_COMMANDS_COMPLETED_DAYS', 1),
 
-    'kra_agent_commands_failed_days' => (int) env('RETENTION_KRA_COMMANDS_FAILED_DAYS', 7),
+    'kra_agent_commands_failed_days' => (int) env('RETENTION_KRA_COMMANDS_FAILED_DAYS', 2),
 
     /**
      * Completed Hikvision commands are deleted as soon as the API reads the body.

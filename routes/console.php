@@ -1,6 +1,7 @@
 <?php
 
 use App\Services\Backup\BackupScheduleSettingsResolver;
+use App\Services\Retention\DataRetentionSettingsResolver;
 use Illuminate\Support\Facades\Schedule;
 
 $backupCron = '0 2 * * *';
@@ -15,6 +16,14 @@ try {
     } catch (\Throwable) {
         $backupCron = '0 2 * * *';
     }
+}
+
+$pruneTime = '03:40';
+try {
+    DataRetentionSettingsResolver::applyToRuntime();
+    $pruneTime = (string) config('data_retention.prune_time', '03:40');
+} catch (\Throwable) {
+    $pruneTime = (string) config('data_retention.prune_time', '03:40');
 }
 
 Schedule::command('erp:database-backup')
@@ -82,7 +91,7 @@ Schedule::command('erp:prune-platform-mail')
     ->appendOutputTo(storage_path('logs/prune-platform-mail.log'));
 
 Schedule::command('erp:prune-operational-data')
-    ->dailyAt(config('data_retention.prune_time', '03:40'))
+    ->dailyAt($pruneTime)
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/prune-operational-data.log'));
 
