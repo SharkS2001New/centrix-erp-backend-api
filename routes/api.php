@@ -451,6 +451,8 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::post('admin/operational-prune', [\App\Http\Controllers\Api\V1\PlatformOperationalPruneController::class, 'run'])
             ->middleware(['erp.super_admin']);
+        Route::post('admin/operational-prune/stream', [\App\Http\Controllers\Api\V1\PlatformOperationalPruneController::class, 'runStream'])
+            ->middleware(['erp.super_admin']);
         Route::post('admin/operational-prune/optimize', [\App\Http\Controllers\Api\V1\PlatformOperationalPruneController::class, 'optimize'])
             ->middleware(['erp.super_admin']);
         Route::post('admin/legacy-import-converter/convert', [LegacyImportConverterController::class, 'convert'])

@@ -29,6 +29,12 @@ return [
     /** Idle API tokens are revoked after this many minutes without a request. */
     'session_idle_minutes' => (int) env('AUTH_SESSION_IDLE_MINUTES', 60),
 
+    /**
+     * Platform Active users: max minutes since last API use for mobile/manager
+     * sessions to count as present. Capped by each org's session_idle_minutes.
+     */
+    'mobile_presence_minutes' => (int) env('AUTH_MOBILE_PRESENCE_MINUTES', 120),
+
     /** Default screen lock delay for new organizations (minutes). */
     'screen_lock_minutes' => (int) env('AUTH_SCREEN_LOCK_MINUTES', 5),
 

@@ -111,9 +111,11 @@ class TripStockService
         }
 
         $sale->update(['stock_balanced' => 1]);
-        \App\Models\StockReservation::query()
-            ->where('sale_id', $sale->id)
-            ->whereNull('released_at')
-            ->update(['released_at' => now()]);
+        $this->runInventoryDeadlockSafe(function () use ($sale): void {
+            \App\Models\StockReservation::query()
+                ->where('sale_id', $sale->id)
+                ->whereNull('released_at')
+                ->update(['released_at' => now()]);
+        });
     }
 }

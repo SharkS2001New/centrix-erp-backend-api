@@ -3,9 +3,14 @@
 namespace App\Services\Platform;
 
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Reads MySQL Performance Schema digests for platform slow-query triage.
+ *
+ * Strictly scoped to the Centrix app database (DB_DATABASE / DATABASE()).
+ * Shared MySQL hosts often also run WordPress and other apps — those digests
+ * must never appear here.
  */
 class SlowQueryDigestService
 {
@@ -22,7 +27,9 @@ class SlowQueryDigestService
     public function topQueries(int $limit = 25): array
     {
         $limit = max(1, min(100, $limit));
-        $schema = (string) DB::getDatabaseName();
+        $schema = $this->centrixSchema();
+
+        $slowTables = $this->centrixTableSizes();
 
         if (! $this->performanceSchemaAvailable()) {
             return [
@@ -30,7 +37,7 @@ class SlowQueryDigestService
                 'reason' => 'performance_schema.events_statements_summary_by_digest is not available on this MySQL instance.',
                 'database' => $schema,
                 'queries' => [],
-                'slow_tables' => $this->centrixTableSizes(),
+                'slow_tables' => $slowTables,
                 'enable_hint' => [
                     'SET GLOBAL slow_query_log = 1;',
                     'SET GLOBAL long_query_time = 1;',
@@ -39,53 +46,52 @@ class SlowQueryDigestService
             ];
         }
 
-        // Pull extra rows then keep only Centrix-schema digests (other DBs share the same MySQL instance).
-        $fetch = min(200, max($limit * 8, 50));
-        $rows = DB::select(<<<'SQL'
-SELECT
-    DIGEST AS digest,
-    SCHEMA_NAME AS schema_name,
-    LEFT(DIGEST_TEXT, 800) AS digest_text,
-    COUNT_STAR AS exec_count,
-    ROUND(SUM_TIMER_WAIT / 1e12, 3) AS total_sec,
-    ROUND(AVG_TIMER_WAIT / 1e12, 3) AS avg_sec,
-    ROUND(MAX_TIMER_WAIT / 1e12, 3) AS max_sec,
-    SUM_ROWS_EXAMINED AS rows_examined,
-    SUM_ROWS_SENT AS rows_sent,
-    FIRST_SEEN AS first_seen,
-    LAST_SEEN AS last_seen
-FROM performance_schema.events_statements_summary_by_digest
-WHERE DIGEST_TEXT IS NOT NULL
-  AND DIGEST_TEXT NOT LIKE 'SET %'
-  AND DIGEST_TEXT NOT LIKE 'SHOW %'
-  AND DIGEST_TEXT NOT LIKE 'SELECT @@%'
-  AND DIGEST_TEXT NOT LIKE 'USE %'
-  AND DIGEST_TEXT NOT LIKE 'COMMIT%'
-  AND DIGEST_TEXT NOT LIKE 'ROLLBACK%'
-  AND DIGEST_TEXT NOT LIKE 'BEGIN%'
-  AND DIGEST_TEXT NOT LIKE 'START TRANSACTION%'
-  AND DIGEST_TEXT NOT LIKE '%`wpa0_%'
-  AND DIGEST_TEXT NOT LIKE '%wpa0_%'
-  AND (SCHEMA_NAME IS NULL OR SCHEMA_NAME = '' OR SCHEMA_NAME = ?)
-ORDER BY SUM_TIMER_WAIT DESC
-LIMIT ?
-SQL, [$schema, $fetch]);
+        $knownTables = $this->centrixTableNames();
+        $fetch = min(500, max($limit * 20, 100));
+
+        // 1) Digests explicitly tagged with our schema.
+        $rows = $this->fetchDigestsForSchema($schema, $fetch);
+
+        // 2) NULL-schema digests that clearly touch our tables (agents sometimes omit SCHEMA_NAME).
+        $nullRows = $this->fetchNullSchemaDigestsTouchingCentrix($schema, $knownTables, $fetch);
+        $rows = array_merge($rows, $nullRows);
 
         $queries = [];
+        $seenDigests = [];
         $mentionedTables = [];
+
+        usort($rows, static function ($a, $b) {
+            return ((float) ($b->total_sec ?? 0)) <=> ((float) ($a->total_sec ?? 0));
+        });
+
         foreach ($rows as $row) {
-            $text = (string) ($row->digest_text ?? '');
+            $text = trim((string) ($row->digest_text ?? ''));
+            $digestId = (string) ($row->digest ?? '');
             $rowSchema = trim((string) ($row->schema_name ?? ''));
-            if (! $this->isCentrixDigest($text, $schema, $rowSchema)) {
+
+            if ($digestId !== '' && isset($seenDigests[$digestId])) {
+                continue;
+            }
+            if ($text === '' || $this->isNoiseDigest($text)) {
+                continue;
+            }
+            if (! $this->isCentrixDigest($text, $schema, $rowSchema, $knownTables)) {
+                continue;
+            }
+            if (! $this->isActuallySlow($row)) {
                 continue;
             }
 
-            foreach ($this->tablesMentionedInSql($text) as $table) {
+            if ($digestId !== '') {
+                $seenDigests[$digestId] = true;
+            }
+
+            foreach ($this->tablesMentionedInSql($text, $knownTables) as $table) {
                 $mentionedTables[$table] = true;
             }
 
             $queries[] = [
-                'digest' => (string) ($row->digest ?? ''),
+                'digest' => $digestId,
                 'schema' => $rowSchema !== '' ? $rowSchema : $schema,
                 'sql' => $text,
                 'exec_count' => (int) ($row->exec_count ?? 0),
@@ -104,6 +110,7 @@ SQL, [$schema, $fetch]);
             }
         }
 
+        // Re-rank table sizes with slow-query priority once we know mentions.
         $slowTables = $this->centrixTableSizes(array_keys($mentionedTables));
 
         return [
@@ -122,32 +129,17 @@ SQL, [$schema, $fetch]);
      */
     public function centrixTableSizes(array $priorityTables = []): array
     {
-        $schema = (string) DB::getDatabaseName();
+        $schema = $this->centrixSchema();
         $priority = array_fill_keys(array_map('strtolower', $priorityTables), true);
-
-        try {
-            $rows = DB::select(
-                'SELECT table_name AS name,
-                        ROUND((data_length + index_length) / 1024 / 1024, 1) AS mb,
-                        table_rows AS approx_rows
-                 FROM information_schema.tables
-                 WHERE table_schema = ?
-                   AND table_type = \'BASE TABLE\'
-                 ORDER BY (data_length + index_length) DESC
-                 LIMIT 30',
-                [$schema],
-            );
-        } catch (\Throwable) {
-            return [];
-        }
+        $rows = $this->loadTableSizeRows($schema);
 
         $tables = array_map(function ($row) use ($priority) {
-            $name = (string) ($row->name ?? '');
+            $name = (string) ($row['name'] ?? '');
 
             return [
                 'name' => $name,
-                'mb' => (float) ($row->mb ?? 0),
-                'rows' => (int) ($row->approx_rows ?? 0),
+                'mb' => (float) ($row['mb'] ?? 0),
+                'rows' => (int) ($row['rows'] ?? 0),
                 'in_slow_queries' => isset($priority[strtolower($name)]),
             ];
         }, $rows);
@@ -160,41 +152,232 @@ SQL, [$schema, $fetch]);
             return $b['mb'] <=> $a['mb'];
         });
 
-        return $tables;
+        return array_slice($tables, 0, 30);
     }
 
-    protected function isCentrixDigest(string $sql, string $schema, string $rowSchema): bool
-    {
+    /**
+     * @param  list<string>  $knownTables
+     */
+    public function isCentrixDigest(
+        string $sql,
+        string $schema,
+        string $rowSchema,
+        array $knownTables = [],
+    ): bool {
+        if ($this->isNoiseDigest($sql)) {
+            return false;
+        }
+
         if ($rowSchema !== '' && strcasecmp($rowSchema, $schema) !== 0) {
             return false;
         }
 
         // Explicit other-database references: `pitchnewdb`.`table`
-        if (preg_match_all('/`([a-zA-Z0-9_]+)`\s*\.\s*`/', $sql, $matches)) {
-            foreach ($matches[1] as $dbName) {
-                if (strcasecmp((string) $dbName, $schema) !== 0) {
+        if (preg_match_all('/`([a-zA-Z0-9_]+)`\s*\.\s*`([a-zA-Z0-9_]+)`/', $sql, $matches, PREG_SET_ORDER)) {
+            foreach ($matches as $match) {
+                $dbName = (string) ($match[1] ?? '');
+                if ($dbName !== '' && strcasecmp($dbName, $schema) !== 0) {
                     return false;
                 }
             }
         }
 
-        // Unquoted schema.table for a different database
-        if (preg_match_all('/\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\.\s*`?[a-zA-Z_][a-zA-Z0-9_]*`?/', $sql, $matches)) {
-            foreach ($matches[1] as $dbName) {
-                $candidate = strtolower((string) $dbName);
-                if (in_array($candidate, ['performance_schema', 'information_schema', 'mysql', 'sys'], true)) {
+        $knownLookup = array_fill_keys(array_map('strtolower', $knownTables), true);
+        $schemaLower = strtolower($schema);
+
+        // Unquoted schema.table for a different database (not table.column).
+        if (preg_match_all('/\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\.\s*`?([a-zA-Z_][a-zA-Z0-9_]*)`?/', $sql, $matches, PREG_SET_ORDER)) {
+            foreach ($matches as $match) {
+                $left = strtolower((string) ($match[1] ?? ''));
+                if ($left === '' || $left === $schemaLower) {
                     continue;
                 }
-                if ($candidate !== strtolower($schema) && ! $this->looksLikeTableAlias($candidate, $sql)) {
-                    // Only reject when it looks like a schema qualifier for a foreign DB.
-                    if (preg_match('/`'.preg_quote((string) $dbName, '/').'`\s*\./i', $sql)) {
-                        return false;
-                    }
+                if (in_array($left, ['performance_schema', 'information_schema', 'mysql', 'sys'], true)) {
+                    continue;
                 }
+                // Centrix table.column (e.g. sales.organization_id)
+                if (isset($knownLookup[$left])) {
+                    continue;
+                }
+                if ($this->looksLikeTableAlias($left, $sql)) {
+                    continue;
+                }
+
+                return false;
             }
         }
 
+        // NULL / empty SCHEMA_NAME: only keep if SQL mentions a known Centrix table.
+        if ($rowSchema === '') {
+            if ($knownTables === []) {
+                return false;
+            }
+
+            return $this->mentionsKnownCentrixTable($sql, $knownTables);
+        }
+
         return true;
+    }
+
+    public function isNoiseDigest(string $sql): bool
+    {
+        $trimmed = ltrim($sql);
+        $upper = strtoupper($trimmed);
+
+        foreach ([
+            'SET ',
+            'SHOW ',
+            'USE ',
+            'COMMIT',
+            'ROLLBACK',
+            'BEGIN',
+            'START TRANSACTION',
+            'SAVEPOINT ',
+            'RELEASE SAVEPOINT',
+            'XA ',
+            'SELECT @@',
+            'SELECT DATABASE(',
+            'SELECT SCHEMA(',
+            'SELECT CONNECTION_ID(',
+            'SELECT VERSION(',
+            'PREPARE ',
+            'EXECUTE ',
+            'DEALLOCATE ',
+        ] as $prefix) {
+            if (str_starts_with($upper, $prefix)) {
+                return true;
+            }
+        }
+
+        $lower = strtolower($trimmed);
+
+        // WordPress / phpMyAdmin / other tenants on shared MySQL.
+        foreach ([
+            'wpa0_',
+            'wp_',
+            'wpmeta',
+            'phpmyadmin',
+            'pitchnewdb',
+            'information_schema',
+            'performance_schema',
+            'mysql.',
+            '`mysql`',
+        ] as $needle) {
+            if (str_contains($lower, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @return list<object>
+     */
+    protected function fetchDigestsForSchema(string $schema, int $limit): array
+    {
+        try {
+            return DB::select(<<<'SQL'
+SELECT
+    DIGEST AS digest,
+    SCHEMA_NAME AS schema_name,
+    LEFT(DIGEST_TEXT, 800) AS digest_text,
+    COUNT_STAR AS exec_count,
+    ROUND(SUM_TIMER_WAIT / 1e12, 3) AS total_sec,
+    ROUND(AVG_TIMER_WAIT / 1e12, 3) AS avg_sec,
+    ROUND(MAX_TIMER_WAIT / 1e12, 3) AS max_sec,
+    SUM_ROWS_EXAMINED AS rows_examined,
+    SUM_ROWS_SENT AS rows_sent,
+    FIRST_SEEN AS first_seen,
+    LAST_SEEN AS last_seen
+FROM performance_schema.events_statements_summary_by_digest
+WHERE DIGEST_TEXT IS NOT NULL
+  AND SCHEMA_NAME = ?
+ORDER BY SUM_TIMER_WAIT DESC
+LIMIT ?
+SQL, [$schema, $limit]);
+        } catch (\Throwable $e) {
+            Log::warning('slow_queries.schema_digests_failed', ['error' => $e->getMessage()]);
+
+            return [];
+        }
+    }
+
+    /**
+     * @param  list<string>  $knownTables
+     * @return list<object>
+     */
+    protected function fetchNullSchemaDigestsTouchingCentrix(string $schema, array $knownTables, int $limit): array
+    {
+        if ($knownTables === []) {
+            return [];
+        }
+
+        // Prefer high-signal Centrix tables so the LIKE list stays small.
+        $priority = array_values(array_intersect(
+            $this->optimizableTables(),
+            array_map('strtolower', $knownTables),
+        ));
+        if ($priority === []) {
+            $priority = array_slice(array_map('strtolower', $knownTables), 0, 25);
+        }
+
+        $likes = [];
+        $bindings = [];
+        foreach (array_slice($priority, 0, 20) as $table) {
+            $likes[] = 'DIGEST_TEXT LIKE ?';
+            $bindings[] = '%'.$table.'%';
+        }
+        if ($likes === []) {
+            return [];
+        }
+
+        $likeSql = implode(' OR ', $likes);
+        $bindings[] = $limit;
+
+        try {
+            return DB::select(
+                <<<SQL
+SELECT
+    DIGEST AS digest,
+    SCHEMA_NAME AS schema_name,
+    LEFT(DIGEST_TEXT, 800) AS digest_text,
+    COUNT_STAR AS exec_count,
+    ROUND(SUM_TIMER_WAIT / 1e12, 3) AS total_sec,
+    ROUND(AVG_TIMER_WAIT / 1e12, 3) AS avg_sec,
+    ROUND(MAX_TIMER_WAIT / 1e12, 3) AS max_sec,
+    SUM_ROWS_EXAMINED AS rows_examined,
+    SUM_ROWS_SENT AS rows_sent,
+    FIRST_SEEN AS first_seen,
+    LAST_SEEN AS last_seen
+FROM performance_schema.events_statements_summary_by_digest
+WHERE DIGEST_TEXT IS NOT NULL
+  AND (SCHEMA_NAME IS NULL OR SCHEMA_NAME = '')
+  AND ({$likeSql})
+ORDER BY SUM_TIMER_WAIT DESC
+LIMIT ?
+SQL,
+                $bindings,
+            );
+        } catch (\Throwable $e) {
+            Log::warning('slow_queries.null_schema_digests_failed', ['error' => $e->getMessage()]);
+
+            return [];
+        }
+    }
+
+    protected function isActuallySlow(object $row): bool
+    {
+        $avg = (float) ($row->avg_sec ?? 0);
+        $total = (float) ($row->total_sec ?? 0);
+        $max = (float) ($row->max_sec ?? 0);
+        $examined = (int) ($row->rows_examined ?? 0);
+
+        // Keep genuinely expensive digests; drop micro-latency chatter.
+        return $avg >= 0.05
+            || $max >= 0.5
+            || $total >= 5.0
+            || $examined >= 100000;
     }
 
     protected function looksLikeTableAlias(string $name, string $sql): bool
@@ -204,24 +387,43 @@ SQL, [$schema, $fetch]);
     }
 
     /**
+     * @param  list<string>  $knownTables
      * @return list<string>
      */
-    protected function tablesMentionedInSql(string $sql): array
+    protected function tablesMentionedInSql(string $sql, array $knownTables = []): array
     {
         $found = [];
-        foreach ($this->optimizableTables() as $table) {
-            if (stripos($sql, $table) !== false) {
+        $haystack = strtolower($sql);
+        foreach ($knownTables !== [] ? $knownTables : $this->optimizableTables() as $table) {
+            $table = strtolower((string) $table);
+            if ($table !== '' && str_contains($haystack, $table)) {
                 $found[] = $table;
             }
         }
 
-        if (preg_match_all('/(?:FROM|JOIN|UPDATE|INTO|TABLE)\s+`([a-zA-Z0-9_]+)`/i', $sql, $m)) {
+        if (preg_match_all('/(?:FROM|JOIN|UPDATE|INTO|TABLE)\s+(?:`[a-zA-Z0-9_]+`\s*\.\s*)?`([a-zA-Z0-9_]+)`/i', $sql, $m)) {
             foreach ($m[1] as $table) {
                 $found[] = strtolower((string) $table);
             }
         }
 
         return array_values(array_unique($found));
+    }
+
+    /**
+     * @param  list<string>  $knownTables
+     */
+    protected function mentionsKnownCentrixTable(string $sql, array $knownTables): bool
+    {
+        $haystack = strtolower($sql);
+        foreach ($knownTables as $table) {
+            $table = strtolower((string) $table);
+            if ($table !== '' && str_contains($haystack, $table)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -437,6 +639,122 @@ SQL, [$schema, $fetch]);
         }
 
         return strtolower($m[1]);
+    }
+
+    protected function centrixSchema(): string
+    {
+        $schema = trim((string) DB::getDatabaseName());
+        if ($schema !== '') {
+            return $schema;
+        }
+
+        return trim((string) config('database.connections.'.config('database.default').'.database', ''));
+    }
+
+    /**
+     * @return list<string>
+     */
+    protected function centrixTableNames(): array
+    {
+        $schema = $this->centrixSchema();
+        try {
+            $rows = DB::select(
+                'SELECT table_name AS name
+                 FROM information_schema.tables
+                 WHERE table_schema = ?
+                   AND table_type = \'BASE TABLE\'',
+                [$schema],
+            );
+            $names = array_values(array_filter(array_map(
+                static fn ($row) => strtolower((string) ($row->name ?? '')),
+                $rows,
+            )));
+            if ($names !== []) {
+                return $names;
+            }
+        } catch (\Throwable) {
+            // fall through
+        }
+
+        try {
+            $rows = DB::select('SHOW TABLES');
+            $names = [];
+            foreach ($rows as $row) {
+                $values = array_values((array) $row);
+                $name = strtolower((string) ($values[0] ?? ''));
+                if ($name !== '') {
+                    $names[] = $name;
+                }
+            }
+
+            return array_values(array_unique($names));
+        } catch (\Throwable) {
+            return $this->optimizableTables();
+        }
+    }
+
+    /**
+     * @return list<array{name: string, mb: float, rows: int}>
+     */
+    protected function loadTableSizeRows(string $schema): array
+    {
+        try {
+            $rows = DB::select(
+                'SELECT table_name AS name,
+                        ROUND((COALESCE(data_length, 0) + COALESCE(index_length, 0)) / 1024 / 1024, 1) AS mb,
+                        COALESCE(table_rows, 0) AS approx_rows
+                 FROM information_schema.tables
+                 WHERE table_schema = ?
+                   AND table_type = \'BASE TABLE\'
+                 ORDER BY (COALESCE(data_length, 0) + COALESCE(index_length, 0)) DESC
+                 LIMIT 40',
+                [$schema],
+            );
+
+            if ($rows !== []) {
+                return array_map(static fn ($row) => [
+                    'name' => (string) ($row->name ?? ''),
+                    'mb' => (float) ($row->mb ?? 0),
+                    'rows' => (int) ($row->approx_rows ?? 0),
+                ], $rows);
+            }
+        } catch (\Throwable $e) {
+            Log::warning('slow_queries.table_sizes_information_schema_failed', [
+                'schema' => $schema,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        // Fallback for hosts that hide information_schema sizes.
+        try {
+            $quoted = str_replace('`', '``', $schema);
+            $rows = DB::select("SHOW TABLE STATUS FROM `{$quoted}`");
+            $mapped = [];
+            foreach ($rows as $row) {
+                $name = (string) ($row->Name ?? $row->name ?? '');
+                if ($name === '') {
+                    continue;
+                }
+                $data = (float) ($row->Data_length ?? $row->data_length ?? 0);
+                $index = (float) ($row->Index_length ?? $row->index_length ?? 0);
+                $mapped[] = [
+                    'name' => $name,
+                    'mb' => round(($data + $index) / 1024 / 1024, 1),
+                    'rows' => (int) ($row->Rows ?? $row->rows ?? 0),
+                ];
+            }
+
+            usort($mapped, static fn ($a, $b) => $b['mb'] <=> $a['mb']);
+
+            return $mapped;
+        } catch (\Throwable $e) {
+            Log::warning('slow_queries.table_sizes_show_status_failed', [
+                'schema' => $schema,
+                'error' => $e->getMessage(),
+            ]);
+
+            return [];
+        }
     }
 
     protected function performanceSchemaAvailable(): bool

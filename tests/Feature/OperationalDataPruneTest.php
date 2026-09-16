@@ -266,6 +266,7 @@ class OperationalDataPruneTest extends TestCase
                 'retention' => ['attendance_days', 'hikvision_access_events_days'],
                 'schedule_time',
                 'tables',
+                'prune_targets',
             ]);
 
         $this->postJson('/api/v1/admin/operational-prune', [
@@ -275,6 +276,55 @@ class OperationalDataPruneTest extends TestCase
             ->assertOk()
             ->assertJsonPath('dry_run', true)
             ->assertJsonStructure(['deleted', 'total', 'status']);
+    }
+
+    public function test_platform_prune_accepts_days_and_targets_override(): void
+    {
+        Sanctum::actingAs(User::where('username', 'superadmin')->firstOrFail());
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        AuditLog::query()->forceCreate([
+            'user_id' => $admin->id,
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'action' => 'days_override_test',
+            'table_name' => 'sales',
+            'record_id' => '99',
+            'created_at' => now()->subDays(5),
+        ]);
+
+        $this->postJson('/api/v1/admin/operational-prune', [
+            'dry_run' => false,
+            'optimize_tables' => false,
+            'targets' => ['audit_logs'],
+            'days' => 3,
+        ])
+            ->assertOk()
+            ->assertJsonPath('days', 3)
+            ->assertJsonPath('targets.0', 'audit_logs');
+
+        $this->assertSame(0, AuditLog::query()->where('action', 'days_override_test')->count());
+    }
+
+    public function test_artisan_prune_only_and_days(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        AuditLog::query()->forceCreate([
+            'user_id' => $admin->id,
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'action' => 'artisan_days_test',
+            'table_name' => 'sales',
+            'record_id' => '100',
+            'created_at' => now()->subDays(12),
+        ]);
+
+        Artisan::call('erp:prune-operational-data', [
+            '--only' => ['audit_logs'],
+            '--days' => 7,
+        ]);
+
+        $this->assertSame(0, AuditLog::query()->where('action', 'artisan_days_test')->count());
     }
 
     public function test_platform_operational_prune_forbidden_for_org_admin(): void
@@ -304,5 +354,54 @@ class OperationalDataPruneTest extends TestCase
         ])
             ->assertOk()
             ->assertJsonPath('optimized_tables.0', 'audit_logs');
+
+        $this->postJson('/api/v1/admin/operational-prune', [
+            'optimize_only' => true,
+            'tables' => ['audit_logs'],
+        ])
+            ->assertOk()
+            ->assertJsonPath('optimized_tables.0', 'audit_logs')
+            ->assertJsonMissingPath('deleted');
+    }
+
+    public function test_prune_targets_emits_step_by_step_progress(): void
+    {
+        $pruner = app(\App\Services\Retention\OperationalDataPruneService::class);
+        $messages = [];
+
+        $results = $pruner->pruneTargets(
+            ['audit_logs'],
+            1,
+            true,
+            function (array $payload) use (&$messages): void {
+                if (! empty($payload['message'])) {
+                    $messages[] = (string) $payload['message'];
+                }
+            },
+        );
+
+        $this->assertArrayHasKey('audit_logs', $results);
+        $this->assertNotEmpty($messages);
+        $this->assertTrue(
+            collect($messages)->contains(fn ($m) => str_contains($m, 'audit_logs')),
+            'Expected progress logs to mention audit_logs',
+        );
+    }
+
+    public function test_platform_admin_can_stream_prune_dry_run_logs(): void
+    {
+        Sanctum::actingAs(User::where('username', 'superadmin')->firstOrFail());
+
+        $response = $this->post('/api/v1/admin/operational-prune/stream', [
+            'dry_run' => true,
+            'optimize_tables' => false,
+            'targets' => ['audit_logs'],
+        ]);
+
+        $response->assertOk();
+        $body = $response->streamedContent();
+        $this->assertStringContainsString('data: ', $body);
+        $this->assertStringContainsString('"event":"done"', $body);
+        $this->assertStringContainsString('audit_logs', $body);
     }
 }

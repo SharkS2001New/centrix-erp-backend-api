@@ -462,14 +462,28 @@ class BranchStockService
         }
 
         // Stamp released_at on timed-out cart holds so live available updates immediately
-        // (not only after the every-minute release job).
-        DB::table('stock_reservations')
-            ->where('branch_id', $branchId)
-            ->whereIn('product_code', $productCodes)
-            ->whereNull('released_at')
-            ->whereNotNull('expires_at')
-            ->where('expires_at', '<=', now())
-            ->update(['released_at' => now()]);
+        // (not only after the every-minute release job). Retry MySQL 1213 — this UPDATE
+        // races POS reserveStock / releaseExpiredReservations on the same index.
+        $codes = $productCodes;
+        sort($codes);
+        DB::transaction(function () use ($branchId, $codes): void {
+            // Same lock order as HandlesInventory::reserveStock (current_stock first).
+            foreach ($codes as $code) {
+                CurrentStock::query()
+                    ->where('product_code', $code)
+                    ->where('branch_id', $branchId)
+                    ->lockForUpdate()
+                    ->first();
+            }
+
+            DB::table('stock_reservations')
+                ->where('branch_id', $branchId)
+                ->whereIn('product_code', $codes)
+                ->whereNull('released_at')
+                ->whereNotNull('expires_at')
+                ->where('expires_at', '<=', now())
+                ->update(['released_at' => now()]);
+        }, 5);
 
         $rows = DB::table('stock_reservations')
             ->whereNull('released_at')

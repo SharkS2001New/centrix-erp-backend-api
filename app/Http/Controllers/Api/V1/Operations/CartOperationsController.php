@@ -393,7 +393,17 @@ class CartOperationsController extends Controller
         ));
 
         // Retry on MySQL deadlock while releasing/re-reserving many SKUs at once.
+        // Lock the cart row first so concurrent POS line adds / checkout wait instead of
+        // racing cart_lines INSERT vs stock_reservations (MySQL 1213).
         $cart = DB::transaction(function () use ($cart, $data, $user, $gate, $heldOrderNum, $supersededSaleId, $lines) {
+            $locked = TemporaryCart::query()->whereKey($cart->id)->lockForUpdate()->first();
+            if (! $locked) {
+                throw new InvalidArgumentException(
+                    'Cart not found. It may have already been checked out — reopen the order to continue editing.',
+                );
+            }
+            $cart = $locked;
+
             $this->releaseCartReservations((int) $cart->id);
             CartLine::where('cart_id', $cart->id)->delete();
 
@@ -543,6 +553,14 @@ class CartOperationsController extends Controller
         $needsStockReverse = false;
 
         $cart = DB::transaction(function () use ($cart, $sale, $user, $gate, $alreadyEditing, &$needsStockReverse) {
+            $locked = TemporaryCart::query()->whereKey($cart->id)->lockForUpdate()->first();
+            if (! $locked) {
+                throw new InvalidArgumentException(
+                    'Cart was removed before this order could be restored. Try again.',
+                );
+            }
+            $cart = $locked;
+
             if ($cart->lines()->exists()) {
                 $this->clearCart($cart, $user);
             }
@@ -611,7 +629,7 @@ class CartOperationsController extends Controller
             ]);
 
             return $this->freshOwnedCart($cart);
-        });
+        }, 5);
 
         if ($needsStockReverse || $needsKraVoid) {
             FinalizePosOrderEditRestoreJob::dispatch(
@@ -682,6 +700,14 @@ class CartOperationsController extends Controller
         CapabilityGate $gate,
     ): TemporaryCart {
         return DB::transaction(function () use ($cart, $sale, $user, $gate) {
+            $locked = TemporaryCart::query()->whereKey($cart->id)->lockForUpdate()->first();
+            if (! $locked) {
+                throw new InvalidArgumentException(
+                    'Cart was removed before this order could be restored. Try again.',
+                );
+            }
+            $cart = $locked;
+
             if ($cart->lines()->exists()) {
                 $this->clearCart($cart, $user);
             }
@@ -744,7 +770,7 @@ class CartOperationsController extends Controller
             );
 
             return $this->freshOwnedCart($cart);
-        });
+        }, 5);
     }
 
     /** GET /sales/customers/lookup — search registered customers for POS credit checkout */

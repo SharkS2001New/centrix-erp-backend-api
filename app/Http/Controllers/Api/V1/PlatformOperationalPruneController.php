@@ -44,27 +44,161 @@ class PlatformOperationalPruneController extends Controller
 
     public function run(Request $request, OperationalDataPruneService $pruner)
     {
-        $data = $request->validate([
-            'dry_run' => 'sometimes|boolean',
-            'optimize_tables' => 'sometimes|boolean',
-        ]);
+        $data = $this->validateRunRequest($request);
+
+        $optimizeOnly = (bool) ($data['optimize_only'] ?? false);
+        if ($optimizeOnly) {
+            return $this->respondOptimized(
+                $pruner,
+                $data['tables'] ?? null,
+            );
+        }
 
         $dryRun = (bool) ($data['dry_run'] ?? false);
         $optimize = (bool) ($data['optimize_tables'] ?? false) && ! $dryRun;
+        $days = array_key_exists('days', $data) && $data['days'] !== null
+            ? (int) $data['days']
+            : null;
+        $targets = $data['targets'] ?? null;
 
         if (function_exists('set_time_limit')) {
             @set_time_limit($optimize ? 600 : 300);
         }
 
-        $results = $pruner->pruneAll($dryRun);
-        $optimized = $optimize ? $pruner->optimizeRetentionTables() : [];
+        try {
+            $results = $pruner->pruneTargets($targets, $days, $dryRun);
+        } catch (\InvalidArgumentException $e) {
+            throw ValidationException::withMessages([
+                'targets' => $e->getMessage(),
+            ]);
+        }
+
+        $optimizeTables = $data['tables'] ?? $targets;
+        $optimized = $optimize ? $pruner->optimizeRetentionTables(
+            is_array($optimizeTables) && $optimizeTables !== [] ? $optimizeTables : null,
+        ) : [];
 
         return response()->json([
             'dry_run' => $dryRun,
+            'days' => $days,
+            'targets' => $targets ?? OperationalDataPruneService::TARGETS,
             'deleted' => $results,
             'total' => array_sum($results),
             'optimized_tables' => $optimized,
             'status' => $pruner->platformStatus(),
+        ]);
+    }
+
+    /**
+     * Stream step-by-step prune / optimize logs (SSE) for the Data retention UI.
+     */
+    public function runStream(Request $request, OperationalDataPruneService $pruner)
+    {
+        $data = $this->validateRunRequest($request);
+
+        $optimizeOnly = (bool) ($data['optimize_only'] ?? false);
+        $dryRun = (bool) ($data['dry_run'] ?? false);
+        $optimize = (bool) ($data['optimize_tables'] ?? false) && ! $dryRun && ! $optimizeOnly;
+        $days = array_key_exists('days', $data) && $data['days'] !== null
+            ? (int) $data['days']
+            : null;
+        $targets = $data['targets'] ?? null;
+        $optimizeTables = $data['tables'] ?? $targets;
+
+        if (function_exists('set_time_limit')) {
+            @set_time_limit($optimize || $optimizeOnly ? 900 : 600);
+        }
+
+        return response()->stream(function () use (
+            $pruner,
+            $optimizeOnly,
+            $dryRun,
+            $optimize,
+            $days,
+            $targets,
+            $optimizeTables,
+        ) {
+            $send = static function (array $event): void {
+                echo 'data: '.json_encode($event, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)."\n\n";
+                if (ob_get_level() > 0) {
+                    @ob_flush();
+                }
+                @flush();
+            };
+
+            $onProgress = static function (array $payload) use ($send): void {
+                $send($payload + ['event' => $payload['event'] ?? 'step']);
+            };
+
+            try {
+                if ($optimizeOnly) {
+                    $send([
+                        'event' => 'status',
+                        'message' => 'OPTIMIZE TABLE starting…',
+                        'phase' => 'start',
+                    ]);
+                    $optimized = $pruner->optimizeRetentionTables(
+                        is_array($optimizeTables) && $optimizeTables !== [] ? $optimizeTables : null,
+                        $onProgress,
+                    );
+                    $send([
+                        'event' => 'done',
+                        'dry_run' => false,
+                        'deleted' => [],
+                        'total' => 0,
+                        'optimized_tables' => $optimized,
+                        'status' => $pruner->platformStatus(),
+                        'message' => 'Optimized '.count($optimized).' table(s).',
+                    ]);
+
+                    return;
+                }
+
+                $results = $pruner->pruneTargets($targets, $days, $dryRun, $onProgress);
+
+                $optimized = [];
+                if ($optimize) {
+                    $send([
+                        'event' => 'status',
+                        'message' => 'OPTIMIZE TABLE starting…',
+                        'phase' => 'start',
+                    ]);
+                    $optimized = $pruner->optimizeRetentionTables(
+                        is_array($optimizeTables) && $optimizeTables !== [] ? $optimizeTables : null,
+                        $onProgress,
+                    );
+                }
+
+                $send([
+                    'event' => 'done',
+                    'dry_run' => $dryRun,
+                    'days' => $days,
+                    'targets' => $targets ?? OperationalDataPruneService::TARGETS,
+                    'deleted' => $results,
+                    'total' => array_sum($results),
+                    'optimized_tables' => $optimized,
+                    'status' => $pruner->platformStatus(),
+                    'message' => $dryRun
+                        ? 'Dry run complete — no rows were deleted.'
+                        : 'Operational data prune complete.',
+                ]);
+            } catch (\InvalidArgumentException $e) {
+                $send([
+                    'event' => 'error',
+                    'message' => $e->getMessage(),
+                ]);
+            } catch (\Throwable $e) {
+                report($e);
+                $send([
+                    'event' => 'error',
+                    'message' => 'Prune failed: '.$e->getMessage(),
+                ]);
+            }
+        }, 200, [
+            'Content-Type' => 'text/event-stream; charset=UTF-8',
+            'Cache-Control' => 'no-cache, no-transform',
+            'Connection' => 'keep-alive',
+            'X-Accel-Buffering' => 'no',
         ]);
     }
 
@@ -75,11 +209,35 @@ class PlatformOperationalPruneController extends Controller
             'tables.*' => 'string|max:100',
         ]);
 
+        return $this->respondOptimized($pruner, $data['tables'] ?? null);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function validateRunRequest(Request $request): array
+    {
+        return $request->validate([
+            'dry_run' => 'sometimes|boolean',
+            'optimize_tables' => 'sometimes|boolean',
+            'optimize_only' => 'sometimes|boolean',
+            'tables' => 'sometimes|array|min:1',
+            'tables.*' => 'string|max:100',
+            'days' => 'sometimes|nullable|integer|min:1|max:365',
+            'targets' => 'sometimes|array|min:1',
+            'targets.*' => 'string|max:100',
+        ]);
+    }
+
+    /**
+     * @param  list<string>|null  $tables
+     */
+    private function respondOptimized(OperationalDataPruneService $pruner, ?array $tables)
+    {
         if (function_exists('set_time_limit')) {
             @set_time_limit(600);
         }
 
-        $tables = $data['tables'] ?? null;
         $optimized = $pruner->optimizeRetentionTables($tables);
 
         if ($optimized === []) {
