@@ -196,20 +196,20 @@ class AiUsageAnalyticsService
 
         $toolCounts = [];
         if (Schema::hasColumn('ai_usage_logs', 'tools_used')) {
-            (clone $base)
+        (clone $base)
                 ->whereNotNull('ai_usage_logs.tools_used')
                 ->orderByDesc('ai_usage_logs.id')
                 ->limit(3000)
                 ->get(['ai_usage_logs.tools_used'])
-                ->each(function (AiUsageLog $log) use (&$toolCounts) {
-                    foreach ((array) $log->tools_used as $tool) {
-                        $name = is_string($tool) ? $tool : '';
-                        if ($name === '') {
-                            continue;
-                        }
-                        $toolCounts[$name] = ($toolCounts[$name] ?? 0) + 1;
+            ->each(function (AiUsageLog $log) use (&$toolCounts) {
+                foreach ((array) $log->tools_used as $tool) {
+                    $name = is_string($tool) ? $tool : '';
+                    if ($name === '') {
+                        continue;
                     }
-                });
+                    $toolCounts[$name] = ($toolCounts[$name] ?? 0) + 1;
+                }
+            });
         }
         arsort($toolCounts);
         $topTools = [];
