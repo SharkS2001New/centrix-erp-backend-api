@@ -41,6 +41,62 @@ class PermissionMatrixService
     /** Prevents ensure() ↔ industry-catalog helpers from re-entering each other. */
     protected static bool $ensuring = false;
 
+    /**
+     * Fingerprint of permission config files so deploy/registry edits bust warm-path caches.
+     */
+    public static function registryCacheVersion(): string
+    {
+        $files = [
+            config_path('permission_registry.php'),
+            config_path('permissions.php'),
+            config_path('permission_aliases.php'),
+        ];
+        $parts = [];
+        foreach ($files as $file) {
+            $parts[] = is_file($file) ? (string) filemtime($file) : '0';
+        }
+        $parts[] = (string) count(self::allRegistryCodes());
+
+        return implode('.', $parts);
+    }
+
+    /**
+     * Run full matrix ensure at most once per registry version (login / cold capabilities).
+     * CLI `erp:permissions-sync` still calls ensure() directly.
+     */
+    public static function ensureCached(): void
+    {
+        $key = 'erp:permission_matrix:ensure_done:'.self::registryCacheVersion();
+        \Illuminate\Support\Facades\Cache::remember($key, 86400 * 7, function () {
+            self::ensure();
+
+            return true;
+        });
+    }
+
+    /**
+     * Cheap login/capabilities heal: Administrator industry grants + HR time pages.
+     * Runs the insertOrIgnore sweep once per registry version; warm hits return zeros
+     * so callers do not keep invalidating org capabilities caches.
+     *
+     * @return array{industry: int, hr: int}
+     */
+    public static function healLoginGrantsCached(): array
+    {
+        $key = 'erp:permission_matrix:login_heal_done:'.self::registryCacheVersion();
+        if (\Illuminate\Support\Facades\Cache::get($key)) {
+            return ['industry' => 0, 'hr' => 0];
+        }
+
+        $result = [
+            'industry' => self::ensureAdministratorIndustryCatalogPermissions(),
+            'hr' => self::ensureHrTimeAttendancePagesForExistingRoles(),
+        ];
+        \Illuminate\Support\Facades\Cache::put($key, true, 86400 * 7);
+
+        return $result;
+    }
+
     public static function ensure(): void
     {
         if (self::$ensuring) {

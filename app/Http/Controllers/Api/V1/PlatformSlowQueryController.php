@@ -20,6 +20,21 @@ class PlatformSlowQueryController extends Controller
         return response()->json($digest->topQueries((int) ($data['limit'] ?? 25)));
     }
 
+    public function reset(SlowQueryDigestService $digest)
+    {
+        $result = $digest->resetDigests();
+        if (! ($result['ok'] ?? false)) {
+            throw ValidationException::withMessages([
+                'digest' => $result['message'] ?? 'Could not reset digests.',
+            ]);
+        }
+
+        return response()->json([
+            ...$result,
+            ...$digest->topQueries(25),
+        ]);
+    }
+
     public function advise(Request $request, SlowQueryDigestService $digest, AiProviderFactory $providers)
     {
         $data = $request->validate([

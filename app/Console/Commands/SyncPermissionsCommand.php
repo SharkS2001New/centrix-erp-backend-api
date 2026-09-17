@@ -16,6 +16,14 @@ class SyncPermissionsCommand extends Command
     public function handle(): int
     {
         PermissionMatrixService::ensure();
+        // Allow the next login/capabilities request to re-check admin/HR heals after an
+        // explicit sync (registry version may be unchanged when only DB rows were fixed).
+        \Illuminate\Support\Facades\Cache::forget(
+            'erp:permission_matrix:login_heal_done:'.PermissionMatrixService::registryCacheVersion()
+        );
+        \Illuminate\Support\Facades\Cache::forget(
+            'erp:permission_matrix:ensure_done:'.PermissionMatrixService::registryCacheVersion()
+        );
 
         $registryCount = count(PermissionMatrixService::allRegistryCodes());
         $capabilityCount = count(config('permissions', []));

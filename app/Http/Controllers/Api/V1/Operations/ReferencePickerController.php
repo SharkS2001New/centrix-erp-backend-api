@@ -177,6 +177,20 @@ class ReferencePickerController extends Controller
             ['supplier_name', 'supplier_code', 'contact_person', 'phone', 'email'],
         );
 
+        if ($request->filled('ids')) {
+            $ids = collect(explode(',', (string) $request->input('ids')))
+                ->map(fn ($id) => (int) trim((string) $id))
+                ->filter(fn (int $id) => $id > 0)
+                ->unique()
+                ->values()
+                ->all();
+            if ($ids === []) {
+                $query->whereRaw('0 = 1');
+            } else {
+                $query->whereIn('id', $ids);
+            }
+        }
+
         return response()->json(
             $query->paginate(
                 $this->perPage($request),

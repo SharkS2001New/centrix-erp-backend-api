@@ -59,6 +59,9 @@ class PlatformOperationalPruneController extends Controller
         $days = array_key_exists('days', $data) && $data['days'] !== null
             ? (int) $data['days']
             : null;
+        $maxRows = array_key_exists('max_rows', $data) && $data['max_rows'] !== null
+            ? (int) $data['max_rows']
+            : null;
         $targets = $data['targets'] ?? null;
 
         if (function_exists('set_time_limit')) {
@@ -66,7 +69,7 @@ class PlatformOperationalPruneController extends Controller
         }
 
         try {
-            $results = $pruner->pruneTargets($targets, $days, $dryRun);
+            $results = $pruner->pruneTargets($targets, $days, $dryRun, null, $maxRows);
         } catch (\InvalidArgumentException $e) {
             throw ValidationException::withMessages([
                 'targets' => $e->getMessage(),
@@ -74,17 +77,19 @@ class PlatformOperationalPruneController extends Controller
         }
 
         $optimizeTables = $data['tables'] ?? $targets;
-        $optimized = $optimize ? $pruner->optimizeRetentionTables(
+        $optimizeResults = $optimize ? $pruner->optimizeRetentionTables(
             is_array($optimizeTables) && $optimizeTables !== [] ? $optimizeTables : null,
         ) : [];
 
         return response()->json([
             'dry_run' => $dryRun,
             'days' => $days,
+            'max_rows' => $maxRows,
             'targets' => $targets ?? OperationalDataPruneService::TARGETS,
             'deleted' => $results,
             'total' => array_sum($results),
-            'optimized_tables' => $optimized,
+            'optimized_tables' => array_column($optimizeResults, 'name'),
+            'optimize_results' => $optimizeResults,
             'status' => $pruner->platformStatus(),
         ]);
     }
@@ -102,6 +107,9 @@ class PlatformOperationalPruneController extends Controller
         $days = array_key_exists('days', $data) && $data['days'] !== null
             ? (int) $data['days']
             : null;
+        $maxRows = array_key_exists('max_rows', $data) && $data['max_rows'] !== null
+            ? (int) $data['max_rows']
+            : null;
         $targets = $data['targets'] ?? null;
         $optimizeTables = $data['tables'] ?? $targets;
 
@@ -115,6 +123,7 @@ class PlatformOperationalPruneController extends Controller
             $dryRun,
             $optimize,
             $days,
+            $maxRows,
             $targets,
             $optimizeTables,
         ) {
@@ -137,7 +146,7 @@ class PlatformOperationalPruneController extends Controller
                         'message' => 'OPTIMIZE TABLE starting…',
                         'phase' => 'start',
                     ]);
-                    $optimized = $pruner->optimizeRetentionTables(
+                    $optimizeResults = $pruner->optimizeRetentionTables(
                         is_array($optimizeTables) && $optimizeTables !== [] ? $optimizeTables : null,
                         $onProgress,
                     );
@@ -146,24 +155,25 @@ class PlatformOperationalPruneController extends Controller
                         'dry_run' => false,
                         'deleted' => [],
                         'total' => 0,
-                        'optimized_tables' => $optimized,
+                        'optimized_tables' => array_column($optimizeResults, 'name'),
+                        'optimize_results' => $optimizeResults,
                         'status' => $pruner->platformStatus(),
-                        'message' => 'Optimized '.count($optimized).' table(s).',
+                        'message' => 'Optimized '.count($optimizeResults).' table(s).',
                     ]);
 
                     return;
                 }
 
-                $results = $pruner->pruneTargets($targets, $days, $dryRun, $onProgress);
+                $results = $pruner->pruneTargets($targets, $days, $dryRun, $onProgress, $maxRows);
 
-                $optimized = [];
+                $optimizeResults = [];
                 if ($optimize) {
                     $send([
                         'event' => 'status',
                         'message' => 'OPTIMIZE TABLE starting…',
                         'phase' => 'start',
                     ]);
-                    $optimized = $pruner->optimizeRetentionTables(
+                    $optimizeResults = $pruner->optimizeRetentionTables(
                         is_array($optimizeTables) && $optimizeTables !== [] ? $optimizeTables : null,
                         $onProgress,
                     );
@@ -173,10 +183,12 @@ class PlatformOperationalPruneController extends Controller
                     'event' => 'done',
                     'dry_run' => $dryRun,
                     'days' => $days,
+                    'max_rows' => $maxRows,
                     'targets' => $targets ?? OperationalDataPruneService::TARGETS,
                     'deleted' => $results,
                     'total' => array_sum($results),
-                    'optimized_tables' => $optimized,
+                    'optimized_tables' => array_column($optimizeResults, 'name'),
+                    'optimize_results' => $optimizeResults,
                     'status' => $pruner->platformStatus(),
                     'message' => $dryRun
                         ? 'Dry run complete — no rows were deleted.'
@@ -224,6 +236,7 @@ class PlatformOperationalPruneController extends Controller
             'tables' => 'sometimes|array|min:1',
             'tables.*' => 'string|max:100',
             'days' => 'sometimes|nullable|integer|min:1|max:365',
+            'max_rows' => 'sometimes|nullable|integer|min:1|max:500000',
             'targets' => 'sometimes|array|min:1',
             'targets.*' => 'string|max:100',
         ]);
@@ -238,16 +251,17 @@ class PlatformOperationalPruneController extends Controller
             @set_time_limit(600);
         }
 
-        $optimized = $pruner->optimizeRetentionTables($tables);
+        $optimizeResults = $pruner->optimizeRetentionTables($tables);
 
-        if ($optimized === []) {
+        if ($optimizeResults === []) {
             throw ValidationException::withMessages([
                 'tables' => 'No allowed retention tables to optimize.',
             ]);
         }
 
         return response()->json([
-            'optimized_tables' => $optimized,
+            'optimized_tables' => array_column($optimizeResults, 'name'),
+            'optimize_results' => $optimizeResults,
             'status' => $pruner->platformStatus(),
         ]);
     }

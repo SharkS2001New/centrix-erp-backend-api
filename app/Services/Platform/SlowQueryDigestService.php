@@ -38,6 +38,7 @@ class SlowQueryDigestService
                 'database' => $schema,
                 'queries' => [],
                 'slow_tables' => $slowTables,
+                'refreshed_at' => now()->toIso8601String(),
                 'enable_hint' => [
                     'SET GLOBAL slow_query_log = 1;',
                     'SET GLOBAL long_query_time = 1;',
@@ -118,6 +119,39 @@ class SlowQueryDigestService
             'database' => $schema,
             'queries' => $queries,
             'slow_tables' => $slowTables,
+            'refreshed_at' => now()->toIso8601String(),
+            'digest_note' => 'Digests are cumulative MySQL performance_schema stats until you Reset digests. Refresh alone re-reads the same counters.',
+        ];
+    }
+
+    /**
+     * Clear statement digest summary so the Slow queries page starts fresh.
+     *
+     * @return array{ok: bool, message: string}
+     */
+    public function resetDigests(): array
+    {
+        if (! $this->performanceSchemaAvailable()) {
+            return [
+                'ok' => false,
+                'message' => 'performance_schema digests are not available on this MySQL instance.',
+            ];
+        }
+
+        try {
+            DB::statement('TRUNCATE TABLE performance_schema.events_statements_summary_by_digest');
+        } catch (\Throwable $e) {
+            Log::warning('Failed to truncate statement digests', ['error' => $e->getMessage()]);
+
+            return [
+                'ok' => false,
+                'message' => 'Could not reset digests (DB user may lack TRUNCATE on performance_schema): '.$e->getMessage(),
+            ];
+        }
+
+        return [
+            'ok' => true,
+            'message' => 'Statement digests cleared. New traffic will refill this list.',
         ];
     }
 

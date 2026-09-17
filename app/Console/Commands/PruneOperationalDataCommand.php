@@ -11,10 +11,11 @@ class PruneOperationalDataCommand extends Command
     protected $signature = 'erp:prune-operational-data
                             {--dry-run : Count matching rows without deleting}
                             {--days= : Delete rows older than this many days (overrides saved retention timers for this run)}
+                            {--limit= : Max rows to delete this run (across selected targets)}
                             {--only=* : Limit to table aliases (hikvision_agent_commands, hikvision_access_events, employee_attendance, kra_agent_commands, stock_reservations, audit_logs, cancelled_sales, expired_sales)}
                             {--optimize : Run OPTIMIZE TABLE on pruned retention tables afterward}';
 
-    protected $description = 'Prune operational tables older than retention (or --days). Optionally limit with --only.';
+    protected $description = 'Prune operational tables older than retention (or --days). Optionally limit with --only / --limit.';
 
     public function handle(OperationalDataPruneService $pruner): int
     {
@@ -25,6 +26,14 @@ class PruneOperationalDataCommand extends Command
         $days = $daysOption !== null && $daysOption !== '' ? (int) $daysOption : null;
         if ($days !== null && ($days < 1 || $days > 365)) {
             $this->error('--days must be between 1 and 365.');
+
+            return self::FAILURE;
+        }
+
+        $limitOption = $this->option('limit');
+        $maxRows = $limitOption !== null && $limitOption !== '' ? (int) $limitOption : null;
+        if ($maxRows !== null && ($maxRows < 1 || $maxRows > 500000)) {
+            $this->error('--limit must be between 1 and 500000.');
 
             return self::FAILURE;
         }
@@ -52,6 +61,7 @@ class PruneOperationalDataCommand extends Command
                         $this->line($message);
                     }
                 },
+                $maxRows,
             );
         } catch (InvalidArgumentException $e) {
             $this->error($e->getMessage());
@@ -61,7 +71,6 @@ class PruneOperationalDataCommand extends Command
 
         if (! $dryRun && (bool) $this->option('optimize')) {
             $tables = $only === [] ? null : $only;
-            // Map logical targets that share optimize tables
             if ($tables !== null) {
                 $tables = array_values(array_unique(array_map(
                     static fn (string $t) => $t === 'employee_attendance' ? 'employee_attendance' : $t,

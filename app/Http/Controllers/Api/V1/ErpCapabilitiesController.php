@@ -59,12 +59,10 @@ class ErpCapabilitiesController extends Controller
             );
         }
 
-        // Heal Administrator industry grants before serving a possibly-cached map.
-        // If rows were inserted, bump the capabilities version so stale "admin-only"
-        // workspace lists (common for hotel tenants) are rebuilt immediately.
-        $industryGrants = \App\Services\Erp\PermissionMatrixService::ensureAdministratorIndustryCatalogPermissions();
-        $hrPageGrants = \App\Services\Erp\PermissionMatrixService::ensureHrTimeAttendancePagesForExistingRoles();
-        if ($industryGrants > 0 || $hrPageGrants > 0) {
+        // Heal Administrator industry + HR page grants at most once per registry version.
+        // Warm logins skip the insertOrIgnore sweep; new deploys (mtime) re-run heal.
+        $heal = \App\Services\Erp\PermissionMatrixService::healLoginGrantsCached();
+        if (($heal['industry'] ?? 0) > 0 || ($heal['hr'] ?? 0) > 0) {
             OrganizationCache::invalidateCapabilities($orgId);
         }
 
@@ -107,20 +105,21 @@ class ErpCapabilitiesController extends Controller
     /** @return array<string, mixed> */
     protected function buildCapabilitiesPayload(Request $request): array
     {
-        // Keep Administrator industry shells current before computing workspaces.
-        \App\Services\Erp\PermissionMatrixService::ensure();
+        // Full matrix ensure once per registry version (not on every cold user rebuild).
+        \App\Services\Erp\PermissionMatrixService::ensureCached();
 
         $gate = $this->erp->gateForUser($request->user());
         $user = $request->user();
+        $permissionMap = $user
+            ? app(UserPermissionService::class)->permissionMapForUser($user, $gate)
+            : [];
 
         return array_merge($gate->toArray($user), [
             'is_super_admin' => (bool) $user?->is_super_admin,
             'is_admin' => (bool) $user?->is_admin,
             'access_scope' => $user?->access_scope ?? 'org',
             'branch_id' => $user?->branch_id,
-            'permissions' => $user
-                ? app(UserPermissionService::class)->permissionMapForUser($user, $gate)
-                : [],
+            'permissions' => $permissionMap,
             'assigned_permissions' => $user
                 ? app(UserPermissionService::class)->navigationPermissionMapForUser($user, $gate)
                 : [],
@@ -129,7 +128,7 @@ class ErpCapabilitiesController extends Controller
                 : [],
             'allow_org_provisioning' => (bool) $user?->is_super_admin
                 && config('erp.allow_org_provisioning'),
-            'workspaces' => app(WorkspaceResolver::class)->availableForUser($user, $gate),
+            'workspaces' => app(WorkspaceResolver::class)->availableForUser($user, $gate, $permissionMap),
         ]);
     }
 
@@ -196,8 +195,16 @@ class ErpCapabilitiesController extends Controller
 
         // Workspaces are user + config + industry dependent — always recompute so
         // Hotel POS / Hotel Backoffice labels and industry filters are not stuck in cache.
+        // Reuse the cached permission map when present (avoids a second full map build).
         if (! $user->is_super_admin) {
-            $payload['workspaces'] = app(WorkspaceResolver::class)->availableForUser($user, $gate);
+            $permissionMap = is_array($payload['permissions'] ?? null)
+                ? $payload['permissions']
+                : null;
+            $payload['workspaces'] = app(WorkspaceResolver::class)->availableForUser(
+                $user,
+                $gate,
+                $permissionMap,
+            );
         }
 
         if ($org) {

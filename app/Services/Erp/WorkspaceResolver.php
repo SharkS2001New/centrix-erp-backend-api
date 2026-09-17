@@ -52,17 +52,20 @@ class WorkspaceResolver
     ];
 
     /**
+     * @param  array<string, bool>|null  $permissionMap  When provided, skip rebuilding the map.
      * @return list<array{id: string, label: string, description: string, icon: string, home_path: string}>
      */
-    public function availableForUser(?User $user, CapabilityGate $gate): array
+    public function availableForUser(?User $user, CapabilityGate $gate, ?array $permissionMap = null): array
     {
         if ($user?->is_super_admin) {
             return [];
         }
 
-        $permissionMap = $user
-            ? app(UserPermissionService::class)->permissionMapForUser($user, $gate)
-            : [];
+        if ($permissionMap === null) {
+            $permissionMap = $user
+                ? app(UserPermissionService::class)->permissionMapForUser($user, $gate)
+                : [];
+        }
 
         $definitions = config('erp_workspaces', []);
         $available = [];

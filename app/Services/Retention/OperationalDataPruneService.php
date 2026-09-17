@@ -33,14 +33,17 @@ class OperationalDataPruneService
         'expired_sales',
     ];
 
+    /** Remaining row budget for this prune run (null = unlimited). */
+    protected ?int $maxRowsRemaining = null;
+
     public function __construct(protected SaleHardDeleteService $saleHardDelete) {}
 
     /**
      * @return array<string, int>
      */
-    public function pruneAll(bool $dryRun = false, ?int $days = null): array
+    public function pruneAll(bool $dryRun = false, ?int $days = null, ?int $maxRows = null): array
     {
-        return $this->pruneTargets(null, $days, $dryRun);
+        return $this->pruneTargets(null, $days, $dryRun, null, $maxRows);
     }
 
     /**
@@ -56,15 +59,20 @@ class OperationalDataPruneService
         ?int $days = null,
         bool $dryRun = false,
         ?callable $onProgress = null,
+        ?int $maxRows = null,
     ): array {
         DataRetentionSettingsResolver::applyToRuntime();
 
         $selected = $this->normalizeTargets($targets);
         $overrideDays = $days !== null ? max(1, min(365, $days)) : null;
+        $this->maxRowsRemaining = $maxRows !== null ? max(1, min(500_000, $maxRows)) : null;
         $verb = $dryRun ? 'Would delete' : 'Deleted';
         $scope = $overrideDays !== null
             ? "older than {$overrideDays} day(s)"
             : 'using saved retention timers';
+        if ($this->maxRowsRemaining !== null) {
+            $scope .= ", max {$this->maxRowsRemaining} rows this run";
+        }
 
         $this->emitProgress($onProgress, [
             'event' => 'status',
@@ -347,12 +355,7 @@ class OperationalDataPruneService
             ->whereNotNull('released_at')
             ->where('released_at', '<', $cutoff);
 
-        $count = (clone $query)->count();
-        if (! $dryRun && $count > 0) {
-            $query->delete();
-        }
-
-        return $count;
+        return $this->deleteMatching($query, $dryRun);
     }
 
     public function pruneKraAgentCommands(string $status, int $days, bool $dryRun = false): int
@@ -377,12 +380,7 @@ class OperationalDataPruneService
             $query->where('created_at', '<', $cutoff);
         }
 
-        $count = (clone $query)->count();
-        if (! $dryRun && $count > 0) {
-            $query->delete();
-        }
-
-        return $count;
+        return $this->deleteMatching($query, $dryRun);
     }
 
     public function pruneHikvisionAgentCommands(string $status, int $days, bool $dryRun = false): int
@@ -407,12 +405,7 @@ class OperationalDataPruneService
             $query->where('created_at', '<', $cutoff);
         }
 
-        $count = (clone $query)->count();
-        if (! $dryRun && $count > 0) {
-            $query->delete();
-        }
-
-        return $count;
+        return $this->deleteMatching($query, $dryRun);
     }
 
     /**
@@ -471,12 +464,18 @@ class OperationalDataPruneService
         $cutoff = $this->attendanceCutoffDate($days)->startOfDay();
         $base = EmployeeClockSession::query()->where('clock_in_at', '<', $cutoff);
         if ($dryRun) {
-            return min((clone $base)->count(), 25_000);
+            $count = min((clone $base)->count(), 25_000);
+
+            return $this->consumeRowBudget($count);
         }
 
         $deleted = 0;
         for ($i = 0; $i < 5; $i++) {
-            $ids = (clone $base)->orderBy('id')->limit(5000)->pluck('id');
+            if ($this->maxRowsRemaining !== null && $this->maxRowsRemaining <= 0) {
+                break;
+            }
+            $chunk = min(5000, $this->maxRowsRemaining ?? 5000);
+            $ids = (clone $base)->orderBy('id')->limit($chunk)->pluck('id');
             if ($ids->isEmpty()) {
                 break;
             }
@@ -489,7 +488,11 @@ class OperationalDataPruneService
             }
 
             EmployeeClockSession::query()->whereIn('id', $ids)->delete();
-            $deleted += $ids->count();
+            $n = $ids->count();
+            $deleted += $n;
+            if ($this->maxRowsRemaining !== null) {
+                $this->maxRowsRemaining -= $n;
+            }
         }
 
         return $deleted;
@@ -504,12 +507,18 @@ class OperationalDataPruneService
         $cutoff = $this->attendanceCutoffDate($days)->toDateString();
         $base = EmployeeAttendance::query()->where('attendance_date', '<', $cutoff);
         if ($dryRun) {
-            return min((clone $base)->count(), 25_000);
+            $count = min((clone $base)->count(), 25_000);
+
+            return $this->consumeRowBudget($count);
         }
 
         $deleted = 0;
         for ($i = 0; $i < 5; $i++) {
-            $ids = (clone $base)->orderBy('id')->limit(5000)->pluck('id');
+            if ($this->maxRowsRemaining !== null && $this->maxRowsRemaining <= 0) {
+                break;
+            }
+            $chunk = min(5000, $this->maxRowsRemaining ?? 5000);
+            $ids = (clone $base)->orderBy('id')->limit($chunk)->pluck('id');
             if ($ids->isEmpty()) {
                 break;
             }
@@ -521,7 +530,11 @@ class OperationalDataPruneService
             }
 
             EmployeeAttendance::query()->whereIn('id', $ids)->delete();
-            $deleted += $ids->count();
+            $n = $ids->count();
+            $deleted += $n;
+            if ($this->maxRowsRemaining !== null) {
+                $this->maxRowsRemaining -= $n;
+            }
         }
 
         return $deleted;
@@ -530,20 +543,87 @@ class OperationalDataPruneService
     /**
      * @param  \Illuminate\Database\Eloquent\Builder<\Illuminate\Database\Eloquent\Model>  $query
      */
-    protected function deleteInBatches($query, bool $dryRun, int $batchSize = 5000, int $maxBatches = 5): int
+    protected function deleteMatching($query, bool $dryRun): int
     {
+        if ($this->maxRowsRemaining !== null && $this->maxRowsRemaining <= 0) {
+            return 0;
+        }
+
+        $count = (clone $query)->count();
+        $toDelete = $this->consumeRowBudget($count);
+        if ($toDelete <= 0) {
+            return 0;
+        }
+
         if ($dryRun) {
-            return min((clone $query)->count(), $batchSize * $maxBatches);
+            return $toDelete;
+        }
+
+        if ($toDelete >= $count) {
+            $query->delete();
+
+            return $count;
         }
 
         $deleted = 0;
-        for ($i = 0; $i < $maxBatches; $i++) {
-            $ids = (clone $query)->orderBy('id')->limit($batchSize)->pluck('id');
+        while ($deleted < $toDelete) {
+            $chunk = min(5000, $toDelete - $deleted);
+            $ids = (clone $query)->orderBy('id')->limit($chunk)->pluck('id');
             if ($ids->isEmpty()) {
                 break;
             }
             $query->getModel()->newQuery()->whereIn('id', $ids)->delete();
             $deleted += $ids->count();
+        }
+
+        return $deleted;
+    }
+
+    protected function consumeRowBudget(int $available): int
+    {
+        if ($this->maxRowsRemaining === null) {
+            return $available;
+        }
+
+        $take = min($available, $this->maxRowsRemaining);
+        $this->maxRowsRemaining -= $take;
+
+        return $take;
+    }
+
+    /**
+     * @param  \Illuminate\Database\Eloquent\Builder<\Illuminate\Database\Eloquent\Model>  $query
+     */
+    protected function deleteInBatches($query, bool $dryRun, int $batchSize = 5000, int $maxBatches = 5): int
+    {
+        if ($this->maxRowsRemaining !== null && $this->maxRowsRemaining <= 0) {
+            return 0;
+        }
+
+        $cap = $this->maxRowsRemaining ?? ($batchSize * $maxBatches);
+        if ($dryRun) {
+            $count = min((clone $query)->count(), $cap);
+
+            return $this->consumeRowBudget($count);
+        }
+
+        $deleted = 0;
+        $limit = min($batchSize * $maxBatches, $cap);
+        while ($deleted < $limit) {
+            if ($this->maxRowsRemaining !== null && $this->maxRowsRemaining <= 0) {
+                break;
+            }
+            $chunk = min($batchSize, $limit - $deleted, $this->maxRowsRemaining ?? $batchSize);
+            $ids = (clone $query)->orderBy('id')->limit($chunk)->pluck('id');
+            if ($ids->isEmpty()) {
+                break;
+            }
+            $query->getModel()->newQuery()->whereIn('id', $ids)->delete();
+            $n = $ids->count();
+            $deleted += $n;
+            if ($this->maxRowsRemaining !== null) {
+                $this->maxRowsRemaining -= $n;
+            }
         }
 
         return $deleted;
@@ -558,12 +638,8 @@ class OperationalDataPruneService
         $days = max(1, $days ?? $this->auditLogsDays());
         $cutoff = Carbon::now()->subDays($days)->startOfDay();
         $query = AuditLog::query()->where('created_at', '<', $cutoff);
-        $count = (clone $query)->count();
-        if (! $dryRun && $count > 0) {
-            $query->delete();
-        }
 
-        return $count;
+        return $this->deleteMatching($query, $dryRun);
     }
 
     public function pruneTerminalSales(string $status, string $dateColumn, int $days, bool $dryRun = false): int
@@ -574,21 +650,27 @@ class OperationalDataPruneService
 
         $days = max(1, $days);
         $cutoff = Carbon::now()->subDays($days);
+        $limit = min(500, $this->maxRowsRemaining ?? 500);
+        if ($limit <= 0) {
+            return 0;
+        }
+
         $ids = Sale::query()
             ->where('status', $status)
             ->whereNotNull($dateColumn)
             ->where($dateColumn, '<', $cutoff)
             ->orderBy('id')
-            ->limit(500)
+            ->limit($limit)
             ->pluck('id')
             ->all();
 
+        $toDelete = $this->consumeRowBudget(count($ids));
         if ($dryRun) {
-            return count($ids);
+            return $toDelete;
         }
 
         $deleted = 0;
-        foreach ($ids as $id) {
+        foreach (array_slice($ids, 0, $toDelete) as $id) {
             $sale = Sale::query()->find($id);
             if (! $sale) {
                 continue;
@@ -608,8 +690,9 @@ class OperationalDataPruneService
      * @return array{
      *   retention: array<string, int|string>,
      *   schedule_time: string,
-     *   tables: list<array{name: string, mb: float, rows: int}>,
-     *   prune_targets: list<string>
+     *   tables: list<array{name: string, mb: float, rows: int, prunable_rows?: int|null, note?: string}>,
+     *   prune_targets: list<string>,
+     *   notes: list<string>
      * }
      */
     public function platformStatus(): array
@@ -638,11 +721,30 @@ class OperationalDataPruneService
                  WHERE table_schema = DATABASE() AND table_name = ?',
                 [$table],
             );
-            $sizes[] = [
+
+            $entry = [
                 'name' => $table,
                 'mb' => (float) ($row->mb ?? 0),
                 'rows' => (int) ($row->approx_rows ?? 0),
+                'prunable_rows' => null,
+                'note' => null,
             ];
+
+            if ($table === 'stock_reservations') {
+                $days = $this->releasedReservationDays();
+                $cutoff = Carbon::now()->subDays($days);
+                $releasedEligible = (int) StockReservation::query()
+                    ->whereNotNull('released_at')
+                    ->where('released_at', '<', $cutoff)
+                    ->count();
+                $active = (int) StockReservation::query()->whereNull('released_at')->count();
+                $entry['prunable_rows'] = $releasedEligible;
+                $entry['note'] = "Only released holds older than {$days}d are deleted ({$releasedEligible} eligible). {$active} still active (not pruned).";
+            } elseif ($table === 'hikvision_agent_commands') {
+                $entry['note'] = 'Already empty after delivery delete — Optimize will not shrink further.';
+            }
+
+            $sizes[] = $entry;
         }
 
         usort($sizes, fn ($a, $b) => $b['mb'] <=> $a['mb']);
@@ -655,7 +757,32 @@ class OperationalDataPruneService
             'tables' => $sizes,
             'optimizable_tables' => array_values(array_map(fn ($t) => $t['name'], $sizes)),
             'prune_targets' => self::TARGETS,
+            'notes' => [
+                'MB / row counts from information_schema are estimates and often lag until ANALYZE/OPTIMIZE.',
+                'OPTIMIZE only reclaims disk after rows were deleted. Empty or already-compact tables show little/no MB change.',
+                'stock_reservations prune never deletes active (unreleased) cart/sale holds.',
+                'Watch Live prune log for exact “Deleted N …” counts — that proves the run, not the MB column alone.',
+            ],
         ];
+    }
+
+    /**
+     * Measure current table size in MB (data + indexes).
+     */
+    public function tableSizeMb(string $table): float
+    {
+        if (! Schema::hasTable($table)) {
+            return 0.0;
+        }
+
+        $row = \Illuminate\Support\Facades\DB::selectOne(
+            'SELECT ROUND((data_length + index_length) / 1024 / 1024, 1) AS mb
+             FROM information_schema.tables
+             WHERE table_schema = DATABASE() AND table_name = ?',
+            [$table],
+        );
+
+        return (float) ($row->mb ?? 0);
     }
 
     /**
@@ -663,7 +790,7 @@ class OperationalDataPruneService
      *
      * @param  list<string>|null  $onlyTables  When set, only these tables are optimized.
      * @param  (callable(array<string, mixed>): void)|null  $onProgress
-     * @return list<string>
+     * @return list<array{name: string, before_mb: float, after_mb: float, delta_mb: float}>
      */
     public function optimizeRetentionTables(?array $onlyTables = null, ?callable $onProgress = null): array
     {
@@ -692,18 +819,33 @@ class OperationalDataPruneService
                 ]);
                 continue;
             }
+            $before = $this->tableSizeMb($table);
             $this->emitProgress($onProgress, [
                 'event' => 'step',
                 'key' => 'optimize_'.$table,
-                'message' => "OPTIMIZE TABLE `{$table}`…",
+                'message' => "OPTIMIZE TABLE `{$table}` (before {$before} MB)…",
                 'phase' => 'start',
             ]);
             \Illuminate\Support\Facades\DB::statement('OPTIMIZE TABLE `'.$table.'`');
-            $optimized[] = $table;
+            try {
+                \Illuminate\Support\Facades\DB::statement('ANALYZE TABLE `'.$table.'`');
+            } catch (\Throwable) {
+                // ANALYZE is best-effort for fresher information_schema stats.
+            }
+            $after = $this->tableSizeMb($table);
+            $delta = round($before - $after, 1);
+            $optimized[] = [
+                'name' => $table,
+                'before_mb' => $before,
+                'after_mb' => $after,
+                'delta_mb' => $delta,
+            ];
             $this->emitProgress($onProgress, [
                 'event' => 'step',
                 'key' => 'optimize_'.$table,
-                'message' => "Optimized {$table}",
+                'message' => $delta > 0
+                    ? "Optimized {$table}: {$before} → {$after} MB (−{$delta} MB)"
+                    : "Optimized {$table}: still {$after} MB (no reclaim — delete old rows first, or table was already compact)",
                 'phase' => 'done',
             ]);
         }
