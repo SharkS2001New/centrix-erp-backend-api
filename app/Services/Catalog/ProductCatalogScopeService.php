@@ -8,7 +8,6 @@ use App\Models\User;
 use App\Services\Auth\UserAccessService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Validation\ValidationException;
 
 class ProductCatalogScopeService
@@ -181,11 +180,37 @@ class ProductCatalogScopeService
         int $organizationId,
         int $branchId,
     ): Product {
-        $productCode = trim($productCode);
-        if ($productCode === '') {
+        $byCode = $this->findAccessibleProductsByCodes([$productCode], $organizationId, $branchId);
+        $key = strtolower(trim($productCode));
+        $product = $byCode->get($key);
+        if (! $product) {
             throw ValidationException::withMessages([
-                'product_code' => ['Product code is required.'],
+                'product_code' => ['Product not found or is not available at this branch.'],
             ]);
+        }
+
+        return $product;
+    }
+
+    /**
+     * Batch product lookup for checkout — one query instead of N per unique SKU.
+     *
+     * @param  list<string>  $productCodes
+     * @return \Illuminate\Support\Collection<string, Product> keyed by lowercased product_code
+     */
+    public function findAccessibleProductsByCodes(
+        array $productCodes,
+        int $organizationId,
+        int $branchId,
+    ): \Illuminate\Support\Collection {
+        $normalized = collect($productCodes)
+            ->map(fn ($code) => trim((string) $code))
+            ->filter()
+            ->unique(fn ($code) => strtolower($code))
+            ->values();
+
+        if ($normalized->isEmpty()) {
+            return collect();
         }
 
         if ($organizationId <= 0) {
@@ -194,23 +219,34 @@ class ProductCatalogScopeService
             ]);
         }
 
-        try {
-            $product = Product::query()
-                ->whereRaw('LOWER(product_code) = ?', [strtolower($productCode)])
-                ->where('organization_id', $organizationId)
-                ->whereNull('deleted_at')
-                ->firstOrFail();
-        } catch (ModelNotFoundException) {
-            throw ValidationException::withMessages([
-                'product_code' => ['Product not found or is not available at this branch.'],
-            ]);
+        $lowerCodes = $normalized->map(fn ($code) => strtolower($code))->all();
+        $placeholders = implode(',', array_fill(0, count($lowerCodes), '?'));
+        $products = Product::query()
+            ->where('organization_id', $organizationId)
+            ->whereNull('deleted_at')
+            ->whereRaw("LOWER(product_code) IN ({$placeholders})", $lowerCodes)
+            ->with(['unit', 'vat'])
+            ->get();
+
+        $byCode = collect();
+        foreach ($products as $product) {
+            $key = strtolower((string) $product->product_code);
+            if ($branchId > 0) {
+                $this->assertVisibleAtBranch($product, $branchId);
+            }
+            $byCode->put($key, $product);
         }
 
-        if ($branchId > 0) {
-            $this->assertVisibleAtBranch($product, $branchId);
+        foreach ($normalized as $code) {
+            $key = strtolower($code);
+            if (! $byCode->has($key)) {
+                throw ValidationException::withMessages([
+                    'product_code' => ["Product \"{$code}\" not found or is not available at this branch."],
+                ]);
+            }
         }
 
-        return $product;
+        return $byCode;
     }
 
     protected function assertBranchInOrganization(int $organizationId, int $branchId): void

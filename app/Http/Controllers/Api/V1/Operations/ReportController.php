@@ -2295,6 +2295,36 @@ class ReportController extends Controller
 
     public function kraReceipts(Request $request)
     {
+        // List/print preview fetch full payloads via GET /kra-responses/{id}.
+        // Shipping request/response JSON on every list row dominates TTFB.
+        $listColumns = [
+            'kra_response_id',
+            'sale_id',
+            'order_no',
+            'sale_order_num',
+            'pos_order_num',
+            'customer_name',
+            'receipt_date',
+            'receipt_at',
+            'invoice_number',
+            'serial_number',
+            'signature_link',
+            'kra_timestamp',
+            'status',
+            'error_message',
+            'document_type',
+            'relevant_invoice_number',
+            'cashier_id',
+            'cashier_name',
+            'branch_id',
+            'branch_name',
+            'channel',
+            'order_total',
+            'amount_paid',
+            'total_vat',
+            'organization_id',
+        ];
+
         return response()->json($this->reportFromView(
             'v_kra_receipts',
             $this->filters($request),
@@ -2311,6 +2341,12 @@ class ReportController extends Controller
             function ($q) {
                 $q->orderByDesc('receipt_at')->orderByDesc('kra_response_id');
             },
+            [
+                'select' => $listColumns,
+                'lean_summary' => ['order_total', 'amount_paid', 'total_vat'],
+                // Prefer timestamp range so (organization_id, created_at) can be used.
+                'prefer_timestamp_date_column' => 'receipt_at',
+            ],
         ));
     }
 
@@ -2687,7 +2723,7 @@ class ReportController extends Controller
      * @param  array<int, string>  $allowedCols
      * @return \Illuminate\Database\Query\Builder
      */
-    protected function buildFilteredReportViewQuery(string $view, array $filters, array $allowedCols)
+    protected function buildFilteredReportViewQuery(string $view, array $filters, array $allowedCols, array $options = [])
     {
         $request = request();
         $q = DB::table($view);
@@ -2703,16 +2739,31 @@ class ReportController extends Controller
                 $q->where($col, $filters[$col]);
             }
         }
-        if (! empty($filters['from_date']) && ! empty($filters['date_column'])) {
-            $dateColumn = $filters['date_column'];
-            if ($this->viewColumnExists($view, $dateColumn)) {
-                $q->where($dateColumn, '>=', $filters['from_date']);
+
+        $preferTimestamp = (string) ($options['prefer_timestamp_date_column'] ?? '');
+        $useTimestampRange = $preferTimestamp !== ''
+            && $this->viewColumnExists($view, $preferTimestamp)
+            && in_array((string) ($filters['date_column'] ?? ''), ['receipt_date', 'sale_date', ''], true);
+
+        if ($useTimestampRange) {
+            if (! empty($filters['from_date'])) {
+                $q->where($preferTimestamp, '>=', $filters['from_date'].' 00:00:00');
             }
-        }
-        if (! empty($filters['to_date']) && ! empty($filters['date_column'])) {
-            $dateColumn = $filters['date_column'];
-            if ($this->viewColumnExists($view, $dateColumn)) {
-                $q->where($dateColumn, '<=', $filters['to_date']);
+            if (! empty($filters['to_date'])) {
+                $q->where($preferTimestamp, '<=', $filters['to_date'].' 23:59:59');
+            }
+        } else {
+            if (! empty($filters['from_date']) && ! empty($filters['date_column'])) {
+                $dateColumn = $filters['date_column'];
+                if ($this->viewColumnExists($view, $dateColumn)) {
+                    $q->where($dateColumn, '>=', $filters['from_date']);
+                }
+            }
+            if (! empty($filters['to_date']) && ! empty($filters['date_column'])) {
+                $dateColumn = $filters['date_column'];
+                if ($this->viewColumnExists($view, $dateColumn)) {
+                    $q->where($dateColumn, '<=', $filters['to_date']);
+                }
             }
         }
 
@@ -2764,15 +2815,36 @@ class ReportController extends Controller
         return round((float) $normalized, 2);
     }
 
-    protected function reportFromView(string $view, array $filters, array $allowedCols, ?callable $orderBy = null): array
-    {
-        $q = $this->buildFilteredReportViewQuery($view, $filters, $allowedCols);
+    protected function reportFromView(
+        string $view,
+        array $filters,
+        array $allowedCols,
+        ?callable $orderBy = null,
+        array $options = [],
+    ): array {
+        $q = $this->buildFilteredReportViewQuery($view, $filters, $allowedCols, $options);
 
         // Full-filter aggregates for KPI / footer cards (not just the current page).
-        $summary = $this->aggregateFilteredReportSummary(clone $q, $view);
+        $leanSummary = $options['lean_summary'] ?? null;
+        if (is_array($leanSummary)) {
+            $summary = $this->aggregateLeanReportSummary(clone $q, $leanSummary);
+        } else {
+            $summary = $this->aggregateFilteredReportSummary(clone $q, $view);
+        }
 
         if ($orderBy) {
             $orderBy($q);
+        }
+
+        $select = $options['select'] ?? null;
+        if (is_array($select) && $select !== []) {
+            $existing = array_values(array_filter(
+                $select,
+                fn ($col) => $this->viewColumnExists($view, (string) $col),
+            ));
+            if ($existing !== []) {
+                $q->select($existing);
+            }
         }
 
         $paginator = $q->paginate(min((int) ($filters['per_page'] ?? 20), 200));
@@ -2780,6 +2852,39 @@ class ReportController extends Controller
         return array_merge($paginator->toArray(), [
             'summary' => $summary,
         ]);
+    }
+
+    /**
+     * Cheap COUNT + SUM for known money columns (avoids loading a full sample row
+     * that may include large JSON payload columns).
+     *
+     * @param  \Illuminate\Database\Query\Builder  $query
+     * @param  list<string>  $sumCols
+     * @return array<string, float|int>
+     */
+    protected function aggregateLeanReportSummary($query, array $sumCols): array
+    {
+        try {
+            $query->reorder();
+        } catch (\Throwable) {
+            // continue
+        }
+
+        $selects = ['COUNT(*) as row_count'];
+        foreach ($sumCols as $col) {
+            $escaped = str_replace('`', '``', (string) $col);
+            $selects[] = "COALESCE(SUM(`{$escaped}`), 0) as `{$escaped}`";
+        }
+
+        $agg = (clone $query)->selectRaw(implode(', ', $selects))->first();
+        $summary = [
+            'row_count' => (int) ($agg->row_count ?? 0),
+        ];
+        foreach ($sumCols as $col) {
+            $summary[$col] = round((float) ($agg->{$col} ?? 0), 4);
+        }
+
+        return $summary;
     }
 
     /**
@@ -2796,17 +2901,15 @@ class ReportController extends Controller
             // Some builders may not support reorder; continue.
         }
 
-        $sample = (clone $query)->limit(1)->first();
+        // Avoid SELECT * on views that include large JSON blobs (e.g. v_kra_receipts).
+        $sample = (clone $query)->selectRaw('1 as _probe')->limit(1)->first();
         if (! $sample) {
             return ['row_count' => 0];
         }
 
         $sumCols = [];
-        foreach (array_keys((array) $sample) as $col) {
-            $col = (string) $col;
-            if ($this->isSummableReportColumn($col) && $this->viewColumnExists($view, $col)) {
-                $sumCols[] = $col;
-            }
+        foreach ($this->summableColumnsForView($view) as $col) {
+            $sumCols[] = $col;
         }
 
         $selects = ['COUNT(*) as row_count'];
@@ -2899,6 +3002,35 @@ class ReportController extends Controller
             '/amount|total|vat|gross|net|qty|quantity|count|orders|revenue|collected|discount|credit|debit|sales|profit|expense|due|outstanding|variance|float|value|paid|balance|cost|cogs|received|sold|units|items|transactions|line_items|pending|working/',
             $col,
         );
+    }
+
+    /**
+     * Column names eligible for SUM in report summaries (from information_schema).
+     *
+     * @return list<string>
+     */
+    protected function summableColumnsForView(string $view): array
+    {
+        static $cache = [];
+        if (isset($cache[$view])) {
+            return $cache[$view];
+        }
+
+        $names = collect(DB::select(
+            'SELECT column_name AS name
+             FROM information_schema.columns
+             WHERE table_schema = DATABASE() AND table_name = ?',
+            [$view],
+        ))->pluck('name')->map(fn ($n) => (string) $n)->all();
+
+        $sumCols = [];
+        foreach ($names as $col) {
+            if ($this->isSummableReportColumn($col)) {
+                $sumCols[] = $col;
+            }
+        }
+
+        return $cache[$view] = $sumCols;
     }
 
     /** Add ERP-style PO numbers to LPO report rows (open LPO, purchases by supplier). */

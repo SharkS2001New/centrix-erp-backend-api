@@ -85,8 +85,11 @@ class KraReceiptsReportTest extends TestCase
         $this->assertSame('SCU-TEST-1', $hit['serial_number'] ?? null);
         $this->assertArrayHasKey('receipt_date', $hit);
         $this->assertArrayHasKey('signature_link', $hit);
-        $this->assertArrayHasKey('request_payload', $hit);
-        $this->assertArrayHasKey('response_payload', $hit);
+        // List API intentionally omits large JSON payloads (fetch via GET /kra-responses/{id}).
+        $this->assertArrayNotHasKey('request_payload', $hit);
+        $this->assertArrayNotHasKey('response_payload', $hit);
+        $this->assertArrayHasKey('document_type', $hit);
+        $this->assertArrayHasKey('order_total', $hit);
     }
 
     public function test_kra_compliance_summary_and_unfiscalized_sales(): void

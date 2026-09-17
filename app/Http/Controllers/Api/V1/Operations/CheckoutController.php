@@ -27,6 +27,7 @@ use App\Services\Erp\ErpContext;
 use App\Services\Erp\FloatSessionValidator;
 use App\Services\Erp\OrderWorkflowService;
 use App\Jobs\FinalizeSaleAfterCheckoutJob;
+use App\Jobs\SubmitSaleKraAfterCheckoutJob;
 use App\Services\Sales\SaleInventoryRestorer;
 use App\Services\Sales\PosOrderEditService;
 use App\Services\Accounting\CustomerInvoiceService;
@@ -119,14 +120,24 @@ class CheckoutController extends Controller
             }
         }
 
-        // Fiscalize after the sale commits (not inside the DB transaction) but still
-        // before the HTTP response so the first thermal receipt includes the eTIMS QR.
+        // Fiscalize after the sale commits (not inside the DB transaction).
+        // POS / backoffice wait sync so the first thermal receipt can include the eTIMS QR.
+        // Mobile confirmation does not print QR — defer Comstore RTT after the HTTP response
+        // so field sales are not blocked ~10s+ when the KRA agent is slow.
         $persistedKra = null;
         if ($pendingKra) {
-            $persistedKra = app(CheckoutKraSubmissionService::class)
-                ->submitForSale($sale, $gate, $buyerPin);
-            if ($persistedKra) {
-                $sale->setRelation('kraResponse', $persistedKra);
+            if ($channel === 'mobile') {
+                SubmitSaleKraAfterCheckoutJob::dispatch(
+                    (int) $sale->id,
+                    (int) $request->user()->id,
+                    $buyerPin,
+                )->afterResponse();
+            } else {
+                $persistedKra = app(CheckoutKraSubmissionService::class)
+                    ->submitForSale($sale, $gate, $buyerPin);
+                if ($persistedKra) {
+                    $sale->setRelation('kraResponse', $persistedKra);
+                }
             }
         }
 
@@ -1317,7 +1328,9 @@ class CheckoutController extends Controller
                 $sale->update(['order_change' => $orderChange]);
             }
 
-            $sale = $sale->fresh(['items.product.unit', 'payments.paymentMethod']);
+            $sale = (string) $cart->channel === 'mobile'
+                ? $sale->fresh()
+                : $sale->fresh(['items.product.unit', 'payments.paymentMethod']);
 
             // Held/draft parks are unfinished — do not fiscalize, invoice, journal, or notify.
             $isParkedOrder = in_array($orderStatus, ['held', 'draft'], true);
@@ -2634,8 +2647,8 @@ class CheckoutController extends Controller
         // branch. Live new-sale adds still enforce branch visibility.
         $branchId = $isOrderEdit ? 0 : (int) ($cart->branch_id ?? $user->branch_id ?? 0);
         $catalog = app(ProductCatalogScopeService::class);
-        $byCode = collect();
 
+        $codes = [];
         foreach ($lines as $line) {
             $code = trim((string) ($line->product_code ?? ''));
             if ($code === '') {
@@ -2643,17 +2656,10 @@ class CheckoutController extends Controller
                     'product_code' => ['Product code is required on every cart line.'],
                 ]);
             }
-
-            $key = strtolower($code);
-            if ($byCode->has($key)) {
-                continue;
-            }
-
-            $product = $catalog->findAccessibleProduct($code, $orgId, $branchId);
-            $byCode->put($key, $product->loadMissing(['unit', 'vat']));
+            $codes[] = $code;
         }
 
-        return $byCode;
+        return $catalog->findAccessibleProductsByCodes($codes, $orgId, $branchId);
     }
 
     /** Buyer KRA PIN for eTIMS — explicit checkout input, then linked customer record. */
