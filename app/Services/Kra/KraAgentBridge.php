@@ -373,8 +373,24 @@ class KraAgentBridge
             }
 
             if ($command->status === 'failed') {
+                $status = (int) ($command->response_status ?? 0);
+                $body = (string) ($command->response_body ?? '');
+                $err = trim((string) ($command->error_message ?? ''));
+
+                // Comstore answered with an HTTP error body — hand it to KraDeviceService
+                // so cashiers see the real message instead of a bare "Comstore HTTP 500".
+                if ($body !== '') {
+                    return [
+                        'status' => $status > 0 ? $status : 502,
+                        'body' => $body,
+                        'headers' => is_array($command->response_headers) ? $command->response_headers : [],
+                        'via_agent' => true,
+                        'agent_error' => $err !== '' ? $err : null,
+                    ];
+                }
+
                 throw new RuntimeException(
-                    trim((string) ($command->error_message ?: self::AGENT_NAME.' command failed.')),
+                    $err !== '' ? $err : self::AGENT_NAME.' command failed.',
                 );
             }
 
@@ -505,11 +521,62 @@ class KraAgentBridge
         $command->response_status = isset($payload['status']) ? (int) $payload['status'] : null;
         $command->response_body = isset($payload['body']) ? (string) $payload['body'] : null;
         $command->response_headers = is_array($payload['headers'] ?? null) ? $payload['headers'] : null;
-        $command->error_message = $success
-            ? null
-            : mb_substr(trim((string) ($payload['error'] ?? 'Agent command failed')), 0, 500);
+        $error = $success ? null : trim((string) ($payload['error'] ?? 'Agent command failed'));
+        if (! $success) {
+            $error = self::enrichAgentErrorMessage($error, (string) ($command->response_body ?? ''));
+        }
+        $command->error_message = $success ? null : mb_substr($error !== '' ? $error : 'Agent command failed', 0, 500);
         $command->completed_at = AppTimezone::now()->format('Y-m-d H:i:s');
         $command->save();
+    }
+
+    /**
+     * When the agent only reported "Comstore HTTP 500", pull the real fault from the response body.
+     */
+    public static function enrichAgentErrorMessage(?string $error, string $body): string
+    {
+        $error = trim((string) $error);
+        $detail = self::extractMessageFromComstoreBody($body);
+        if ($detail === '') {
+            return $error !== '' ? $error : 'Agent command failed';
+        }
+
+        if ($error === '' || preg_match('/^Comstore HTTP \d+$/i', $error) === 1) {
+            if (preg_match('/^Comstore HTTP (\d+)$/i', $error, $matches) === 1) {
+                return 'Comstore HTTP '.$matches[1].': '.$detail;
+            }
+
+            return $detail;
+        }
+
+        if (! str_contains(mb_strtolower($error), mb_strtolower($detail))) {
+            return mb_substr($error.': '.$detail, 0, 500);
+        }
+
+        return $error;
+    }
+
+    public static function extractMessageFromComstoreBody(string $body): string
+    {
+        $trimmed = trim($body);
+        if ($trimmed === '') {
+            return '';
+        }
+
+        $json = json_decode($trimmed, true);
+        if (is_array($json)) {
+            foreach (['message', 'Message', 'error', 'Error', 'detail', 'Detail', 'title', 'Title'] as $key) {
+                if (! empty($json[$key]) && is_string($json[$key])) {
+                    return trim($json[$key]);
+                }
+            }
+        }
+
+        if (str_starts_with($trimmed, '<') || str_starts_with(strtolower($trimmed), '<!doctype')) {
+            return '';
+        }
+
+        return mb_substr($trimmed, 0, 400);
     }
 
     protected function assertAllowedPath(string $path): void

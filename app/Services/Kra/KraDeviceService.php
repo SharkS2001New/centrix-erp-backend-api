@@ -1220,13 +1220,25 @@ class KraDeviceService
                     );
                 }
 
-                $rawMessage = is_array($responseData)
-                    ? ($responseData['message'] ?? $responseData['Message'] ?? $proxied['body'])
-                    : $proxied['body'];
+                $fromJson = '';
+                if (is_array($responseData)) {
+                    foreach (['message', 'Message', 'error', 'Error', 'detail', 'Detail'] as $key) {
+                        if (! empty($responseData[$key]) && is_string($responseData[$key])) {
+                            $fromJson = trim($responseData[$key]);
+                            break;
+                        }
+                    }
+                }
+                $agentError = trim((string) ($proxied['agent_error'] ?? ''));
+                $rawMessage = $fromJson !== ''
+                    ? $fromJson
+                    : ($agentError !== ''
+                        ? $agentError
+                        : (string) ($proxied['body'] ?? 'Comstore request failed'));
 
                 if (! $successful) {
                     return $this->deviceFailureResult(
-                        (string) $rawMessage,
+                        $rawMessage,
                         $payload,
                         $this->mapResponse(is_array($responseData) ? $responseData : null),
                     );

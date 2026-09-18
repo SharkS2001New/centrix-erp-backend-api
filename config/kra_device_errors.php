@@ -95,6 +95,9 @@ return [
         '/519\s*error\s*code|error\s*code\s*[,:]?\s*519/i' => 'The KRA fiscal device is not communicating. Check Centrix KRA Agent, Comstore, and that the device is powered on and connected.',
         '/aborted without a reason|signal is aborted|operation was aborted/i' => 'Centrix KRA Agent reported Comstore or the fiscal device stopped responding. Start Comstore, check the device, then try again.',
         '/has not checked in|has never checked in/i' => 'Centrix KRA Agent is not online. On the PC with Comstore, start the CentrixKraAgent Windows service (status http://127.0.0.1:9261), then try again.',
+        '/^Comstore HTTP 5\d{2}$/i' => 'Comstore had an internal error while fiscalizing this sale. On the shop PC, confirm Comstore is running, check Comstore logs for the detailed fault (often product, PIN, or device related), restart Comstore if needed, then retry from KRA invoices or Unfiscalized sales.',
+        '/^Comstore HTTP 4\d{2}$/i' => 'Comstore rejected this fiscal request. Check the shop PIN, device serial, and that products are registered on the KRA device, then retry.',
+        '/^Comstore HTTP \d+$/i' => 'Comstore returned an unexpected error while talking to the KRA device. Confirm Centrix KRA Agent and Comstore are running, then retry this sale.',
     ],
 
     'fallback' => 'KRA rejected the request via Centrix KRA Agent. Check Comstore, the fiscal device, and product registration, then try again.',

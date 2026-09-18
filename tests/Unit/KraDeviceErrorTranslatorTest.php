@@ -76,4 +76,22 @@ class KraDeviceErrorTranslatorTest extends TestCase
 
         $this->assertStringContainsString('stopped responding', strtolower($result['message']));
     }
+
+    public function test_translates_bare_comstore_http_500(): void
+    {
+        $result = KraDeviceErrorTranslator::translate('Comstore HTTP 500');
+
+        $this->assertStringContainsString('internal error', strtolower($result['message']));
+        $this->assertStringNotContainsString('Comstore HTTP 500', $result['message']);
+    }
+
+    public function test_unwraps_comstore_http_prefix_with_device_code(): void
+    {
+        $raw = 'Comstore HTTP 500: Signature generation failed: receiptNo is error (Code 314)';
+
+        $result = KraDeviceErrorTranslator::translate($raw);
+
+        $this->assertSame('314', $result['code']);
+        $this->assertStringContainsString('receipt or invoice reference', strtolower($result['message']));
+    }
 }

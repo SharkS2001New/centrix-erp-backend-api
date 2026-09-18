@@ -106,6 +106,25 @@ final class KraDeviceErrorTranslator
             }
         }
 
+        // Agent style: "Comstore HTTP 500: Signature generation failed (Code 314)"
+        // or "Comstore HTTP 500: {\"message\":\"...\"}"
+        if (preg_match('/^Comstore HTTP \d+\s*:\s*(.+)$/is', $text, $matches) === 1) {
+            $detail = trim($matches[1]);
+            if (str_starts_with($detail, '{')) {
+                $json = json_decode($detail, true);
+                if (is_array($json)) {
+                    foreach (['message', 'Message', 'error', 'Error', 'detail', 'Detail'] as $key) {
+                        if (! empty($json[$key]) && is_string($json[$key])) {
+                            return trim($json[$key]);
+                        }
+                    }
+                }
+            }
+            if ($detail !== '') {
+                return $detail;
+            }
+        }
+
         if (str_starts_with($text, 'Exception: ')) {
             $text = substr($text, strlen('Exception: '));
         }
@@ -170,6 +189,7 @@ final class KraDeviceErrorTranslator
     {
         return str_contains($text, 'HTTP request returned status code')
             || str_contains($text, 'cURL error')
+            || (bool) preg_match('/^Comstore HTTP \d+$/i', $text)
             || (str_starts_with($text, '{') && str_contains($text, '"ModelState"'));
     }
 
