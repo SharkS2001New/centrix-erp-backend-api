@@ -49,20 +49,26 @@ class MobileSalesApiTest extends TestCase
             ->assertCreated()
             ->json();
 
-        $this->withToken($token)
+        $addLine = $this->withToken($token)
             ->postJson("/api/v1/sales/carts/{$cart['id']}/lines", [
                 'product_code' => $product->product_code,
                 'quantity' => 1,
                 'unit_price' => 100,
                 'on_wholesale_retail' => 0,
             ])
-            ->assertCreated();
+            ->assertCreated()
+            ->json();
+
+        $this->assertSame((int) $cart['id'], (int) ($addLine['id'] ?? 0));
+        $this->assertArrayNotHasKey('lines', $addLine);
+        $this->assertArrayNotHasKey('next_order_num', $addLine);
 
         $this->withToken($token)
             ->getJson("/api/v1/sales/carts/{$cart['id']}")
             ->assertOk()
             ->assertJsonPath('channel', 'mobile')
-            ->assertJsonCount(1, 'lines');
+            ->assertJsonCount(1, 'lines')
+            ->assertJsonMissingPath('next_order_num');
     }
 
     public function test_mobile_session_can_access_dashboard_orders_and_catalogue_helpers(): void

@@ -3,6 +3,7 @@
 namespace App\Services\Customers;
 
 use App\Models\Customer;
+use App\Models\RouteModel;
 use App\Models\User;
 use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserMobileOrderScopeService;
@@ -27,9 +28,9 @@ class MobileCustomerService
         $term = trim((string) ($filters['q'] ?? ''));
         $routeId = isset($filters['route_id']) ? (int) $filters['route_id'] : null;
 
+        // Customers only — no routes/users joins. Joins force MySQL to materialize the
+        // full scoped set before LIMIT and make paginate()'s COUNT(*) expensive.
         $query = $this->scopedQuery($user, $routeId)
-            ->leftJoin('routes', 'customers.route_id', '=', 'routes.id')
-            ->leftJoin('users', 'customers.created_by', '=', 'users.id')
             ->select([
                 'customers.customer_num',
                 'customers.branch_id',
@@ -47,28 +48,53 @@ class MobileCustomerService
                 'customers.credit_limit',
                 'customers.current_balance',
                 'customers.customer_status',
-                'routes.route_name',
-                'users.username as created_by_username',
             ]);
 
         if ($term !== '') {
             SqlLikeSearch::applyCustomerSearch($query, $term);
         }
 
-        $paginator = $query
+        // Peek one extra row instead of COUNT(*) — mobile only needs hasMore (last_page).
+        $rows = $query
             ->orderBy('customers.customer_name')
-            ->paginate($perPage, ['*'], 'page', $page);
+            ->orderBy('customers.customer_num')
+            ->forPage($page, $perPage + 1)
+            ->get();
+
+        $hasMore = $rows->count() > $perPage;
+        if ($hasMore) {
+            $rows = $rows->take($perPage)->values();
+        }
+
+        $routeNames = $this->routeNamesById(
+            $rows->pluck('route_id')
+                ->filter(fn ($id) => $id !== null && (int) $id > 0)
+                ->map(fn ($id) => (int) $id)
+                ->unique()
+                ->values()
+                ->all()
+        );
+
+        $data = $rows
+            ->map(function ($row) use ($routeNames) {
+                $row->route_name = $routeNames[(int) ($row->route_id ?? 0)] ?? null;
+                $row->created_by_username = '';
+
+                return $this->presentRow($row);
+            })
+            ->values()
+            ->all();
+
+        $count = count($data);
 
         return [
-            'data' => collect($paginator->items())
-                ->map(fn ($row) => $this->presentRow($row))
-                ->values()
-                ->all(),
+            'data' => $data,
             'meta' => [
-                'current_page' => $paginator->currentPage(),
-                'last_page' => $paginator->lastPage(),
-                'per_page' => $paginator->perPage(),
-                'total' => $paginator->total(),
+                'current_page' => $page,
+                'last_page' => $hasMore ? $page + 1 : $page,
+                'per_page' => $perPage,
+                // Lower-bound total (enough for clients that ignore total and use hasMore).
+                'total' => (($page - 1) * $perPage) + $count + ($hasMore ? 1 : 0),
             ],
         ];
     }
@@ -178,12 +204,31 @@ class MobileCustomerService
             }
         }
 
+        // SoftDeletes already excludes deleted rows; keep explicit table-qualified
+        // filter for joined queries (show/update) so the predicate stays unambiguous.
         $query = Customer::query()
             ->whereNull('customers.deleted_at');
 
         $this->mobileScope->applyCustomerScope($query, $user, $routeId);
 
         return $query;
+    }
+
+    /**
+     * @param  list<int>  $routeIds
+     * @return array<int, string>
+     */
+    protected function routeNamesById(array $routeIds): array
+    {
+        if ($routeIds === []) {
+            return [];
+        }
+
+        return RouteModel::query()
+            ->whereIn('id', $routeIds)
+            ->pluck('route_name', 'id')
+            ->map(fn ($name) => (string) $name)
+            ->all();
     }
 
     /** @param array<string, mixed> $data */

@@ -94,14 +94,16 @@ trait HandlesCartAccess
         $cart->loadMissing('lines');
         $payload = array_merge($cart->toArray(), $extra);
 
-        if ($user && $user->organization_id) {
-            // Always peek — POS UI needs a stable “New Order - S00xx” label after line adds.
-            // Peek only (no lock); real allocation still happens at checkout.
+        $channel = strtolower(trim((string) ($cart->channel ?? '')));
+        $source = strtolower(trim((string) ($cart->order_source ?? '')));
+        $shouldPeekOrderNum = $includeNextOrderNum || $channel === 'pos' || $source === 'pos';
+
+        if ($shouldPeekOrderNum && $user && $user->organization_id) {
+            // POS needs a stable “New Order - S00xx” label after line adds.
+            // Mobile list/poll paths pass includeNextOrderNum=false — skip the sales ceiling scan.
             $payload['next_order_num'] = app(OrderNumberAllocator::class)
                 ->peekNextForOrganization((int) $user->organization_id);
 
-            $channel = strtolower(trim((string) ($cart->channel ?? '')));
-            $source = strtolower(trim((string) ($cart->order_source ?? '')));
             if ($channel === 'pos' || $source === 'pos') {
                 // Prefer the cashier's currently open float session so Cash Sales #
                 // resets after Z/close even when the reused cart still points at

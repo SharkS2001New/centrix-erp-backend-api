@@ -10,6 +10,7 @@ use App\Support\SalePaymentStatus;
 use App\Support\SalesOrderQueuePermissions;
 use App\Support\ShopDebtorsPermissions;
 use App\Support\SqlLikeSearch;
+use App\Services\Accounting\CustomerInvoiceService;
 use App\Services\Sales\BackofficeOrderLineEditService;
 use App\Services\Sales\CentrixSalesScope;
 use App\Services\Sales\MobileRouteExpenseService;
@@ -398,33 +399,58 @@ class SaleController extends BaseResourceController
     {
         // Joined list queries may carry select('sales.*'). selectRaw() appends columns and breaks
         // ONLY_FULL_GROUP_BY; drop any prior select/order before aggregating.
-        // Buckets use amount_paid vs order_total — never the denormalized payment_status label.
         $active = SalePaymentStatus::activeStatusSql('sales.');
-        $paid = SalePaymentStatus::isPaidSql('sales.');
-        $partial = SalePaymentStatus::isPartialSql('sales.');
-        $unpaid = SalePaymentStatus::isUnpaidSql('sales.');
-        $row = (clone $query)
-            ->cloneWithout(['columns', 'orders'])
+        $base = (clone $query)->cloneWithout(['columns', 'orders']);
+        $row = (clone $base)
             ->selectRaw("
                 SUM(CASE WHEN {$active} THEN 1 ELSE 0 END) as total,
                 SUM(CASE WHEN {$active} THEN COALESCE(sales.order_total, 0) ELSE 0 END) as revenue,
-                SUM(CASE WHEN {$active} AND {$paid} THEN 1 ELSE 0 END) as paid,
-                SUM(CASE WHEN {$active} AND {$partial} THEN 1 ELSE 0 END) as partial,
-                SUM(CASE WHEN {$active} AND {$unpaid} THEN 1 ELSE 0 END) as unpaid,
                 SUM(CASE WHEN sales.status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
                 SUM(CASE WHEN sales.status = 'expired' THEN 1 ELSE 0 END) as expired
             ")
             ->first();
 
+        $paymentBuckets = $this->paymentBucketsFromSettlements(
+            (clone $base)->whereRaw($active)->pluck('sales.id')->map(fn ($id) => (int) $id)->all(),
+        );
+
         return [
             'total' => (int) ($row->total ?? 0),
             'revenue' => round((float) ($row->revenue ?? 0), 2),
-            'unpaid' => (int) ($row->unpaid ?? 0),
-            'partial' => (int) ($row->partial ?? 0),
-            'paid' => (int) ($row->paid ?? 0),
+            'unpaid' => $paymentBuckets['unpaid'],
+            'partial' => $paymentBuckets['partial'],
+            'paid' => $paymentBuckets['paid'],
             'cancelled' => (int) ($row->cancelled ?? 0),
             'expired' => (int) ($row->expired ?? 0),
         ];
+    }
+
+    /**
+     * Match list rows + mark-paid modal: invoice/tender/credit settlement, not raw sales.amount_paid.
+     *
+     * @param  list<int>  $saleIds
+     * @return array{unpaid: int, partial: int, paid: int}
+     */
+    protected function paymentBucketsFromSettlements(array $saleIds): array
+    {
+        $counts = ['unpaid' => 0, 'partial' => 0, 'paid' => 0];
+        if ($saleIds === []) {
+            return $counts;
+        }
+
+        $settlements = app(CustomerInvoiceService::class)->settlementsBySaleId($saleIds);
+        foreach ($saleIds as $saleId) {
+            $bucket = (string) (($settlements[$saleId] ?? [])['payment_status'] ?? SalePaymentStatus::UNPAID);
+            if ($bucket === SalePaymentStatus::PAID) {
+                $counts['paid']++;
+            } elseif ($bucket === SalePaymentStatus::PARTIAL) {
+                $counts['partial']++;
+            } else {
+                $counts['unpaid']++;
+            }
+        }
+
+        return $counts;
     }
 
     /**

@@ -249,7 +249,23 @@ class CartOperationsController extends Controller
             $this->addCartLine($locked, $request->validated(), $user, $gate);
         }, 5);
 
-        return $this->cartResponse($this->freshOwnedCart($cart), $user, 201, includeNextOrderNum: false);
+        $fresh = $this->freshOwnedCart($cart);
+
+        // Mobile app ignores the POST body and refetches the cart when needed — skip
+        // presentCart (order-num peek, product joins, discount meta) on the hot path.
+        if ($this->isMobileChannelCart($fresh)) {
+            return response()->json([
+                'id' => (int) $fresh->id,
+                'update_no' => (int) $fresh->update_no,
+            ], 201);
+        }
+
+        return $this->cartResponse(
+            $fresh,
+            $user,
+            201,
+            includeNextOrderNum: $this->cartNeedsOrderNumPeek($fresh),
+        );
     }
 
     public function updateLine(UpdateCartLineRequest $request, int|string $cartId, string $lineRef)
@@ -2385,6 +2401,19 @@ class CartOperationsController extends Controller
         }
 
         return max(0, $amount);
+    }
+
+    protected function isMobileChannelCart(TemporaryCart $cart): bool
+    {
+        return strtolower(trim((string) ($cart->channel ?? ''))) === 'mobile';
+    }
+
+    protected function cartNeedsOrderNumPeek(TemporaryCart $cart): bool
+    {
+        $channel = strtolower(trim((string) ($cart->channel ?? '')));
+        $source = strtolower(trim((string) ($cart->order_source ?? '')));
+
+        return $channel === 'pos' || $source === 'pos';
     }
 
     protected function findProductForCart(TemporaryCart $cart, string $productCode, User $user): Product

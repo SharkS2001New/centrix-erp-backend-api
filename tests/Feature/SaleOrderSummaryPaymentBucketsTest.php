@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use App\Models\Customer;
+use App\Models\CustomerInvoice;
 use App\Models\PlatformSubscription;
 use App\Models\Sale;
 use App\Models\User;
@@ -207,5 +209,76 @@ class SaleOrderSummaryPaymentBucketsTest extends TestCase
         $this->assertSame('partial', SalePaymentStatus::normalizeLabel('partially_paid'));
         $this->assertSame('unpaid', SalePaymentStatus::resolve('cancelled', 100, 40));
         $this->assertSame('paid', SalePaymentStatus::resolve('paid', 100, 100));
+    }
+
+    public function test_summary_uses_invoice_settlement_not_stale_sales_amount_paid(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $this->seedLicense($admin);
+        Sanctum::actingAs($admin);
+
+        $customer = Customer::query()
+            ->where('organization_id', $admin->organization_id)
+            ->whereNull('deleted_at')
+            ->firstOrFail();
+        $cashier = User::query()->create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $admin->role_id,
+            'username' => 'settle_bucket_'.substr(uniqid(), -8),
+            'full_name' => 'Settle Bucket',
+            'email' => 'settle_bucket_'.substr(uniqid(), -8).'@example.test',
+            'password' => bcrypt('password'),
+            'is_admin' => false,
+            'access_scope' => 'org',
+        ]);
+        $day = now()->toDateString();
+
+        // sales row looks fully paid; live AR invoice still has an open balance.
+        $sale = $this->seedSale([
+            'order_num' => 880021,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $cashier->id,
+            'customer_num' => $customer->customer_num,
+            'status' => 'unpaid',
+            'payment_status' => 'paid',
+            'total_vat' => 0,
+            'order_total' => 2500,
+            'amount_paid' => 2500,
+            'created_at' => $day.' 15:00:00',
+            'effective_sale_date' => $day,
+        ]);
+
+        // Observer syncs invoice from sales — simulate stale sales row vs open AR.
+        CustomerInvoice::query()
+            ->where('sale_id', $sale->id)
+            ->whereNull('deleted_at')
+            ->update([
+                'invoice_total' => 2500,
+                'amount_paid' => 0,
+                'payment_status' => 0,
+            ]);
+
+        $res = $this->getJson('/api/v1/sales?'.http_build_query([
+            'from_date' => $day,
+            'to_date' => $day,
+            'date_field' => 'placed',
+            'channel' => 'mobile',
+            'cashier_id' => $cashier->id,
+            'exclude_status' => 'held',
+            'per_page' => 50,
+        ]))->assertOk();
+
+        $summary = $res->json('summary');
+        $this->assertSame(1, (int) $summary['total']);
+        $this->assertSame(1, (int) $summary['unpaid'], 'invoice balance must drive summary, not stale sales.amount_paid');
+        $this->assertSame(0, (int) $summary['paid']);
+
+        $row = collect($res->json('data'))->firstWhere('order_num', 880021);
+        $this->assertNotNull($row);
+        $this->assertSame('unpaid', $row['payment_status']);
+        $this->assertGreaterThan(0.01, (float) ($row['balance_due'] ?? 0));
     }
 }

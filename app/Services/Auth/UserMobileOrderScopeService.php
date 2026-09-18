@@ -18,10 +18,22 @@ use InvalidArgumentException;
  */
 class UserMobileOrderScopeService
 {
+    /** @var bool|null Cached for the request/process: user_assigned_routes table present. */
+    protected static ?bool $hasUserAssignedRoutesTable = null;
+
     public function __construct(
         protected UserAccessService $access,
         protected RouteAccessService $routes,
     ) {}
+
+    protected function hasUserAssignedRoutesTable(): bool
+    {
+        if (self::$hasUserAssignedRoutesTable === null) {
+            self::$hasUserAssignedRoutesTable = Schema::hasTable('user_assigned_routes');
+        }
+
+        return self::$hasUserAssignedRoutesTable;
+    }
 
     public const ROUTE_ONLY = 'route_only';
 
@@ -76,7 +88,7 @@ class UserMobileOrderScopeService
     public function assignedRouteIds(User $user): array
     {
         $ids = [];
-        if (Schema::hasTable('user_assigned_routes')) {
+        if ($this->hasUserAssignedRoutesTable()) {
             if ($user->relationLoaded('assignedRoutes')) {
                 $ids = $user->assignedRoutes
                     ->pluck('id')
@@ -117,7 +129,7 @@ class UserMobileOrderScopeService
             $this->routes->assertAccessible($user, $routeId, 'assigned_route_ids');
         }
 
-        if (Schema::hasTable('user_assigned_routes')) {
+        if ($this->hasUserAssignedRoutesTable()) {
             $user->assignedRoutes()->sync($ids);
         }
 
