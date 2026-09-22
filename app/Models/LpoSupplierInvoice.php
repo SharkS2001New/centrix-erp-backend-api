@@ -22,4 +22,9 @@ class LpoSupplierInvoice extends Model
     {
         return $this->belongsTo(LpoMst::class, 'lpo_no', 'lpo_no');
     }
+
+    public function supplier()
+    {
+        return $this->belongsTo(Supplier::class, 'supplier_id');
+    }
 }

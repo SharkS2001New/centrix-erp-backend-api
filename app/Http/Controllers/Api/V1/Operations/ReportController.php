@@ -24,6 +24,7 @@ use App\Services\Pos\TillReportMetrics;
 use App\Services\Sales\CentrixSalesScope;
 use App\Support\AppTimezone;
 use App\Support\EffectiveSaleDate;
+use App\Support\SalePaymentStatus;
 use App\Support\SalesChannelLabels;
 use App\Support\SalesReportUserScope;
 use Carbon\Carbon;
@@ -596,6 +597,18 @@ class ReportController extends Controller
     public function salesByCustomer(Request $request)
     {
         $filters = $this->filters($request);
+        $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
+        $fromDate = trim((string) ($filters['from_date'] ?? ''));
+        $toDate = trim((string) ($filters['to_date'] ?? ''));
+        $hasPeriod = $orgId && $fromDate !== '' && $toDate !== '';
+
+        // Date range → period aggregates from sales (same placed-date + unpaid maths as
+        // Sales → Unpaid / Sales by User). The customer view is lifetime and must not
+        // be filtered with whereExists alone (that kept lifetime purchased/outstanding).
+        if ($hasPeriod) {
+            return $this->salesByCustomerForPeriod($request, $filters, (int) $orgId, $fromDate, $toDate);
+        }
+
         $q = DB::table('v_sales_by_customer');
         $this->scopeReportQueryToOrganization($q, $request, 'v_sales_by_customer', [
             'customer_num', 'route_name',
@@ -612,31 +625,6 @@ class ReportController extends Controller
                 $inner->where('customer_name', 'like', "%{$search}%")
                     ->orWhere('customer_num', 'like', "%{$search}%")
                     ->orWhere('phone_number', 'like', "%{$search}%");
-            });
-        }
-
-        $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
-        if ($orgId && ! empty($filters['from_date']) && ! empty($filters['to_date'])) {
-            $legacy = CentrixSalesScope::legacyExcludeSql('s');
-            $statuses = CentrixSalesScope::reportPipelineStatuses();
-            $q->whereExists(function ($sub) use ($filters, $orgId, $legacy, $statuses) {
-                $sub->select(DB::raw('1'))
-                    ->from('sales as s')
-                    ->where('s.organization_id', $orgId)
-                    ->whereIn('s.status', $statuses)
-                    ->where('s.archived', 0)
-                    ->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) >= ?', [$filters['from_date']])
-                    ->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) <= ?', [$filters['to_date']])
-                    ->whereRaw($legacy)
-                    ->where(function ($match) {
-                        // Registered customers: match by customer_num.
-                        // Walk-in bucket (NULL customer_num): match anonymous cash sales.
-                        $match->whereColumn('s.customer_num', 'v_sales_by_customer.customer_num')
-                            ->orWhere(function ($walkIn) {
-                                $walkIn->whereNull('s.customer_num')
-                                    ->whereNull('v_sales_by_customer.customer_num');
-                            });
-                    });
             });
         }
 
@@ -658,6 +646,117 @@ class ReportController extends Controller
                 'row_count' => (int) ($summaryRaw->customer_count ?? 0),
                 'total_orders' => (int) ($summaryRaw->total_orders ?? 0),
                 'total_purchased' => round((float) ($summaryRaw->total_purchased ?? 0), 2),
+                'total_outstanding' => round((float) ($summaryRaw->total_outstanding ?? 0), 2),
+                'ar_balance' => round((float) ($summaryRaw->ar_balance ?? 0), 2),
+            ],
+        ]));
+    }
+
+    /**
+     * Period Sales by Customer — order totals / unpaid for placed dates in range.
+     *
+     * @param  array<string, mixed>  $filters
+     */
+    protected function salesByCustomerForPeriod(
+        Request $request,
+        array $filters,
+        int $orgId,
+        string $fromDate,
+        string $toDate,
+    ) {
+        $legacy = CentrixSalesScope::legacyExcludeSql('s');
+        $statuses = CentrixSalesScope::reportPipelineStatuses();
+        $saleDate = CentrixSalesScope::reportSaleDateSql('s');
+        $unpaidSql = SalePaymentStatus::isUnpaidSql('s.');
+        $outstandingSql = 'GREATEST(COALESCE(s.order_total, 0) - COALESCE(s.amount_paid, 0), 0)';
+
+        $q = DB::table('sales as s')
+            ->leftJoin('customers as c', function ($join) {
+                $join->on('c.customer_num', '=', 's.customer_num')
+                    ->on('c.organization_id', '=', 's.organization_id')
+                    ->whereNull('c.deleted_at');
+            })
+            ->leftJoin('routes as r', 'r.id', '=', 'c.route_id')
+            ->where('s.organization_id', $orgId)
+            ->whereIn('s.status', $statuses)
+            ->where('s.archived', 0)
+            ->whereRaw($legacy)
+            ->whereRaw("{$saleDate} >= ?", [$fromDate])
+            ->whereRaw("{$saleDate} <= ?", [$toDate]);
+
+        $access = app(UserAccessService::class);
+        $branchId = $access->branchId($request->user());
+        if ($branchId !== null) {
+            $q->where('s.branch_id', $branchId);
+        }
+
+        if (isset($filters['customer_num']) && $filters['customer_num'] !== '') {
+            $q->where('s.customer_num', $filters['customer_num']);
+        }
+        if (isset($filters['route_name']) && $filters['route_name'] !== '') {
+            $q->where('r.route_name', $filters['route_name']);
+        }
+        if ($search = trim((string) $request->input('q', ''))) {
+            $q->where(function ($inner) use ($search) {
+                $inner->where('c.customer_name', 'like', "%{$search}%")
+                    ->orWhere('s.customer_num', 'like', "%{$search}%")
+                    ->orWhere('c.phone_number', 'like', "%{$search}%")
+                    ->orWhere('s.customer_name_override', 'like', "%{$search}%");
+            });
+        }
+
+        $grouped = DB::query()
+            ->fromSub(
+                (clone $q)->selectRaw("
+                    s.organization_id,
+                    s.customer_num,
+                    COALESCE(
+                        NULLIF(TRIM(c.customer_name), ''),
+                        NULLIF(TRIM(s.customer_name_override), ''),
+                        CASE WHEN s.customer_num IS NULL THEN 'Walk-in' ELSE '—' END
+                    ) AS customer_name,
+                    c.phone_number,
+                    r.route_name,
+                    COUNT(DISTINCT s.id) AS total_orders,
+                    COALESCE(SUM(s.order_total), 0) AS total_purchased,
+                    COALESCE(SUM(CASE WHEN {$unpaidSql} THEN s.order_total ELSE 0 END), 0) AS unpaid_sales,
+                    COALESCE(SUM({$outstandingSql}), 0) AS total_outstanding,
+                    COALESCE(MAX(c.current_balance), 0) AS ar_balance
+                ")
+                    ->groupByRaw("
+                        s.organization_id,
+                        s.customer_num,
+                        COALESCE(
+                            NULLIF(TRIM(c.customer_name), ''),
+                            NULLIF(TRIM(s.customer_name_override), ''),
+                            CASE WHEN s.customer_num IS NULL THEN 'Walk-in' ELSE '—' END
+                        ),
+                        c.phone_number,
+                        r.route_name
+                    "),
+                'sales_by_customer_period',
+            );
+
+        $perPage = min((int) ($filters['per_page'] ?? 20), 200);
+        $summaryRaw = DB::query()
+            ->fromSub(clone $grouped, 'sales_by_customer_period_summary')
+            ->selectRaw('COUNT(*) as customer_count')
+            ->selectRaw('COALESCE(SUM(total_orders), 0) as total_orders')
+            ->selectRaw('COALESCE(SUM(total_purchased), 0) as total_purchased')
+            ->selectRaw('COALESCE(SUM(unpaid_sales), 0) as unpaid_sales')
+            ->selectRaw('COALESCE(SUM(total_outstanding), 0) as total_outstanding')
+            ->selectRaw('COALESCE(SUM(ar_balance), 0) as ar_balance')
+            ->first();
+
+        $paginator = $grouped->orderByDesc('total_purchased')->paginate($perPage);
+
+        return response()->json(array_merge($paginator->toArray(), [
+            'summary' => [
+                'customer_count' => (int) ($summaryRaw->customer_count ?? 0),
+                'row_count' => (int) ($summaryRaw->customer_count ?? 0),
+                'total_orders' => (int) ($summaryRaw->total_orders ?? 0),
+                'total_purchased' => round((float) ($summaryRaw->total_purchased ?? 0), 2),
+                'unpaid_sales' => round((float) ($summaryRaw->unpaid_sales ?? 0), 2),
                 'total_outstanding' => round((float) ($summaryRaw->total_outstanding ?? 0), 2),
                 'ar_balance' => round((float) ($summaryRaw->ar_balance ?? 0), 2),
             ],

@@ -69,7 +69,7 @@ class RegisterKraProductsJob implements ShouldQueue
             $result = $service->registerProducts($products->all(), $path, $finance);
 
             if (empty($result['success'])) {
-                if ($service->isAlreadyRegisteredPluResult($result)) {
+                if (KraDeviceService::isAlreadyRegisteredPluResult($result)) {
                     $skipped = (int) ($result['product_count'] ?? $products->count());
                     $tasks->markCompleted($task, [
                         'success' => true,
@@ -85,15 +85,19 @@ class RegisterKraProductsJob implements ShouldQueue
                     return;
                 }
 
-                throw new \RuntimeException((string) ($result['message'] ?? 'KRA registration failed.'));
+                // Agent offline / Comstore unreachable — fail the task with the device message
+                // (do not rethrow; that used to hit app(KraDeviceService) and mask the real error).
+                $tasks->markFailed(
+                    $task,
+                    (string) ($result['message'] ?? 'KRA registration failed. Check that Centrix KRA Agent is running.'),
+                );
+
+                return;
             }
 
             $tasks->markCompleted($task, $result);
         } catch (\Throwable $e) {
-            $alreadyRegistered = app(KraDeviceService::class)->isAlreadyRegisteredPluResult([
-                'message' => $e->getMessage(),
-            ]);
-            if ($alreadyRegistered) {
+            if (KraDeviceService::isAlreadyRegisteredPluResult(['message' => $e->getMessage()])) {
                 $tasks->markCompleted($task, [
                     'success' => true,
                     'message' => 'Products were already on the KRA device (skipped).',
@@ -110,8 +114,23 @@ class RegisterKraProductsJob implements ShouldQueue
                 'task_id' => $this->taskId,
                 'error' => $e->getMessage(),
             ]);
-            $tasks->markFailed($task, $e->getMessage());
-            throw $e;
+            $tasks->markFailed($task, $this->userFacingFailureMessage($e));
         }
+    }
+
+    protected function userFacingFailureMessage(\Throwable $e): string
+    {
+        $message = trim($e->getMessage());
+        if ($message === '') {
+            return 'KRA product registration failed. Check that Centrix KRA Agent is running and reachable.';
+        }
+
+        // Container mis-resolve must never surface to the UI if something else regresses.
+        if (str_contains($message, 'Unresolvable dependency')
+            || str_contains($message, 'deviceBaseUrl')) {
+            return 'KRA product registration failed. Check that Centrix KRA Agent is running and reachable.';
+        }
+
+        return $message;
     }
 }

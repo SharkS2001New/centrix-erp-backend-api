@@ -93,14 +93,81 @@ class LpoSupplierInvoiceController extends Controller
 
     public function index(Request $request)
     {
-        $query = $this->scopedQuery($request);
-        if ($request->filled('filter.lpo_no')) {
-            $query->where('lpo_no', (int) $request->input('filter.lpo_no'));
+        $query = $this->scopedQuery($request)
+            ->with([
+                'supplier:id,supplier_name,supplier_code',
+                'lpo:lpo_no,organization_id,lpo_seq,reference_number,created_at',
+            ]);
+
+        if ($lpoNo = $request->input('lpo_no') ?? $request->input('filter.lpo_no')) {
+            $query->where('lpo_no', (int) $lpoNo);
+        }
+        if ($supplierId = $request->input('supplier_id') ?? $request->input('filter.supplier_id')) {
+            $query->where('supplier_id', (int) $supplierId);
+        }
+        if ($from = $request->input('date_from') ?? $request->input('filter.date_from')) {
+            $query->whereRaw('DATE(COALESCE(invoice_date, created_at)) >= ?', [$from]);
+        }
+        if ($to = $request->input('date_to') ?? $request->input('filter.date_to')) {
+            $query->whereRaw('DATE(COALESCE(invoice_date, created_at)) <= ?', [$to]);
         }
 
-        return response()->json([
-            'data' => $query->limit(200)->get(),
-        ]);
+        if ($q = trim((string) $request->input('q', ''))) {
+            $query->where(function ($inner) use ($q) {
+                $inner->where('supplier_invoice_number', 'like', "%{$q}%")
+                    ->orWhere('file_name', 'like', "%{$q}%")
+                    ->orWhereHas(
+                        'supplier',
+                        fn ($supplier) => $supplier->where('supplier_name', 'like', "%{$q}%")
+                            ->orWhere('supplier_code', 'like', "%{$q}%"),
+                    )
+                    ->orWhereHas(
+                        'lpo',
+                        fn ($lpo) => $lpo->where('reference_number', 'like', "%{$q}%")
+                            ->orWhere('lpo_seq', 'like', "%{$q}%")
+                            ->orWhere('lpo_no', 'like', "%{$q}%"),
+                    );
+            });
+        }
+
+        $perPage = min(max((int) $request->input('per_page', 25), 1), 100);
+        $paginator = $query->paginate($perPage);
+        $paginator->setCollection(
+            $paginator->getCollection()->map(fn (LpoSupplierInvoice $invoice) => $this->mapListRow($invoice)),
+        );
+
+        return response()->json($paginator);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function mapListRow(LpoSupplierInvoice $invoice): array
+    {
+        $lpo = $invoice->lpo;
+        $supplier = $invoice->supplier;
+
+        return [
+            'id' => (int) $invoice->id,
+            'lpo_no' => (int) $invoice->lpo_no,
+            'lpo_seq' => $lpo?->lpo_seq !== null ? (int) $lpo->lpo_seq : null,
+            'reference_number' => $lpo?->reference_number,
+            'po_number' => $lpo?->reference_number
+                ?: ($lpo?->lpo_seq !== null ? 'LPO-'.$lpo->lpo_seq : null),
+            'supplier_id' => (int) $invoice->supplier_id,
+            'supplier_name' => $supplier?->supplier_name,
+            'supplier_code' => $supplier?->supplier_code,
+            'supplier_invoice_number' => (string) ($invoice->supplier_invoice_number ?? ''),
+            'invoice_date' => $invoice->invoice_date,
+            'invoice_amount' => $invoice->invoice_amount !== null
+                ? round((float) $invoice->invoice_amount, 2)
+                : null,
+            'has_document' => filled($invoice->file_path),
+            'file_name' => $invoice->file_name,
+            'mime_type' => $invoice->mime_type,
+            'file_size' => $invoice->file_size !== null ? (int) $invoice->file_size : null,
+            'created_at' => $invoice->created_at,
+        ];
     }
 
     public function store(Request $request)

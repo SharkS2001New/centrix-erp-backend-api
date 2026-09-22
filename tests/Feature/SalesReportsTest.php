@@ -388,6 +388,57 @@ class SalesReportsTest extends TestCase
         );
     }
 
+    public function test_sales_by_user_unpaid_includes_booked_and_excludes_partial(): void
+    {
+        $today = now()->toDateString();
+        $uniqueUnpaid = 77771.25;
+
+        Sale::query()->create([
+            'order_num' => 995040,
+            'branch_id' => $this->admin->branch_id,
+            'organization_id' => $this->admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $this->admin->id,
+            'status' => 'booked',
+            'payment_status' => 'unpaid',
+            'order_total' => $uniqueUnpaid,
+            'total_vat' => 0,
+            'amount_paid' => 0,
+            'archived' => 0,
+            'created_at' => now(),
+        ]);
+
+        Sale::query()->create([
+            'order_num' => 995041,
+            'branch_id' => $this->admin->branch_id,
+            'organization_id' => $this->admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $this->admin->id,
+            'status' => 'booked',
+            'payment_status' => 'partial',
+            'order_total' => 2000,
+            'total_vat' => 0,
+            'amount_paid' => 500,
+            'archived' => 0,
+            'created_at' => now(),
+        ]);
+
+        $summary = $this->getJson(
+            "/api/v1/reports/sales-by-user?from_date={$today}&to_date={$today}&date_column=sale_date&cashier_id={$this->admin->id}&channel=backend&per_page=200"
+        )->assertOk()->json('summary');
+
+        $this->assertGreaterThanOrEqual(
+            $uniqueUnpaid,
+            (float) ($summary['unpaid_sales'] ?? 0),
+            'Booked unpaid must count in Unpaid (same as Sales → Unpaid).',
+        );
+        // Partial still has payment — must not inflate Unpaid (zero-payment bucket).
+        $this->assertLessThan(
+            $uniqueUnpaid + 2000,
+            (float) ($summary['unpaid_sales'] ?? 0) + 0.01,
+        );
+    }
+
     public function test_dispatch_orders_match_orders_without_required_date_using_created_at(): void
     {
         $route = RouteModel::query()->firstOrFail();

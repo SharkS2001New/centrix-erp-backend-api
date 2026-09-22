@@ -62,6 +62,40 @@ class LpoSupplierInvoiceTest extends TestCase
         ]);
     }
 
+    public function test_user_can_search_supplier_invoices_by_document_number(): void
+    {
+        $supplier = Supplier::where('supplier_code', 'SUP-001')->firstOrFail();
+        $lpo = $this->createLpo($supplier);
+
+        $this->post('/api/v1/lpo-supplier-invoices', [
+            'lpo_no' => $lpo->lpo_no,
+            'supplier_id' => $supplier->id,
+            'supplier_invoice_number' => 'INV-SEARCH-ABC-99',
+            'invoice_date' => '2026-07-13',
+            'invoice_amount' => 2500,
+            'file' => UploadedFile::fake()->create('search-me.pdf', 40, 'application/pdf'),
+        ])->assertCreated();
+
+        $this->post('/api/v1/lpo-supplier-invoices', [
+            'lpo_no' => $lpo->lpo_no,
+            'supplier_id' => $supplier->id,
+            'supplier_invoice_number' => 'OTHER-INV-1',
+            'invoice_date' => '2026-07-14',
+            'file' => UploadedFile::fake()->create('other.pdf', 40, 'application/pdf'),
+        ])->assertCreated();
+
+        $response = $this->getJson('/api/v1/lpo-supplier-invoices?q=SEARCH-ABC&per_page=15')
+            ->assertOk();
+
+        $rows = $response->json('data');
+        $this->assertIsArray($rows);
+        $this->assertCount(1, $rows);
+        $this->assertSame('INV-SEARCH-ABC-99', $rows[0]['supplier_invoice_number']);
+        $this->assertTrue($rows[0]['has_document']);
+        $this->assertNotEmpty($rows[0]['supplier_name']);
+        $this->assertSame((int) $lpo->lpo_no, (int) $rows[0]['lpo_no']);
+    }
+
     public function test_user_can_upload_supplier_invoice_document(): void
     {
         $supplier = Supplier::where('supplier_code', 'SUP-001')->firstOrFail();

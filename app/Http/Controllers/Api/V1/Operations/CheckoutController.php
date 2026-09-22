@@ -68,11 +68,21 @@ class CheckoutController extends Controller
 
     public function fromCart(CheckoutRequest $request, int|string $cartId)
     {
+        $timingStarted = microtime(true);
+        $timing = [
+            'tx_ms' => 0,
+            'prior_edit_ms' => 0,
+            'kra_ms' => 0,
+            'kra_mode' => 'none',
+        ];
+
         $cart = $this->findOwnedCart($cartId, $request->user());
         $gate = $this->erp->gateForUser($request->user());
         $channel = (string) $cart->channel;
         try {
+            $txStarted = microtime(true);
             $result = $this->checkoutFromCart($cart, $request->user(), $gate, $request->validated());
+            $timing['tx_ms'] = (int) round((microtime(true) - $txStarted) * 1000);
         } catch (InvalidArgumentException $e) {
             throw ValidationException::withMessages([
                 'checkout' => $e->getMessage(),
@@ -94,6 +104,7 @@ class CheckoutController extends Controller
         // or deducting stock for the revision (background job may still be in flight).
         $priorSaleId = (int) (($sale->fulfillment_meta['supersedes_sale_id'] ?? 0));
         if ($priorSaleId > 0) {
+            $priorStarted = microtime(true);
             $priorSale = Sale::query()->find($priorSaleId);
             if ($priorSale) {
                 $priorMeta = is_array($priorSale->fulfillment_meta) ? $priorSale->fulfillment_meta : [];
@@ -118,6 +129,7 @@ class CheckoutController extends Controller
                     app(PosOrderEditService::class)->fiscalVoidBeforeEdit($priorSale->fresh() ?? $priorSale, $request->user(), $gate);
                 }
             }
+            $timing['prior_edit_ms'] = (int) round((microtime(true) - $priorStarted) * 1000);
         }
 
         // Fiscalize after the sale commits (not inside the DB transaction).
@@ -126,19 +138,23 @@ class CheckoutController extends Controller
         // so field sales are not blocked ~10s+ when the KRA agent is slow.
         $persistedKra = null;
         if ($pendingKra) {
+            $kraStarted = microtime(true);
             if ($channel === 'mobile') {
+                $timing['kra_mode'] = 'deferred';
                 SubmitSaleKraAfterCheckoutJob::dispatch(
                     (int) $sale->id,
                     (int) $request->user()->id,
                     $buyerPin,
                 )->afterResponse();
             } else {
+                $timing['kra_mode'] = 'sync';
                 $persistedKra = app(CheckoutKraSubmissionService::class)
                     ->submitForSale($sale, $gate, $buyerPin);
                 if ($persistedKra) {
                     $sale->setRelation('kraResponse', $persistedKra);
                 }
             }
+            $timing['kra_ms'] = (int) round((microtime(true) - $kraStarted) * 1000);
         }
 
         // Stock ledger, journals, SMS/email, trip assignment, and cache invalidation
@@ -150,6 +166,18 @@ class CheckoutController extends Controller
                 $deductStock,
                 $runSideEffects,
             )->afterResponse();
+        }
+
+        $timing['total_ms'] = (int) round((microtime(true) - $timingStarted) * 1000);
+        if ($timing['total_ms'] >= 2000) {
+            Log::warning('Slow checkout', [
+                'cart_id' => (int) $cartId,
+                'sale_id' => (int) $sale->id,
+                'channel' => $channel,
+                'pending_kra' => $pendingKra,
+                'same_day_append' => ! empty(($sale->fulfillment_meta['same_day_customer_append'] ?? null)),
+                ...$timing,
+            ]);
         }
 
         $labels = config('erp.order_status_labels', []);

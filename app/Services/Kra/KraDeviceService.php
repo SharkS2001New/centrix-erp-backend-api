@@ -396,7 +396,7 @@ class KraDeviceService
     }
 
     /** @param  array<string, mixed>  $result */
-    public function isAlreadyRegisteredPluResult(array $result): bool
+    public static function isAlreadyRegisteredPluResult(array $result): bool
     {
         if (($result['error_code'] ?? null) === '353') {
             return true;
