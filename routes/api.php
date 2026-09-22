@@ -124,6 +124,7 @@ use App\Http\Controllers\Api\V1\SaleController;
 use App\Http\Controllers\Api\V1\SaleItemController;
 use App\Http\Controllers\Api\V1\SalePaymentController;
 use App\Http\Controllers\Api\V1\StockReceiptController;
+use App\Http\Controllers\Api\V1\ExpiringBatchController;
 use App\Http\Controllers\Api\V1\StockReservationController;
 use App\Http\Controllers\Api\V1\StockTakeLineController;
 use App\Http\Controllers\Api\V1\StockTakeSessionController;
@@ -900,6 +901,10 @@ Route::prefix('v1')->group(function () {
             Route::apiResource('stock-receipts', StockReceiptController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:inventory.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:inventory.manage']);
+            Route::get('inventory/expiring-batches', [ExpiringBatchController::class, 'index'])
+                ->middleware('erp.permission:inventory.view|inventory.receipts.view');
+            Route::post('inventory/expiring-batches/{id}/clear', [ExpiringBatchController::class, 'clear'])
+                ->middleware('erp.permission:inventory.manage|inventory.damages.create');
             Route::apiResource('supplier-returns', SupplierReturnController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:purchasing.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:purchasing.manage']);

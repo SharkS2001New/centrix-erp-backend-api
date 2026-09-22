@@ -18,6 +18,8 @@ class StockReceipt extends Model
         'product_code', 'branch_id', 'organization_id', 'units_received',
         'stock_location', 'invoice_number', 'batch_no', 'expiry_date',
         'cost_price', 'original_cost_price', 'received_by',
+        'expiry_cleared_at', 'expiry_cleared_by', 'expiry_cleared_qty',
+        'expiry_clear_reason', 'expiry_clear_damage_id',
     ];
 
     protected $casts = [
@@ -25,6 +27,8 @@ class StockReceipt extends Model
         'units_received' => 'float',
         'cost_price' => 'float',
         'original_cost_price' => 'float',
+        'expiry_cleared_at' => 'datetime',
+        'expiry_cleared_qty' => 'float',
     ];
 
     protected $appends = [
@@ -34,6 +38,11 @@ class StockReceipt extends Model
     public function receiver(): BelongsTo
     {
         return $this->belongsTo(User::class, 'received_by');
+    }
+
+    public function product(): BelongsTo
+    {
+        return $this->belongsTo(Product::class, 'product_code', 'product_code');
     }
 
     public function getReceivedByNameAttribute(): ?string
