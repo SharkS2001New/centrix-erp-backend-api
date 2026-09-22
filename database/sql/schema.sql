@@ -555,6 +555,8 @@ CREATE TABLE stock_receipts (
     units_received  FLOAT         NOT NULL,
     stock_location  ENUM('shop','store') NOT NULL DEFAULT 'store',
     invoice_number  VARCHAR(45),
+    batch_no        VARCHAR(100)  NULL,
+    expiry_date     DATE          NULL,
     cost_price      FLOAT,
     received_by     INT           NOT NULL,
     created_at      TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
@@ -562,7 +564,8 @@ CREATE TABLE stock_receipts (
     FOREIGN KEY (organization_id) REFERENCES organizations(id),
     FOREIGN KEY (received_by)     REFERENCES users(id),
     INDEX idx_product_code (product_code),
-    INDEX stock_receipts_org_product_id_idx (organization_id, product_code, id)
+    INDEX stock_receipts_org_product_id_idx (organization_id, product_code, id),
+    INDEX stock_receipts_org_batch_no_idx (organization_id, batch_no)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 DROP TABLE IF EXISTS supplier_return_document_lines;
@@ -2428,9 +2431,11 @@ SELECT
     sr.cost_price,
     (sr.units_received * COALESCE(sr.cost_price, 0)) AS line_cost,
     sr.invoice_number,
+    sr.batch_no,
+    sr.expiry_date,
     u.username AS received_by
 FROM stock_receipts sr
-JOIN products p ON sr.product_code = p.product_code
+JOIN products p ON sr.product_code = p.product_code AND p.organization_id = sr.organization_id
 JOIN users u ON sr.received_by = u.id;
 
 DROP VIEW IF EXISTS v_credit_outstanding;

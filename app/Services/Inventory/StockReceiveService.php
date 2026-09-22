@@ -7,6 +7,7 @@ use App\Models\LpoTxn;
 use App\Models\Product;
 use App\Models\StockReceipt;
 use App\Models\User;
+use App\Services\Erp\ErpContext;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -40,6 +41,20 @@ class StockReceiveService
                 'cost_price' => $effectiveCost,
                 'received_by' => $user->id,
             ];
+
+            if (
+                Schema::hasColumn('stock_receipts', 'batch_no')
+                && $this->receiveBatchTrackingEnabled($user)
+            ) {
+                $batchNo = trim((string) ($data['batch_no'] ?? ''));
+                $receiptAttributes['batch_no'] = $batchNo !== '' ? $batchNo : null;
+                if (Schema::hasColumn('stock_receipts', 'expiry_date')) {
+                    $expiry = $data['expiry_date'] ?? null;
+                    $receiptAttributes['expiry_date'] = $expiry !== null && $expiry !== ''
+                        ? $expiry
+                        : null;
+                }
+            }
 
             if (
                 Schema::hasColumn('stock_receipts', 'original_cost_price')
@@ -188,5 +203,13 @@ class StockReceiveService
         $txn->received_qty = (float) ($txn->received_qty ?? 0) + $incomingPack;
         $txn->offer_qty = (float) ($txn->offer_qty ?? 0) + $split['bonus'];
         $txn->save();
+    }
+
+    protected function receiveBatchTrackingEnabled(User $user): bool
+    {
+        $gate = app(ErpContext::class)->gateForUser($user);
+        $inventory = $gate->moduleSettings('inventory');
+
+        return filter_var($inventory['enable_receive_batch_tracking'] ?? false, FILTER_VALIDATE_BOOLEAN);
     }
 }

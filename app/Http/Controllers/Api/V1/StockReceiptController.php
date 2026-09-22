@@ -31,6 +31,33 @@ class StockReceiptController extends BaseResourceController
         return parent::baseQuery($request)->with('receiver:id,full_name,username');
     }
 
+    /** @return list<string> */
+    protected function searchColumns(): array
+    {
+        $columns = ['invoice_number', 'product_code'];
+        if (\Illuminate\Support\Facades\Schema::hasColumn('stock_receipts', 'batch_no')) {
+            $columns[] = 'batch_no';
+        }
+
+        return $columns;
+    }
+
+    /** @return list<string> */
+    protected function filterableColumns(): array
+    {
+        $cols = parent::filterableColumns();
+        foreach (['batch_no', 'expiry_date'] as $col) {
+            if (
+                \Illuminate\Support\Facades\Schema::hasColumn('stock_receipts', $col)
+                && ! in_array($col, $cols, true)
+            ) {
+                $cols[] = $col;
+            }
+        }
+
+        return $cols;
+    }
+
     /** @param  \Illuminate\Database\Eloquent\Builder<mixed>  $query */
     protected function applyCreatedAtDateRange($query, Request $request): void
     {
@@ -38,7 +65,8 @@ class StockReceiptController extends BaseResourceController
         $hasTo = $request->filled('to_date');
         $hasExactLookup = $request->filled('q')
             || $request->filled('filter.invoice_number')
-            || $request->filled('filter.product_code');
+            || $request->filled('filter.product_code')
+            || $request->filled('filter.batch_no');
 
         if (! $hasFrom && ! $hasTo && ! $hasExactLookup) {
             $to = now()->toDateString();

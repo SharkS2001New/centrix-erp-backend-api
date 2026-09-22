@@ -16,7 +16,15 @@ class StockReceipt extends Model
 
     protected $fillable = [
         'product_code', 'branch_id', 'organization_id', 'units_received',
-        'stock_location', 'invoice_number', 'cost_price', 'original_cost_price', 'received_by',
+        'stock_location', 'invoice_number', 'batch_no', 'expiry_date',
+        'cost_price', 'original_cost_price', 'received_by',
+    ];
+
+    protected $casts = [
+        'expiry_date' => 'date:Y-m-d',
+        'units_received' => 'float',
+        'cost_price' => 'float',
+        'original_cost_price' => 'float',
     ];
 
     protected $appends = [

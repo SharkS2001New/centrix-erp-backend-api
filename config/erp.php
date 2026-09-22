@@ -289,6 +289,7 @@ return [
         'inventory' => [
             'reserve_stock_on_cart',
             'cart_reservation_ttl_minutes',
+            'enable_receive_batch_tracking',
         ],
         'general' => [
             'enable_tab_workspace',
@@ -696,6 +697,8 @@ return [
             'default_distribution_sale_location' => 'store',
             'reserve_stock_on_cart' => true,
             'cart_reservation_ttl_minutes' => 15,
+            /** Capture supplier batch/lot + expiry on goods receipt (platform-controlled). */
+            'enable_receive_batch_tracking' => false,
             'stock_adjustment_approval_enabled' => false,
             'stock_transfer_approval_enabled' => false,
             'damage_write_off_approval_enabled' => false,

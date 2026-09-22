@@ -616,6 +616,7 @@ class OrganizationPlatformConfigService
             'backoffice_order_edit_layout' => 'modern',
             'reserve_stock_on_cart' => true,
             'cart_reservation_ttl_minutes' => 15,
+            'enable_receive_batch_tracking' => false,
             // Wholesale/retail: 2 weeks list / 1 month search. Distribution: wider operational window.
             'orders_list_default_days' => $isDistribution ? 30 : 14,
             // Shop Debtors often need a wider window than day-to-day orders (1 month default).
@@ -756,6 +757,7 @@ class OrganizationPlatformConfigService
                 15,
                 max(0, (int) ($inventory['cart_reservation_ttl_minutes'] ?? 15)),
             ),
+            'enable_receive_batch_tracking' => (bool) ($inventory['enable_receive_batch_tracking'] ?? false),
             'order_expiry_enabled' => ($sales['order_expiry_enabled'] ?? true) !== false,
             'order_expiry_days' => max(1, min(90, (int) ($sales['order_expiry_days'] ?? 5))),
             'order_expiry_before_status' => (string) ($sales['order_expiry_before_status'] ?? 'processed'),
