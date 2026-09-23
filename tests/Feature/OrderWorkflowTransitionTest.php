@@ -269,19 +269,10 @@ class OrderWorkflowTransitionTest extends TestCase
             ->assertJsonPath('status', 'processed');
     }
 
-    public function test_backoffice_cannot_mark_processed_order_delivered_without_fulfillment_context(): void
+    public function test_unpaid_order_can_advance_to_delivered(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();
         Sanctum::actingAs($admin);
-
-        $org = Organization::findOrFail($admin->organization_id);
-        $settings = is_array($org->module_settings) ? $org->module_settings : [];
-        $modules = is_array($org->enabled_modules) ? $org->enabled_modules : [];
-        $modules['distribution'] = true;
-        $org->update([
-            'enabled_modules' => $modules,
-            'module_settings' => $settings,
-        ]);
 
         $sale = Sale::query()->create([
             'order_num' => 992007,
@@ -298,28 +289,44 @@ class OrderWorkflowTransitionTest extends TestCase
         $this->postJson("/api/v1/sales/orders/{$sale->id}/transition", [
             'status' => 'delivered',
         ])
-            ->assertStatus(422)
-            ->assertJsonFragment([
-                'message' => 'Mark this order as delivered from the Distribution module after the trip is dispatched.',
-            ]);
+            ->assertOk()
+            ->assertJsonPath('status', 'delivered')
+            ->assertJsonPath('payment_status', 'unpaid');
     }
 
-    public function test_backoffice_cannot_manually_complete_distribution_order(): void
+    public function test_unpaid_order_cannot_be_marked_completed(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();
         Sanctum::actingAs($admin);
 
-        $org = Organization::findOrFail($admin->organization_id);
-        $settings = is_array($org->module_settings) ? $org->module_settings : [];
-        $modules = is_array($org->enabled_modules) ? $org->enabled_modules : [];
-        $modules['distribution'] = true;
-        $org->update([
-            'enabled_modules' => $modules,
-            'module_settings' => $settings,
-        ]);
-
         $sale = Sale::query()->create([
             'order_num' => 992008,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'status' => 'delivered',
+            'payment_status' => 'unpaid',
+            'order_total' => 900,
+            'amount_paid' => 0,
+        ]);
+
+        $this->postJson("/api/v1/sales/orders/{$sale->id}/transition", [
+            'status' => 'completed',
+        ])
+            ->assertStatus(422)
+            ->assertJsonFragment([
+                'message' => 'Completed means the order is fully paid. Collect the outstanding balance before marking this order as completed (Delivered can stay unpaid until then).',
+            ]);
+    }
+
+    public function test_fully_paid_delivered_order_can_be_marked_completed(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $sale = Sale::query()->create([
+            'order_num' => 992009,
             'branch_id' => $admin->branch_id,
             'organization_id' => $admin->organization_id,
             'channel' => 'backend',
@@ -333,9 +340,7 @@ class OrderWorkflowTransitionTest extends TestCase
         $this->postJson("/api/v1/sales/orders/{$sale->id}/transition", [
             'status' => 'completed',
         ])
-            ->assertStatus(422)
-            ->assertJsonFragment([
-                'message' => 'Complete this order by collecting payment at the till.',
-            ]);
+            ->assertOk()
+            ->assertJsonPath('status', 'completed');
     }
 }

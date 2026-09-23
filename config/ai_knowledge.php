@@ -12,6 +12,8 @@ return [
         'Purchasing: Suppliers at /suppliers, purchase orders (LPO) at /lpo, receive goods (GRN) at /inventory/receipts, pay suppliers at /suppliers/payments.',
         'Inventory: Current stock at /inventory/stock, adjustments at /inventory/adjustments, stock take at /inventory/stock-take, products at /products.',
         'Sales (retail): Orders at /sales/orders, POS at /sales/pos or /pos, debtors under /sales/shop-debtors/*, Sales by User report at /reports (Sales by user).',
+        'Order workflow vs payment: Delivered means goods were fulfilled — the order may still be unpaid or partially paid. Completed means the order is fully paid (amount paid covers order total); Centrix blocks marking Completed while a balance remains. Paid is the payment stage; Delivered is fulfillment. Do not tell users that Delivered implies payment, or that unpaid orders can be Completed.',
+        'Unpaid / Partially paid queues and Sales by User "Unpaid" use amount maths (nothing / something / fully collected), not the workflow label alone — a Delivered order with zero collected still counts as unpaid.',
         'Hospitality: Hotel dashboard at /hospitality, rooms /hospitality/rooms, reservations /hospitality/reservations, front desk /hospitality/front-desk, folios /hospitality/folios, housekeeping /hospitality/housekeeping, night audit /hospitality/night-audit, outlets /hospitality/outlets.',
         'Hotel POS (checks, not retail carts): /hotel-bar-pos — open/settle checks, room charge, F&B outlets. Hotel orders lists: /hospitality/orders, /hospitality/orders/hotel, /hospitality/orders/bar.',
         'Hospitality reports: occupancy KPI, arrivals/departures, folio balances, F&B by outlet/hour, open checks, voids, manager flash, EOD cashier, P&L under /reports/hospitality-*.',
@@ -57,6 +59,7 @@ return [
                 'Held orders — save_only checkout with status held (resume or cancel later)',
                 'Credit sales, vouchers, loyalty points, order discounts',
                 'Shop debtors queues — unpaid / partial / paid',
+                'Advance fulfillment (processed / delivered) even when unpaid; Completed only after full payment',
             ],
         ],
         [

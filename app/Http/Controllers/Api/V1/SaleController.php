@@ -333,7 +333,10 @@ class SaleController extends BaseResourceController
         $this->applyColumnFilters($query, $request);
 
         // Summary must run before select('sales.*'); aggregate select replaces columns on a clone.
-        $summary = $this->summarizeFilteredOrders($query);
+        $summary = $this->summarizeFilteredOrders(
+            $query,
+            $hasPaymentStatusFilter ? (string) $paymentStatusFilter : null,
+        );
         $summary = $this->applyMobileExpenseDeductionToSummary($summary, $request, $listScope ?? null);
 
         if (! empty($query->getQuery()->joins)) {
@@ -394,8 +397,10 @@ class SaleController extends BaseResourceController
         ]));
     }
 
-    /** @return array{total: int, revenue: float, unpaid: int, partial: int, paid: int, cancelled: int, expired: int} */
-    protected function summarizeFilteredOrders(Builder $query): array
+    /**
+     * @return array{total: int, revenue: float, unpaid: int, partial: int, paid: int, cancelled: int, expired: int}
+     */
+    protected function summarizeFilteredOrders(Builder $query, ?string $paymentStatusFilter = null): array
     {
         // Joined list queries may carry select('sales.*'). selectRaw() appends columns and breaks
         // ONLY_FULL_GROUP_BY; drop any prior select/order before aggregating.
@@ -410,9 +415,13 @@ class SaleController extends BaseResourceController
             ")
             ->first();
 
-        $paymentBuckets = $this->paymentBucketsFromSettlements(
-            (clone $base)->whereRaw($active)->pluck('sales.id')->map(fn ($id) => (int) $id)->all(),
-        );
+        // Payment queues already filter by amount maths — KPI buckets must use the same
+        // basis (otherwise Partially paid can show Paid=7 from invoice settlements).
+        $paymentBuckets = $paymentStatusFilter !== null && trim($paymentStatusFilter) !== ''
+            ? $this->paymentBucketsFromAmounts((clone $base)->whereRaw($active))
+            : $this->paymentBucketsFromSettlements(
+                (clone $base)->whereRaw($active)->pluck('sales.id')->map(fn ($id) => (int) $id)->all(),
+            );
 
         return [
             'total' => (int) ($row->total ?? 0),
@@ -422,6 +431,32 @@ class SaleController extends BaseResourceController
             'paid' => $paymentBuckets['paid'],
             'cancelled' => (int) ($row->cancelled ?? 0),
             'expired' => (int) ($row->expired ?? 0),
+        ];
+    }
+
+    /**
+     * Count unpaid / partial / paid with the same amount maths as list filters + Sales by User.
+     *
+     * @return array{unpaid: int, partial: int, paid: int}
+     */
+    protected function paymentBucketsFromAmounts(Builder $activeQuery): array
+    {
+        $unpaidSql = SalePaymentStatus::isUnpaidSql('sales.');
+        $partialSql = SalePaymentStatus::isPartialSql('sales.');
+        $paidSql = SalePaymentStatus::isPaidSql('sales.');
+
+        $row = (clone $activeQuery)->cloneWithout(['columns', 'orders'])
+            ->selectRaw("
+                SUM(CASE WHEN {$unpaidSql} THEN 1 ELSE 0 END) as unpaid,
+                SUM(CASE WHEN {$partialSql} THEN 1 ELSE 0 END) as partial,
+                SUM(CASE WHEN {$paidSql} THEN 1 ELSE 0 END) as paid
+            ")
+            ->first();
+
+        return [
+            'unpaid' => (int) ($row->unpaid ?? 0),
+            'partial' => (int) ($row->partial ?? 0),
+            'paid' => (int) ($row->paid ?? 0),
         ];
     }
 

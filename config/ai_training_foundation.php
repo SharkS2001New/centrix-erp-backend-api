@@ -132,4 +132,10 @@ return [
         'path' => '/accounting/bank-reconciliation',
         'workspace_id' => 'accounting',
     ],
+    [
+        'topic' => 'Q: Can a Delivered order still be unpaid? What does Completed mean?',
+        'content' => 'A: Yes — Delivered is fulfillment (goods handed over / trip POD). It may still be unpaid or partially paid. Completed means full payment is received (amount paid covers order total). Centrix blocks marking Completed while a balance remains; collect payment first (Sales → Unpaid / Partially paid, or Collect payment on the order). Paid is the payment stage; Delivered is not payment. Unpaid queues and Sales by User "Unpaid" use amount maths, so a Delivered order with nothing collected still counts as unpaid.',
+        'path' => '/sales/orders',
+        'workspace_id' => 'backoffice',
+    ],
 ];

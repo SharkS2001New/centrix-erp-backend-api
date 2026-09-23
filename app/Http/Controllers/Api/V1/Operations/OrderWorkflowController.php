@@ -212,6 +212,8 @@ class OrderWorkflowController extends Controller
             );
         }
 
+        // Fulfillment (processed / delivered) may advance while unpaid.
+        // Completed is settlement-gated: full payment must already be on the sale.
         $balanceDue = max(0, (float) $sale->order_total - (float) $sale->amount_paid);
         if ($balanceDue > 0.01) {
             if ($toStatus === 'paid') {
@@ -226,7 +228,7 @@ class OrderWorkflowController extends Controller
             }
             if ($toStatus === 'completed') {
                 throw new InvalidArgumentException(
-                    'Collect the outstanding balance before marking this order as completed.',
+                    'Completed means the order is fully paid. Collect the outstanding balance before marking this order as completed (Delivered can stay unpaid until then).',
                 );
             }
         }
