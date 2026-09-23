@@ -388,7 +388,7 @@ class SalesReportsTest extends TestCase
         );
     }
 
-    public function test_sales_by_user_unpaid_includes_booked_and_excludes_partial(): void
+    public function test_sales_by_user_unpaid_includes_partial_remaining_balance(): void
     {
         $today = now()->toDateString();
         $uniqueUnpaid = 77771.25;
@@ -427,15 +427,27 @@ class SalesReportsTest extends TestCase
             "/api/v1/reports/sales-by-user?from_date={$today}&to_date={$today}&date_column=sale_date&cashier_id={$this->admin->id}&channel=backend&per_page=200"
         )->assertOk()->json('summary');
 
+        // Unpaid = remaining balances: full unpaid total + partial remainder (1500).
         $this->assertGreaterThanOrEqual(
-            $uniqueUnpaid,
+            $uniqueUnpaid + 1500,
             (float) ($summary['unpaid_sales'] ?? 0),
-            'Booked unpaid must count in Unpaid (same as Sales → Unpaid).',
+            'Unpaid must include zero-paid totals and remaining balance on partials.',
         );
-        // Partial still has payment — must not inflate Unpaid (zero-payment bucket).
-        $this->assertLessThan(
-            $uniqueUnpaid + 2000,
-            (float) ($summary['unpaid_sales'] ?? 0) + 0.01,
+        // Collected must include the partial tender.
+        $this->assertGreaterThanOrEqual(
+            500.0,
+            (float) ($summary['amount_collected'] ?? 0),
+            'Collected must include amount paid on partially paid orders.',
+        );
+        $this->assertGreaterThanOrEqual(
+            2,
+            (int) ($summary['unpaid_order_count'] ?? 0),
+            'Both zero-paid and partial orders count as unpaid orders.',
+        );
+        $this->assertGreaterThanOrEqual(
+            1,
+            (int) ($summary['collected_order_count'] ?? 0),
+            'Partial tender counts toward collected order count.',
         );
     }
 

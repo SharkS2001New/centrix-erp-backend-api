@@ -138,4 +138,10 @@ return [
         'path' => '/sales/orders',
         'workspace_id' => 'backoffice',
     ],
+    [
+        'topic' => 'Q: Why is Sales by User Unpaid different from Gross minus Collected?',
+        'content' => 'A: On Sales by User, Unpaid IS Gross − Collected: remaining balances on zero-paid and partially paid orders. Collected includes money taken on full and partial payments, with Orders collected / Orders unpaid counts. Sales → Unpaid is a work queue of zero-paid orders only (use Partially paid for partial remainders). Match the same date range when comparing.',
+        'path' => '/reports/sales-by-user',
+        'workspace_id' => 'backoffice',
+    ],
 ];

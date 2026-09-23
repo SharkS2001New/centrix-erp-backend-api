@@ -255,9 +255,12 @@ class AiInsightDataBuilder
                     .'ROUND(COALESCE(SUM(s.order_total), 0), 2) as gross_sales, '
                     .'ROUND(COALESCE(SUM(s.order_total - s.total_vat), 0), 2) as net_sales, '
                     .'ROUND(COALESCE(SUM(s.total_vat), 0), 2) as total_vat, '
-                    .'ROUND(COALESCE(SUM(s.amount_paid), 0), 2) as amount_collected, '
+                    .'ROUND(COALESCE(SUM(LEAST(GREATEST(COALESCE(s.amount_paid, 0), 0), GREATEST(COALESCE(s.order_total, 0), 0))), 0), 2) as amount_collected, '
+                    .'ROUND(COALESCE(SUM(GREATEST(COALESCE(s.order_total, 0) - COALESCE(s.amount_paid, 0), 0)), 0), 2) as unpaid_sales, '
                     ."ROUND(COALESCE(SUM(CASE WHEN {$fullyPaidSql} THEN s.order_total ELSE 0 END), 0), 2) as fully_paid_sales, "
                     .'COUNT(DISTINCT s.id) as transactions, '
+                    .'COALESCE(SUM(CASE WHEN COALESCE(s.amount_paid, 0) > 0.01 THEN 1 ELSE 0 END), 0) as collected_order_count, '
+                    .'COALESCE(SUM(CASE WHEN GREATEST(COALESCE(s.order_total, 0) - COALESCE(s.amount_paid, 0), 0) > 0.01 THEN 1 ELSE 0 END), 0) as unpaid_order_count, '
                     ."COALESCE(SUM(CASE WHEN {$fullyPaidSql} THEN 1 ELSE 0 END), 0) as fully_paid_transactions"
                 )
                 ->groupBy('s.cashier_id', 'u.full_name', 'u.username')
@@ -271,8 +274,11 @@ class AiInsightDataBuilder
                     'net_sales' => round((float) $row->net_sales, 2),
                     'total_vat' => round((float) $row->total_vat, 2),
                     'amount_collected' => round((float) $row->amount_collected, 2),
+                    'unpaid_sales' => round((float) $row->unpaid_sales, 2),
                     'fully_paid_sales' => round((float) $row->fully_paid_sales, 2),
                     'transactions' => (int) $row->transactions,
+                    'collected_order_count' => (int) $row->collected_order_count,
+                    'unpaid_order_count' => (int) $row->unpaid_order_count,
                     'fully_paid_transactions' => (int) $row->fully_paid_transactions,
                 ])
                 ->all();
@@ -294,7 +300,8 @@ class AiInsightDataBuilder
                 ->selectRaw(
                     's.channel, '
                     .'ROUND(COALESCE(SUM(s.order_total), 0), 2) as gross_sales, '
-                    .'ROUND(COALESCE(SUM(s.amount_paid), 0), 2) as amount_collected, '
+                    .'ROUND(COALESCE(SUM(LEAST(GREATEST(COALESCE(s.amount_paid, 0), 0), GREATEST(COALESCE(s.order_total, 0), 0))), 0), 2) as amount_collected, '
+                    .'ROUND(COALESCE(SUM(GREATEST(COALESCE(s.order_total, 0) - COALESCE(s.amount_paid, 0), 0)), 0), 2) as unpaid_sales, '
                     ."ROUND(COALESCE(SUM(CASE WHEN {$fullyPaidSql} THEN s.order_total ELSE 0 END), 0), 2) as fully_paid_sales, "
                     .'COUNT(DISTINCT s.id) as transactions'
                 )
@@ -305,6 +312,7 @@ class AiInsightDataBuilder
                     'channel' => (string) ($row->channel ?? ''),
                     'gross_sales' => round((float) $row->gross_sales, 2),
                     'amount_collected' => round((float) $row->amount_collected, 2),
+                    'unpaid_sales' => round((float) $row->unpaid_sales, 2),
                     'fully_paid_sales' => round((float) $row->fully_paid_sales, 2),
                     'transactions' => (int) $row->transactions,
                 ])
@@ -331,7 +339,8 @@ class AiInsightDataBuilder
             'branch_scope' => $branchId !== null ? 'askers_branch_only' : 'all_branches',
             'note' => 'Same placed-date basis as Sales by User and Sales Orders (effective_sale_date / created_at). '
                 .'gross_sales = all pipeline order totals (incl. unpaid/credit). '
-                .'amount_collected = sum of amount_paid. '
+                .'amount_collected = money taken including partial tenders; collected_order_count = orders with any payment. '
+                .'unpaid_sales = remaining balances (zero-paid + partial remainders); unpaid_order_count = orders still owed. '
                 .'fully_paid_sales = order totals only where amount_paid covers the order (closer to till X/Z ORDTTL). '
                 .'Quote these from the tool — never invent. Identify cashiers by username/name only.',
         ];
@@ -371,8 +380,11 @@ class AiInsightDataBuilder
                 'net_sales' => $row['net_sales'] ?? null,
                 'total_vat' => $row['total_vat'] ?? null,
                 'amount_collected' => $row['amount_collected'] ?? null,
+                'unpaid_sales' => $row['unpaid_sales'] ?? null,
                 'fully_paid_sales' => $row['fully_paid_sales'] ?? null,
                 'transactions' => $row['transactions'] ?? null,
+                'collected_order_count' => $row['collected_order_count'] ?? null,
+                'unpaid_order_count' => $row['unpaid_order_count'] ?? null,
                 'fully_paid_transactions' => $row['fully_paid_transactions'] ?? null,
             ], fn ($v) => $v !== null && $v !== '');
         })->values()->all();
