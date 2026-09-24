@@ -2780,10 +2780,12 @@ class ReportController extends Controller
                 $aggregated->addSelect($col);
             }
         }
+        $effectiveSumColumns = [];
         foreach ($sumColumns as $col) {
             if ($this->viewColumnExists($view, $col)) {
                 $escaped = str_replace('`', '``', $col);
                 $aggregated->selectRaw("SUM(`{$escaped}`) as `{$escaped}`");
+                $effectiveSumColumns[] = $col;
             }
         }
         foreach ($maxColumns as $col) {
@@ -2807,9 +2809,12 @@ class ReportController extends Controller
 
         // Wrap the grouped rows before summarizing. Calling SUM() on a builder that
         // still has GROUP BY makes ->first() return one group (wrong KPI/footer totals).
+        // Pass only columns selected above — view may have extra summable fields
+        // (e.g. products_sold) that are not projected into this subquery.
         $summary = $this->aggregateFilteredReportSummary(
             DB::query()->fromSub(clone $aggregated, 'overall_period_rows'),
             $view,
+            $effectiveSumColumns,
         );
         $paginator = $aggregated->paginate(min((int) ($filters['per_page'] ?? 20), 200));
 
@@ -2990,9 +2995,13 @@ class ReportController extends Controller
      * Sum numeric/money/qty columns across the full filtered report (before pagination).
      *
      * @param  \Illuminate\Database\Query\Builder  $query
+     * @param  list<string>|null  $sumColumns  When set (period overall reports), only these
+     *                                         projected columns are summed — avoids SUMming
+     *                                         view fields that were dropped in a subquery
+     *                                         (e.g. products_sold on sales-by-supplier).
      * @return array<string, float|int>
      */
-    protected function aggregateFilteredReportSummary($query, string $view): array
+    protected function aggregateFilteredReportSummary($query, string $view, ?array $sumColumns = null): array
     {
         try {
             $query->reorder();
@@ -3000,15 +3009,24 @@ class ReportController extends Controller
             // Some builders may not support reorder; continue.
         }
 
-        // Avoid SELECT * on views that include large JSON blobs (e.g. v_kra_receipts).
-        $sample = (clone $query)->selectRaw('1 as _probe')->limit(1)->first();
+        $sample = (clone $query)->limit(1)->first();
         if (! $sample) {
             return ['row_count' => 0];
         }
 
-        $sumCols = [];
-        foreach ($this->summableColumnsForView($view) as $col) {
-            $sumCols[] = $col;
+        $available = array_map('strval', array_keys((array) $sample));
+
+        if ($sumColumns !== null) {
+            $sumCols = array_values(array_filter(
+                $sumColumns,
+                fn (string $col): bool => in_array($col, $available, true),
+            ));
+        } else {
+            // Direct view queries: summable view columns that are present on this result.
+            $sumCols = array_values(array_filter(
+                $this->summableColumnsForView($view),
+                fn (string $col): bool => in_array($col, $available, true),
+            ));
         }
 
         $selects = ['COUNT(*) as row_count'];

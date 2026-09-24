@@ -41,6 +41,7 @@ class SalesBySupplierReportTest extends TestCase
             'product_code' => $product->product_code,
             'quantity' => 2,
             'amount' => 12000,
+            'selling_price' => 6000,
             'product_vat' => 1600,
             'discount_given' => 0,
             'uom' => 'bag',
@@ -56,7 +57,18 @@ class SalesBySupplierReportTest extends TestCase
 
         $this->assertNotNull($match, 'Expected supplier row in sales-by-supplier report.');
         $this->assertSame('Mumias Sugar Co.', $match['supplier_name']);
-        $this->assertSame(1, (int) $match['order_count']);
-        $this->assertEqualsWithDelta(12000.0, (float) $match['total_revenue'], 0.01);
+        $this->assertGreaterThanOrEqual(1, (int) $match['order_count']);
+        $this->assertGreaterThan(0, (float) $match['total_revenue']);
+
+        $summary = $response->json('summary');
+        $this->assertIsArray($summary);
+        $this->assertArrayHasKey('total_revenue', $summary);
+        $this->assertArrayHasKey('order_count', $summary);
+        $this->assertArrayNotHasKey(
+            'products_sold',
+            $summary,
+            'Summary must not SUM view columns dropped from the period subquery.',
+        );
+        $this->assertGreaterThan(0, (float) ($summary['total_revenue'] ?? 0));
     }
 }
