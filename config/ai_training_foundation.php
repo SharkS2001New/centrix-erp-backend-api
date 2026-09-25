@@ -139,9 +139,9 @@ return [
         'workspace_id' => 'backoffice',
     ],
     [
-        'topic' => 'Q: Why is Sales by User Unpaid different from Gross minus Collected?',
-        'content' => 'A: On Sales by User, Unpaid IS Gross − Collected: remaining balances on zero-paid and partially paid orders. Collected includes money taken on full and partial payments, with Orders collected / Orders unpaid counts. Sales → Unpaid is a work queue of zero-paid orders only (use Partially paid for partial remainders). Match the same date range when comparing.',
-        'path' => '/reports/sales-by-user',
+        'topic' => 'Q: Which products have cost higher than selling price?',
+        'content' => 'A: Call find_catalogue_exceptions with check=cost_above_selling (or check=all for a catalogue health overview). Quote totals and the product table (code, name, unit_price, last_cost_price, margin_pct). Link /products to fix prices. This is catalogue master data — not the same as margin_discount_watchdog (recent sale lines sold below cost). Other checks: zero_selling_price, zero_cost_price, thin_margin, missing_supplier, missing_reorder_point, below_reorder, missing_vat, missing_uom.',
+        'path' => '/products',
         'workspace_id' => 'backoffice',
     ],
 ];

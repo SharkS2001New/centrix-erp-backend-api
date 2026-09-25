@@ -585,7 +585,7 @@ class AiToolChatService
             'get_route_orders' => 'Loading mobile orders…',
             'get_customer_returns' => 'Loading returns…',
             'get_expense_summary' => 'Loading expenses…',
-            'get_stock_summary', 'get_product_details', 'get_product_price_history' => 'Checking inventory…',
+            'get_stock_summary', 'get_product_details', 'get_product_price_history', 'find_catalogue_exceptions' => 'Checking inventory…',
             'get_debtors_summary', 'get_customer_statement' => 'Loading customer accounts…',
             'get_supplier_statement', 'get_purchasing_overview', 'get_lpo_details' => 'Loading purchase order…',
             'get_employee_attendance', 'get_employee_details', 'get_employee_payroll_preview' => 'Loading HR records…',
@@ -948,6 +948,7 @@ Tools:
 - get_inventory_valuation — money tied in stock (cost/retail value); not the primary answer for "which items are in stock"
 - get_product_details — product UoM measurements (kg/bags/packs), stock qty_label, sell-on-retail + retail packaging tiers; use for "is it kg or bags?" / packaging questions
 - get_product_price_history — formal Centrix price-change ledger (/price-history): unit price, cost, discount %, who changed it, when. Use for "price history" / "when did the price change". Never say Centrix lacks price history.
+- find_catalogue_exceptions — scan products for catalogue comparisons: cost > selling (check=cost_above_selling), zero selling/cost, thin margin, missing supplier/reorder/VAT/UoM, stock ≤ reorder, or check=all. Use for "which products have cost higher than selling price". Not the same as margin_discount_watchdog (sold-below-cost lines).
 - get_purchasing_overview — supplier count + recent LPOs; point to /suppliers and /lpo
 - get_lpo_details — retrieve one LPO by number/reference: status, lines, next workflow steps, PDF/print/open links (document_links). Use for "show LPO", "download LPO PDF", "what is the status of PO …"
 - get_debtors_summary — unpaid / AR / who to call
@@ -1030,6 +1031,7 @@ Rules:
 - Quantities: when a tool returns qty_label / stock_on_hand_label / suggested_qty_label (e.g. "2 Bag, 40 kg"), quote that label exactly in answers and table Qty columns — do not invent kg/bags/pcs. qty / qty_base / stock_on_hand numbers are raw base units for math only.
 - Product measurements / retail packaging: call get_product_details. Explain UoM hierarchy from the tool (conversion_factor, full/middle/small labels). Distinguish UoM (how stock is counted) from retail packaging (POS retail markup tiers at /retail-package-settings). Do not guess packaging.
 - Product price history / previous prices / when price changed: call get_product_price_history with product_code from @Product. Quote the history table (date, unit price, cost, discount, changed by). Link /price-history. Never claim Centrix has no price-change log. Do not answer price-history questions with only current catalog price or realized sales averages.
+- Catalogue comparisons (cost > selling, zero price, thin margin, missing supplier/reorder/VAT/UoM, stock ≤ reorder): call find_catalogue_exceptions. For cost higher than selling use check=cost_above_selling. For a health overview use check=all. Quote totals and product tables from the tool. Do not invent product lists. Sold-below-cost on recent invoices is run_insight margin_discount_watchdog — different question.
 - Mixed products: never sum bare qty across different UOMs into one "items sold" without labels; list per product with qty_label in a markdown table, or say totals are in base units.
 - Accuracy: copy amounts and qty_label values from tool JSON without rounding inventively; keep currency as returned.
 - Custom reports: if the user wants a report-builder report and has not named it, call create_custom_report without name (or ask), then call again with their chosen name. After create, give the /reports/custom/{id} link.

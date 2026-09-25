@@ -58,6 +58,7 @@ class AiToolResultReplyBuilder
                 'get_expense_summary' => $this->formatExpenseSummary($result),
                 'get_customer_returns' => $this->formatCustomerReturns($result),
                 'get_product_price_history' => $this->formatProductPriceHistory($result),
+                'find_catalogue_exceptions' => $this->formatCatalogueExceptions($result),
                 'get_vat_collected' => $this->formatVatCollected($result),
                 'get_user_details' => $this->formatUserDetails($result),
                 'get_route_details' => $this->formatRouteDetails($result),
@@ -868,6 +869,81 @@ class AiToolResultReplyBuilder
         $lines[] = 'Full ledger: [/price-history](/price-history).';
 
         return implode("\n", $lines);
+    }
+
+    protected function formatCatalogueExceptions(array $result): ?string
+    {
+        $check = (string) ($result['check'] ?? 'all');
+        $labels = is_array($result['check_labels'] ?? null) ? $result['check_labels'] : [];
+        $totals = is_array($result['totals'] ?? null) ? $result['totals'] : [];
+        $products = $result['products'] ?? null;
+
+        $lines = ['### Catalogue exceptions', ''];
+
+        if ($check === 'all' && is_array($products)) {
+            $lines[] = '| Check | Count |';
+            $lines[] = '| --- | ---: |';
+            foreach ($totals as $key => $count) {
+                $label = (string) ($labels[$key] ?? $key);
+                $lines[] = '| '.$this->cell($label).' | '.(int) $count.' |';
+            }
+            $lines[] = '';
+            foreach ($products as $key => $rows) {
+                if (! is_array($rows) || $rows === []) {
+                    continue;
+                }
+                $label = (string) ($labels[$key] ?? $key);
+                $lines[] = '#### '.$label.' (showing '.count($rows).' of '.(int) ($totals[$key] ?? count($rows)).')';
+                $lines[] = '';
+                $lines = array_merge($lines, $this->catalogueExceptionTable($rows));
+                $lines[] = '';
+            }
+        } else {
+            $label = (string) ($labels[$check] ?? $check);
+            $total = (int) ($totals[$check] ?? (is_array($products) ? count($products) : 0));
+            $rows = is_array($products) ? $products : [];
+            $lines[] = "**{$label}** — **{$total}** product(s).";
+            $lines[] = '';
+            if ($rows === []) {
+                $lines[] = 'No products matched this check.';
+            } else {
+                $lines = array_merge($lines, $this->catalogueExceptionTable($rows));
+            }
+            $lines[] = '';
+        }
+
+        $lines[] = 'Fix on [/products](/products). For lines *sold* below cost recently, ask for the margin discount watchdog insight.';
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $rows
+     * @return list<string>
+     */
+    protected function catalogueExceptionTable(array $rows): array
+    {
+        $lines = [
+            '| Code | Product | Selling (KES) | Cost (KES) | Margin % | Stock |',
+            '| --- | --- | ---: | ---: | ---: | ---: |',
+        ];
+        foreach (array_slice($rows, 0, 40) as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $margin = $row['margin_pct'];
+            $lines[] = sprintf(
+                '| %s | %s | %s | %s | %s | %s |',
+                $this->cell((string) ($row['product_code'] ?? '')),
+                $this->cell((string) ($row['product_name'] ?? '')),
+                $this->money((float) ($row['unit_price'] ?? 0)),
+                $this->money((float) ($row['last_cost_price'] ?? 0)),
+                $margin === null ? '—' : (string) $margin,
+                $this->cell((string) ($row['stock_on_hand'] ?? 0)),
+            );
+        }
+
+        return $lines;
     }
 
     /**

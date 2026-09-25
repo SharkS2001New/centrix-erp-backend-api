@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Services\Ai\Tools\AiToolInterface;
 use App\Services\Ai\Tools\CalculateScenarioTool;
 use App\Services\Ai\Tools\CreateCustomReportTool;
+use App\Services\Ai\Tools\FindCatalogueExceptionsTool;
 use App\Services\Ai\Tools\FindScreenTool;
 use App\Services\Ai\Tools\GetCashPositionTool;
 use App\Services\Ai\Tools\GetCustomerPortfolioTool;
@@ -50,6 +51,7 @@ class AiToolRegistry
         protected GetSalesByProductTool $getSalesByProduct,
         protected GetSalesBriefTool $getSalesBrief,
         protected FindScreenTool $findScreen,
+        protected FindCatalogueExceptionsTool $findCatalogueExceptions,
         protected GetStockSummaryTool $getStockSummary,
         protected GetProductDetailsTool $getProductDetails,
         protected GetProductPriceHistoryTool $getProductPriceHistory,
@@ -183,6 +185,7 @@ class AiToolRegistry
 
         $registered = [
             $this->findScreen,
+            $this->findCatalogueExceptions,
             $this->getSalesSummary,
             $this->getVatCollected,
             $this->getSalesByCashier,

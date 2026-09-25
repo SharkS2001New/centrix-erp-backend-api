@@ -86,6 +86,7 @@ return [
      */
     'tools' => [
         'find_screen' => true,
+        'find_catalogue_exceptions' => true,
         'get_sales_summary' => true,
         'get_vat_collected' => true,
         'get_sales_by_cashier' => true,

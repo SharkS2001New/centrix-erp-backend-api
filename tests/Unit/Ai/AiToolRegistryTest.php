@@ -17,6 +17,7 @@ class AiToolRegistryTest extends TestCase
 
         foreach ([
             'find_screen',
+            'find_catalogue_exceptions',
             'get_sales_summary',
             'get_vat_collected',
             'get_sales_by_cashier',
