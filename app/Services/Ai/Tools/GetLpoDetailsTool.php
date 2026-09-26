@@ -206,11 +206,11 @@ class GetLpoDetailsTool implements AiToolInterface
             'path' => '/lpo/'.$lpo->lpo_no,
             'screens' => [
                 ['label' => 'Open this LPO', 'path' => '/lpo/'.$lpo->lpo_no],
-                ['label' => 'Print LPO', 'path' => '/lpo/'.$lpo->lpo_no.'/print'],
                 ['label' => 'All purchase orders', 'path' => '/lpo'],
             ],
-            'tip' => 'Offer Download PDF / Print links from document_links. For mutations use confirm actions: '
-                .'submit_lpo_for_approval, approve_lpo, mark_lpo_sent, or receive_lpo_goods.',
+            'tip' => 'Keep the reply short: PO number, supplier, status, total. '
+                .'Document buttons (Open / Print / PDF) already appear in the chat panel — do not restate them. '
+                .'Only mention the single next workflow action that matches workflow_actions / can_receive.',
         ];
     }
 
@@ -224,20 +224,18 @@ class GetLpoDetailsTool implements AiToolInterface
         $actions = is_array($header['workflow_actions'] ?? null) ? $header['workflow_actions'] : [];
         $steps = [];
 
-        if (in_array('submit_for_approval', $actions, true) || $status === 0) {
-            $steps[] = 'Submit for approval (chat: “submit LPO for approval”).';
-        }
-        if (in_array('approve', $actions, true) || $status === 1) {
-            $steps[] = 'Approve the LPO (chat: “approve LPO”).';
-        }
-        if (in_array('mark_sent', $actions, true) || $status === 2) {
-            $steps[] = 'Mark as sent to supplier, then print/download PDF to share.';
-        }
-        if (! empty($header['can_receive'])) {
-            $steps[] = 'Receive goods into stock (chat: “receive LPO” or open Receive).';
-        }
-        if ($steps === []) {
-            $steps[] = 'Open the LPO screen for payments, returns, or clearance.';
+        if (in_array('submit_for_approval', $actions, true)) {
+            $steps[] = 'Submit for approval.';
+        } elseif (in_array('approve', $actions, true)) {
+            $steps[] = 'Approve this LPO.';
+        } elseif (in_array('mark_sent', $actions, true)) {
+            $steps[] = 'Mark as sent to the supplier.';
+        } elseif (
+            ! empty($header['can_receive'])
+            && $status >= LpoModuleService::STATUS_AWAITING_RECEIVE
+            && $status < LpoModuleService::STATUS_FULLY_RECEIVED
+        ) {
+            $steps[] = 'Receive remaining goods into stock.';
         }
 
         return $steps;

@@ -583,11 +583,12 @@ class AiToolChatService
             'get_sales_by_cashier' => 'Loading cashier sales…',
             'get_vat_collected' => 'Calculating VAT…',
             'get_route_orders' => 'Loading mobile orders…',
+            'get_route_details', 'get_route_markups' => 'Loading routes…',
             'get_customer_returns' => 'Loading returns…',
             'get_expense_summary' => 'Loading expenses…',
             'get_stock_summary', 'get_product_details', 'get_product_price_history', 'find_catalogue_exceptions' => 'Checking inventory…',
             'get_debtors_summary', 'get_customer_statement' => 'Loading customer accounts…',
-            'get_supplier_statement', 'get_purchasing_overview', 'get_lpo_details' => 'Loading purchase order…',
+            'get_supplier_statement', 'get_purchasing_overview', 'get_lpo_details', 'list_lpos' => 'Loading purchase order…',
             'get_employee_attendance', 'get_employee_details', 'get_employee_payroll_preview' => 'Loading HR records…',
             'search_training_notes' => 'Searching Centrix guides…',
             default => 'Fetching Centrix data…',
@@ -956,15 +957,17 @@ Tools:
 - get_product_details — product UoM measurements (kg/bags/packs), stock qty_label, sell-on-retail + retail packaging tiers; use for "is it kg or bags?" / packaging questions
 - get_product_price_history — formal Centrix price-change ledger (/price-history): unit price, cost, discount %, who changed it, when. Use for "price history" / "when did the price change". Never say Centrix lacks price history.
 - find_catalogue_exceptions — scan products for catalogue comparisons: cost > selling (check=cost_above_selling), zero selling/cost, thin margin, missing supplier/reorder/VAT/UoM, stock ≤ reorder, or check=all. Use for "which products have cost higher than selling price". Not the same as margin_discount_watchdog (sold-below-cost lines).
-- get_purchasing_overview — supplier count + recent LPOs; point to /suppliers and /lpo
-- get_lpo_details — retrieve one LPO by number/reference: status, lines, next workflow steps, PDF/print/open links (document_links). Use for "show LPO", "download LPO PDF", "what is the status of PO …"
+- get_purchasing_overview — supplier count + recent LPOs snapshot only (not status-filtered). Point to /suppliers and /lpo.
+- list_lpos — list LPOs by status. For "awaiting goods receiving / GRN / to receive" ALWAYS call with filter=awaiting_receive (statuses 3+4 only). Do NOT use get_purchasing_overview for that question. Exclude fully received, cleared, awaiting check/approval unless asked.
+- get_lpo_details — retrieve one LPO by number/reference: status, lines, workflow flags, document_links (open/print/PDF). Use for "show LPO", "download LPO PDF", "status of PO …". Prefer document_links UI — do not repeat Open/Print/PDF/next-step boilerplate in the reply.
 - get_debtors_summary — unpaid / AR / who to call
 - get_customer_statement — one customer's balance + period purchases with product line items (qty_label); use for statements, "what did they buy", and pronoun follow-ups about the focused customer
 - get_supplier_statement — one supplier's AP balance + period LPOs/payments with product line items (qty_label); use for supplier statements and "what did we buy from them"
 - get_till_health — till variance / payment mix; for one cashier’s float today pass cashier_name + relative_date=today (opening float, cash, M-Pesa, bank, expected drawer cash)
 - get_route_orders — mobile/route order debrief for a period (relative_date=yesterday/today) and optional user/cashier; use for mobile sales
 - get_customer_returns — customer/product returns (credit returns) by period and optional returned_by user; use for "returns done by X"
-- get_route_details — one route by name/id: assigned users (who operates it), drivers, customers, recent orders
+- get_route_details — one route by name/id: assigned users (who operates it), drivers, customers, route_markup_price, recent orders
+- get_route_markups — list every route with its route_markup_price (KES). Use for "markup for each route" / "route markups". Not retail package markups.
 - get_user_details — one user by name/username: role, branch, assigned sales routes (user_assigned_routes), linked employee/driver
 - get_employee_attendance — live HR attendance (clock in/out, late, absent) by employee name/code/username; supports this_month / year_month
 - get_employee_details — full HR employee profile including basic/base salary, shift schedule, pays_sha, contacts; use for salary/role questions
@@ -992,7 +995,8 @@ Rules:
 - When resolved entities are present, use those product_code / customer_num / supplier id values in tools and answers.
 - run_insight insight_type must be an exact catalog value (e.g. customer_360, anomaly_detection). Never invent types like customer_buying or top_purchases — use get_customer_statement for purchase mix.
 - Which routes a person operates / user route assignments: call get_user_details with their name or username. Quote assigned_routes.route_name. Never say Centrix lacks user-to-route mapping when the tool returns assigned_routes.
-- Who operates a route / route territory details: call get_route_details with route_name or route_id. Quote assigned_users and drivers.
+- Who operates a route / route territory details: call get_route_details with route_name or route_id. Quote assigned_users, drivers, and route_markup_price.
+- Markup amount for each route / list route markups: call get_route_markups. Answer with a markdown table of route_name and route_markup_price (KES). Do not invent figures. Retail packaging markups are separate (get_product_details → retail_packaging).
 - Sales by product / generate sales report for @Product mentions: call get_sales_by_product with those product_codes (and a period). Prefer answering with a markdown table from the tool — do not only open /reports/sales-by-product unless the user asks for the screen.
 - VAT / tax on sales / "how much VAT do I have to pay" for a month: call get_vat_collected. Quote summary.vat_collected_total and taxable_sales_gross. Link /reports/vat-collected. Never invent VAT and never reply with only an LPO or unrelated screen.
 - Never invent financial figures or attendance. Use tools for numbers and attendance. If a tool cannot answer (e.g. sales targets/quotas), say so and offer actual sales or the right screen.
@@ -1038,7 +1042,7 @@ Rules:
   Values must be plain numbers (no KES commas). Never emit charts for one-row answers, navigation, or when the user did not ask for a chart.
 - Product sales tables: columns like Product | Qty | Amount (KES) — do NOT include a Code column.
 - Quantities: when a tool returns qty_label / stock_on_hand_label / suggested_qty_label (e.g. "2 Bag, 40 kg"), quote that label exactly in answers and table Qty columns — do not invent kg/bags/pcs. qty / qty_base / stock_on_hand numbers are raw base units for math only.
-- Product measurements / retail packaging: call get_product_details. Explain UoM hierarchy from the tool (conversion_factor, full/middle/small labels). Distinguish UoM (how stock is counted) from retail packaging (POS retail markup tiers at /retail-package-settings). Do not guess packaging.
+- Product measurements / UoM / kg vs bags / packaging for a named product (e.g. Sugar): call get_product_details with query=product name (or product_code). Quote measurements.conversion_meaning and stock.*_qty_label. Distinguish UoM (how stock is counted) from retail packaging markups. Do not guess packaging.
 - Product price history / previous prices / when price changed: call get_product_price_history with product_code from @Product. Quote the history table (date, unit price, cost, discount, changed by). Link /price-history. Never claim Centrix has no price-change log. Do not answer price-history questions with only current catalog price or realized sales averages.
 - Catalogue comparisons (cost > selling, zero price, thin margin, missing supplier/reorder/VAT/UoM, stock ≤ reorder): call find_catalogue_exceptions. For cost higher than selling use check=cost_above_selling. For a health overview use check=all. Quote totals and product tables from the tool. Do not invent product lists. Sold-below-cost on recent invoices is run_insight margin_discount_watchdog — different question.
 - Mixed products: never sum bare qty across different UOMs into one "items sold" without labels; list per product with qty_label in a markdown table, or say totals are in base units.

@@ -21,7 +21,9 @@ class SlowQueryDigestService
      *   database?: string,
      *   queries: list<array<string, mixed>>,
      *   slow_tables?: list<array<string, mixed>>,
-     *   enable_hint?: list<string>
+     *   enable_hint?: list<string>,
+     *   stats?: array<string, int|string>,
+     *   empty_hint?: string
      * }
      */
     public function topQueries(int $limit = 25): array
@@ -57,9 +59,11 @@ class SlowQueryDigestService
         $nullRows = $this->fetchNullSchemaDigestsTouchingCentrix($schema, $knownTables, $fetch);
         $rows = array_merge($rows, $nullRows);
 
-        $queries = [];
+        $rawCount = count($rows);
+        $noiseSkipped = 0;
+        $nonCentrixSkipped = 0;
+        $candidates = [];
         $seenDigests = [];
-        $mentionedTables = [];
 
         usort($rows, static function ($a, $b) {
             return ((float) ($b->total_sec ?? 0)) <=> ((float) ($a->total_sec ?? 0));
@@ -74,12 +78,13 @@ class SlowQueryDigestService
                 continue;
             }
             if ($text === '' || $this->isNoiseDigest($text)) {
+                $noiseSkipped++;
+
                 continue;
             }
             if (! $this->isCentrixDigest($text, $schema, $rowSchema, $knownTables)) {
-                continue;
-            }
-            if (! $this->isActuallySlow($row)) {
+                $nonCentrixSkipped++;
+
                 continue;
             }
 
@@ -87,14 +92,10 @@ class SlowQueryDigestService
                 $seenDigests[$digestId] = true;
             }
 
-            foreach ($this->tablesMentionedInSql($text, $knownTables) as $table) {
-                $mentionedTables[$table] = true;
-            }
-
-            $queries[] = [
+            $candidates[] = (object) [
                 'digest' => $digestId,
-                'schema' => $rowSchema !== '' ? $rowSchema : $schema,
-                'sql' => $text,
+                'schema_name' => $rowSchema !== '' ? $rowSchema : $schema,
+                'digest_text' => $text,
                 'exec_count' => (int) ($row->exec_count ?? 0),
                 'total_sec' => (float) ($row->total_sec ?? 0),
                 'avg_sec' => (float) ($row->avg_sec ?? 0),
@@ -103,22 +104,83 @@ class SlowQueryDigestService
                 'rows_sent' => (int) ($row->rows_sent ?? 0),
                 'first_seen' => (string) ($row->first_seen ?? ''),
                 'last_seen' => (string) ($row->last_seen ?? ''),
+            ];
+        }
+
+        $slow = [];
+        $notable = [];
+        foreach ($candidates as $row) {
+            if ($this->isActuallySlow($row)) {
+                $slow[] = $row;
+            } else {
+                $notable[] = $row;
+            }
+        }
+
+        // Prefer truly slow digests; if none, still show top Centrix traffic by total time.
+        $selected = $slow;
+        $listMode = 'slow';
+        if ($selected === [] && $notable !== []) {
+            $selected = array_slice($notable, 0, $limit);
+            $listMode = 'notable';
+        } else {
+            $selected = array_slice($selected, 0, $limit);
+        }
+
+        $queries = [];
+        $mentionedTables = [];
+        foreach ($selected as $row) {
+            $text = (string) $row->digest_text;
+            foreach ($this->tablesMentionedInSql($text, $knownTables) as $table) {
+                $mentionedTables[$table] = true;
+            }
+
+            $queries[] = [
+                'digest' => (string) $row->digest,
+                'schema' => (string) $row->schema_name,
+                'sql' => $text,
+                'exec_count' => (int) $row->exec_count,
+                'total_sec' => (float) $row->total_sec,
+                'avg_sec' => (float) $row->avg_sec,
+                'max_sec' => (float) $row->max_sec,
+                'rows_examined' => (int) $row->rows_examined,
+                'rows_sent' => (int) $row->rows_sent,
+                'first_seen' => (string) $row->first_seen,
+                'last_seen' => (string) $row->last_seen,
+                'severity' => $this->isActuallySlow($row) ? 'slow' : 'notable',
                 'cleanup_hint' => $this->cleanupHintForSql($text),
             ];
-
-            if (count($queries) >= $limit) {
-                break;
-            }
         }
 
         // Re-rank table sizes with slow-query priority once we know mentions.
         $slowTables = $this->centrixTableSizes(array_keys($mentionedTables));
+
+        $emptyHint = null;
+        if ($queries === []) {
+            if ($rawCount === 0) {
+                $emptyHint = 'No statement digests in performance_schema for this database yet. Click “Capture digests”, use Centrix for 30–60 seconds, then Refresh — or paste a slow SQL below and Ask Centrix AI.';
+            } else {
+                $emptyHint = "MySQL has {$rawCount} digest row(s) but none matched Centrix app SQL after filters (noise={$noiseSkipped}, other apps={$nonCentrixSkipped}). Paste a query and Ask Centrix AI, or Capture digests after generating Centrix traffic.";
+            }
+        } elseif ($listMode === 'notable') {
+            $emptyHint = 'No digests crossed the “slow” thresholds yet — showing top Centrix queries by total time so you can still triage and Ask AI.';
+        }
 
         return [
             'available' => true,
             'database' => $schema,
             'queries' => $queries,
             'slow_tables' => $slowTables,
+            'list_mode' => $listMode,
+            'stats' => [
+                'raw_fetched' => $rawCount,
+                'centrix_candidates' => count($candidates),
+                'slow_count' => count($slow),
+                'notable_count' => count($notable),
+                'noise_skipped' => $noiseSkipped,
+                'non_centrix_skipped' => $nonCentrixSkipped,
+            ],
+            'empty_hint' => $emptyHint,
             'refreshed_at' => now()->toIso8601String(),
             'digest_note' => 'Digests are cumulative MySQL performance_schema stats until you Reset digests. Refresh alone re-reads the same counters. Dump-style SELECTs, OPTIMIZE/TRUNCATE/DROP, and other maintenance statements are hidden so this list stays actionable for app query tuning.',
         ];
@@ -450,18 +512,18 @@ SQL,
         }
     }
 
-    protected function isActuallySlow(object $row): bool
+    public function isActuallySlow(object $row): bool
     {
         $avg = (float) ($row->avg_sec ?? 0);
         $total = (float) ($row->total_sec ?? 0);
         $max = (float) ($row->max_sec ?? 0);
         $examined = (int) ($row->rows_examined ?? 0);
 
-        // Keep genuinely expensive digests; drop micro-latency chatter.
-        return $avg >= 0.05
-            || $max >= 0.5
-            || $total >= 5.0
-            || $examined >= 100000;
+        // Keep expensive digests; drop tiny chatter. Notable (below these) still shown when no slow hits.
+        return $avg >= 0.02
+            || $max >= 0.2
+            || $total >= 1.0
+            || $examined >= 10000;
     }
 
     protected function looksLikeTableAlias(string $name, string $sql): bool

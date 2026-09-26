@@ -703,7 +703,8 @@ class AiAssistantService
             $linkHint = $path ? " Open: {$path}" : '';
             $docHint = '';
             if (! empty($result['document_links']) && is_array($result['document_links'])) {
-                $docHint = ' Use Download PDF / Print in the chat panel when available.';
+                // Document buttons already render in the chat panel — keep the reply short.
+                $linkHint = '';
             }
             $reply = $this->replyFormatter->format(($outcome['message'] ?? 'Done.').$linkHint.$docHint);
 

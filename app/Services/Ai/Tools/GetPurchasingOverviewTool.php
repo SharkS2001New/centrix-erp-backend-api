@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Services\Ai\AiSystemContextBuilder;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\ErpContext;
+use App\Services\LpoModuleService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
@@ -95,6 +96,9 @@ class GetPurchasingOverviewTool implements AiToolInterface
         if ($lpoTable) {
             $query = DB::table($lpoTable)->where('organization_id', $orgId);
             $columns = Schema::getColumnListing($lpoTable);
+            if (in_array('deleted_at', $columns, true)) {
+                $query->whereNull('deleted_at');
+            }
             $orderCol = in_array('created_at', $columns, true) ? 'created_at' : (in_array('lpo_no', $columns, true) ? 'lpo_no' : 'id');
             $select = array_values(array_unique(array_filter([
                 in_array('lpo_no', $columns, true) ? 'lpo_no' : null,
@@ -103,12 +107,25 @@ class GetPurchasingOverviewTool implements AiToolInterface
                 in_array('lpo_status_code', $columns, true) ? 'lpo_status_code' : (in_array('status', $columns, true) ? 'status' : null),
                 in_array('supplier_id', $columns, true) ? 'supplier_id' : null,
                 in_array('total_amount', $columns, true) ? 'total_amount' : null,
+                in_array('net_amount', $columns, true) ? 'net_amount' : null,
                 $orderCol,
             ])));
             $recentLpos = $query->orderByDesc($orderCol)
                 ->limit($limit)
                 ->get($select ?: ['*'])
-                ->map(fn ($row) => (array) $row)
+                ->map(function ($row) {
+                    $data = (array) $row;
+                    if (isset($data['lpo_status_code'])) {
+                        $code = (int) $data['lpo_status_code'];
+                        $data['status_name'] = LpoModuleService::statusLabel($code);
+                        $data['open_for_receive'] = in_array($code, [
+                            LpoModuleService::STATUS_AWAITING_RECEIVE,
+                            LpoModuleService::STATUS_PARTIALLY_RECEIVED,
+                        ], true);
+                    }
+
+                    return $data;
+                })
                 ->all();
         }
 
@@ -122,8 +139,8 @@ class GetPurchasingOverviewTool implements AiToolInterface
                 ['label' => 'Supplier payments', 'path' => '/suppliers/payments'],
                 ['label' => 'Stock receipts (GRN)', 'path' => '/inventory/receipts'],
             ],
-            'note' => 'Open the screens above for full supplier balances, LPO details, and GRN receiving. '
-                .'This overview is a snapshot, not a full AP aging report.',
+            'note' => 'This is a recent snapshot, not a status-filtered list. '
+                .'For LPOs awaiting goods receiving, call list_lpos with filter=awaiting_receive.',
         ];
     }
 

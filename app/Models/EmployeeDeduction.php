@@ -58,6 +58,11 @@ class EmployeeDeduction extends Model
         return true;
     }
 
+    public function payrollRun()
+    {
+        return $this->belongsTo(PayrollRun::class, 'payroll_run_id');
+    }
+
     public function employee()
     {
         return $this->belongsTo(Employee::class, 'employee_id');

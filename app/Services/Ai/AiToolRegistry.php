@@ -26,7 +26,9 @@ use App\Services\Ai\Tools\GetProductDetailsTool;
 use App\Services\Ai\Tools\GetProductPriceHistoryTool;
 use App\Services\Ai\Tools\GetLpoDetailsTool;
 use App\Services\Ai\Tools\GetPurchasingOverviewTool;
+use App\Services\Ai\Tools\ListLposTool;
 use App\Services\Ai\Tools\GetRouteDetailsTool;
+use App\Services\Ai\Tools\GetRouteMarkupsTool;
 use App\Services\Ai\Tools\GetRouteOrdersTool;
 use App\Services\Ai\Tools\GetSalesBriefTool;
 use App\Services\Ai\Tools\GetSalesByCashierTool;
@@ -58,6 +60,7 @@ class AiToolRegistry
         protected SearchTrainingNotesTool $searchTrainingNotes,
         protected GetPurchasingOverviewTool $getPurchasingOverview,
         protected GetLpoDetailsTool $getLpoDetails,
+        protected ListLposTool $listLpos,
         protected GetDebtorsSummaryTool $getDebtorsSummary,
         protected GetCustomerStatementTool $getCustomerStatement,
         protected GetCustomerReturnsTool $getCustomerReturns,
@@ -65,6 +68,7 @@ class AiToolRegistry
         protected GetTillHealthTool $getTillHealth,
         protected GetRouteOrdersTool $getRouteOrders,
         protected GetRouteDetailsTool $getRouteDetails,
+        protected GetRouteMarkupsTool $getRouteMarkups,
         protected GetUserDetailsTool $getUserDetails,
         protected GetEmployeeAttendanceTool $getEmployeeAttendance,
         protected GetEmployeeDetailsTool $getEmployeeDetails,
@@ -197,6 +201,7 @@ class AiToolRegistry
             $this->searchTrainingNotes,
             $this->getPurchasingOverview,
             $this->getLpoDetails,
+            $this->listLpos,
             $this->getDebtorsSummary,
             $this->getCustomerStatement,
             $this->getCustomerReturns,
@@ -204,6 +209,7 @@ class AiToolRegistry
             $this->getTillHealth,
             $this->getRouteOrders,
             $this->getRouteDetails,
+            $this->getRouteMarkups,
             $this->getUserDetails,
             $this->getEmployeeAttendance,
             $this->getEmployeeDetails,

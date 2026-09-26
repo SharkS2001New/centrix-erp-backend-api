@@ -466,6 +466,8 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::post('admin/slow-queries/advise', [\App\Http\Controllers\Api\V1\PlatformSlowQueryController::class, 'advise'])
             ->middleware(['erp.super_admin']);
+        Route::post('admin/slow-queries/advise-url', [\App\Http\Controllers\Api\V1\PlatformSlowQueryController::class, 'adviseUrl'])
+            ->middleware(['erp.super_admin']);
         Route::post('admin/slow-queries/run-fix', [\App\Http\Controllers\Api\V1\PlatformSlowQueryController::class, 'runFix'])
             ->middleware(['erp.super_admin']);
         Route::get('admin/operational-prune', [\App\Http\Controllers\Api\V1\PlatformOperationalPruneController::class, 'show'])

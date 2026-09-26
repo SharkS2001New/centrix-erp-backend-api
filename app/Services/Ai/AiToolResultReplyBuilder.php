@@ -58,13 +58,16 @@ class AiToolResultReplyBuilder
                 'get_expense_summary' => $this->formatExpenseSummary($result),
                 'get_customer_returns' => $this->formatCustomerReturns($result),
                 'get_product_price_history' => $this->formatProductPriceHistory($result),
+                'get_product_details' => $this->formatProductDetails($result),
                 'find_catalogue_exceptions' => $this->formatCatalogueExceptions($result),
                 'get_vat_collected' => $this->formatVatCollected($result),
                 'get_user_details' => $this->formatUserDetails($result),
                 'get_route_details' => $this->formatRouteDetails($result),
+                'get_route_markups' => $this->formatRouteMarkups($result),
                 'search_training_notes' => $this->formatTrainingNotes($result),
                 'find_screen' => $this->formatFindScreen($result),
                 'get_lpo_details' => $this->formatLpoDetails($result),
+                'list_lpos' => $this->formatListLpos($result),
                 'run_insight' => $this->formatRunInsight($result),
                 default => null,
             };
@@ -1064,7 +1067,14 @@ class AiToolResultReplyBuilder
             return null;
         }
         $lines = ["### Route **{$name}**"];
+        $markup = $route['route_markup_price'] ?? $result['route_markup_price'] ?? null;
+        if ($markup !== null && $markup !== '') {
+            $lines[] = 'Route markup: **KES '.number_format((float) $markup, 2).'**';
+        }
         $users = is_array($result['assigned_users'] ?? null) ? $result['assigned_users'] : [];
+        if ($users === [] && is_array($route['assigned_users'] ?? null)) {
+            $users = $route['assigned_users'];
+        }
         if ($users !== []) {
             $parts = [];
             foreach ($users as $u) {
@@ -1079,6 +1089,110 @@ class AiToolResultReplyBuilder
             }
             if ($parts !== []) {
                 $lines[] = 'Operated by: '.implode(', ', $parts);
+            }
+        }
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * @param  array<string, mixed>  $result
+     */
+    protected function formatRouteMarkups(array $result): ?string
+    {
+        $routes = is_array($result['routes'] ?? null) ? $result['routes'] : [];
+        if ($routes === []) {
+            return 'No routes found for this organization.';
+        }
+
+        $lines = [
+            '### Route markup amounts (KES)',
+            '',
+            '| Route | Markup (KES) | Active |',
+            '| --- | ---: | --- |',
+        ];
+        foreach (array_slice($routes, 0, 80) as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $name = trim((string) ($row['route_name'] ?? ''));
+            if ($name === '') {
+                continue;
+            }
+            $markup = number_format((float) ($row['route_markup_price'] ?? $row['route_markup_kes'] ?? 0), 2);
+            $active = ! empty($row['is_active']) ? 'Yes' : 'No';
+            $lines[] = '| '.$name.' | '.$markup.' | '.$active.' |';
+        }
+
+        $withMarkup = (int) ($result['routes_with_markup'] ?? 0);
+        $lines[] = '';
+        $lines[] = "Routes with markup > 0: **{$withMarkup}** of ".(int) ($result['route_count'] ?? count($routes)).'.';
+        $lines[] = 'Edit markups under Routes. Retail packaging markups are separate (/retail-package-settings).';
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * @param  array<string, mixed>  $result
+     */
+    protected function formatProductDetails(array $result): ?string
+    {
+        $product = is_array($result['product'] ?? null) ? $result['product'] : [];
+        $name = trim((string) ($product['product_name'] ?? ''));
+        $code = trim((string) ($product['product_code'] ?? ''));
+        if ($name === '' && $code === '') {
+            return null;
+        }
+
+        $label = $name !== '' ? $name : $code;
+        $lines = ["### {$label}".($code !== '' && $name !== '' ? " (`{$code}`)" : '')];
+
+        $measurements = is_array($result['measurements'] ?? null) ? $result['measurements'] : [];
+        if (! empty($measurements['configured'])) {
+            $meaning = trim((string) ($measurements['conversion_meaning'] ?? ''));
+            if ($meaning !== '') {
+                $lines[] = $meaning;
+            } else {
+                $full = trim((string) ($measurements['full_package_label'] ?? $measurements['full_name'] ?? 'pack'));
+                $small = trim((string) ($measurements['small_package_label'] ?? 'unit'));
+                $factor = $measurements['conversion_factor'] ?? null;
+                if ($factor !== null) {
+                    $lines[] = "UoM: **1 {$full} = {$factor} {$small}** (stock stored in {$small}).";
+                }
+            }
+            if (! empty($measurements['hierarchy']) && is_array($measurements['hierarchy'])) {
+                foreach ($measurements['hierarchy'] as $level) {
+                    if (is_array($level) && ! empty($level['label'])) {
+                        $role = trim((string) ($level['role'] ?? ''));
+                        $lines[] = '- '.$level['label'].($role !== '' ? " — {$role}" : '');
+                    }
+                }
+            }
+        } elseif (! empty($measurements['message'])) {
+            $lines[] = (string) $measurements['message'];
+        } else {
+            $lines[] = 'No unit of measure is linked on this product yet (/uoms).';
+        }
+
+        $stock = is_array($result['stock'] ?? null) ? $result['stock'] : [];
+        if (! empty($stock['total_qty_label'])) {
+            $lines[] = 'On hand: **'.$stock['total_qty_label'].'**'
+                .(isset($stock['shop_qty_label']) ? ' (shop '.$stock['shop_qty_label'].', store '.($stock['store_qty_label'] ?? '—').')' : '');
+        }
+
+        $retail = is_array($result['retail_packaging'] ?? null) ? $result['retail_packaging'] : [];
+        if (! empty($retail['configured']) || ! empty($retail['sell_on_retail'])) {
+            $rm = $retail['markup_price'] ?? null;
+            $wm = $retail['wholesale_markup_price'] ?? null;
+            if ($rm !== null || $wm !== null) {
+                $bits = [];
+                if ($rm !== null) {
+                    $bits[] = 'retail markup KES '.number_format((float) $rm, 2);
+                }
+                if ($wm !== null) {
+                    $bits[] = 'wholesale markup KES '.number_format((float) $wm, 2);
+                }
+                $lines[] = 'Retail packaging: '.implode(', ', $bits).' (separate from route markup).';
             }
         }
 
@@ -1336,27 +1450,54 @@ class AiToolResultReplyBuilder
         $supplier = (string) ($result['supplier_name'] ?? 'Supplier');
         $status = (string) ($result['status_name'] ?? '');
         $total = number_format((float) ($result['total_amount'] ?? 0), 2);
-        $path = (string) ($result['path'] ?? '/lpo/'.$lpoNo);
 
         $lines = [
-            "Purchase order **{$po}** for **{$supplier}**.",
+            "**{$po}** — {$supplier}",
             "Status: {$status}. Total: KES {$total}.",
-            '',
-            "Open: [{$path}]({$path})",
-            "Print: [/lpo/{$lpoNo}/print](/lpo/{$lpoNo}/print)",
         ];
 
         $next = is_array($result['next_steps'] ?? null) ? $result['next_steps'] : [];
         if ($next !== []) {
-            $lines[] = '';
-            $lines[] = 'Next steps:';
-            foreach (array_slice($next, 0, 4) as $step) {
-                $lines[] = '- '.(string) $step;
-            }
+            $lines[] = 'Next: '.(string) $next[0];
         }
 
-        $lines[] = '';
-        $lines[] = 'Use **Download PDF** in the chat panel, or ask me to submit for approval, approve, mark sent, or receive goods.';
+        return implode("\n", $lines);
+    }
+
+    /**
+     * @param  array<string, mixed>  $result
+     */
+    protected function formatListLpos(array $result): ?string
+    {
+        $items = is_array($result['purchase_orders'] ?? null) ? $result['purchase_orders'] : [];
+        $label = (string) ($result['filter_label'] ?? 'Purchase orders');
+        $totalMatching = (int) ($result['total_matching'] ?? count($items));
+
+        if ($items === []) {
+            return "No purchase orders match **{$label}**.";
+        }
+
+        $lines = [
+            "**{$label}** — showing ".count($items).($totalMatching > count($items) ? " of {$totalMatching}" : '').':',
+            '',
+            '| PO | Supplier | Status | Total |',
+            '| --- | --- | --- | ---: |',
+        ];
+
+        foreach (array_slice($items, 0, 25) as $row) {
+            $po = (string) ($row['po_number'] ?? $row['lpo_no'] ?? '');
+            $supplier = (string) ($row['supplier_name'] ?? '—');
+            $status = (string) ($row['status_name'] ?? '');
+            $total = number_format((float) ($row['total_amount'] ?? 0), 2);
+            $path = (string) ($row['path'] ?? '');
+            $poCell = $path !== '' ? "[{$po}]({$path})" : $po;
+            $lines[] = "| {$poCell} | {$supplier} | {$status} | {$total} |";
+        }
+
+        if ($totalMatching > count($items)) {
+            $lines[] = '';
+            $lines[] = 'Open [/lpo](/lpo) for the full list.';
+        }
 
         return implode("\n", $lines);
     }

@@ -38,8 +38,9 @@ class GetProductDetailsTool implements AiToolInterface
     {
         return 'Look up a Centrix product by SKU/code or name and return measurements (UoM hierarchy: '
             .'full pack / middle / small base units), current stock with qty_label, sell-on-retail flag, '
-            .'and retail packaging / pricing tiers. Use for questions like "is this in kg or bags?", '
-            .'"how is retail packaging set?", "what is the conversion factor?", or product measurement explainers. '
+            .'and retail packaging / pricing tiers. Use for questions like "is Sugar in kg or bags?", '
+            .'"UoM for product X", "how is retail packaging set?", "what is the conversion factor?", '
+            .'or product measurement explainers. Always call this for named-product packaging questions. '
             .'For formal price-change history (when unit/cost price changed), use get_product_price_history instead.';
     }
 
@@ -105,6 +106,18 @@ class GetProductDetailsTool implements AiToolInterface
         }
 
         $product = $this->findProduct($orgId, $code, $query);
+        if ($product instanceof \Illuminate\Support\Collection) {
+            return AiNearMissHelper::ambiguous(
+                $code !== '' ? $code : $query,
+                $product->map(fn (Product $p) => [
+                    'label' => trim((string) $p->product_name) !== ''
+                        ? (string) $p->product_name
+                        : (string) $p->product_code,
+                    'product_code' => (string) $p->product_code,
+                ])->all(),
+                'product',
+            );
+        }
         if (! $product) {
             $searched = $code !== '' ? $code : $query;
             $alternatives = $this->suggestClosestProducts($orgId, $searched);
@@ -179,7 +192,10 @@ class GetProductDetailsTool implements AiToolInterface
         ];
     }
 
-    protected function findProduct(int $orgId, string $code, string $query): ?Product
+    /**
+     * @return Product|\Illuminate\Support\Collection<int, Product>|null
+     */
+    protected function findProduct(int $orgId, string $code, string $query): Product|\Illuminate\Support\Collection|null
     {
         $base = Product::query()
             ->where('organization_id', $orgId)
@@ -197,13 +213,45 @@ class GetProductDetailsTool implements AiToolInterface
             return null;
         }
 
-        return (clone $base)
+        $lower = mb_strtolower($term);
+
+        $exactName = (clone $base)
+            ->whereRaw('LOWER(product_name) = ?', [$lower])
+            ->orderBy('product_name')
+            ->first();
+        if ($exactName) {
+            return $exactName;
+        }
+
+        $startsWith = (clone $base)
+            ->whereRaw('LOWER(product_name) LIKE ?', [$lower.'%'])
+            ->orderBy('product_name')
+            ->limit(10)
+            ->get();
+        if ($startsWith->count() === 1) {
+            return $startsWith->first();
+        }
+        if ($startsWith->count() > 1) {
+            return $startsWith;
+        }
+
+        $matches = (clone $base)
             ->where(function ($q) use ($term) {
                 $q->where('product_code', 'like', '%'.$term.'%')
                     ->orWhere('product_name', 'like', '%'.$term.'%');
             })
             ->orderBy('product_name')
-            ->first();
+            ->limit(10)
+            ->get();
+
+        if ($matches->count() === 1) {
+            return $matches->first();
+        }
+        if ($matches->count() > 1) {
+            return $matches;
+        }
+
+        return null;
     }
 
     /**

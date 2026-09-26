@@ -35,9 +35,10 @@ class GetRouteDetailsTool implements AiToolInterface
     public function description(): string
     {
         return 'Look up a Centrix sales/distribution route by name or id: assigned users (who operates it), '
-            .'default drivers, customer count, and recent order totals. '
-            .'Use for "who operates route X?", "tell me about route 118", or route territory questions. '
-            .'Never invent assignments — always call this tool.';
+            .'default drivers, customer count, route_markup_price (KES), and recent order totals. '
+            .'Use for "who operates route X?", "tell me about route 118", or one-route territory questions. '
+            .'For "markup for each route" / list all route markups, use get_route_markups instead. '
+            .'Never invent assignments or markup — always call a tool.';
     }
 
     public function parametersSchema(): array
@@ -290,6 +291,7 @@ class GetRouteDetailsTool implements AiToolInterface
             'route_name' => (string) ($route->route_name ?? ''),
             'direction' => $route->direction ? (string) $route->direction : null,
             'is_active' => (bool) ($route->is_active ?? true),
+            'route_markup_price' => round((float) ($route->route_markup_price ?? 0), 2),
             'branch_id' => $route->branch_id !== null ? (int) $route->branch_id : null,
             'assigned_users' => $assignedUsers,
             'assigned_user_count' => count($assignedUsers),

@@ -95,4 +95,28 @@ class SlowQueryDigestServiceTest extends TestCase
             ],
         ];
     }
+
+    public function test_is_actually_slow_thresholds(): void
+    {
+        $service = app(SlowQueryDigestService::class);
+
+        $this->assertTrue($service->isActuallySlow((object) [
+            'avg_sec' => 0.03,
+            'max_sec' => 0.01,
+            'total_sec' => 0.1,
+            'rows_examined' => 10,
+        ]));
+        $this->assertTrue($service->isActuallySlow((object) [
+            'avg_sec' => 0.001,
+            'max_sec' => 0.001,
+            'total_sec' => 2.0,
+            'rows_examined' => 10,
+        ]));
+        $this->assertFalse($service->isActuallySlow((object) [
+            'avg_sec' => 0.005,
+            'max_sec' => 0.01,
+            'total_sec' => 0.2,
+            'rows_examined' => 100,
+        ]));
+    }
 }

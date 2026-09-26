@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Services\Ai\AiProviderFactory;
 use App\Services\Ai\AiSettingsResolver;
+use App\Services\Platform\SlowApiUrlAnalyzer;
 use App\Services\Platform\SlowQueryDigestService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
@@ -100,6 +101,98 @@ class PlatformSlowQueryController extends Controller
         ]);
     }
 
+    public function adviseUrl(Request $request, SlowApiUrlAnalyzer $analyzer, AiProviderFactory $providers)
+    {
+        $data = $request->validate([
+            'url' => 'required|string|max:2000',
+            'method' => 'nullable|string|max:10',
+        ]);
+
+        $analysis = $analyzer->analyze($data['url'], $data['method'] ?? null);
+        $heuristic = [
+            'fast_fix' => $analysis['fast_fix'],
+            'permanent_fix' => $analysis['permanent_fix'],
+            'safe_sql' => $analysis['safe_sql'],
+            'platform_actions' => $analysis['platform_actions'],
+            'hypotheses' => $analysis['hypotheses'],
+        ];
+
+        $runtime = AiSettingsResolver::resolveRuntimeForPlatformTraining();
+        if (! $runtime || empty($runtime['api_key'])) {
+            return response()->json([
+                'analysis' => $analysis,
+                'advice' => [
+                    'source' => 'heuristic',
+                    'note' => 'Platform AI credentials are not configured. Showing route + digest based advice. Add a key under Platform → AI training.',
+                    ...$heuristic,
+                ],
+            ]);
+        }
+
+        $digestLines = '';
+        foreach (array_slice($analysis['related_digests'] ?? [], 0, 5) as $i => $row) {
+            $n = $i + 1;
+            $digestLines .= "Digest {$n}: avg=".($row['avg_sec'] ?? '?')
+                .'s total='.($row['total_sec'] ?? '?')
+                .'s runs='.($row['exec_count'] ?? '?')
+                .' sql='.($row['sql'] ?? '')."\n";
+        }
+        $issueLines = '';
+        foreach (array_slice($analysis['related_issues'] ?? [], 0, 5) as $i => $row) {
+            $n = $i + 1;
+            $issueLines .= "Issue {$n}: ".($row['http_method'] ?? '').' '.($row['api_path'] ?? '')
+                .' duration_ms='.($row['duration_ms'] ?? 'n/a')
+                .' msg='.($row['message'] ?? '')."\n";
+        }
+
+        $route = $analysis['route'] ?? null;
+        $system = 'You are Centrix ERP API performance assistant for platform admins. '
+            .'A slow API URL was pasted. Explain likely causes and fixes. '
+            .'Return JSON only with keys: hypotheses (string array), fast_fix (string array), '
+            .'permanent_fix (string array), safe_sql (ANALYZE/OPTIMIZE retention tables or CREATE/ADD INDEX only), '
+            .'platform_actions (array of {id,label,kind[,sql]}). '
+            .'Never suggest DROP DATABASE, unrestricted DELETE/UPDATE, TRUNCATE of live sales, or SET GLOBAL. '
+            .'Prefer 14–90 day report windows, organization_id filters, pagination, and Data retention prune for Hikvision/attendance.';
+
+        $userPrompt = 'Method: '.$analysis['method']."\n"
+            .'Path: '.$analysis['path']."\n"
+            .'Query: '.json_encode($analysis['query'] ?? [], JSON_UNESCAPED_SLASHES)."\n"
+            .'Route action: '.($route['action'] ?? 'unmatched')."\n"
+            .'Controller: '.($route['controller'] ?? 'n/a').'::'.($route['action_method'] ?? '')."\n"
+            .'Table hints: '.implode(', ', $analysis['table_hints'] ?? [])."\n"
+            .'Heuristic hypotheses: '.implode(' | ', $analysis['hypotheses'] ?? [])."\n"
+            ."Related digests:\n".($digestLines !== '' ? $digestLines : "(none)\n")
+            ."Related slow issue reports:\n".($issueLines !== '' ? $issueLines : "(none)\n");
+
+        try {
+            $turn = $providers->make($runtime)->chat([
+                'system' => $system,
+                'messages' => [
+                    ['role' => 'user', 'content' => $userPrompt],
+                ],
+                'temperature' => 0.25,
+                'max_output_tokens' => 1100,
+            ]);
+            $content = trim((string) ($turn['text'] ?? ''));
+            $aiAdvice = $this->parseAiAdvice($content, $heuristic);
+            if (! empty($analysis['hypotheses']) && empty($aiAdvice['hypotheses'])) {
+                $aiAdvice['hypotheses'] = $analysis['hypotheses'];
+            }
+        } catch (\Throwable $e) {
+            report($e);
+            $aiAdvice = [
+                'source' => 'heuristic',
+                'note' => 'Centrix AI call failed; showing route + digest based advice. '.$e->getMessage(),
+                ...$heuristic,
+            ];
+        }
+
+        return response()->json([
+            'analysis' => $analysis,
+            'advice' => $aiAdvice,
+        ]);
+    }
+
     public function runFix(Request $request, SlowQueryDigestService $digest)
     {
         $data = $request->validate([
@@ -120,7 +213,8 @@ class PlatformSlowQueryController extends Controller
      *   fast_fix: list<string>,
      *   permanent_fix: list<string>,
      *   safe_sql: list<string>,
-     *   platform_actions?: list<array<string, mixed>>
+     *   platform_actions?: list<array<string, mixed>>,
+     *   hypotheses?: list<string>
      * }  $fallback
      * @return array<string, mixed>
      */
@@ -147,8 +241,14 @@ class PlatformSlowQueryController extends Controller
             $actions = $fallback['platform_actions'] ?? [];
         }
 
+        $hypotheses = $json['hypotheses'] ?? $fallback['hypotheses'] ?? [];
+        if (! is_array($hypotheses)) {
+            $hypotheses = $fallback['hypotheses'] ?? [];
+        }
+
         return [
             'source' => 'ai',
+            'hypotheses' => array_values(array_filter(array_map('strval', $hypotheses))),
             'fast_fix' => array_values(array_filter(array_map('strval', $json['fast_fix'] ?? $fallback['fast_fix']))),
             'permanent_fix' => array_values(array_filter(array_map('strval', $json['permanent_fix'] ?? $fallback['permanent_fix']))),
             'safe_sql' => array_values(array_filter(array_map('strval', $json['safe_sql'] ?? $fallback['safe_sql']))),

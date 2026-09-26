@@ -27,6 +27,8 @@ class AiLpoDocumentWorkflowTest extends TestCase
             3 => 'Awaiting receive',
             4 => 'Partially received',
             5 => 'Fully received',
+            6 => 'Cleared',
+            7 => 'Cancelled / returned',
         ] as $code => $name) {
             DB::table('lpo_statuses')->updateOrInsert(
                 ['status_code' => $code],
@@ -61,6 +63,94 @@ class AiLpoDocumentWorkflowTest extends TestCase
         $response->assertOk();
         $this->assertStringContainsString('application/pdf', (string) $response->headers->get('content-type'));
         $this->assertStringStartsWith('%PDF', $response->getContent());
+
+        // HTML builder (used by Dompdf) must match org print document title + procurement layout.
+        $service = app(\App\Services\Purchasing\LpoDocumentPdfService::class);
+        $summary = app(\App\Services\LpoModuleService::class)->summary($lpoNo, (int) $user->organization_id, $user);
+        $org = Organization::query()->find((int) $user->organization_id);
+        $ref = new \ReflectionClass($service);
+        $method = $ref->getMethod('buildHtml');
+        $method->setAccessible(true);
+        $html = $method->invoke(
+            $service,
+            $summary['lpo'] ?? [],
+            $summary['lines'] ?? [],
+            app(\App\Services\Background\ReportBrandingService::class)->forOrganization($org),
+            \App\Services\Purchasing\ProcurementSettingsResolver::forOrganization($org),
+            $supplier,
+            $org,
+        );
+        $this->assertStringContainsString('LOCAL PURCHASE ORDER', $html);
+        $this->assertStringContainsString('Item Description', $html);
+        $this->assertStringContainsString('Authorised by', $html);
+    }
+
+    public function test_list_lpos_awaiting_receive_excludes_fully_received_and_cleared(): void
+    {
+        $this->ensureLpoStatuses();
+        $user = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($user);
+
+        $supplier = Supplier::where('supplier_code', 'SUP-001')->firstOrFail();
+        $product = Product::firstOrFail();
+
+        $make = function (int $status) use ($supplier, $product) {
+            $create = $this->postJson('/api/v1/lpo-mst/full', [
+                'supplier_id' => $supplier->id,
+                'lines' => [
+                    [
+                        'product_code' => $product->product_code,
+                        'ordered_qty' => 1,
+                        'cost_price' => 50,
+                    ],
+                ],
+            ])->assertCreated();
+            $lpoNo = (int) $create->json('lpo_no');
+            LpoMst::query()->where('lpo_no', $lpoNo)->update(['lpo_status_code' => $status]);
+
+            return $lpoNo;
+        };
+
+        $awaiting = $make(3);
+        $partial = $make(4);
+        $fully = $make(5);
+        $cleared = $make(6);
+        $check = $make(0);
+
+        $this->assertSame(3, (int) LpoMst::query()->where('lpo_no', $awaiting)->value('lpo_status_code'));
+        $this->assertSame(4, (int) LpoMst::query()->where('lpo_no', $partial)->value('lpo_status_code'));
+
+        $registry = app(\App\Services\Ai\AiToolRegistry::class);
+        $this->assertTrue($registry->has('list_lpos'), 'list_lpos tool must be registered');
+
+        $result = app(\App\Services\Ai\Tools\ListLposTool::class)->execute($user, [
+            'filter' => 'awaiting_receive',
+            'limit' => 50,
+        ]);
+        // Normalize in case the runtime wraps the payload (ArrayAccess / JsonSerializable).
+        $payload = json_decode(json_encode($result), true);
+        $this->assertIsArray($payload, get_debug_type($result));
+        $this->assertFalse($payload['error'] ?? false, json_encode($payload));
+        $orders = $payload['purchase_orders'] ?? [];
+        $this->assertIsArray($orders);
+        $this->assertCount(2, $orders, json_encode($payload));
+        $this->assertSame(2, (int) ($payload['total_matching'] ?? -1));
+
+        $ids = [];
+        $statusCodes = [];
+        foreach ($orders as $row) {
+            $ids[] = (int) ($row['lpo_no'] ?? 0);
+            $statusCodes[] = (int) ($row['status_code'] ?? -1);
+            $this->assertTrue((bool) ($row['open_for_receive'] ?? false));
+        }
+        sort($statusCodes);
+
+        $this->assertSame([3, 4], $statusCodes);
+        $this->assertContainsEquals((int) $awaiting, $ids);
+        $this->assertContainsEquals((int) $partial, $ids);
+        $this->assertNotContainsEquals((int) $fully, $ids);
+        $this->assertNotContainsEquals((int) $cleared, $ids);
+        $this->assertNotContainsEquals((int) $check, $ids);
     }
 
     public function test_ai_can_submit_approve_mark_sent_and_receive(): void

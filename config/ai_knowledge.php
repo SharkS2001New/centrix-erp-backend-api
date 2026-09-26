@@ -256,7 +256,13 @@ return [
         'retrieve_lpo' => [
             'summary' => 'Retrieve LPO status, lines, next steps, and PDF/print links',
             'path' => '/lpo',
-            'notes' => 'Use get_lpo_details tool — do not invent status. Always include open/print/PDF links from document_links.',
+            'notes' => 'Use get_lpo_details for one LPO; use list_lpos with filter=awaiting_receive for goods-receiving lists. '
+                .'Do not invent status. Prefer chat document_links buttons — do not restate Open/Print/PDF in prose when links are present.',
+        ],
+        'list_lpos_awaiting_receive' => [
+            'summary' => 'List LPOs awaiting goods receiving (Awaiting receive + Partially received)',
+            'path' => '/lpo',
+            'notes' => 'Call list_lpos with filter=awaiting_receive. Never use get_purchasing_overview for this — overview is unfiltered recent LPOs.',
         ],
         'create_report' => [
             'summary' => 'Save a custom report template — ask for a name first, then create and share /reports/custom/{id}',

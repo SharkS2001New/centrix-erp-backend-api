@@ -108,6 +108,7 @@ class PayrollCycleSettlementService
             }
 
             if ($includeOther) {
+                $touchedOneTimeTypeIds = [];
                 foreach ($lineInputs as $line) {
                     foreach ($line['payroll_meta']['deductions_detail'] ?? [] as $item) {
                         if (($item['type'] ?? '') === 'cash_advance' && ! empty($item['id'])) {
@@ -143,10 +144,14 @@ class PayrollCycleSettlementService
                             if ($deduction && ($item['frequency'] ?? '') === EmployeeDeduction::FREQUENCY_ONE_TIME) {
                                 $snapshot['is_active'] = (bool) $deduction->is_active;
                                 $snapshot['payroll_run_id'] = $deduction->payroll_run_id;
+                                $snapshot['deduction_type_id'] = $deduction->deduction_type_id;
                                 $deduction->update([
                                     'is_active' => false,
                                     'payroll_run_id' => $runId,
                                 ]);
+                                if ($deduction->deduction_type_id) {
+                                    $touchedOneTimeTypeIds[(int) $deduction->deduction_type_id] = true;
+                                }
                             }
                             $this->recordSettlement(
                                 $runId,
@@ -191,6 +196,7 @@ class PayrollCycleSettlementService
                                         'payroll_run_id' => $runId,
                                     ]);
                                 }
+                                $touchedOneTimeTypeIds[$typeId] = true;
                                 $this->recordSettlement(
                                     $runId,
                                     $orgId,
@@ -212,6 +218,10 @@ class PayrollCycleSettlementService
                             }
                         }
                     }
+                }
+
+                foreach (array_keys($touchedOneTimeTypeIds) as $typeId) {
+                    $this->deactivateOneTimeTypeIfFullyApplied((int) $typeId);
                 }
             }
 
@@ -471,9 +481,14 @@ class PayrollCycleSettlementService
             return;
         }
 
+        $typeId = (int) ($snapshot['deduction_type_id'] ?? $row->deduction_type_id ?? 0);
+
         if (! empty($snapshot['created_marker']) && ! empty($snapshot['from_organization_type'])) {
             $row->delete();
             $counts['employee_deduction']++;
+            if ($typeId > 0) {
+                $this->reactivateOneTimeType($typeId);
+            }
 
             return;
         }
@@ -484,9 +499,46 @@ class PayrollCycleSettlementService
                 'is_active' => array_key_exists('is_active', $snapshot) ? (bool) $snapshot['is_active'] : true,
                 'payroll_run_id' => $snapshot['payroll_run_id'] ?? null,
             ]);
+            if ($typeId > 0) {
+                $this->reactivateOneTimeType($typeId);
+            }
         }
 
         $counts['employee_deduction']++;
+    }
+
+    /**
+     * After assigned one-time deductions are fully applied, hide the type from Pending.
+     * Org-wide one-time stays active so remaining employees still get it on later runs
+     * (per-employee settlement markers prevent double deduction).
+     */
+    protected function deactivateOneTimeTypeIfFullyApplied(int $typeId): void
+    {
+        $type = PayrollDeductionType::find($typeId);
+        if (! $type || ! $type->isOneTime() || $type->applies_to_all) {
+            return;
+        }
+
+        $hasPending = EmployeeDeduction::query()
+            ->where('deduction_type_id', $typeId)
+            ->where('is_active', true)
+            ->whereNull('payroll_run_id')
+            ->exists();
+
+        if (! $hasPending) {
+            $type->update(['is_active' => false]);
+        }
+    }
+
+    protected function reactivateOneTimeType(int $typeId): void
+    {
+        $type = PayrollDeductionType::find($typeId);
+        if (! $type || ! $type->isOneTime()) {
+            return;
+        }
+        if (! $type->is_active) {
+            $type->update(['is_active' => true]);
+        }
     }
 
     /** @param  array<string, int>  $counts */
