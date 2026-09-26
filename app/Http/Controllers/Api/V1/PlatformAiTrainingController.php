@@ -212,6 +212,7 @@ class PlatformAiTrainingController extends Controller
     {
         $data = $request->validate([
             'enabled' => 'sometimes|boolean',
+            'talk_enabled' => 'sometimes|boolean',
             'provider' => 'sometimes|in:openai,gemini',
             'model' => 'sometimes|nullable|string|max:80',
             'api_key' => 'sometimes|nullable|string|max:512',

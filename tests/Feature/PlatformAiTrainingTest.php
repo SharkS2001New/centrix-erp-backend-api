@@ -65,6 +65,24 @@ class PlatformAiTrainingTest extends TestCase
 
         $this->actingAs($this->superAdmin, 'sanctum')
             ->patchJson('/api/v1/admin/ai-training/settings', [
+                'talk_enabled' => false,
+            ])
+            ->assertOk()
+            ->assertJsonPath('settings.talk_enabled', false);
+
+        $this->assertFalse(AiSettingsResolver::isTalkEnabled());
+
+        $this->actingAs($this->superAdmin, 'sanctum')
+            ->patchJson('/api/v1/admin/ai-training/settings', [
+                'talk_enabled' => true,
+            ])
+            ->assertOk()
+            ->assertJsonPath('settings.talk_enabled', true);
+
+        $this->assertTrue(AiSettingsResolver::isTalkEnabled());
+
+        $this->actingAs($this->superAdmin, 'sanctum')
+            ->patchJson('/api/v1/admin/ai-training/settings', [
                 'enabled' => true,
                 'api_key' => 'sk-test-platform-key-updated',
                 'model' => 'gpt-4o',

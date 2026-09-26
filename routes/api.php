@@ -93,6 +93,8 @@ use App\Http\Controllers\Api\V1\LegacyImportConverterController;
 use App\Http\Controllers\Api\V1\PlatformDatabaseBackupController;
 use App\Http\Controllers\Api\V1\RetailPackageImportController;
 use App\Http\Controllers\Api\V1\PlatformSystemIssueReportController;
+use App\Http\Controllers\Api\V1\PlatformWhatsNewController;
+use App\Http\Controllers\Api\V1\WhatsNewController;
 use App\Http\Controllers\Api\V1\PlatformKenyaPayrollSettingsController;
 use App\Http\Controllers\Api\V1\PlatformPayrollScheduleSettingsController;
 use App\Http\Controllers\Api\V1\PlatformSystemIssueAlertSettingsController;
@@ -264,6 +266,9 @@ Route::prefix('v1')->group(function () {
         Route::post('action-requests/{id}/reject', [InAppNotificationController::class, 'rejectActionRequest']);
         Route::post('action-requests/{id}/remind', [InAppNotificationController::class, 'remindActionRequest']);
 
+        Route::get('whats-new/pending', [WhatsNewController::class, 'pending']);
+        Route::post('whats-new/{id}/dismiss', [WhatsNewController::class, 'dismiss']);
+
         Route::get('catalog/pricing-revision', PosCatalogPricingController::class)
             ->middleware('erp.permission:sales.orders.create|pos.checkout.create|pos.terminal.view|mobile_sales.orders.create');
 
@@ -416,6 +421,19 @@ Route::prefix('v1')->group(function () {
         Route::get('admin/platform-health', [\App\Http\Controllers\Api\V1\PlatformHealthController::class, 'show'])
             ->middleware(['erp.super_admin']);
         Route::post('admin/platform-health/reverb-test', [\App\Http\Controllers\Api\V1\PlatformHealthController::class, 'sendReverbTest'])
+            ->middleware(['erp.super_admin']);
+
+        Route::get('admin/whats-new', [PlatformWhatsNewController::class, 'index'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/whats-new', [PlatformWhatsNewController::class, 'store'])
+            ->middleware(['erp.super_admin']);
+        Route::get('admin/whats-new/{id}', [PlatformWhatsNewController::class, 'show'])
+            ->middleware(['erp.super_admin']);
+        Route::patch('admin/whats-new/{id}', [PlatformWhatsNewController::class, 'update'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/whats-new/{id}/publish', [PlatformWhatsNewController::class, 'publish'])
+            ->middleware(['erp.super_admin']);
+        Route::delete('admin/whats-new/{id}', [PlatformWhatsNewController::class, 'destroy'])
             ->middleware(['erp.super_admin']);
         Route::get('admin/platform-theme', [\App\Http\Controllers\Api\V1\PlatformThemeController::class, 'show'])
             ->middleware(['erp.super_admin']);

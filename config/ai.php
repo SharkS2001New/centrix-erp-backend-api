@@ -62,6 +62,16 @@ return [
     /** Stream token deltas to the web assistant via POST /ai/chat/stream (OpenAI-compatible providers). */
     'stream_responses' => filter_var(env('AI_STREAM_RESPONSES', true), FILTER_VALIDATE_BOOLEAN),
 
+    /** Dedicated speech-to-text (optional). Use when chat is DeepSeek/other chat-only APIs. */
+    'transcription' => [
+        'api_key' => env('AI_TRANSCRIPTION_API_KEY', ''),
+        'base_url' => rtrim(env('AI_TRANSCRIPTION_BASE_URL', 'https://api.openai.com/v1'), '/'),
+        'model' => env('AI_TRANSCRIPTION_MODEL', ''),
+    ],
+
+    /** @deprecated Prefer ai.transcription.model — kept for older env files. */
+    'transcription_model' => env('AI_TRANSCRIPTION_MODEL', ''),
+
     /** Cap simultaneous in-flight inferences (0 = unlimited). Only rejects under extreme concurrent load. */
     'max_concurrent_requests' => (int) env('AI_MAX_CONCURRENT_REQUESTS', 32),
 

@@ -388,6 +388,7 @@ class AiSettingsResolver
         $defaults = self::defaults();
         $out = array_merge($defaults, $settings);
         $out['enabled'] = (bool) ($out['enabled'] ?? false);
+        $out['talk_enabled'] = (bool) ($out['talk_enabled'] ?? true);
         $out['use_platform_gemini'] = (bool) ($out['use_platform_gemini'] ?? false);
         $out['use_platform_ai'] = (bool) ($out['use_platform_ai'] ?? false);
         $freeProvider = strtolower(trim((string) ($out['free_ai_provider'] ?? config('ai.free_provider', 'gemini'))));
@@ -900,6 +901,7 @@ class AiSettingsResolver
             'platform_enabled' => $gate->aiPlatformEnabled(),
             'enabled' => $gate->aiPlatformEnabled(),
             'available' => $available,
+            'talk_enabled' => self::isTalkEnabled(),
             'use_platform_gemini' => $platformOffersFree,
             'use_platform_ai' => $prefersPlatform,
             'platform_offers_free_ai' => $platformOffersFree,
@@ -908,5 +910,13 @@ class AiSettingsResolver
             'insights' => $settings['insights'] ?? self::normalizeInsights([]),
             'tools' => $settings['tools'] ?? self::normalizeTools([]),
         ];
+    }
+
+    /** Platform admin switch for header Talk-to-AI voice Q&A. */
+    public static function isTalkEnabled(): bool
+    {
+        $settings = self::forPlatformTraining();
+
+        return (bool) ($settings['talk_enabled'] ?? true);
     }
 }

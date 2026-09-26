@@ -905,9 +905,13 @@ class AiToolChatService
                 'branch_id' => $pageForPrompt['branch_id'] ?? null,
                 'filters' => $pageForPrompt['filters'] ?? null,
                 'summary' => $pageForPrompt['summary'] ?? null,
+                'voice_mode' => ! empty($pageForPrompt['voice_mode']) ? true : null,
             ], fn ($v) => $v !== null && $v !== '' && $v !== []);
             if ($pageCompact !== []) {
                 $pageLines[] = 'Page context JSON: '.json_encode($pageCompact, JSON_UNESCAPED_SLASHES);
+            }
+            if (! empty($pageContext['voice_mode'])) {
+                $pageLines[] = 'VOICE MODE: The user asked by microphone. Keep the chat reply to 1–3 short spoken sentences with the direct answer only (amounts/names). No long markdown tables, bullet dumps, or “open this screen” essays unless they asked for a full report.';
             }
         }
         if ($entityRefs !== []) {

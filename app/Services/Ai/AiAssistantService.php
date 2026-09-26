@@ -1260,6 +1260,7 @@ PROMPT;
             'branch_id' => $pageContext['branch_id'] ?? null,
             'filters' => is_array($pageContext['filters'] ?? null) ? $pageContext['filters'] : null,
             'summary' => is_array($pageContext['summary'] ?? null) ? $pageContext['summary'] : null,
+            'voice_mode' => ! empty($pageContext['voice_mode']) ? true : null,
             'rows' => $rows !== [] ? $rows : null,
         ], fn ($v) => $v !== null && $v !== '' && $v !== []);
     }

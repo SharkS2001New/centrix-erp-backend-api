@@ -784,6 +784,8 @@ return [
             'use_platform_gemini' => false,
             'use_platform_ai' => false,
             'enabled' => false,
+            /** Platform-wide: header “Talk to AI” voice Q&A (STT + short TTS). */
+            'talk_enabled' => true,
             'provider' => env('AI_PROVIDER', 'openai'),
             'model' => '',
             'api_key' => '',

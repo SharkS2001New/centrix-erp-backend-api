@@ -48,7 +48,8 @@ class AiAssistantController extends Controller
             'supports_page_explore' => true,
             'supports_feedback' => Schema::hasTable('ai_assistant_feedback'),
             'supports_streaming' => filter_var(config('ai.stream_responses', true), FILTER_VALIDATE_BOOLEAN),
-            'supports_voice_transcribe' => true,
+            'supports_voice_transcribe' => AiSettingsResolver::isTalkEnabled(),
+            'talk_enabled' => AiSettingsResolver::isTalkEnabled(),
             'fast_mode' => filter_var(config('ai.fast_mode', true), FILTER_VALIDATE_BOOLEAN),
             'runtime' => [
                 'status' => $health['status'],
@@ -126,6 +127,7 @@ class AiAssistantController extends Controller
             'entity_refs.*.id' => 'nullable|string|max:64',
             'entity_refs.*.code' => 'nullable|string|max:64',
             'entity_refs.*.label' => 'nullable|string|max:200',
+            'voice_mode' => 'nullable|boolean',
         ]);
 
         if (! empty($data['form_values']) && ! empty($data['pending_action'])) {
@@ -142,6 +144,13 @@ class AiAssistantController extends Controller
                     'confirm_learn_id' => ['Learning entry not found or already confirmed.'],
                 ]);
             }
+        }
+
+        if (! empty($data['voice_mode'])) {
+            if (! AiSettingsResolver::isTalkEnabled()) {
+                abort(403, 'Talk to AI is turned off by the platform administrator.');
+            }
+            $data['page_context'] = array_merge($data['page_context'] ?? [], ['voice_mode' => true]);
         }
 
         $result = $this->ai->chat(
@@ -198,6 +207,7 @@ class AiAssistantController extends Controller
             'entity_refs.*.id' => 'nullable|string|max:64',
             'entity_refs.*.code' => 'nullable|string|max:64',
             'entity_refs.*.label' => 'nullable|string|max:200',
+            'voice_mode' => 'nullable|boolean',
         ]);
 
         if (! empty($data['form_values']) && ! empty($data['pending_action'])) {
@@ -205,6 +215,13 @@ class AiAssistantController extends Controller
                 $data['pending_action']['params'] ?? [],
                 $this->normalizeFormValues($data['form_values']),
             );
+        }
+
+        if (! empty($data['voice_mode'])) {
+            if (! AiSettingsResolver::isTalkEnabled()) {
+                abort(403, 'Talk to AI is turned off by the platform administrator.');
+            }
+            $data['page_context'] = array_merge($data['page_context'] ?? [], ['voice_mode' => true]);
         }
 
         $user = $request->user();
@@ -287,6 +304,10 @@ class AiAssistantController extends Controller
      */
     public function transcribe(Request $request)
     {
+        if (! AiSettingsResolver::isTalkEnabled()) {
+            abort(403, 'Talk to AI is turned off by the platform administrator.');
+        }
+
         $data = $request->validate([
             'audio' => 'required|file|max:12288',
         ]);
