@@ -44,6 +44,7 @@ class AiSpeechTranscriptionService
         $errors = [];
         $chatHost = $this->hostLabel((string) ($runtime['base_url'] ?? ''));
         $chatIsWhisperIncapable = ! $this->hostSupportsWhisper((string) ($runtime['base_url'] ?? ''));
+        $geminiRateLimited = false;
 
         // 1) Optional dedicated Whisper key (best when platform chat is DeepSeek / chat-only).
         $dedicated = $this->resolveDedicatedTranscriptionCredentials();
@@ -56,13 +57,18 @@ class AiSpeechTranscriptionService
         }
 
         // 2) Gemini first when chat provider cannot do Whisper (e.g. DeepSeek).
+        // DeepSeek is chat-only — voice STT is a separate Gemini/Whisper path.
         if ($chatIsWhisperIncapable || strtolower((string) ($runtime['provider'] ?? '')) === 'gemini') {
             $geminiEarly = $this->resolveGeminiCredentials($runtime);
             if ($geminiEarly) {
                 try {
                     return $this->transcribeViaGemini($geminiEarly, $bytes, $mime);
                 } catch (ValidationException $e) {
-                    $errors[] = $this->firstValidationMessage($e);
+                    $msg = $this->firstValidationMessage($e);
+                    $errors[] = $msg;
+                    if ($this->isRateLimitMessage($msg)) {
+                        $geminiRateLimited = true;
+                    }
                 }
             }
         }
@@ -77,13 +83,17 @@ class AiSpeechTranscriptionService
             }
         }
 
-        // 4) Gemini fallback (platform Gemini key even if chat is DeepSeek).
+        // 4) Gemini fallback (skip if we already hit Gemini rate limits above).
         $gemini = $this->resolveGeminiCredentials($runtime);
-        if ($gemini) {
+        if ($gemini && ! $geminiRateLimited) {
             try {
                 return $this->transcribeViaGemini($gemini, $bytes, $mime);
             } catch (ValidationException $e) {
-                $errors[] = $this->firstValidationMessage($e);
+                $msg = $this->firstValidationMessage($e);
+                $errors[] = $msg;
+                if ($this->isRateLimitMessage($msg)) {
+                    $geminiRateLimited = true;
+                }
             }
         }
 
@@ -95,10 +105,21 @@ class AiSpeechTranscriptionService
             'had_dedicated' => (bool) $dedicated,
             'had_openai' => (bool) $openai,
             'had_gemini' => (bool) $gemini,
+            'gemini_rate_limited' => $geminiRateLimited,
             'errors' => $errors,
             'mime' => $mime,
             'bytes' => strlen($bytes),
         ]);
+
+        if ($geminiRateLimited && $chatIsWhisperIncapable) {
+            throw ValidationException::withMessages([
+                'audio' => [
+                    'Voice transcription uses Gemini (or a Whisper key), not your chat model ('.$chatHost.'). '
+                        .'Gemini is temporarily rate-limited. Wait a minute and try again, or set AI_TRANSCRIPTION_API_KEY '
+                        .'(OpenAI/Groq Whisper) on the platform.',
+                ],
+            ]);
+        }
 
         if ($chatIsWhisperIncapable) {
             throw ValidationException::withMessages([
@@ -248,7 +269,7 @@ class AiSpeechTranscriptionService
 
         if ($response->status() === 429) {
             throw ValidationException::withMessages([
-                'audio' => ['Gemini is rate-limited. Wait a moment and try again.'],
+                'audio' => ['Speech transcription provider is rate-limited. Wait a moment and try again.'],
             ]);
         }
 
@@ -477,6 +498,13 @@ class AiSpeechTranscriptionService
         $messages = $e->errors()['audio'] ?? [];
 
         return is_array($messages) ? trim((string) ($messages[0] ?? '')) : '';
+    }
+
+    protected function isRateLimitMessage(string $message): bool
+    {
+        return str_contains(strtolower($message), 'rate-limited')
+            || str_contains(strtolower($message), 'rate limited')
+            || str_contains(strtolower($message), 'resource_exhausted');
     }
 
     protected function hostLabel(string $baseUrl): string

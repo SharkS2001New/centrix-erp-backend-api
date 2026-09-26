@@ -912,9 +912,9 @@ class AiToolChatService
             }
             if (! empty($pageContext['voice_mode'])) {
                 $pageLines[] = 'VOICE MODE: The user asked by microphone and may not see the chat panel. '
-                    .'Reply in 1–2 short spoken sentences with the direct answer only (amounts, names, yes/no). '
-                    .'No markdown tables, long bullet lists, or “open this screen” essays unless they asked for a full report. '
-                    .'Speed and clarity matter more than completeness.';
+                    .'Give a complete spoken answer in a few clear sentences (amounts, names, yes/no, and the key takeaway). '
+                    .'Avoid markdown tables and long bullet dumps — those belong in the sidebar. '
+                    .'Do not cut off mid-thought; finish the answer they asked for.';
             }
         }
         if ($entityRefs !== []) {
