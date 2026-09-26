@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Models\AiAssistantFeedback;
 use App\Services\Ai\AiAssistantService;
 use App\Services\Ai\AiEntitySchemaCatalog;
 use App\Services\Ai\AiKnowledgeService;
@@ -10,6 +11,7 @@ use App\Services\Ai\AiPageExplorer;
 use App\Services\Ai\AiSettingsResolver;
 use App\Services\Ai\AiRuntimeGuard;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class AiAssistantController extends Controller
@@ -42,6 +44,7 @@ class AiAssistantController extends Controller
             'allows_images' => false,
             'supports_teaching' => true,
             'supports_page_explore' => true,
+            'supports_feedback' => Schema::hasTable('ai_assistant_feedback'),
             'supports_streaming' => filter_var(config('ai.stream_responses', true), FILTER_VALIDATE_BOOLEAN),
             'fast_mode' => filter_var(config('ai.fast_mode', true), FILTER_VALIDATE_BOOLEAN),
             'runtime' => [
@@ -229,6 +232,50 @@ class AiAssistantController extends Controller
             'Connection' => 'keep-alive',
             'X-Accel-Buffering' => 'no',
         ]);
+    }
+
+    /**
+     * Thumbs up/down on an assistant reply — stored for platform training review.
+     */
+    public function feedback(Request $request)
+    {
+        if (! Schema::hasTable('ai_assistant_feedback')) {
+            abort(503, 'AI feedback storage is not installed yet.');
+        }
+
+        $data = $request->validate([
+            'rating' => 'required|string|in:up,down',
+            'conversation_id' => 'nullable|uuid',
+            'workspace_id' => 'nullable|string|max:40',
+            'pathname' => 'nullable|string|max:300',
+            'user_message_preview' => 'nullable|string|max:2000',
+            'assistant_message_preview' => 'nullable|string|max:4000',
+            'note' => 'nullable|string|max:500',
+        ]);
+
+        $user = $request->user();
+        $orgId = (int) ($user?->organization_id ?? 0);
+        if ($orgId <= 0) {
+            abort(422, 'Organization context is required.');
+        }
+
+        $row = AiAssistantFeedback::query()->create([
+            'organization_id' => $orgId,
+            'user_id' => (int) $user->id,
+            'conversation_id' => $data['conversation_id'] ?? null,
+            'rating' => $data['rating'],
+            'workspace_id' => $data['workspace_id'] ?? null,
+            'pathname' => $data['pathname'] ?? null,
+            'user_message_preview' => $data['user_message_preview'] ?? null,
+            'assistant_message_preview' => $data['assistant_message_preview'] ?? null,
+            'note' => $data['note'] ?? null,
+        ]);
+
+        return response()->json([
+            'ok' => true,
+            'id' => $row->id,
+            'rating' => $row->rating,
+        ], 201);
     }
 
     public function teach(Request $request)

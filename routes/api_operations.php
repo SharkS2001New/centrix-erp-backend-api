@@ -773,6 +773,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('chat/stream', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'chatStream'])
             ->middleware('throttle:ai-chat');
         Route::post('teach', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'teach']);
+        Route::post('feedback', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'feedback'])
+            ->middleware('throttle:ai-chat');
         Route::post('explore', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'explore']);
         Route::post('knowledge/{id}/confirm', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'confirmKnowledge']);
         Route::delete('knowledge/{id}', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'discardKnowledge']);
