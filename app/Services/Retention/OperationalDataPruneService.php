@@ -12,11 +12,14 @@ use App\Models\Sale;
 use App\Models\StockReservation;
 use App\Services\Sales\SaleHardDeleteService;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schema;
 use InvalidArgumentException;
 
 class OperationalDataPruneService
 {
+    public const LAST_RUN_CACHE_KEY = 'platform:operational_prune:last_run';
+
     /**
      * User-facing prune targets (table aliases) → what gets deleted.
      *
@@ -52,6 +55,7 @@ class OperationalDataPruneService
      *
      * @param  list<string>|null  $targets  Null/empty = all targets. Use table aliases from TARGETS.
      * @param  (callable(array{event: string, key?: string, message: string, phase?: string, count?: int, total?: int}): void)|null  $onProgress
+     * @param  string  $source  Who triggered this run: schedule | cli | manual
      * @return array<string, int>
      */
     public function pruneTargets(
@@ -60,6 +64,7 @@ class OperationalDataPruneService
         bool $dryRun = false,
         ?callable $onProgress = null,
         ?int $maxRows = null,
+        string $source = 'manual',
     ): array {
         DataRetentionSettingsResolver::applyToRuntime();
 
@@ -292,7 +297,45 @@ class OperationalDataPruneService
             'total' => $total,
         ]);
 
+        $this->recordLastRun([
+            'source' => in_array($source, ['schedule', 'cli', 'manual'], true) ? $source : 'manual',
+            'dry_run' => $dryRun,
+            'total' => $total,
+            'deleted' => $results,
+            'targets' => $selected,
+            'days' => $overrideDays,
+            'max_rows' => $maxRows,
+        ]);
+
         return $results;
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    public function recordLastRun(array $payload): void
+    {
+        Cache::put(self::LAST_RUN_CACHE_KEY, [
+            'finished_at' => now()->toIso8601String(),
+            'source' => (string) ($payload['source'] ?? 'manual'),
+            'dry_run' => (bool) ($payload['dry_run'] ?? false),
+            'total' => (int) ($payload['total'] ?? 0),
+            'deleted' => is_array($payload['deleted'] ?? null) ? $payload['deleted'] : [],
+            'targets' => is_array($payload['targets'] ?? null) ? array_values($payload['targets']) : [],
+            'days' => $payload['days'] ?? null,
+            'max_rows' => $payload['max_rows'] ?? null,
+            'optimized_tables' => is_array($payload['optimized_tables'] ?? null)
+                ? array_values($payload['optimized_tables'])
+                : [],
+        ], now()->addDays(45));
+    }
+
+    /** @return array<string, mixed>|null */
+    public function lastRun(): ?array
+    {
+        $raw = Cache::get(self::LAST_RUN_CACHE_KEY);
+
+        return is_array($raw) ? $raw : null;
     }
 
     /**
@@ -750,10 +793,32 @@ class OperationalDataPruneService
         usort($sizes, fn ($a, $b) => $b['mb'] <=> $a['mb']);
 
         $retention = DataRetentionSettingsResolver::resolve();
+        $heartbeatRaw = Cache::get(\App\Services\Platform\PlatformHealthProbe::SCHEDULER_HEARTBEAT_KEY);
+        $schedulerOk = false;
+        $schedulerAgeSec = null;
+        if (is_string($heartbeatRaw) && $heartbeatRaw !== '') {
+            try {
+                $heartbeatAt = Carbon::parse($heartbeatRaw);
+                $schedulerAgeSec = max(0, (int) $heartbeatAt->diffInSeconds(now()));
+                $schedulerOk = $heartbeatAt->greaterThanOrEqualTo(now()->subSeconds(180));
+            } catch (\Throwable) {
+                $schedulerOk = false;
+            }
+        }
 
         return [
             'retention' => $retention,
             'schedule_time' => (string) ($retention['prune_time'] ?? config('data_retention.prune_time', '03:40')),
+            'schedule_timezone' => (string) config('app.timezone', 'Africa/Nairobi'),
+            'scheduler' => [
+                'ok' => $schedulerOk,
+                'heartbeat_at' => is_string($heartbeatRaw) ? $heartbeatRaw : null,
+                'age_seconds' => $schedulerAgeSec,
+                'detail' => $schedulerOk
+                    ? 'Cron is running schedule:run'
+                    : 'No recent scheduler heartbeat — ensure cron runs `php artisan schedule:run` every minute',
+            ],
+            'last_run' => $this->lastRun(),
             'tables' => $sizes,
             'optimizable_tables' => array_values(array_map(fn ($t) => $t['name'], $sizes)),
             'prune_targets' => self::TARGETS,
@@ -762,6 +827,7 @@ class OperationalDataPruneService
                 'OPTIMIZE only reclaims disk after rows were deleted. Empty or already-compact tables show little/no MB change.',
                 'stock_reservations prune never deletes active (unreleased) cart/sale holds.',
                 'Watch Live prune log for exact “Deleted N …” counts — that proves the run, not the MB column alone.',
+                'Nightly automation is erp:prune-operational-data at the saved prune time (app timezone). Last run proves it fired.',
             ],
         ];
     }

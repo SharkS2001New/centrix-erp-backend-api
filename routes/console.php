@@ -90,8 +90,9 @@ Schedule::command('erp:prune-platform-mail')
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/prune-platform-mail.log'));
 
-Schedule::command('erp:prune-operational-data')
+Schedule::command('erp:prune-operational-data --source=schedule')
     ->dailyAt($pruneTime)
+    ->timezone(config('app.timezone', 'Africa/Nairobi'))
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/prune-operational-data.log'));
 

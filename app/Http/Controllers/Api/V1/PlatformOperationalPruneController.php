@@ -69,7 +69,7 @@ class PlatformOperationalPruneController extends Controller
         }
 
         try {
-            $results = $pruner->pruneTargets($targets, $days, $dryRun, null, $maxRows);
+            $results = $pruner->pruneTargets($targets, $days, $dryRun, null, $maxRows, 'manual');
         } catch (\InvalidArgumentException $e) {
             throw ValidationException::withMessages([
                 'targets' => $e->getMessage(),
@@ -80,6 +80,18 @@ class PlatformOperationalPruneController extends Controller
         $optimizeResults = $optimize ? $pruner->optimizeRetentionTables(
             is_array($optimizeTables) && $optimizeTables !== [] ? $optimizeTables : null,
         ) : [];
+        if ($optimizeResults !== []) {
+            $pruner->recordLastRun([
+                'source' => 'manual',
+                'dry_run' => $dryRun,
+                'total' => array_sum($results),
+                'deleted' => $results,
+                'targets' => $targets ?? OperationalDataPruneService::TARGETS,
+                'days' => $days,
+                'max_rows' => $maxRows,
+                'optimized_tables' => array_column($optimizeResults, 'name'),
+            ]);
+        }
 
         return response()->json([
             'dry_run' => $dryRun,
@@ -150,6 +162,14 @@ class PlatformOperationalPruneController extends Controller
                         is_array($optimizeTables) && $optimizeTables !== [] ? $optimizeTables : null,
                         $onProgress,
                     );
+                    $pruner->recordLastRun([
+                        'source' => 'manual',
+                        'dry_run' => false,
+                        'total' => 0,
+                        'deleted' => [],
+                        'targets' => [],
+                        'optimized_tables' => array_column($optimizeResults, 'name'),
+                    ]);
                     $send([
                         'event' => 'done',
                         'dry_run' => false,
@@ -164,7 +184,7 @@ class PlatformOperationalPruneController extends Controller
                     return;
                 }
 
-                $results = $pruner->pruneTargets($targets, $days, $dryRun, $onProgress, $maxRows);
+                $results = $pruner->pruneTargets($targets, $days, $dryRun, $onProgress, $maxRows, 'manual');
 
                 $optimizeResults = [];
                 if ($optimize) {
@@ -177,6 +197,16 @@ class PlatformOperationalPruneController extends Controller
                         is_array($optimizeTables) && $optimizeTables !== [] ? $optimizeTables : null,
                         $onProgress,
                     );
+                    $pruner->recordLastRun([
+                        'source' => 'manual',
+                        'dry_run' => $dryRun,
+                        'total' => array_sum($results),
+                        'deleted' => $results,
+                        'targets' => $targets ?? OperationalDataPruneService::TARGETS,
+                        'days' => $days,
+                        'max_rows' => $maxRows,
+                        'optimized_tables' => array_column($optimizeResults, 'name'),
+                    ]);
                 }
 
                 $send([

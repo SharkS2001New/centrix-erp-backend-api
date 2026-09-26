@@ -13,7 +13,8 @@ class PruneOperationalDataCommand extends Command
                             {--days= : Delete rows older than this many days (overrides saved retention timers for this run)}
                             {--limit= : Max rows to delete this run (across selected targets)}
                             {--only=* : Limit to table aliases (hikvision_agent_commands, hikvision_access_events, employee_attendance, kra_agent_commands, stock_reservations, audit_logs, cancelled_sales, expired_sales)}
-                            {--optimize : Run OPTIMIZE TABLE on pruned retention tables afterward}';
+                            {--optimize : Run OPTIMIZE TABLE on pruned retention tables afterward}
+                            {--source=cli : Who triggered this run (schedule|cli|manual)}';
 
     protected $description = 'Prune operational tables older than retention (or --days). Optionally limit with --only / --limit.';
 
@@ -43,8 +44,13 @@ class PruneOperationalDataCommand extends Command
             static fn (string $v) => trim($v) !== '',
         ));
 
+        $source = strtolower(trim((string) $this->option('source')));
+        if (! in_array($source, ['schedule', 'cli', 'manual'], true)) {
+            $source = 'cli';
+        }
+
         try {
-            $pruner->pruneTargets(
+            $results = $pruner->pruneTargets(
                 $only === [] ? null : $only,
                 $days,
                 $dryRun,
@@ -62,6 +68,7 @@ class PruneOperationalDataCommand extends Command
                     }
                 },
                 $maxRows,
+                $source,
             );
         } catch (InvalidArgumentException $e) {
             $this->error($e->getMessage());
@@ -69,6 +76,7 @@ class PruneOperationalDataCommand extends Command
             return self::FAILURE;
         }
 
+        $optimized = [];
         if (! $dryRun && (bool) $this->option('optimize')) {
             $tables = $only === [] ? null : $only;
             if ($tables !== null) {
@@ -80,7 +88,7 @@ class PruneOperationalDataCommand extends Command
                     $tables[] = 'employee_clock_sessions';
                 }
             }
-            $optimized = $pruner->optimizeRetentionTables(
+            $optimizeResults = $pruner->optimizeRetentionTables(
                 $tables,
                 function (array $payload): void {
                     $message = (string) ($payload['message'] ?? '');
@@ -89,9 +97,20 @@ class PruneOperationalDataCommand extends Command
                     }
                 },
             );
+            $optimized = array_column($optimizeResults, 'name');
             if ($optimized === []) {
                 $this->warn('No tables were optimized.');
             }
+            $pruner->recordLastRun([
+                'source' => $source,
+                'dry_run' => false,
+                'total' => array_sum($results),
+                'deleted' => $results,
+                'targets' => $only === [] ? OperationalDataPruneService::TARGETS : $only,
+                'days' => $days,
+                'max_rows' => $maxRows,
+                'optimized_tables' => $optimized,
+            ]);
         }
 
         $this->info($dryRun
