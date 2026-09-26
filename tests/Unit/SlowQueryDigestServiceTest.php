@@ -16,7 +16,17 @@ class SlowQueryDigestServiceTest extends TestCase
         $this->assertTrue($service->isNoiseDigest('COMMIT'));
         $this->assertTrue($service->isNoiseDigest("SELECT `option_value` FROM `wpa0_options`"));
         $this->assertTrue($service->isNoiseDigest('SELECT @@session.transaction_read_only'));
+        $this->assertTrue($service->isNoiseDigest('OPTIMIZE TABLE `hikvision_agent_commands`'));
+        $this->assertTrue($service->isNoiseDigest('TRUNCATE `centrix_erp`.`hikvision_agent_commands`'));
+        $this->assertTrue($service->isNoiseDigest('DROP TABLE `centrix_erp`.`hikvision_agent_commands`'));
+        $this->assertTrue($service->isNoiseDigest("SELECT * FROM `centrix_erp`.`hikvision_agent_commands`"));
+        $this->assertTrue($service->isNoiseDigest(
+            "SELECT SQL_NO_CACHE `id`, `organization_id` FROM `inventory_transactions`"
+        ));
         $this->assertFalse($service->isNoiseDigest('SELECT * FROM `hikvision_agent_commands` WHERE id = ?'));
+        $this->assertFalse($service->isNoiseDigest(
+            'SELECT * FROM `inventory_transactions` WHERE `organization_id` = ? AND `created_at` >= ?'
+        ));
     }
 
     #[DataProvider('centrixDigestProvider')]
@@ -38,13 +48,18 @@ class SlowQueryDigestServiceTest extends TestCase
     public static function centrixDigestProvider(): array
     {
         return [
-            'own schema optimize' => [
+            'own schema optimize is noise' => [
                 "OPTIMIZE TABLE `hikvision_agent_commands`",
                 'centrix_erp',
-                true,
+                false,
             ],
-            'qualified own schema' => [
+            'qualified dump select is noise' => [
                 "SELECT * FROM `centrix_erp`.`hikvision_agent_commands`",
+                'centrix_erp',
+                false,
+            ],
+            'qualified filtered select' => [
+                "SELECT * FROM `centrix_erp`.`hikvision_agent_commands` WHERE `id` = ?",
                 'centrix_erp',
                 true,
             ],
@@ -64,7 +79,7 @@ class SlowQueryDigestServiceTest extends TestCase
                 true,
             ],
             'null schema unrelated' => [
-                'SELECT * FROM `random_other_table`',
+                'SELECT * FROM `random_other_table` WHERE id = ?',
                 '',
                 false,
             ],

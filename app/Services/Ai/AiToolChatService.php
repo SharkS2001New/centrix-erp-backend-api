@@ -911,7 +911,10 @@ class AiToolChatService
                 $pageLines[] = 'Page context JSON: '.json_encode($pageCompact, JSON_UNESCAPED_SLASHES);
             }
             if (! empty($pageContext['voice_mode'])) {
-                $pageLines[] = 'VOICE MODE: The user asked by microphone. Keep the chat reply to 1–3 short spoken sentences with the direct answer only (amounts/names). No long markdown tables, bullet dumps, or “open this screen” essays unless they asked for a full report.';
+                $pageLines[] = 'VOICE MODE: The user asked by microphone and may not see the chat panel. '
+                    .'Reply in 1–2 short spoken sentences with the direct answer only (amounts, names, yes/no). '
+                    .'No markdown tables, long bullet lists, or “open this screen” essays unless they asked for a full report. '
+                    .'Speed and clarity matter more than completeness.';
             }
         }
         if ($entityRefs !== []) {

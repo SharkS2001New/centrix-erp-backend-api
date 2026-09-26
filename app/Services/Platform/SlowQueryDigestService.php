@@ -48,7 +48,7 @@ class SlowQueryDigestService
         }
 
         $knownTables = $this->centrixTableNames();
-        $fetch = min(500, max($limit * 20, 100));
+        $fetch = min(800, max($limit * 40, 200));
 
         // 1) Digests explicitly tagged with our schema.
         $rows = $this->fetchDigestsForSchema($schema, $fetch);
@@ -120,7 +120,7 @@ class SlowQueryDigestService
             'queries' => $queries,
             'slow_tables' => $slowTables,
             'refreshed_at' => now()->toIso8601String(),
-            'digest_note' => 'Digests are cumulative MySQL performance_schema stats until you Reset digests. Refresh alone re-reads the same counters.',
+            'digest_note' => 'Digests are cumulative MySQL performance_schema stats until you Reset digests. Refresh alone re-reads the same counters. Dump-style SELECTs, OPTIMIZE/TRUNCATE/DROP, and other maintenance statements are hidden so this list stays actionable for app query tuning.',
         ];
     }
 
@@ -277,6 +277,24 @@ class SlowQueryDigestService
             'PREPARE ',
             'EXECUTE ',
             'DEALLOCATE ',
+            // Maintenance / DDL — not application query triage
+            'OPTIMIZE ',
+            'ANALYZE ',
+            'TRUNCATE',
+            'DROP ',
+            'CREATE ',
+            'ALTER ',
+            'RENAME ',
+            'REPAIR ',
+            'CHECK TABLE',
+            'CHECKSUM TABLE',
+            'FLUSH ',
+            'LOCK TABLES',
+            'UNLOCK TABLES',
+            'EXPLAIN ',
+            'DESCRIBE ',
+            'DESC ',
+            'HANDLER ',
         ] as $prefix) {
             if (str_starts_with($upper, $prefix)) {
                 return true;
@@ -302,7 +320,39 @@ class SlowQueryDigestService
             }
         }
 
+        // mysqldump / backup / CHECKTABLE-style full reads
+        if (str_contains($upper, 'SQL_NO_CACHE')) {
+            return true;
+        }
+
+        // Bare or dump-like SELECT from a single table with no filter / join / aggregation.
+        if ($this->isUnfilteredSingleTableSelect($trimmed)) {
+            return true;
+        }
+
         return false;
+    }
+
+    /**
+     * Full-table dump shapes (SELECT * / column lists with no WHERE/JOIN) are not
+     * actionable for app query tuning — they usually come from backups or admin tools.
+     */
+    protected function isUnfilteredSingleTableSelect(string $sql): bool
+    {
+        $trimmed = trim($sql);
+        if (! preg_match('/^SELECT\b/i', $trimmed)) {
+            return false;
+        }
+
+        if (preg_match('/\b(?:WHERE|JOIN|GROUP\s+BY|HAVING|UNION|EXISTS|IN\s*\(|LIMIT\s+\?)\b/i', $trimmed)) {
+            return false;
+        }
+
+        // SELECT … FROM `db`.`table` or `table`  [alias]  [ORDER BY …]  end
+        return (bool) preg_match(
+            '/^SELECT\b.+\bFROM\s+(?:`?[a-zA-Z0-9_]+`?\s*\.\s*)?`?[a-zA-Z0-9_]+`?(?:\s+(?:AS\s+)?[a-zA-Z_][a-zA-Z0-9_]*)?(?:\s+ORDER\s+BY\b.*)?$/is',
+            $trimmed,
+        );
     }
 
     /**
@@ -427,21 +477,25 @@ SQL,
     protected function tablesMentionedInSql(string $sql, array $knownTables = []): array
     {
         $found = [];
-        $haystack = strtolower($sql);
-        foreach ($knownTables !== [] ? $knownTables : $this->optimizableTables() as $table) {
-            $table = strtolower((string) $table);
-            if ($table !== '' && str_contains($haystack, $table)) {
-                $found[] = $table;
-            }
-        }
-
-        if (preg_match_all('/(?:FROM|JOIN|UPDATE|INTO|TABLE)\s+(?:`[a-zA-Z0-9_]+`\s*\.\s*)?`([a-zA-Z0-9_]+)`/i', $sql, $m)) {
+        if (preg_match_all(
+            '/(?:FROM|JOIN|UPDATE|INTO|TABLE)\s+(?:`?[a-zA-Z0-9_]+`?\s*\.\s*)?`?([a-zA-Z0-9_]+)`?/i',
+            $sql,
+            $m,
+        )) {
             foreach ($m[1] as $table) {
                 $found[] = strtolower((string) $table);
             }
         }
 
-        return array_values(array_unique($found));
+        $knownLookup = array_fill_keys(
+            array_map('strtolower', $knownTables !== [] ? $knownTables : $this->optimizableTables()),
+            true,
+        );
+
+        return array_values(array_unique(array_filter(
+            $found,
+            static fn (string $table) => $table !== '' && isset($knownLookup[$table]),
+        )));
     }
 
     /**
@@ -449,15 +503,7 @@ SQL,
      */
     protected function mentionsKnownCentrixTable(string $sql, array $knownTables): bool
     {
-        $haystack = strtolower($sql);
-        foreach ($knownTables as $table) {
-            $table = strtolower((string) $table);
-            if ($table !== '' && str_contains($haystack, $table)) {
-                return true;
-            }
-        }
-
-        return false;
+        return $this->tablesMentionedInSql($sql, $knownTables) !== [];
     }
 
     /**
@@ -732,10 +778,15 @@ SQL,
      */
     protected function loadTableSizeRows(string $schema): array
     {
+        $innodb = $this->loadInnoDbAllocatedSizes($schema);
+        if ($innodb !== []) {
+            return $innodb;
+        }
+
         try {
             $rows = DB::select(
                 'SELECT table_name AS name,
-                        ROUND((COALESCE(data_length, 0) + COALESCE(index_length, 0)) / 1024 / 1024, 1) AS mb,
+                        ROUND((COALESCE(data_length, 0) + COALESCE(index_length, 0)) / 1024 / 1024, 2) AS mb,
                         COALESCE(table_rows, 0) AS approx_rows
                  FROM information_schema.tables
                  WHERE table_schema = ?
@@ -748,7 +799,7 @@ SQL,
             if ($rows !== []) {
                 return array_map(static fn ($row) => [
                     'name' => (string) ($row->name ?? ''),
-                    'mb' => (float) ($row->mb ?? 0),
+                    'mb' => round((float) ($row->mb ?? 0), 2),
                     'rows' => (int) ($row->approx_rows ?? 0),
                 ], $rows);
             }
@@ -773,7 +824,7 @@ SQL,
                 $index = (float) ($row->Index_length ?? $row->index_length ?? 0);
                 $mapped[] = [
                     'name' => $name,
-                    'mb' => round(($data + $index) / 1024 / 1024, 1),
+                    'mb' => round(($data + $index) / 1024 / 1024, 2),
                     'rows' => (int) ($row->Rows ?? $row->rows ?? 0),
                 ];
             }
@@ -788,6 +839,100 @@ SQL,
             ]);
 
             return [];
+        }
+    }
+
+    /**
+     * Prefer InnoDB allocated tablespace size (more accurate than stale data_length).
+     *
+     * @return list<array{name: string, mb: float, rows: int}>
+     */
+    protected function loadInnoDbAllocatedSizes(string $schema): array
+    {
+        try {
+            $rows = DB::select(
+                'SELECT
+                    SUBSTRING_INDEX(t.NAME, \'/\', -1) AS name,
+                    ROUND(COALESCE(s.ALLOCATED_SIZE, s.FILE_SIZE, 0) / 1024 / 1024, 2) AS mb
+                 FROM information_schema.INNODB_TABLES t
+                 INNER JOIN information_schema.INNODB_TABLESPACES s ON s.SPACE = t.SPACE
+                 WHERE t.NAME LIKE ?
+                 ORDER BY COALESCE(s.ALLOCATED_SIZE, s.FILE_SIZE, 0) DESC
+                 LIMIT 40',
+                [$schema.'/%'],
+            );
+
+            if ($rows === []) {
+                return [];
+            }
+
+            $rowCounts = $this->innodbRowCounts($schema);
+            $mapped = [];
+            foreach ($rows as $row) {
+                $name = (string) ($row->name ?? '');
+                if ($name === '' || str_contains($name, '#')) {
+                    continue; // skip internal partitions / temp
+                }
+                $mapped[] = [
+                    'name' => $name,
+                    'mb' => round((float) ($row->mb ?? 0), 2),
+                    'rows' => (int) ($rowCounts[strtolower($name)] ?? 0),
+                ];
+            }
+
+            return $mapped;
+        } catch (\Throwable $e) {
+            Log::info('slow_queries.innodb_tablespaces_unavailable', [
+                'schema' => $schema,
+                'error' => $e->getMessage(),
+            ]);
+
+            return [];
+        }
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    protected function innodbRowCounts(string $schema): array
+    {
+        try {
+            $rows = DB::select(
+                'SELECT table_name AS name, n_rows AS approx_rows
+                 FROM mysql.innodb_table_stats
+                 WHERE database_name = ?',
+                [$schema],
+            );
+            $out = [];
+            foreach ($rows as $row) {
+                $name = strtolower((string) ($row->name ?? ''));
+                if ($name !== '') {
+                    $out[$name] = (int) ($row->approx_rows ?? 0);
+                }
+            }
+
+            return $out;
+        } catch (\Throwable) {
+            try {
+                $rows = DB::select(
+                    'SELECT table_name AS name, COALESCE(table_rows, 0) AS approx_rows
+                     FROM information_schema.tables
+                     WHERE table_schema = ?
+                       AND table_type = \'BASE TABLE\'',
+                    [$schema],
+                );
+                $out = [];
+                foreach ($rows as $row) {
+                    $name = strtolower((string) ($row->name ?? ''));
+                    if ($name !== '') {
+                        $out[$name] = (int) ($row->approx_rows ?? 0);
+                    }
+                }
+
+                return $out;
+            } catch (\Throwable) {
+                return [];
+            }
         }
     }
 
