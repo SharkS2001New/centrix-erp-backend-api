@@ -422,6 +422,8 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::post('admin/platform-health/reverb-test', [\App\Http\Controllers\Api\V1\PlatformHealthController::class, 'sendReverbTest'])
             ->middleware(['erp.super_admin']);
+        Route::get('admin/platform-speed', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'show'])
+            ->middleware(['erp.super_admin']);
 
         Route::get('admin/whats-new', [PlatformWhatsNewController::class, 'index'])
             ->middleware(['erp.super_admin']);
