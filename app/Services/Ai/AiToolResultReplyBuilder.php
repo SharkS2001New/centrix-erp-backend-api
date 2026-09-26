@@ -486,6 +486,62 @@ class AiToolResultReplyBuilder
      */
     protected function formatTillHealth(array $result): ?string
     {
+        if (($result['type'] ?? '') === 'cashier_till_float') {
+            if (! empty($result['error'])) {
+                if (! empty($result['candidates'])) {
+                    $names = collect($result['candidates'])
+                        ->map(fn ($c) => trim((string) (($c['full_name'] ?? '').' ('.($c['username'] ?? '').')')))
+                        ->filter()
+                        ->take(5)
+                        ->implode(', ');
+
+                    return 'Several cashiers matched **'.($result['searched_for'] ?? '').'**: '.$names
+                        .'. Which one did you mean?';
+                }
+
+                return (string) ($result['message'] ?? 'No till data found for that cashier.');
+            }
+
+            $name = trim((string) ($result['cashier']['full_name'] ?? $result['matched_username'] ?? 'Cashier'));
+            $tenders = is_array($result['tenders'] ?? null) ? $result['tenders'] : [];
+            $opening = (float) ($result['opening_float'] ?? 0);
+            $cash = (float) ($tenders['cash'] ?? 0);
+            $mpesa = (float) ($tenders['mpesa'] ?? 0);
+            $bank = (float) ($tenders['bank'] ?? 0);
+            $expected = (float) ($result['expected_cash_in_drawer'] ?? $opening + $cash);
+            $from = (string) ($result['from_date'] ?? 'today');
+            $sessionStatus = (string) ($result['session']['status'] ?? '');
+            $till = trim((string) ($result['session']['till'] ?? ''));
+            $direct = trim((string) ($result['direct_answer'] ?? ''));
+
+            // Lead with a one-breath spoken answer; bullets are for the chat panel only.
+            $lines = [
+                $direct !== ''
+                    ? $direct
+                    : "**{$name}**: opening float **KES ".$this->money($opening)
+                        .'**. Cash **KES '.$this->money($cash)
+                        .'**, M-Pesa **KES '.$this->money($mpesa)
+                        .'**, bank **KES '.$this->money($bank)
+                        .'**. Expected cash in drawer about **KES '.$this->money($expected).'**.',
+                '',
+                "Detail ({$from}):",
+                '- Opening float: **KES '.$this->money($opening).'**',
+                '- Cash collected: **KES '.$this->money($cash).'**',
+                '- M-Pesa: **KES '.$this->money($mpesa).'**',
+                '- Bank: **KES '.$this->money($bank).'**',
+                '- Expected cash in drawer: **KES '.$this->money($expected).'**',
+            ];
+            if ($sessionStatus !== '') {
+                $lines[] = '- Session: **'.$sessionStatus.'**'.($till !== '' ? ' on '.$till : '');
+            } else {
+                $lines[] = '- No open/closed till session row found for that day — tenders above are from their sales.';
+            }
+            $lines[] = '';
+            $lines[] = 'Open [Till management](/sales/till-management) to verify.';
+
+            return implode("\n", $lines);
+        }
+
         if (($result['type'] ?? '') !== 'cash_till_health' && empty($result['sessions']) && empty($result['payment_mix'])) {
             return null;
         }
