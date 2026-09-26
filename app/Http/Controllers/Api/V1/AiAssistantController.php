@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\AiAssistantFeedback;
+use App\Services\Ai\AiSpeechTranscriptionService;
 use App\Services\Ai\AiAssistantService;
 use App\Services\Ai\AiEntitySchemaCatalog;
 use App\Services\Ai\AiKnowledgeService;
@@ -22,6 +23,7 @@ class AiAssistantController extends Controller
         protected AiKnowledgeService $knowledge,
         protected AiPageExplorer $explorer,
         protected AiRuntimeGuard $runtimeGuard,
+        protected AiSpeechTranscriptionService $transcription,
     ) {}
 
     /**Test API endpoint */
@@ -46,6 +48,7 @@ class AiAssistantController extends Controller
             'supports_page_explore' => true,
             'supports_feedback' => Schema::hasTable('ai_assistant_feedback'),
             'supports_streaming' => filter_var(config('ai.stream_responses', true), FILTER_VALIDATE_BOOLEAN),
+            'supports_voice_transcribe' => true,
             'fast_mode' => filter_var(config('ai.fast_mode', true), FILTER_VALIDATE_BOOLEAN),
             'runtime' => [
                 'status' => $health['status'],
@@ -276,6 +279,35 @@ class AiAssistantController extends Controller
             'id' => $row->id,
             'rating' => $row->rating,
         ], 201);
+    }
+
+    /**
+     * Transcribe a short voice clip (Whisper via OpenAI-compatible API).
+     * Fallback when browser Web Speech fails with a "network" error.
+     */
+    public function transcribe(Request $request)
+    {
+        $data = $request->validate([
+            'audio' => 'required|file|max:12288',
+        ]);
+
+        /** @var \Illuminate\Http\UploadedFile $audio */
+        $audio = $data['audio'];
+        $mime = (string) ($audio->getMimeType() ?? '');
+        $allowed = ['audio/webm', 'audio/wav', 'audio/mpeg', 'audio/mp4', 'audio/ogg', 'video/webm', 'application/octet-stream'];
+        if ($mime !== '' && ! in_array($mime, $allowed, true) && ! str_starts_with($mime, 'audio/')) {
+            throw ValidationException::withMessages([
+                'audio' => ['Unsupported audio type. Record again from Chrome or Edge.'],
+            ]);
+        }
+
+        $result = $this->transcription->transcribeUploadedAudio($request->user(), $audio);
+
+        return response()->json([
+            'ok' => true,
+            'text' => $result['text'],
+            'model' => $result['model'],
+        ]);
     }
 
     public function teach(Request $request)
