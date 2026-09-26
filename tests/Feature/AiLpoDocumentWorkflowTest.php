@@ -153,6 +153,48 @@ class AiLpoDocumentWorkflowTest extends TestCase
         $this->assertNotContainsEquals((int) $check, $ids);
     }
 
+    public function test_get_lpo_details_latest_returns_most_recent_with_pdf_link(): void
+    {
+        $this->ensureLpoStatuses();
+        $user = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($user);
+
+        $supplier = Supplier::where('supplier_code', 'SUP-001')->firstOrFail();
+        $product = Product::firstOrFail();
+
+        $older = (int) $this->postJson('/api/v1/lpo-mst/full', [
+            'supplier_id' => $supplier->id,
+            'lines' => [
+                ['product_code' => $product->product_code, 'ordered_qty' => 1, 'cost_price' => 10],
+            ],
+        ])->assertCreated()->json('lpo_no');
+
+        $newer = (int) $this->postJson('/api/v1/lpo-mst/full', [
+            'supplier_id' => $supplier->id,
+            'lines' => [
+                ['product_code' => $product->product_code, 'ordered_qty' => 2, 'cost_price' => 20],
+            ],
+        ])->assertCreated()->json('lpo_no');
+
+        $this->assertGreaterThan($older, $newer);
+
+        $tool = app(\App\Services\Ai\Tools\GetLpoDetailsTool::class);
+        $byFlag = $tool->execute($user, ['latest' => true]);
+        $byQuery = $tool->execute($user, ['query' => 'last LPO we created, need to download']);
+
+        foreach ([$byFlag, $byQuery] as $result) {
+            $this->assertFalse($result['error'] ?? false, json_encode($result));
+            $this->assertSame($newer, (int) ($result['lpo_no'] ?? 0));
+            $this->assertTrue((bool) ($result['is_latest'] ?? false));
+            $links = $result['document_links'] ?? [];
+            $this->assertIsArray($links);
+            $pdf = collect($links)->firstWhere('kind', 'pdf');
+            $this->assertNotNull($pdf);
+            $this->assertSame('/lpo-mst/'.$newer.'/pdf', $pdf['api_path'] ?? null);
+            $this->assertTrue((bool) ($pdf['download'] ?? false));
+        }
+    }
+
     public function test_ai_can_submit_approve_mark_sent_and_receive(): void
     {
         $this->ensureLpoStatuses();

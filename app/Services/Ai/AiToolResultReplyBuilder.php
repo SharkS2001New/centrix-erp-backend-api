@@ -1452,7 +1452,9 @@ class AiToolResultReplyBuilder
         $total = number_format((float) ($result['total_amount'] ?? 0), 2);
 
         $lines = [
-            "**{$po}** — {$supplier}",
+            ($result['is_latest'] ?? false)
+                ? "Latest purchase order: **{$po}** — {$supplier}"
+                : "**{$po}** — {$supplier}",
             "Status: {$status}. Total: KES {$total}.",
         ];
 

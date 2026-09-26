@@ -32,9 +32,11 @@ class GetLpoDetailsTool implements AiToolInterface
 
     public function description(): string
     {
-        return 'Look up a Centrix purchase order (LPO) by number or reference and return status, supplier, '
-            .'line items, remaining qty, available workflow actions (submit for approval, approve, mark sent, receive), '
-            .'and document links (open, print, download PDF). '
+        return 'Look up a Centrix purchase order (LPO) by number, reference, or the latest created LPO, '
+            .'and return status, supplier, line items, remaining qty, workflow actions, '
+            .'and document_links (Open / Print / Download PDF). '
+            .'For "last LPO", "latest purchase order", "most recent LPO", or "download the last LPO we created", '
+            .'set latest=true (or pass query like "last" / "latest"). '
             .'Use when the user asks to retrieve, show, open, download, or check status of an LPO / purchase order.';
     }
 
@@ -49,7 +51,12 @@ class GetLpoDetailsTool implements AiToolInterface
                 ],
                 'query' => [
                     'type' => 'string',
-                    'description' => 'PO number, reference, or partial search when lpo_no is unknown.',
+                    'description' => 'PO number, reference, or phrases like "last", "latest", "most recent" when lpo_no is unknown.',
+                ],
+                'latest' => [
+                    'type' => 'boolean',
+                    'description' => 'When true, return the most recently created LPO for this organization (highest lpo_no). '
+                        .'Use for "last LPO we created" / "download the latest purchase order".',
                 ],
             ],
         ];
@@ -97,6 +104,25 @@ class GetLpoDetailsTool implements AiToolInterface
 
         $lpoNo = (int) ($arguments['lpo_no'] ?? 0);
         $query = trim((string) ($arguments['query'] ?? ''));
+        $wantsLatest = filter_var($arguments['latest'] ?? false, FILTER_VALIDATE_BOOLEAN)
+            || $this->queryMeansLatest($query);
+
+        // Prefer explicit "latest/last" over guessing a number from the sentence (e.g. year 2026).
+        if ($wantsLatest) {
+            $lpo = $this->latestLpoForOrganization($orgId);
+            if (! $lpo) {
+                return [
+                    'error' => true,
+                    'message' => 'No purchase orders found for your organization yet.',
+                    'screens' => [
+                        ['label' => 'Purchase orders (LPO)', 'path' => '/lpo'],
+                        ['label' => 'Create purchase order', 'path' => '/lpo/new'],
+                    ],
+                ];
+            }
+
+            return $this->presentLpo($lpo, $orgId, $user, isLatest: true);
+        }
 
         if ($lpoNo <= 0 && $query !== '') {
             if (preg_match('/\b(\d{1,12})\b/', $query, $m)) {
@@ -153,13 +179,42 @@ class GetLpoDetailsTool implements AiToolInterface
         if (! $lpo) {
             return [
                 'error' => true,
-                'message' => 'No purchase order matched. Provide an LPO number (e.g. 123) or reference.',
+                'message' => 'No purchase order matched. Provide an LPO number, say “last LPO”, or a reference.',
                 'screens' => [
                     ['label' => 'Purchase orders (LPO)', 'path' => '/lpo'],
                 ],
             ];
         }
 
+        return $this->presentLpo($lpo, $orgId, $user, isLatest: false);
+    }
+
+    protected function queryMeansLatest(string $query): bool
+    {
+        if ($query === '') {
+            return false;
+        }
+
+        return (bool) preg_match(
+            '/\b(last|latest|most\s+recent|newest|recent(?:ly)?\s+created|just\s+created|last\s+one)\b/i',
+            $query,
+        );
+    }
+
+    protected function latestLpoForOrganization(int $orgId): ?LpoMst
+    {
+        return LpoMst::query()
+            ->where('organization_id', $orgId)
+            ->whereNull('deleted_at')
+            ->orderByDesc('lpo_no')
+            ->first();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function presentLpo(LpoMst $lpo, int $orgId, User $user, bool $isLatest = false): array
+    {
         $summary = $this->lpoModule->summary((int) $lpo->lpo_no, $orgId, $user);
         $header = is_array($summary['lpo'] ?? null) ? $summary['lpo'] : [];
         $lines = is_array($summary['lines'] ?? null) ? $summary['lines'] : [];
@@ -180,7 +235,6 @@ class GetLpoDetailsTool implements AiToolInterface
         $nextSteps = $this->nextSteps($header);
 
         $documentLinks = LpoAiDocumentLinks::forLpo((int) $lpo->lpo_no);
-        // Hide receive shortcut until the LPO can be received.
         if (empty($header['can_receive'])) {
             $documentLinks = array_values(array_filter(
                 $documentLinks,
@@ -200,6 +254,7 @@ class GetLpoDetailsTool implements AiToolInterface
             'approval_pending' => (bool) ($header['approval_pending'] ?? false),
             'workflow_actions' => $header['workflow_actions'] ?? [],
             'can_receive' => (bool) ($header['can_receive'] ?? false),
+            'is_latest' => $isLatest,
             'lines' => $compactLines,
             'next_steps' => $nextSteps,
             'document_links' => $documentLinks,
@@ -208,7 +263,8 @@ class GetLpoDetailsTool implements AiToolInterface
                 ['label' => 'Open this LPO', 'path' => '/lpo/'.$lpo->lpo_no],
                 ['label' => 'All purchase orders', 'path' => '/lpo'],
             ],
-            'tip' => 'Keep the reply short: PO number, supplier, status, total. '
+            'tip' => ($isLatest ? 'This is the most recently created LPO. ' : '')
+                .'Keep the reply short: PO number, supplier, status, total. '
                 .'Document buttons (Open / Print / PDF) already appear in the chat panel — do not restate them. '
                 .'Only mention the single next workflow action that matches workflow_actions / can_receive.',
         ];

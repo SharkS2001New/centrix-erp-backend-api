@@ -317,6 +317,14 @@ class AiIntentResolver
             return false;
         }
 
+        // Latest / last LPO + download → get_lpo_details(latest=true), not blank /lpo.
+        if (preg_match(
+            '/\b(last|latest|most\s+recent|newest|download|pdf)\b/i',
+            $text,
+        ) && preg_match('/\b(lpo|purchase\s+orders?|po)\b/i', $text)) {
+            return false;
+        }
+
         return (bool) preg_match('/\b(open|show|list|view|where)\b.{0,40}\b(lpo|purchase\s+orders?)\b/', $text)
             || ((bool) preg_match('/\b(lpo|purchase\s+orders?)\b/', $text)
                 && (bool) preg_match('/\b(suggest|need|find)\b/', $text));

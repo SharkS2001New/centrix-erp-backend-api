@@ -256,8 +256,14 @@ return [
         'retrieve_lpo' => [
             'summary' => 'Retrieve LPO status, lines, next steps, and PDF/print links',
             'path' => '/lpo',
-            'notes' => 'Use get_lpo_details for one LPO; use list_lpos with filter=awaiting_receive for goods-receiving lists. '
+            'notes' => 'Use get_lpo_details for one LPO; use latest=true for "last/latest LPO we created" or download-the-last-LPO. '
+                .'Use list_lpos with filter=awaiting_receive for goods-receiving lists. '
                 .'Do not invent status. Prefer chat document_links buttons — do not restate Open/Print/PDF in prose when links are present.',
+        ],
+        'retrieve_latest_lpo' => [
+            'summary' => 'Find the most recently created purchase order and offer Download PDF',
+            'path' => '/lpo',
+            'notes' => 'Call get_lpo_details with latest=true. Reply with PO number, supplier, status, total; Download PDF appears in the Documents panel.',
         ],
         'list_lpos_awaiting_receive' => [
             'summary' => 'List LPOs awaiting goods receiving (Awaiting receive + Partially received)',

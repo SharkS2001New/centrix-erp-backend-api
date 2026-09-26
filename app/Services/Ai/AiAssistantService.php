@@ -27,6 +27,7 @@ class AiAssistantService
         protected AiReplyFormatter $replyFormatter,
         protected AiAssistantHelpGuide $helpGuide,
         protected AiCreateProductParamMerger $productParamMerger,
+        protected AiCreateLpoParamMerger $lpoParamMerger,
     ) {}
 
     public function isAvailableForUser(User $user): bool
@@ -124,6 +125,44 @@ class AiAssistantService
             }
         }
 
+        $normalizedRefsEarly = \App\Support\EntityMentionRefs::normalize($entityRefs);
+        if (is_array($pendingAction) && (string) ($pendingAction['type'] ?? '') === 'create_lpo') {
+            $pendingAction = $this->enrichPendingActionFromEntityRefs($pendingAction, $normalizedRefsEarly);
+            $mergedLpo = $this->lpoParamMerger->merge($user, $pendingAction, $message, $history, $normalizedRefsEarly);
+            $pendingAction = $mergedLpo['pending'];
+
+            if (
+                ! $confirmAction
+                && ! $this->actionExecutor->isConfirmation($message)
+                && ! $this->intentResolver->isCancelIntent($message)
+                && (
+                    ! $this->intentResolver->isDataQuestion($message)
+                    || $this->lpoParamMerger->looksLikeFieldFollowUp($message)
+                )
+                && ($mergedLpo['changed'] || $this->lpoParamMerger->looksLikeFieldFollowUp($message))
+            ) {
+                $gate = $this->contextBuilder->gateForUser($user);
+                $scope = $this->workspaceScope->resolve($user, $gate, $workspaceId, $pathname);
+                $reply = $this->lpoParamMerger->statusReply($pendingAction, $mergedLpo['notes']);
+
+                return $this->attachPendingAction(
+                    $user,
+                    [
+                        'success' => true,
+                        'reply' => $reply,
+                        'message' => $reply,
+                        'tools_used' => ['create_lpo_param_merger'],
+                        'active_workspace' => $scope['id'],
+                        'provider' => $runtime['provider'] ?? null,
+                    ],
+                    $pendingAction,
+                    $message,
+                    $pathname,
+                    $scope,
+                );
+            }
+        }
+
         if ($confirmAction && $pendingAction) {
             if (! $this->actionExecutor->isReadyToConfirm($pendingAction)) {
                 $gate = $this->contextBuilder->gateForUser($user);
@@ -181,7 +220,15 @@ class AiAssistantService
             );
         }
 
-        if ($pendingAction && ($this->intentResolver->isCancelIntent($message) || $this->intentResolver->isDataQuestion($message))) {
+        if ($pendingAction && (
+            $this->intentResolver->isCancelIntent($message)
+            || (
+                $this->intentResolver->isDataQuestion($message)
+                && ! $this->lpoParamMerger->looksLikeFieldFollowUp($message)
+                && ! $this->productParamMerger->looksLikeFieldFollowUp($message)
+                && (string) ($pendingAction['type'] ?? '') !== 'create_lpo'
+            )
+        )) {
             $pendingAction = null;
         }
 
@@ -339,20 +386,33 @@ class AiAssistantService
                     && (string) ($pendingAction['type'] ?? '') !== ''
                     && (string) ($pendingAction['type'] ?? '') === (string) ($pending['type'] ?? '')
                 ) {
-                    $pending['params'] = array_merge(
+                    $pending['params'] = $this->mergeWriteActionParams(
                         is_array($pendingAction['params'] ?? null) ? $pendingAction['params'] : [],
-                        $pending['params'],
+                        is_array($pending['params'] ?? null) ? $pending['params'] : [],
                     );
                     if (empty($pending['summary']) && ! empty($pendingAction['summary'])) {
                         $pending['summary'] = $pendingAction['summary'];
                     }
                 }
-            } elseif ($pendingAction && $this->shouldContinuePendingAction($message, $history, $pathname)) {
+            } elseif ($pendingAction && $this->shouldContinuePendingAction($message, $history, $pathname, $pendingAction)) {
                 $pending = $pendingAction;
             } else {
                 $inferred = $inferredCreate ?? $this->intentResolver->inferCreateAction($message, $history, $pathname);
                 if ($inferred) {
-                    $pending = $inferred;
+                    // Don't restart a healthy LPO/product draft with an empty re-inference.
+                    if (
+                        is_array($pendingAction)
+                        && (string) ($pendingAction['type'] ?? '') === (string) ($inferred['type'] ?? '')
+                        && $this->shouldContinuePendingAction($message, $history, $pathname, $pendingAction)
+                    ) {
+                        $pending = $pendingAction;
+                        $pending['params'] = $this->mergeWriteActionParams(
+                            is_array($pendingAction['params'] ?? null) ? $pendingAction['params'] : [],
+                            is_array($inferred['params'] ?? null) ? $inferred['params'] : [],
+                        );
+                    } else {
+                        $pending = $inferred;
+                    }
                     if ($this->looksLikeFetchingReply($reply)) {
                         $result['reply'] = $this->isConversationalCreateAction($inferred)
                             ? 'Share the details in chat, or reply **show form** if you prefer a form.'
@@ -365,6 +425,10 @@ class AiAssistantService
             if ($pending) {
                 if ((string) ($pending['type'] ?? '') === 'create_product') {
                     $pending = $this->productParamMerger->merge($user, $pending, $message, $history)['pending'];
+                }
+                if ((string) ($pending['type'] ?? '') === 'create_lpo') {
+                    $pending = $this->enrichPendingActionFromEntityRefs($pending, $normalizedRefs);
+                    $pending = $this->lpoParamMerger->merge($user, $pending, $message, $history, $normalizedRefs)['pending'];
                 }
                 $pending = $this->enrichPendingActionFromEntityRefs($pending, $normalizedRefs);
                 $actionType = (string) ($pending['type'] ?? '');
@@ -591,7 +655,7 @@ class AiAssistantService
                     'summary' => $parsedAction['summary'] ?? ($parsedAction['label'] ?? 'Proposed action'),
                     'params' => $parsedAction['params'] ?? [],
                 ];
-            } elseif ($pendingAction && $this->shouldContinuePendingAction($message, $history, $pathname)) {
+            } elseif ($pendingAction && $this->shouldContinuePendingAction($message, $history, $pathname, $pendingAction)) {
                 $pending = $pendingAction;
             } else {
                 $inferred = $this->intentResolver->inferCreateAction($message, $history, $pathname);
@@ -987,8 +1051,12 @@ PROMPT;
     }
 
     /** @param  array<int, array{role: string, content: string}>  $history */
-    protected function shouldContinuePendingAction(string $message, array $history, ?string $pathname): bool
-    {
+    protected function shouldContinuePendingAction(
+        string $message,
+        array $history,
+        ?string $pathname,
+        ?array $pending = null,
+    ): bool {
         if ($this->intentResolver->isCancelIntent($message) || $this->intentResolver->isDataQuestion($message)) {
             return false;
         }
@@ -1001,14 +1069,55 @@ PROMPT;
             return true;
         }
 
+        if ($this->lpoParamMerger->looksLikeFieldFollowUp($message)) {
+            return true;
+        }
+
+        $pendingType = (string) ($pending['type'] ?? '');
+        if ($pendingType === 'create_lpo') {
+            // Keep the LPO draft for any non-cancel follow-up so edits don't restart collection.
+            return true;
+        }
+
         if ($this->intentResolver->inferCreateAction($message, $history, $pathname) !== null) {
             return true;
         }
 
         return (bool) preg_match(
-            '/\b(subcategory|supplier|customer|employee|unit|price|sku|barcode|vat|reorder|product\s+name|named|called|line\s*items?|ordered_qty|qty|quantity|cost\s*price|due\s*date|delivery|reference|terms|order_num|lpo|purchase\s+order|first\s+name|last\s+name|contact|phone|email|payment|amount|report\s+name)\b/i',
+            '/\b(subcategory|supplier|customer|employee|unit|price|sku|barcode|vat|reorder|product\s+name|named|called|line\s*items?|products?|items?|ordered_qty|qty|quantity|cost\s*price|due\s*date|delivery|reference|terms|order_num|lpo|purchase\s+order|first\s+name|last\s+name|contact|phone|email|payment|amount|report\s+name|change|update|add|remove)\b/i',
             $message,
         );
+    }
+
+    /**
+     * Merge write-action params without letting empty LLM fields wipe collected data.
+     *
+     * @param  array<string, mixed>  $previous
+     * @param  array<string, mixed>  $incoming
+     * @return array<string, mixed>
+     */
+    protected function mergeWriteActionParams(array $previous, array $incoming): array
+    {
+        $merged = $previous;
+        foreach ($incoming as $key => $value) {
+            if ($value === null || $value === '') {
+                continue;
+            }
+            if ($key === 'lines' || $key === 'items') {
+                if (! is_array($value) || $value === []) {
+                    continue;
+                }
+                $merged[$key] = $value;
+
+                continue;
+            }
+            if (in_array($key, ['supplier_id', 'customer_id', 'sale_id', 'branch_id'], true) && (int) $value <= 0) {
+                continue;
+            }
+            $merged[$key] = $value;
+        }
+
+        return $merged;
     }
 
     /** @param  array<string, mixed>  $pending */
@@ -1153,27 +1262,42 @@ PROMPT;
                 $params['supplier_id'] = (int) $supplierIds[0];
             }
 
-            $productCodes = \App\Support\EntityMentionRefs::productCodes($refs);
             $lines = is_array($params['lines'] ?? null) ? $params['lines'] : [];
-            $existingCodes = [];
+            $byCode = [];
             foreach ($lines as $line) {
-                if (is_array($line) && trim((string) ($line['product_code'] ?? '')) !== '') {
-                    $existingCodes[strtoupper(trim((string) $line['product_code']))] = true;
-                }
-            }
-            foreach ($productCodes as $code) {
-                $key = strtoupper(trim((string) $code));
-                if ($key === '' || isset($existingCodes[$key])) {
+                if (! is_array($line)) {
                     continue;
                 }
-                $lines[] = [
-                    'product_code' => $code,
-                    'ordered_qty' => 1,
-                ];
-                $existingCodes[$key] = true;
+                $code = strtoupper(trim((string) ($line['product_code'] ?? '')));
+                if ($code !== '') {
+                    $byCode[$code] = $line;
+                }
             }
-            if ($lines !== []) {
-                $params['lines'] = $lines;
+
+            foreach ($refs as $ref) {
+                if (($ref['type'] ?? '') !== 'product') {
+                    continue;
+                }
+                $code = trim((string) ($ref['code'] ?? ''));
+                if ($code === '') {
+                    continue;
+                }
+                $key = strtoupper($code);
+                $label = trim((string) ($ref['label'] ?? $code));
+                $qty = 1.0;
+                // Prefer qty written next to the @mention in the user message when available via pending message context — default 1.
+                if (isset($byCode[$key]['ordered_qty']) && (float) $byCode[$key]['ordered_qty'] > 0) {
+                    $qty = (float) $byCode[$key]['ordered_qty'];
+                }
+                $byCode[$key] = [
+                    'product_code' => $code,
+                    'product_name' => $label,
+                    'ordered_qty' => $qty,
+                    'cost_price' => $byCode[$key]['cost_price'] ?? null,
+                ];
+            }
+            if ($byCode !== []) {
+                $params['lines'] = array_values($byCode);
             }
         }
 

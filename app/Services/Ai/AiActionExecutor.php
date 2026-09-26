@@ -393,6 +393,17 @@ class AiActionExecutor
 
         $supplierId = (int) ($params['supplier_id'] ?? 0);
         if ($supplierId <= 0) {
+            $supplierName = trim((string) ($params['supplier_name'] ?? $params['supplier'] ?? ''));
+            if ($supplierName !== '') {
+                $resolved = app(AiCreateLpoParamMerger::class)->resolveSupplier($user, $supplierName);
+                if ($resolved !== null) {
+                    $supplierId = (int) $resolved['id'];
+                    $params['supplier_id'] = $supplierId;
+                    $params['supplier_name'] = $resolved['name'];
+                }
+            }
+        }
+        if ($supplierId <= 0) {
             throw ValidationException::withMessages([
                 'supplier_id' => ['Select a supplier for this purchase order.'],
             ]);
@@ -425,19 +436,27 @@ class AiActionExecutor
                 continue;
             }
             $productCode = trim((string) ($line['product_code'] ?? ''));
+            $productName = trim((string) ($line['product_name'] ?? $line['name'] ?? ''));
             $qty = (float) ($line['ordered_qty'] ?? $line['quantity'] ?? 0);
-            if ($productCode === '' || $qty <= 0) {
+            if ($qty <= 0) {
                 continue;
             }
 
-            $product = Product::query()
-                ->where('organization_id', $user->organization_id)
-                ->whereNull('deleted_at')
-                ->where('product_code', $productCode)
-                ->first();
+            $product = null;
+            if ($productCode !== '') {
+                $product = Product::query()
+                    ->where('organization_id', $user->organization_id)
+                    ->whereNull('deleted_at')
+                    ->where('product_code', $productCode)
+                    ->first();
+            }
+            if (! $product && $productName !== '') {
+                $product = app(AiCreateLpoParamMerger::class)->resolveProductByName($user, $productName);
+            }
             if (! $product) {
+                $label = $productCode !== '' ? $productCode : $productName;
                 throw ValidationException::withMessages([
-                    'lines' => ["Product [{$productCode}] was not found in your catalog."],
+                    'lines' => ["Product [{$label}] was not found in your catalog."],
                 ]);
             }
 
@@ -446,7 +465,7 @@ class AiActionExecutor
                 : (float) ($product->last_cost_price ?? 0);
 
             $normalized[] = [
-                'product_code' => $productCode,
+                'product_code' => $product->product_code,
                 'ordered_qty' => $qty,
                 'cost_price' => $cost,
                 'uom' => $line['uom'] ?? null,
@@ -1236,7 +1255,7 @@ class AiActionExecutor
         $type = (string) ($pending['type'] ?? '');
 
         return match ($type) {
-            'create_lpo' => 'Not ready to save yet — share the **supplier** and **line items** (or a sales order to copy from). When those are set, I will ask you to confirm.',
+            'create_lpo' => 'Not ready to save yet — share the **supplier** and **line items** (or a sales order to copy from). When those are set, reply **confirm** to create the LPO (PDF download will appear after).',
             'create_product' => 'Not ready to save yet — share the **product name**, **sub-category**, **unit of measure**, **VAT rate**, and **selling price**. When those are set, I will ask you to confirm.',
             'create_supplier' => 'Not ready to save yet — share the **supplier name**. When details are complete, I will ask you to confirm.',
             'create_customer' => 'Not ready to save yet — share the **customer name**. When details are complete, I will ask you to confirm.',
