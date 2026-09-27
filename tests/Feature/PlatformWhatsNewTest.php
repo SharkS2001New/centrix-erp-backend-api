@@ -43,7 +43,8 @@ class PlatformWhatsNewTest extends TestCase
 
         $this->postJson("/api/v1/admin/whats-new/{$noteId}/publish")
             ->assertOk()
-            ->assertJsonPath('data.status', 'published');
+            ->assertJsonPath('data.status', 'published')
+            ->assertJsonPath('data.release_version', \App\Support\CentrixVersion::current());
 
         Queue::assertPushed(\App\Jobs\PublishPlatformWhatsNewJob::class);
 
@@ -79,6 +80,57 @@ class PlatformWhatsNewTest extends TestCase
         $this->getJson('/api/v1/whats-new/pending?workspace=pos')
             ->assertOk()
             ->assertJsonCount(0, 'data');
+    }
+
+    public function test_reshow_clears_dismissals_and_delete_removes_published_note(): void
+    {
+        Queue::fake();
+
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        $tenantAdmin = User::where('username', 'admin')->firstOrFail();
+        $org = Organization::findOrFail($tenantAdmin->organization_id);
+
+        Sanctum::actingAs($superAdmin);
+        $create = $this->postJson('/api/v1/admin/whats-new', [
+            'title' => 'Updated till float',
+            'body' => 'Till open now asks for float notes.',
+            'audience' => 'all_users',
+            'organization_ids' => [$org->id],
+            'workspace_ids' => ['pos', 'backoffice'],
+            'show_on_login' => true,
+        ])->assertCreated();
+
+        $noteId = (int) $create->json('data.id');
+        $this->postJson("/api/v1/admin/whats-new/{$noteId}/publish")->assertOk();
+
+        Sanctum::actingAs($tenantAdmin);
+        $this->postJson("/api/v1/whats-new/{$noteId}/dismiss")->assertOk();
+        $this->getJson('/api/v1/whats-new/pending?workspace=pos')
+            ->assertOk()
+            ->assertJsonCount(0, 'data');
+
+        Sanctum::actingAs($superAdmin);
+        $this->postJson("/api/v1/admin/whats-new/{$noteId}/reshow", ['renotify' => true])
+            ->assertOk()
+            ->assertJsonPath('cleared_reads', 1);
+
+        Queue::assertPushed(\App\Jobs\PublishPlatformWhatsNewJob::class);
+
+        Sanctum::actingAs($tenantAdmin);
+        $this->getJson('/api/v1/whats-new/pending?workspace=pos')
+            ->assertOk()
+            ->assertJsonPath('data.0.id', $noteId);
+
+        Sanctum::actingAs($superAdmin);
+        $this->deleteJson("/api/v1/admin/whats-new/{$noteId}")
+            ->assertOk()
+            ->assertJsonPath('ok', true);
+
+        $this->assertNull(PlatformWhatsNewNote::query()->find($noteId));
+        $this->assertSame(
+            0,
+            PlatformWhatsNewRead::query()->where('note_id', $noteId)->count(),
+        );
     }
 
     public function test_admins_only_audience_skips_non_admins(): void

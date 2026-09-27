@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\WorkspaceResolver;
 use App\Services\Notifications\InAppNotificationService;
+use App\Support\CentrixVersion;
 use Illuminate\Validation\ValidationException;
 
 class PlatformWhatsNewService
@@ -105,6 +106,7 @@ class PlatformWhatsNewService
 
         $note->forceFill([
             'status' => PlatformWhatsNewNote::STATUS_PUBLISHED,
+            'release_version' => CentrixVersion::current(),
             'published_at' => now(),
             'published_by' => $actor->id,
         ])->save();
@@ -116,13 +118,52 @@ class PlatformWhatsNewService
 
     public function delete(PlatformWhatsNewNote $note): void
     {
-        if ($note->isPublished()) {
+        PlatformWhatsNewRead::query()->where('note_id', $note->id)->delete();
+        $note->delete();
+    }
+
+    /**
+     * Make a published note show on login again for users who already dismissed it.
+     *
+     * @return array{note: PlatformWhatsNewNote, cleared_reads: int, renotify: bool, message: string}
+     */
+    public function reshow(PlatformWhatsNewNote $note, User $actor, bool $renotify = true): array
+    {
+        if (! $note->isPublished()) {
             throw ValidationException::withMessages([
-                'status' => ['Published notes cannot be deleted. Unpublish is not supported — leave them in the archive.'],
+                'status' => ['Only published notes can be shown again. Publish the draft first.'],
             ]);
         }
 
-        $note->delete();
+        if (! $note->show_on_login) {
+            $note->forceFill(['show_on_login' => true])->save();
+        }
+
+        $cleared = PlatformWhatsNewRead::query()->where('note_id', $note->id)->delete();
+
+        $note->forceFill([
+            'published_at' => now(),
+            'published_by' => $actor->id,
+            'release_version' => CentrixVersion::current(),
+        ])->save();
+
+        if ($renotify) {
+            PublishPlatformWhatsNewJob::dispatch($note->id);
+        }
+
+        $message = $cleared > 0
+            ? "Cleared {$cleared} dismissal(s). Matching users will see this note again on next login."
+            : 'No prior dismissals found. Matching users will see this note on next login if they have not dismissed it.';
+        if ($renotify) {
+            $message .= ' Bell notifications are being re-sent.';
+        }
+
+        return [
+            'note' => $note->fresh(),
+            'cleared_reads' => (int) $cleared,
+            'renotify' => $renotify,
+            'message' => $message,
+        ];
     }
 
     /**
@@ -287,6 +328,7 @@ class PlatformWhatsNewService
             'workspace_ids' => $note->targetedWorkspaceIds(),
             'workspaces' => $workspaces,
             'status' => $note->status,
+            'release_version' => $note->release_version,
             'show_on_login' => (bool) $note->show_on_login,
             'published_at' => $note->published_at?->toIso8601String(),
             'notified_count' => (int) $note->notified_count,
@@ -311,6 +353,7 @@ class PlatformWhatsNewService
             'title' => $note->title,
             'body' => $note->body,
             'link_url' => $note->link_url,
+            'release_version' => $note->release_version,
             'published_at' => $note->published_at?->toIso8601String(),
         ];
     }

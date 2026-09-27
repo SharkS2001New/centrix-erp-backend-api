@@ -24,6 +24,7 @@ class PlatformWhatsNewNote extends Model
         'organization_ids',
         'workspace_ids',
         'status',
+        'release_version',
         'show_on_login',
         'published_at',
         'published_by',

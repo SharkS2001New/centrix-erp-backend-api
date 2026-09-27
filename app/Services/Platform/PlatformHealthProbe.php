@@ -22,6 +22,8 @@ class PlatformHealthProbe
      *   ok: bool,
      *   checked_at: string,
      *   hostname: string,
+     *   centrix_version: string,
+     *   centrix_version_label: string,
      *   checks: list<array{id: string, label: string, ok: bool|null, detail: string}>
      * }
      */
@@ -46,6 +48,8 @@ class PlatformHealthProbe
             'ok' => $ok,
             'checked_at' => now()->toIso8601String(),
             'hostname' => gethostname() ?: 'unknown',
+            'centrix_version' => \App\Support\CentrixVersion::current(),
+            'centrix_version_label' => \App\Support\CentrixVersion::label(),
             'checks' => $checks,
         ];
     }
@@ -57,7 +61,8 @@ class PlatformHealthProbe
             'id' => 'app',
             'label' => 'App process',
             'ok' => true,
-            'detail' => 'PHP '.PHP_VERSION.' · '.config('app.env'),
+            'detail' => 'Centrix '.\App\Support\CentrixVersion::label()
+                .' · PHP '.PHP_VERSION.' · '.config('app.env'),
         ];
     }
 

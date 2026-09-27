@@ -23,10 +23,18 @@ class PlatformHealthTest extends TestCase
                 'ok',
                 'checked_at',
                 'hostname',
+                'centrix_version',
+                'centrix_version_label',
                 'checks' => [
                     ['id', 'label', 'ok', 'detail'],
                 ],
             ]);
+
+        $this->assertMatchesRegularExpression(
+            '/^\d+\.\d+\.\d+$/',
+            (string) $response->json('centrix_version'),
+        );
+        $this->assertStringStartsWith('v', (string) $response->json('centrix_version_label'));
 
         $ids = collect($response->json('checks'))->pluck('id')->all();
         $this->assertContains('app', $ids);

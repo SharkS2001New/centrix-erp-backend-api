@@ -78,6 +78,31 @@ class PlatformWhatsNewController extends Controller
         ]);
     }
 
+    /**
+     * Clear login dismissals so the note pops up again; optionally re-send bell notifications.
+     */
+    public function reshow(Request $request, int $id)
+    {
+        $note = PlatformWhatsNewNote::query()->findOrFail($id);
+        $data = $request->validate([
+            'renotify' => ['sometimes', 'boolean'],
+        ]);
+        $result = $this->service->reshow(
+            $note,
+            $request->user(),
+            (bool) ($data['renotify'] ?? true),
+        );
+        $note = $result['note'];
+        $note->load(['creator:id,full_name', 'publisher:id,full_name']);
+
+        return response()->json([
+            'data' => $this->service->present($note),
+            'cleared_reads' => $result['cleared_reads'],
+            'renotify' => $result['renotify'],
+            'message' => $result['message'],
+        ]);
+    }
+
     public function destroy(int $id)
     {
         $note = PlatformWhatsNewNote::query()->findOrFail($id);

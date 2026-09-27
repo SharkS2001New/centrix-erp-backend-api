@@ -435,6 +435,8 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::post('admin/whats-new/{id}/publish', [PlatformWhatsNewController::class, 'publish'])
             ->middleware(['erp.super_admin']);
+        Route::post('admin/whats-new/{id}/reshow', [PlatformWhatsNewController::class, 'reshow'])
+            ->middleware(['erp.super_admin']);
         Route::delete('admin/whats-new/{id}', [PlatformWhatsNewController::class, 'destroy'])
             ->middleware(['erp.super_admin']);
         Route::get('admin/platform-theme', [\App\Http\Controllers\Api\V1\PlatformThemeController::class, 'show'])
