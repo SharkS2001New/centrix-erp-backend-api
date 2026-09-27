@@ -30,7 +30,8 @@ class AiWorkspaceScope
 
         $id = $this->normalizeWorkspaceId($workspaceId, $pathname, $available->keys()->all());
 
-        if (! $available->has($id)) {
+        // Manager app is org-wide — not an ERP workspace the user "switches" into.
+        if ($id !== 'manager' && ! $available->has($id)) {
             $id = (string) ($available->keys()->first() ?? 'backoffice');
         }
 
@@ -67,12 +68,20 @@ class AiWorkspaceScope
     protected function normalizeWorkspaceId(?string $workspaceId, ?string $pathname, array $availableIds): string
     {
         $id = strtolower(trim((string) $workspaceId));
+        $path = (string) ($pathname ?? '');
+
+        if ($id === 'manager' || str_starts_with($path, '/manager')) {
+            return 'manager';
+        }
+
         if ($id !== '' && in_array($id, $availableIds, true)) {
             return $id;
         }
 
-        $path = (string) ($pathname ?? '');
         foreach (config('ai_workspaces', []) as $candidate => $def) {
+            if ($candidate === 'manager') {
+                continue;
+            }
             if (! in_array($candidate, $availableIds, true)) {
                 continue;
             }
@@ -92,6 +101,11 @@ class AiWorkspaceScope
     public function isMessageInScope(string $message, array $scope, ?array $pendingAction = null): bool
     {
         if ($pendingAction !== null) {
+            return true;
+        }
+
+        // Manager app answers across all modules the user can access.
+        if (($scope['id'] ?? '') === 'manager') {
             return true;
         }
 

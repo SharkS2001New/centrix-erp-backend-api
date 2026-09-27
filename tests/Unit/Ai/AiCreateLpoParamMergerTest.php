@@ -150,6 +150,8 @@ class AiCreateLpoParamMergerTest extends TestCase
         $this->assertNotEmpty($outcome['result']['lpo_no'] ?? null);
         $links = $outcome['result']['document_links'] ?? [];
         $this->assertNotEmpty($links);
-        $this->assertNotNull(collect($links)->firstWhere('kind', 'pdf'));
+        $print = collect($links)->firstWhere('kind', 'print');
+        $this->assertNotNull($print);
+        $this->assertTrue((bool) ($print['use_lpo_print'] ?? false));
     }
 }

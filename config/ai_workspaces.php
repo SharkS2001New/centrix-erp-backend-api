@@ -192,4 +192,38 @@ return [
             '/\b(journal entry|record payment to customer)\b/i',
         ],
     ],
+
+    /**
+     * Centrix Manager mobile/web app — org-wide assistant (not ERP workspace-gated).
+     * Empty foreign_signals so questions across sales, stock, HR, accounting, etc. stay in scope.
+     */
+    'manager' => [
+        'label' => 'Centrix Manager',
+        'description' => 'Organization-wide manager assistant across sales, stock, purchasing, distribution, accounting, HR, and admin.',
+        'nav_section_ids' => [],
+        'nav_path_prefixes' => ['/manager'],
+        'module_catalog_keys' => [
+            'catalogue', 'sales', 'inventory', 'purchasing', 'reports', 'distribution',
+            'fulfillment', 'accounting', 'payments', 'hr_payroll', 'admin', 'hospitality',
+        ],
+        'action_types' => [
+            'create_sales_order', 'create_held_order', 'create_product', 'update_product',
+            'create_supplier', 'create_lpo', 'create_customer',
+            'submit_lpo_for_approval', 'approve_lpo', 'mark_lpo_sent', 'receive_lpo_goods',
+            'create_report_template', 'record_customer_payment', 'open_lpo', 'navigate_orders',
+            'create_employee',
+        ],
+        'workflow_keys' => [
+            'create_product', 'update_product', 'create_supplier', 'create_lpo', 'create_customer',
+            'create_sales_order', 'create_held_order',
+            'submit_lpo_for_approval', 'approve_lpo', 'mark_lpo_sent', 'receive_lpo_goods',
+            'record_customer_payment', 'create_report_template', 'create_employee',
+        ],
+        'keywords' => [
+            'product', 'catalog', 'stock', 'inventory', 'sales', 'order', 'customer', 'supplier', 'lpo',
+            'purchase', 'grn', 'dispatch', 'route', 'driver', 'report', 'dashboard', 'debtor', 'payment',
+            'expense', 'accounting', 'payroll', 'employee', 'admin', 'till', 'eod', 'pos', 'branch',
+        ],
+        'foreign_signals' => [],
+    ],
 ];

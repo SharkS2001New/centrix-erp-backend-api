@@ -34,7 +34,7 @@ class GetLpoDetailsTool implements AiToolInterface
     {
         return 'Look up a Centrix purchase order (LPO) by number, reference, or the latest created LPO, '
             .'and return status, supplier, line items, remaining qty, workflow actions, '
-            .'and document_links (Open / Print / Download PDF). '
+            .'and document_links (Open / Print-Save PDF using the same LPO page template). '
             .'For "last LPO", "latest purchase order", "most recent LPO", or "download the last LPO we created", '
             .'set latest=true (or pass query like "last" / "latest"). '
             .'Use when the user asks to retrieve, show, open, download, or check status of an LPO / purchase order.';

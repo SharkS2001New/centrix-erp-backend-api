@@ -597,19 +597,22 @@ class AiActionExecutor
 
         $data = app(LpoMstController::class)->storeFull($req)->getData(true);
         $lpoNo = $data['lpo_no'] ?? $data['lpo']['lpo_no'] ?? null;
-        $documentLinks = $lpoNo ? LpoAiDocumentLinks::forLpo((int) $lpoNo) : [];
+        if (! $lpoNo) {
+            throw ValidationException::withMessages([
+                'lpo' => ['The purchase order could not be saved. Please try again.'],
+            ]);
+        }
+        $documentLinks = LpoAiDocumentLinks::forLpo((int) $lpoNo);
 
         return [
             'success' => true,
-            'message' => $lpoNo
-                ? "Purchase order (LPO) {$lpoNo} created. You can download the PDF, submit it for approval, or open it to continue."
-                : 'Purchase order (LPO) created.',
+            'message' => "Purchase order (LPO) {$lpoNo} created. You can download the PDF, submit it for approval, or open it to continue.",
             'result' => [
-                'lpo_no' => $lpoNo,
+                'lpo_no' => (int) $lpoNo,
                 'supplier_id' => $supplierId,
                 'line_count' => count($normalized),
                 'from_sale_id' => $fromSale?->id,
-                'path' => $lpoNo ? '/lpo/'.$lpoNo : '/lpo',
+                'path' => '/lpo/'.$lpoNo,
                 'document_links' => $documentLinks,
                 'next_steps' => [
                     'Download or print the LPO PDF to share with the supplier.',

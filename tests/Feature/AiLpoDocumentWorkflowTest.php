@@ -188,10 +188,13 @@ class AiLpoDocumentWorkflowTest extends TestCase
             $this->assertTrue((bool) ($result['is_latest'] ?? false));
             $links = $result['document_links'] ?? [];
             $this->assertIsArray($links);
-            $pdf = collect($links)->firstWhere('kind', 'pdf');
-            $this->assertNotNull($pdf);
-            $this->assertSame('/lpo-mst/'.$newer.'/pdf', $pdf['api_path'] ?? null);
-            $this->assertTrue((bool) ($pdf['download'] ?? false));
+            $print = collect($links)->firstWhere('kind', 'print');
+            $this->assertNotNull($print);
+            $this->assertSame($newer, (int) ($print['lpo_no'] ?? 0));
+            $this->assertTrue((bool) ($print['use_lpo_print'] ?? false));
+            $this->assertSame('/lpo/'.$newer.'/print', $print['path'] ?? null);
+            // Assistant must not ship a separate Dompdf download — same template as LPO pages.
+            $this->assertNull(collect($links)->firstWhere('kind', 'pdf'));
         }
     }
 

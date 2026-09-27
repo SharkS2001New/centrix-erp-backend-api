@@ -22,6 +22,8 @@ return [
         'accounting',
         'hr',
         'distribution',
+        // Centrix Manager app — not tied to a single ERP workspace.
+        'manager',
     ],
 
     /** Default model/URL when an org leaves them blank in Settings → AI. */

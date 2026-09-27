@@ -261,9 +261,9 @@ return [
                 .'Do not invent status. Prefer chat document_links buttons — do not restate Open/Print/PDF in prose when links are present.',
         ],
         'retrieve_latest_lpo' => [
-            'summary' => 'Find the most recently created purchase order and offer Download PDF',
+            'summary' => 'Find the most recently created purchase order and offer Print / Save PDF',
             'path' => '/lpo',
-            'notes' => 'Call get_lpo_details with latest=true. Reply with PO number, supplier, status, total; Download PDF appears in the Documents panel.',
+            'notes' => 'Call get_lpo_details with latest=true. Reply with PO number, supplier, status, total; Print / Save PDF uses the same LPO page template.',
         ],
         'list_lpos_awaiting_receive' => [
             'summary' => 'List LPOs awaiting goods receiving (Awaiting receive + Partially received)',

@@ -251,7 +251,6 @@ class ErpCapabilitiesController extends Controller
         unset(
             $payload['workspaces'],
             $payload['allow_org_provisioning'],
-            $payload['ai_assistant'],
             $payload['whatsapp_orders'],
             $payload['platform_tab_workspace_enabled'],
             $payload['workflows'],
@@ -264,17 +263,23 @@ class ErpCapabilitiesController extends Controller
         );
 
         if ($channel === 'mobile') {
-            // Field sales app: drop manager + org module maps (not used for gating there).
+            // Field sales app: drop manager + org module maps + AI assistant (ERP/web only today).
             unset(
                 $payload['manager_app'],
                 $payload['modules'],
                 $payload['deployment_profile'],
                 $payload['profile_label'],
+                $payload['ai_assistant'],
             );
+        } else {
+            // Manager app: keep a slim AI assistant flag so Centrix Assistant can gate in-app.
+            $ai = is_array($payload['ai_assistant'] ?? null) ? $payload['ai_assistant'] : [];
+            $payload['ai_assistant'] = [
+                'enabled' => (bool) ($ai['enabled'] ?? false),
+                'available' => (bool) ($ai['available'] ?? false),
+                'talk_enabled' => ($ai['talk_enabled'] ?? true) !== false,
+            ];
         }
-        // Manager channel keeps `modules`, `deployment_profile`, and `profile_label` so
-        // Centrix Manager can show POS / distribution / finance (e.g. End of Day report).
-
         if (isset($payload['module_settings']) && is_array($payload['module_settings'])) {
             if ($channel === 'mobile') {
                 // Sales + distribution power mobile sales/driver; inventory/security for stock & session.

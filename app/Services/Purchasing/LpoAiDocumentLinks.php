@@ -3,12 +3,15 @@
 namespace App\Services\Purchasing;
 
 /**
- * Shared download / print / open paths for LPO documents in AI chat replies.
+ * Shared open / print paths for LPO documents in AI chat replies.
+ *
+ * Print uses the same LPO page print template (frontend professional A4 /
+ * org document settings) — not a separate Dompdf layout.
  */
 class LpoAiDocumentLinks
 {
     /**
-     * @return list<array{label: string, kind: string, path?: string, api_path?: string, download?: bool}>
+     * @return list<array<string, mixed>>
      */
     public static function forLpo(int|string $lpoNo): array
     {
@@ -22,23 +25,21 @@ class LpoAiDocumentLinks
                 'label' => 'Open LPO',
                 'kind' => 'open',
                 'path' => '/lpo/'.$no,
+                'lpo_no' => $no,
             ],
             [
-                'label' => 'Print LPO',
+                // Same print pipeline as Purchasing → LPO → Print (Save as PDF from the dialog).
+                'label' => 'Print / Save PDF',
                 'kind' => 'print',
                 'path' => '/lpo/'.$no.'/print',
-            ],
-            [
-                'label' => 'Download PDF',
-                'kind' => 'pdf',
-                'api_path' => '/lpo-mst/'.$no.'/pdf',
-                'filename' => 'LPO-'.$no.'.pdf',
-                'download' => true,
+                'lpo_no' => $no,
+                'use_lpo_print' => true,
             ],
             [
                 'label' => 'Receive goods',
                 'kind' => 'receive',
                 'path' => '/lpo/'.$no.'/receive',
+                'lpo_no' => $no,
             ],
         ];
     }

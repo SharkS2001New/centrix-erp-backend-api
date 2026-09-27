@@ -791,7 +791,7 @@ class AiToolChatService
                 $reply,
             );
 
-            return [
+            $payload = [
                 'success' => true,
                 'message' => $reply,
                 'reply' => $reply,
@@ -804,6 +804,9 @@ class AiToolChatService
                 'form_spec' => null,
                 'document_links' => $this->extractDocumentLinks($lastToolResults),
             ];
+
+            // Read-only tools only — never echo hallucinated create/save success.
+            return app(AiFalseWriteSuccessGuard::class)->scrub($payload);
         } catch (AiProviderException $e) {
             $this->logUsage(
                 $organization,
@@ -947,7 +950,7 @@ class AiToolChatService
         $focusBlock = $this->focusResolver->promptBlock($focus);
 
         return <<<PROMPT
-You are CentrixAssistant — the Centrix ERP AI assistant for {$orgName} (Kenya-focused business system, currency KES).
+You are CentrixAssistant — the Centrix ERP AI assistant for {$orgName} (Kenya-focused business system). Currency is Kenyan Shillings (KES). Prefer saying "Kenyan Shillings" (or "KES (Kenyan Shillings)" on first mention); do not treat KES as a mystery code.
 Users may call you CentrixAssistant, Centrix Assistant, or Centrix.
 
 You are in a one-on-one conversation with {$speakerLabel}. Address them as {$speakerFirst} when greeting or when a personal touch helps. Never invent a different name for them.
@@ -981,7 +984,7 @@ Tools:
 - find_catalogue_exceptions — scan products for catalogue comparisons: cost > selling (check=cost_above_selling), zero selling/cost, thin margin, missing supplier/reorder/VAT/UoM, stock ≤ reorder, or check=all. Use for "which products have cost higher than selling price". Not the same as margin_discount_watchdog (sold-below-cost lines).
 - get_purchasing_overview — supplier count + recent LPOs snapshot only (not status-filtered). Point to /suppliers and /lpo.
 - list_lpos — list LPOs by status. For "awaiting goods receiving / GRN / to receive" ALWAYS call with filter=awaiting_receive (statuses 3+4 only). Do NOT use get_purchasing_overview for that question. Exclude fully received, cleared, awaiting check/approval unless asked.
-- get_lpo_details — retrieve one LPO by number/reference OR the latest created LPO: status, lines, workflow flags, document_links (open/print/PDF). For "last LPO", "latest purchase order", "most recent LPO we created", or "download the last LPO", call with latest=true (or query="last"). Prefer document_links UI — do not restate Open/Print/PDF/next-step boilerplate in the reply.
+- get_lpo_details — retrieve one LPO by number/reference OR the latest created LPO: status, lines, workflow flags, document_links (Open / Print-Save PDF using the same LPO page template). For "last LPO", "latest purchase order", "most recent LPO we created", or "download the last LPO", call with latest=true (or query="last"). Prefer document_links UI — do not restate Open/Print/PDF/next-step boilerplate in the reply.
 - get_debtors_summary — unpaid / AR / who to call
 - get_customer_statement — one customer's balance + period purchases with product line items (qty_label); use for statements, "what did they buy", and pronoun follow-ups about the focused customer
 - get_supplier_statement — one supplier's AP balance + period LPOs/payments with product line items (qty_label); use for supplier statements and "what did we buy from them"
@@ -1032,11 +1035,12 @@ Rules:
   For ambiguous matches (several candidates), list them and ask the user to pick one.
 - If a tool cannot answer at all, explain what Centrix does store and point to the nearest screen or report.
 - If the user asks to create or update something (product, change unit/selling price, supplier, customer, LPO, sales order, employee, payment, etc.): ask for required details in chat first. Offer an inline form only when they reply **show form** — do not show the form and a field checklist on the same turn.
-- You CAN create and save products, update product unit/selling prices (update_product), create suppliers, customers, sales orders, and purchase orders (LPOs). Never refuse create_product / update_product / create_lpo / create_supplier or say you cannot write/save from chat. Never say catalog creation or price changes must happen only on /products.
-- For product price changes: identify the product (name or code) and the new unit_price (KES), then ask them to reply **confirm**. Emit update_product with those params.
-- For LPOs: ask for supplier + line items (or a sales order to copy from) first. Only after those details are collected, ask them to reply **confirm** / **create it** / **save** (or **show form**). Never ask for confirm on the first “help me create an LPO” turn.
-- Never tell the user to open /products, /lpo, /suppliers, or /customers and type the record themselves after they confirmed or said save. Confirmation/save means the system POSTs and saves — not a path to re-enter data.
-- After a successful create/update/confirm, briefly confirm what was done and ask if there is anything else they need.
+- Create / update / LPO workflows are handled by Centrix outside this tool turn after the user confirms. Collect required details and ask them to reply **confirm** — do not pretend a write already ran.
+- CRITICAL: Never claim you created, saved, drafted, posted, or raised an LPO / product / supplier / customer / order. These tools are read-only. Until Centrix executes a confirmed write and returns a real id (e.g. LPO number), say what is still missing or ask for **confirm**. Hallucinated success is not allowed.
+- For product price changes: identify the product (name or code) and the new unit_price (KES), then ask them to reply **confirm**.
+- For LPOs: ask for supplier + line items (or a sales order to copy from) first. Only after those details are collected, ask them to reply **confirm** / **create it** / **save**. Never ask for confirm on the first “help me create an LPO” turn.
+- Never tell the user to open /products, /lpo, /suppliers, or /customers and type the record themselves after they confirmed or said save.
+- After Centrix has actually saved (system message with a real LPO/product id), briefly confirm and ask if there is anything else they need.
 - Typos / spelling: focus on meaning (e.g. "anomally" = anomaly / abnormal sales). Do not correct the user's English unless they ask; answer the intended Centrix question.
 - Do not claim you lack access to Purchasing, Inventory, or Admin — guide with find_screen and documentation even when live lists are limited.
 - Include paths as Centrix links like /hr/employees — the UI opens them and switches application when needed.

@@ -136,7 +136,7 @@ class HikvisionAttendanceSyncService
 
         $summary = [
             'devices' => $devices->count(),
-            'pulled' => 0,
+                'pulled' => 0,
             'stored' => 0,
             'applied' => 0,
             'skipped' => 0,
@@ -218,8 +218,8 @@ class HikvisionAttendanceSyncService
     ): array {
         $result = [
             'stored' => 0,
-            'applied' => 0,
-            'skipped' => 0,
+                'applied' => 0,
+                'skipped' => 0,
             'duplicates' => 0,
             'retried' => 0,
             'errors' => [],
@@ -547,8 +547,8 @@ class HikvisionAttendanceSyncService
             ? null
             : mb_substr(implode(' | ', array_slice($result['errors'], 0, 3)), 0, 500);
         if ($updateDeviceCursor) {
-            if ($latestEvent) {
-                $device->last_event_at = $latestEvent;
+        if ($latestEvent) {
+            $device->last_event_at = $latestEvent;
             }
             if ($latestSerial) {
                 $device->last_event_serial = $latestSerial;

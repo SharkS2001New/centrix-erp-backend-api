@@ -760,9 +760,9 @@ class AttendanceClockPunchService
             return $employee->loadMissing('shift');
         }
 
-        throw ValidationException::withMessages([
+            throw ValidationException::withMessages([
             'employee_code' => "No Centrix employee matches terminal ID \"{$code}\". Map this ID on Attendance clock-in, or enroll the same employee number on the device.",
-        ]);
+            ]);
     }
 
     /**
@@ -801,9 +801,9 @@ class AttendanceClockPunchService
         } else {
             $at = AppTimezone::fromDeviceWallClock($raw) ?? AppTimezone::normalize($raw);
             if ($at === null) {
-                throw ValidationException::withMessages([
-                    'punched_at' => 'Invalid punched_at timestamp.',
-                ]);
+            throw ValidationException::withMessages([
+                'punched_at' => 'Invalid punched_at timestamp.',
+            ]);
             }
         }
 
@@ -844,12 +844,12 @@ class AttendanceClockPunchService
         }
 
         if ($source !== 'hr_applied') {
-            try {
+        try {
                 $this->dayPolicy->assertCanClockIn($employee, $punchedAt->toIso8601String());
-            } catch (\InvalidArgumentException $e) {
-                throw ValidationException::withMessages([
-                    'employee_id' => $e->getMessage(),
-                ]);
+        } catch (\InvalidArgumentException $e) {
+            throw ValidationException::withMessages([
+                'employee_id' => $e->getMessage(),
+            ]);
             }
         }
 

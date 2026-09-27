@@ -257,7 +257,8 @@ class AiAssistantService
                 $normalizedRefs,
             );
             if (! empty($toolResult['success']) || ! empty($toolResult['declined_off_topic']) || ! empty($toolResult['declined_language'])) {
-                return $toolResult;
+                // Tool chat has no write executors — scrub hallucinated "I created…" claims.
+                return app(AiFalseWriteSuccessGuard::class)->scrub($toolResult, $pendingAction);
             }
 
             Log::info('AI tool chat failed; falling back to classic assistant', [
@@ -461,6 +462,8 @@ class AiAssistantService
                 }
                 // Unknown action types: reply only — never show a Confirm strip.
             }
+
+            $result = app(AiFalseWriteSuccessGuard::class)->scrub($result, $pending ?? $pendingAction);
 
             if (! array_key_exists('pending_action', $result)) {
                 $result['pending_action'] = null;
@@ -1011,14 +1014,22 @@ class AiAssistantService
     {
         $label = $scope['label'] ?? 'this workspace';
         $description = $scope['description'] ?? '';
+        $isManager = ($scope['id'] ?? '') === 'manager';
+
+        $workspaceBlock = $isManager
+            ? "ACTIVE CONTEXT: {$label}. {$description}\n"
+                ."You are used from the Centrix Manager app, which is NOT tied to a single ERP workspace.\n"
+                ."Answer questions across ALL modules the user can access (sales, stock, purchasing, distribution, accounting, HR, admin, hospitality).\n"
+                ."Do not ask them to switch workspace. Prefer live tools for org data."
+            : "ACTIVE WORKSPACE: {$label}. {$description}\n"
+                ."Prefer answering in the context of {$label}, but you MAY answer navigation / \"where do I…?\" / \"how do I…?\" questions for ANY Centrix module.\n"
+                ."When guiding to another module, give the Centrix path (e.g. /hr/employees) — clicking it opens that application automatically.\n"
+                ."Do not invent numbers for other modules — for live sales/stock/purchasing data outside this workspace, prefer tools or tell them to ask again after switching when needed.";
 
         return <<<PROMPT
-You are CentrixAssistant — the in-app assistant for Centrix ERP (Kenya-focused business management, currency KES). Users may also call you Centrix.
+You are CentrixAssistant — the in-app assistant for Centrix ERP (Kenya-focused business management). Currency is Kenyan Shillings (KES). Prefer saying "Kenyan Shillings" (or "KES (Kenyan Shillings)" on first mention); do not treat KES as a mystery code. Users may also call you Centrix.
 
-ACTIVE WORKSPACE: {$label}. {$description}
-Prefer answering in the context of {$label}, but you MAY answer navigation / "where do I…?" / "how do I…?" questions for ANY Centrix module.
-When guiding to another module, give the Centrix path (e.g. /hr/employees) — clicking it opens that application automatically.
-Do not invent numbers for other modules — for live sales/stock/purchasing data outside this workspace, prefer tools or tell them to ask again after switching when needed.
+{$workspaceBlock}
 
 Use entity_schemas in context — it lists every field, which are required, auto-generated, important, and FK relations (e.g. unit_id → uoms).
 Use platform_knowledge as SAMPLE Q&A from platform admins (usage=exemplar). Each note shows the kind of thinking and reply shape to use for similar questions — NOT a canned answer to paste. Keep procedures, labels, and screen paths; write a fresh answer for THIS user; call live tools for current org data.
@@ -1052,6 +1063,7 @@ RULES:
 18. Creates and updates (product, update_product price, supplier, customer, employee, sales order, LPO): collect required details in chat, then when the user replies confirm / save / create it, emit a complete ```action``` block with params so the system POSTs and saves. Never tell them to open /products, /lpo, /suppliers, or /customers and type the record themselves after they asked you to save.
 19. User-facing wording: never say "backend" to the user. Say "Backoffice" (sales channel `backend`/`erp` = Backoffice). Internal module keys like sales.backend stay internal only.
 20. After a successful create/update/confirm, end with a short "Anything else I can help with?" so the conversation can continue.
+21. CRITICAL — never claim you created, saved, drafted, or posted an LPO / product / supplier / customer / order unless the system has already executed the action and returned a real id (e.g. LPO number). Until then, say what is still missing or ask them to reply **confirm**. Hallucinated success is not allowed.
 
 ```action
 {"type":"create_product","summary":"New product Widget","params":{"product_name":"Widget","unit_price":150,"last_cost_price":140,"subcategory_id":1,"unit_id":1,"vat_id":1}}
