@@ -22,6 +22,10 @@ class AiFormSpecBuilder
             return $this->lpoWorkflowForm($type, $params);
         }
 
+        if ($type === 'update_product') {
+            return $this->updateProductForm($params);
+        }
+
         $entity = $this->entityForAction($type, $pathname);
         if (! $entity) {
             return null;
@@ -80,8 +84,57 @@ class AiFormSpecBuilder
                 'create_supplier' => 'Confirm & add supplier',
                 'create_customer' => 'Confirm & add customer',
                 'create_lpo' => 'Confirm & create LPO',
+                'update_product' => 'Confirm & update price',
                 default => 'Confirm & create',
             },
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $params
+     * @return array<string, mixed>
+     */
+    protected function updateProductForm(array $params): array
+    {
+        return [
+            'entity' => 'product',
+            'action_type' => 'update_product',
+            'title' => 'Update product price',
+            'fields' => [
+                [
+                    'name' => 'product_name',
+                    'label' => 'Product name',
+                    'type' => 'text',
+                    'required' => true,
+                    'value' => $params['product_name'] ?? null,
+                    'hint' => 'Or use product_code if you know the SKU',
+                ],
+                [
+                    'name' => 'product_code',
+                    'label' => 'Product code (optional)',
+                    'type' => 'text',
+                    'required' => false,
+                    'value' => $params['product_code'] ?? null,
+                ],
+                [
+                    'name' => 'unit_price',
+                    'label' => 'New selling / unit price (KES)',
+                    'type' => 'number',
+                    'required' => true,
+                    'value' => $params['unit_price'] ?? null,
+                ],
+                [
+                    'name' => 'last_cost_price',
+                    'label' => 'Cost price (KES, optional)',
+                    'type' => 'number',
+                    'required' => false,
+                    'value' => $params['last_cost_price'] ?? null,
+                ],
+            ],
+            'hints' => [
+                'Say the product and new price in chat, then reply confirm — or use this form.',
+            ],
+            'submit_label' => 'Confirm & update price',
         ];
     }
 

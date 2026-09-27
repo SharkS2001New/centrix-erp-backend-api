@@ -221,7 +221,17 @@ class PlatformAiTrainingController extends Controller
             'gemini_model' => 'sometimes|nullable|string|max:80',
             'gemini_base_url' => 'sometimes|nullable|string|max:500',
             'free_ai_provider' => 'sometimes|in:gemini,openai',
+            'talk_provider' => 'sometimes|in:gemini,openai,chatgpt',
+            'talk_api_key' => 'sometimes|nullable|string|max:512',
+            'talk_model' => 'sometimes|nullable|string|max:80',
+            'talk_base_url' => 'sometimes|nullable|string|max:500',
+            'talk_gemini_api_key' => 'sometimes|nullable|string|max:512',
+            'talk_gemini_model' => 'sometimes|nullable|string|max:80',
         ]);
+
+        if (($data['talk_provider'] ?? null) === 'chatgpt') {
+            $data['talk_provider'] = 'openai';
+        }
 
         return response()->json(AiSettingsResolver::savePlatformTraining($data));
     }

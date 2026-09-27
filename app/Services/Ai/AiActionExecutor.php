@@ -56,6 +56,7 @@ class AiActionExecutor
             'create_sales_order' => $this->createSalesOrder($user, $params, hold: false),
             'create_held_order' => $this->createSalesOrder($user, $params, hold: true),
             'create_product' => $this->createProduct($user, $params),
+            'update_product' => $this->updateProduct($user, $params),
             'create_supplier' => $this->createSupplier($user, $params),
             'create_lpo' => $this->createLpo($user, $params),
             'submit_lpo_for_approval' => $this->lpoWorkflow($user, $params, 'submit_for_approval'),
@@ -333,6 +334,100 @@ class AiActionExecutor
             'result' => [
                 'product_code' => $code,
                 'product_name' => $product['product_name'] ?? $productName,
+                'path' => '/products/'.rawurlencode($code),
+            ],
+        ];
+    }
+
+    /** @param  array<string, mixed>  $params */
+    protected function updateProduct(User $user, array $params): array
+    {
+        $this->assertPermission($user, 'catalogue.products.edit');
+
+        $productCode = trim((string) ($params['product_code'] ?? ''));
+        $productName = trim((string) ($params['product_name'] ?? $params['query'] ?? ''));
+
+        $product = null;
+        if ($productCode !== '') {
+            $product = Product::query()
+                ->where('organization_id', $user->organization_id)
+                ->whereNull('deleted_at')
+                ->where('product_code', $productCode)
+                ->first();
+        }
+        if (! $product && $productName !== '') {
+            $product = app(AiCreateLpoParamMerger::class)->resolveProductByName($user, $productName);
+        }
+        if (! $product) {
+            $label = $productCode !== '' ? $productCode : ($productName !== '' ? $productName : 'that product');
+            throw ValidationException::withMessages([
+                'product' => ["I could not find {$label} in the catalog. Name the product clearly or give its code."],
+            ]);
+        }
+
+        $payload = [];
+        if (array_key_exists('unit_price', $params) && $params['unit_price'] !== '' && $params['unit_price'] !== null) {
+            if (! is_numeric($params['unit_price'])) {
+                throw ValidationException::withMessages([
+                    'unit_price' => ['Selling / unit price must be a number (KES).'],
+                ]);
+            }
+            $payload['unit_price'] = (float) $params['unit_price'];
+        }
+        if (array_key_exists('last_cost_price', $params) && $params['last_cost_price'] !== '' && $params['last_cost_price'] !== null) {
+            if (! is_numeric($params['last_cost_price'])) {
+                throw ValidationException::withMessages([
+                    'last_cost_price' => ['Cost price must be a number (KES).'],
+                ]);
+            }
+            $payload['last_cost_price'] = (float) $params['last_cost_price'];
+        }
+        if (array_key_exists('discount_percentage', $params) && $params['discount_percentage'] !== '' && $params['discount_percentage'] !== null) {
+            if (! is_numeric($params['discount_percentage'])) {
+                throw ValidationException::withMessages([
+                    'discount_percentage' => ['Discount percentage must be a number.'],
+                ]);
+            }
+            $payload['discount_percentage'] = (float) $params['discount_percentage'];
+        }
+
+        if ($payload === []) {
+            throw ValidationException::withMessages([
+                'unit_price' => ['Tell me the new selling price (and optional cost price) to update.'],
+            ]);
+        }
+
+        $prevUnit = (float) ($product->unit_price ?? 0);
+        $req = Request::create('/products/'.$product->product_code, 'PUT', $payload);
+        $req->setUserResolver(fn () => $user);
+
+        $response = app(ProductController::class)->update($req, (string) $product->product_code);
+        /** @var array<string, mixed> $updated */
+        $updated = json_decode($response->getContent(), true) ?? [];
+        $newUnit = isset($updated['unit_price']) ? (float) $updated['unit_price'] : (float) ($payload['unit_price'] ?? $prevUnit);
+        $name = (string) ($updated['product_name'] ?? $product->product_name);
+        $code = (string) ($updated['product_code'] ?? $product->product_code);
+
+        $parts = [];
+        if (array_key_exists('unit_price', $payload)) {
+            $parts[] = 'selling price from KES '.number_format($prevUnit, 2).' to KES '.number_format($newUnit, 2);
+        }
+        if (array_key_exists('last_cost_price', $payload)) {
+            $parts[] = 'cost price to KES '.number_format((float) $payload['last_cost_price'], 2);
+        }
+        if (array_key_exists('discount_percentage', $payload)) {
+            $parts[] = 'discount to '.number_format((float) $payload['discount_percentage'], 2).'%';
+        }
+        $changeText = $parts !== [] ? implode(' and ', $parts) : 'details';
+
+        return [
+            'success' => true,
+            'message' => "Updated {$name}: {$changeText}.",
+            'result' => [
+                'product_code' => $code,
+                'product_name' => $name,
+                'unit_price' => $newUnit,
+                'previous_unit_price' => $prevUnit,
                 'path' => '/products/'.rawurlencode($code),
             ],
         ];
@@ -1139,6 +1234,7 @@ class AiActionExecutor
     public function isWriteAction(string $type): bool
     {
         return str_starts_with($type, 'create_')
+            || str_starts_with($type, 'update_')
             || $type === 'record_customer_payment'
             || in_array($type, [
                 'submit_lpo_for_approval',
@@ -1194,6 +1290,10 @@ class AiActionExecutor
                 && (int) ($params['unit_id'] ?? 0) > 0
                 && (int) ($params['vat_id'] ?? 0) > 0
                 && is_numeric($params['unit_price'] ?? null),
+            'update_product' => (
+                trim((string) ($params['product_code'] ?? '')) !== ''
+                || trim((string) ($params['product_name'] ?? $params['query'] ?? '')) !== ''
+            ) && is_numeric($params['unit_price'] ?? null),
             'create_supplier' => trim((string) ($params['supplier_name'] ?? '')) !== '',
             'create_customer' => trim((string) ($params['customer_name'] ?? '')) !== '',
             'create_employee' => trim((string) ($params['first_name'] ?? $params['employee_name'] ?? '')) !== ''
@@ -1257,6 +1357,7 @@ class AiActionExecutor
         return match ($type) {
             'create_lpo' => 'Not ready to save yet — share the **supplier** and **line items** (or a sales order to copy from). When those are set, reply **confirm** to create the LPO (PDF download will appear after).',
             'create_product' => 'Not ready to save yet — share the **product name**, **sub-category**, **unit of measure**, **VAT rate**, and **selling price**. When those are set, I will ask you to confirm.',
+            'update_product' => 'Not ready yet — tell me which **product** and the new **unit / selling price** (KES). When those are set, reply **confirm**.',
             'create_supplier' => 'Not ready to save yet — share the **supplier name**. When details are complete, I will ask you to confirm.',
             'create_customer' => 'Not ready to save yet — share the **customer name**. When details are complete, I will ask you to confirm.',
             'create_employee' => 'Not ready to save yet — share the employee’s **name**. When details are complete, I will ask you to confirm.',

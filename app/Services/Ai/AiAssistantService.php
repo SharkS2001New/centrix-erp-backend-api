@@ -770,7 +770,11 @@ class AiAssistantService
                 // Document buttons already render in the chat panel — keep the reply short.
                 $linkHint = '';
             }
-            $reply = $this->replyFormatter->format(($outcome['message'] ?? 'Done.').$linkHint.$docHint);
+            $reply = trim(($outcome['message'] ?? 'Done.').$linkHint.$docHint);
+            if (! preg_match('/anything else/i', $reply)) {
+                $reply .= ' Anything else I can help with?';
+            }
+            $reply = $this->replyFormatter->format($reply);
 
             return [
                 'reply' => $reply,
@@ -979,11 +983,17 @@ class AiAssistantService
         );
     }
 
-    /** LPO create/workflow is allowed from any workspace when the user has permission. */
+    /** Core catalogue/purchasing writes are allowed from any workspace when the user has permission. */
     protected function isAlwaysAllowedWriteAction(string $type): bool
     {
-        return $type === 'create_lpo'
-            || $type === 'open_lpo'
+        return in_array($type, [
+            'create_lpo',
+            'open_lpo',
+            'create_product',
+            'update_product',
+            'create_supplier',
+            'create_customer',
+        ], true)
             || in_array($type, AiActionExecutor::lpoWorkflowActionTypes(), true);
     }
 
@@ -1003,7 +1013,7 @@ class AiAssistantService
         $description = $scope['description'] ?? '';
 
         return <<<PROMPT
-You are the in-app assistant for Centrix ERP — a Kenya-focused business management system (currency KES).
+You are CentrixAssistant — the in-app assistant for Centrix ERP (Kenya-focused business management, currency KES). Users may also call you Centrix.
 
 ACTIVE WORKSPACE: {$label}. {$description}
 Prefer answering in the context of {$label}, but you MAY answer navigation / "where do I…?" / "how do I…?" questions for ANY Centrix module.
@@ -1020,7 +1030,7 @@ Image uploads are NOT supported — never ask for photos or images.
 
 RULES:
 1. Off-topic only for weather, recipes, trivia, unrelated coding → reply with DECLINE_OFF_TOPIC on its own line.
-2. Navigation/help across modules is allowed. For most WRITE/create actions outside {$label} available_actions, suggest switching workspace — EXCEPT: you CAN and SHOULD create/save products, suppliers, customers, employees, sales orders, and purchase orders (LPOs) whenever those actions are in available_actions (and LPOs from any workspace). Never refuse create_product / create_lpo / create_supplier / create_customer or tell the user you cannot write/save them. Never say catalog creation must happen only on /products.
+2. Navigation/help across modules is allowed. For most WRITE/create actions outside {$label} available_actions, suggest switching workspace — EXCEPT: you CAN and SHOULD create/save products, update product prices (update_product), create suppliers, customers, employees, sales orders, and purchase orders (LPOs) whenever those actions are in available_actions (and LPOs from any workspace). Never refuse create_product / update_product / create_lpo / create_supplier / create_customer or tell the user you cannot write/save them. Never say catalog creation must happen only on /products.
 3. Use entity_schemas.field metadata: skip auto-generated fields unless user provides a value; use select options for FK fields.
 4. Normal orders = create_sales_order; held/save-only = create_held_order only when explicitly requested.
 5. Platform administrators train ERP-wide sample Q&A under Platform → AI training; use them as exemplars of how to respond (not verbatim quotes).
@@ -1039,14 +1049,19 @@ RULES:
 15. Product/sales tables: Product | Qty | Amount — no Code column.
 16. Typos / spelling: interpret meaning despite misspellings (e.g. "anomally" → anomaly / abnormal sales, "lpo" / "purchase oder"). Do not lecture about grammar; answer the intended ERP question.
 17. Abnormal / unusual / anomaly sales this week (or lookback ~7 days): treat as sales anomaly detection — help the user review unusual large orders, after-hours sales, multi-branch spikes, and deep discounts. Never say you cannot check for anomalies.
-18. Creates (product, supplier, customer, employee, sales order, LPO): collect required details in chat, then when the user replies confirm / save / create it, emit a complete ```action``` block with params so the system POSTs and saves. Never tell them to open /products, /lpo, /suppliers, or /customers and type the record themselves after they asked you to save.
+18. Creates and updates (product, update_product price, supplier, customer, employee, sales order, LPO): collect required details in chat, then when the user replies confirm / save / create it, emit a complete ```action``` block with params so the system POSTs and saves. Never tell them to open /products, /lpo, /suppliers, or /customers and type the record themselves after they asked you to save.
 19. User-facing wording: never say "backend" to the user. Say "Backoffice" (sales channel `backend`/`erp` = Backoffice). Internal module keys like sales.backend stay internal only.
+20. After a successful create/update/confirm, end with a short "Anything else I can help with?" so the conversation can continue.
 
 ```action
 {"type":"create_product","summary":"New product Widget","params":{"product_name":"Widget","unit_price":150,"last_cost_price":140,"subcategory_id":1,"unit_id":1,"vat_id":1}}
 ```
 
-For all create / write actions (product, supplier, customer, LPO, sales order, employee, payment, LPO approve/send/receive, etc.): ask for required details in chat first. Do NOT mention or show an inline form until the user replies **show form** (or similar). Offer the form as an option — never show both a field checklist and the form on the same turn. Only ask them to reply **confirm** / **save** / **create it** after required fields are collected — never on the first “help me create…” turn. When confirming, always emit a complete ```action``` block (create_product, create_lpo, etc.) with the collected params so the system can save — do not send the user to a screen to re-enter data.
+```action
+{"type":"update_product","summary":"Set Sugar unit price to 250","params":{"product_name":"Sugar","unit_price":250}}
+```
+
+For all create / update / write actions (product price change, supplier, customer, LPO, sales order, employee, payment, LPO approve/send/receive, etc.): ask for required details in chat first. Do NOT mention or show an inline form until the user replies **show form** (or similar). Offer the form as an option — never show both a field checklist and the form on the same turn. Only ask them to reply **confirm** / **save** / **create it** after required fields are collected — never on the first “help me create…” turn. When confirming, always emit a complete ```action``` block (create_product, update_product, create_lpo, etc.) with the collected params so the system can save — do not send the user to a screen to re-enter data.
 PROMPT;
     }
 
@@ -1133,6 +1148,7 @@ PROMPT;
         }
 
         return str_starts_with($type, 'create_')
+            || $type === 'update_product'
             || $type === 'record_customer_payment'
             || in_array($type, AiActionExecutor::lpoWorkflowActionTypes(), true);
     }
@@ -1225,6 +1241,7 @@ PROMPT;
 
         return match ($actionType) {
             'create_product' => 'Share the product name (and subcategory / UoM / VAT / prices if you have them). Reply **confirm** or **save** when ready — I will create it. Or reply **show form** for a form.',
+            'update_product' => 'Tell me which product and the new unit/selling price (KES). Reply **confirm** when ready — I will update it. Or reply **show form** for a form.',
             'create_supplier' => 'Share the supplier name and contact details here in chat. Reply **confirm** or **save** when ready, or **show form** for a form.',
             'create_customer' => 'Share the customer details here in chat. Reply **confirm** or **save** when ready, or **show form** for a form.',
             'create_employee' => 'Share the employee details here in chat. Reply **confirm** or **save** when ready, or **show form** for a form.',
@@ -1307,6 +1324,23 @@ PROMPT;
                     $params['supplier_name'] = (string) ($ref['label'] ?? '');
                     break;
                 }
+            }
+        }
+
+        if ($type === 'update_product') {
+            foreach ($refs as $ref) {
+                if (($ref['type'] ?? '') !== 'product') {
+                    continue;
+                }
+                $code = trim((string) ($ref['code'] ?? ''));
+                $label = trim((string) ($ref['label'] ?? ''));
+                if ($code !== '' && trim((string) ($params['product_code'] ?? '')) === '') {
+                    $params['product_code'] = $code;
+                }
+                if ($label !== '' && trim((string) ($params['product_name'] ?? '')) === '') {
+                    $params['product_name'] = $label;
+                }
+                break;
             }
         }
 

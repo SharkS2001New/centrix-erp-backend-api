@@ -46,6 +46,14 @@ class AiIntentResolver
 
         $pathEntity = $this->entityFromPath($pathname);
 
+        if (($pathEntity === 'product' || $pathEntity === null) && $this->matchesProductUpdate($text)) {
+            return [
+                'type' => 'update_product',
+                'summary' => $this->productUpdateSummary($message, $history),
+                'params' => $this->extractProductUpdateParams($message, $history),
+            ];
+        }
+
         if (($pathEntity === 'product' || $pathEntity === null) && $this->matchesProductCreate($text)) {
             return [
                 'type' => 'create_product',
@@ -298,7 +306,7 @@ class AiIntentResolver
     protected function hasWriteVerb(string $text): bool
     {
         return (bool) preg_match(
-            '/\b(create|draft|make|raise|generate|issue|new|save|add|record|submit|approve|prepare)\b/i',
+            '/\b(create|draft|make|raise|generate|issue|new|save|add|record|submit|approve|prepare|update|change|set|edit|modify)\b/i',
             $text,
         );
     }
@@ -410,6 +418,100 @@ class AiIntentResolver
     {
         return (bool) preg_match('/\b(create|add|new|register)\b.*\b(product|item|sku|catalog)/i', $text)
             || (bool) preg_match('/\b(product|item|sku)\b.*\b(create|add|new)\b/i', $text);
+    }
+
+    protected function matchesProductUpdate(string $text): bool
+    {
+        // Prefer price/catalog updates over create when the user says change/set/update price.
+        if (preg_match(
+            '/\b(change|update|set|edit|modify|adjust|revise)\b.{0,40}\b(unit\s*price|selling\s*price|price|cost\s*price)\b/i',
+            $text,
+        )) {
+            return true;
+        }
+        if (preg_match(
+            '/\b(unit\s*price|selling\s*price|price|cost\s*price)\b.{0,40}\b(change|update|set|edit|to|of)\b/i',
+            $text,
+        )) {
+            return true;
+        }
+        if (preg_match('/\b(change|update|set|edit|modify)\b.{0,30}\b(product|item|sku)\b/i', $text)
+            && preg_match('/\b(price|kes|\d+)/i', $text)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * @param  array<int, array{role?: string, content?: string}>  $history
+     * @return array<string, mixed>
+     */
+    protected function extractProductUpdateParams(string $message, array $history): array
+    {
+        $params = [];
+        $sources = [$message];
+        foreach (array_reverse($history) as $turn) {
+            if (($turn['role'] ?? '') === 'user') {
+                $sources[] = (string) ($turn['content'] ?? '');
+            }
+        }
+
+        foreach ($sources as $source) {
+            if (preg_match('/(?:code|sku)\s+["\']?([A-Za-z0-9\-#]+)["\']?/i', $source, $m)) {
+                $params['product_code'] = trim($m[1]);
+            }
+            // "change price of Sugar to 250" / "set unit price for Crown Cement to 1800"
+            if (preg_match(
+                '/\b(?:of|for|on)\s+["\']?([A-Za-z0-9][A-Za-z0-9 &\-]{1,80}?)["\']?\s+(?:to|at|=|:)\s*(?:kes\s*)?(\d+(?:\.\d+)?)/i',
+                $source,
+                $m,
+            )) {
+                $params['product_name'] = trim($m[1]);
+                $params['unit_price'] = (float) $m[2];
+            } elseif (preg_match(
+                '/\b(?:product|item)\s+["\']?([A-Za-z0-9][A-Za-z0-9 &\-]{1,80}?)["\']?\s+(?:to|at|=|:)\s*(?:kes\s*)?(\d+(?:\.\d+)?)/i',
+                $source,
+                $m,
+            )) {
+                $params['product_name'] = trim($m[1]);
+                $params['unit_price'] = (float) $m[2];
+            }
+            if (! isset($params['unit_price']) && preg_match(
+                '/\b(?:to|at|=|:)\s*(?:kes\s*)?(\d+(?:\.\d+)?)\b/i',
+                $source,
+                $m,
+            )) {
+                $params['unit_price'] = (float) $m[1];
+            }
+            if (! isset($params['product_name']) && preg_match(
+                '/(?:named|called|name(?:d)?)\s+["\']([^"\']+)["\']/i',
+                $source,
+                $m,
+            )) {
+                $params['product_name'] = trim($m[1]);
+            }
+            if (preg_match('/\bcost(?:\s*price)?\s+(?:to\s+)?(?:kes\s*)?(\d+(?:\.\d+)?)/i', $source, $m)) {
+                $params['last_cost_price'] = (float) $m[1];
+            }
+        }
+
+        return array_filter($params, fn ($v) => $v !== null && $v !== '');
+    }
+
+    /** @param  array<int, array{role?: string, content?: string}>  $history */
+    protected function productUpdateSummary(string $message, array $history): string
+    {
+        $params = $this->extractProductUpdateParams($message, $history);
+        $name = trim((string) ($params['product_name'] ?? $params['product_code'] ?? ''));
+        if ($name !== '' && isset($params['unit_price'])) {
+            return 'Update '.$name.' unit price to KES '.$params['unit_price'];
+        }
+        if ($name !== '') {
+            return 'Update product: '.$name;
+        }
+
+        return 'Update product price';
     }
 
     protected function matchesSupplierCreate(string $text): bool

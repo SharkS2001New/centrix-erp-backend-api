@@ -100,7 +100,12 @@ class AiWorkspaceScope
             return false;
         }
 
-        if (preg_match('/^(hi|hello|hey|help|thanks|thank you|ok|yes|no|confirm|proceed|go ahead)\b/i', $text)) {
+        if (preg_match('/^(hi|hello|hey|good\s+(morning|afternoon|evening)|help|thanks|thank you|ok|yes|no|confirm|proceed|go ahead)(\s+,?\s*(centrix(assistant)?|centrix\s+assistant))?\b/i', $text)) {
+            return true;
+        }
+
+        if (preg_match('/^(hey\s+|hi\s+|hello\s+)?centrix(assistant)?\b/i', $text)
+            || preg_match('/^centrix\s+assistant\b/i', $text)) {
             return true;
         }
 

@@ -219,6 +219,12 @@ return [
             'permission' => 'catalogue.products.create',
         ],
         [
+            'type' => 'update_product',
+            'label' => 'Update product price',
+            'description' => 'Change a product’s unit/selling price (and optional cost price) in the catalog.',
+            'permission' => 'catalogue.products.edit',
+        ],
+        [
             'type' => 'create_supplier',
             'label' => 'Create a supplier',
             'description' => 'Add a new supplier for purchases and accounts payable.',

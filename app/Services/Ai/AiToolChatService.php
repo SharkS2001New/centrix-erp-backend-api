@@ -876,6 +876,15 @@ class AiToolChatService
         $yesterday = $calendar['yesterday'];
         $timezone = $calendar['timezone'];
 
+        $speakerFull = trim((string) ($user->full_name ?: $user->username ?: ''));
+        $speakerFirst = $speakerFull !== ''
+            ? trim((string) (preg_split('/\s+/', $speakerFull)[0] ?? $speakerFull))
+            : 'there';
+        $speakerUsername = trim((string) ($user->username ?? ''));
+        $speakerLabel = $speakerFull !== ''
+            ? ($speakerUsername !== '' ? "{$speakerFull} (@{$speakerUsername})" : $speakerFull)
+            : ($speakerUsername !== '' ? "@{$speakerUsername}" : 'the logged-in user');
+
         $docs = $this->contextBuilder->documentationContext($user, $organization, $message, $workspaceId);
         $docsJson = json_encode($docs, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         $fastMode = filter_var(config('ai.fast_mode', true), FILTER_VALIDATE_BOOLEAN);
@@ -912,10 +921,20 @@ class AiToolChatService
                 $pageLines[] = 'Page context JSON: '.json_encode($pageCompact, JSON_UNESCAPED_SLASHES);
             }
             if (! empty($pageContext['voice_mode'])) {
-                $pageLines[] = 'VOICE MODE: The user asked by microphone and may not see the chat panel. '
-                    .'Give a complete spoken answer in a few clear sentences (amounts, names, yes/no, and the key takeaway). '
-                    .'Avoid markdown tables and long bullet dumps — those belong in the sidebar. '
-                    .'Do not cut off mid-thought; finish the answer they asked for.';
+                $pageLines[] = 'VOICE MODE — you are CentrixAssistant speaking one-on-one with '.$speakerFirst
+                    .' (mic / Talk; they often cannot see the chat panel): '
+                    .'Your name is CentrixAssistant (also answer to "Centrix" / "Centrix Assistant"). '
+                    .'Greetings ("hi", "hello", "hey", "hi Centrix", "hello CentrixAssistant", good morning/thanks): '
+                    .'reply with one short friendly line that uses their first name — e.g. "Hi '.$speakerFirst.', how can I help?" — then wait. '
+                    .'Do not lecture, list features, or ask multiple questions. '
+                    .'This is a continuous 1:1 conversation: answer this turn briefly, then listen for their next question; keep context of what they just asked. '
+                    .'ACTIONS (create supplier, create LPO, create product, update product unit price, payments, LPO approve/send/receive, etc.): '
+                    .'You CAN and SHOULD perform them when the user asks — collect missing details briefly, then ask them to say confirm / yes / save / create it. '
+                    .'Never refuse write actions or tell them to open a screen and type it themselves after they asked you to do it. '
+                    .'After a successful action, say what you did in one short sentence, then ask "Anything else I can help with?" '
+                    .'For questions: at most 1–2 short sentences that directly summarize the result (key amount, name, yes/no, or count). '
+                    .'Do not read tables, bullet lists, screen paths, or "Open …" links aloud. '
+                    .'Prefer a spoken summary over completeness; never ramble or restate the question.';
             }
         }
         if ($entityRefs !== []) {
@@ -928,7 +947,10 @@ class AiToolChatService
         $focusBlock = $this->focusResolver->promptBlock($focus);
 
         return <<<PROMPT
-You are the Centrix ERP top-level AI assistant for {$orgName} — a Kenya-focused business system (currency KES).
+You are CentrixAssistant — the Centrix ERP AI assistant for {$orgName} (Kenya-focused business system, currency KES).
+Users may call you CentrixAssistant, Centrix Assistant, or Centrix.
+
+You are in a one-on-one conversation with {$speakerLabel}. Address them as {$speakerFirst} when greeting or when a personal touch helps. Never invent a different name for them.
 
 You are both a data assistant and Centrix documentation: help users who do not know what to do or where to go.
 Always prefer a concrete screen path (e.g. /suppliers) over vague advice.
@@ -1009,10 +1031,12 @@ Rules:
   "I couldn't find an exact match for **X**. The closest I found is **Y** (reason). Here are related options / links."
   For ambiguous matches (several candidates), list them and ask the user to pick one.
 - If a tool cannot answer at all, explain what Centrix does store and point to the nearest screen or report.
-- If the user asks to create something (product, supplier, customer, LPO, sales order, employee, payment, etc.): ask for required details in chat first. Offer an inline form only when they reply **show form** — do not show the form and a field checklist on the same turn.
-- You CAN create and save products, suppliers, customers, sales orders, and purchase orders (LPOs). Never refuse create_product / create_lpo or say you cannot write/save from chat. Never say catalog creation must happen only on /products.
+- If the user asks to create or update something (product, change unit/selling price, supplier, customer, LPO, sales order, employee, payment, etc.): ask for required details in chat first. Offer an inline form only when they reply **show form** — do not show the form and a field checklist on the same turn.
+- You CAN create and save products, update product unit/selling prices (update_product), create suppliers, customers, sales orders, and purchase orders (LPOs). Never refuse create_product / update_product / create_lpo / create_supplier or say you cannot write/save from chat. Never say catalog creation or price changes must happen only on /products.
+- For product price changes: identify the product (name or code) and the new unit_price (KES), then ask them to reply **confirm**. Emit update_product with those params.
 - For LPOs: ask for supplier + line items (or a sales order to copy from) first. Only after those details are collected, ask them to reply **confirm** / **create it** / **save** (or **show form**). Never ask for confirm on the first “help me create an LPO” turn.
 - Never tell the user to open /products, /lpo, /suppliers, or /customers and type the record themselves after they confirmed or said save. Confirmation/save means the system POSTs and saves — not a path to re-enter data.
+- After a successful create/update/confirm, briefly confirm what was done and ask if there is anything else they need.
 - Typos / spelling: focus on meaning (e.g. "anomally" = anomaly / abnormal sales). Do not correct the user's English unless they ask; answer the intended Centrix question.
 - Do not claim you lack access to Purchasing, Inventory, or Admin — guide with find_screen and documentation even when live lists are limited.
 - Include paths as Centrix links like /hr/employees — the UI opens them and switches application when needed.
@@ -1058,6 +1082,7 @@ Rules:
 - Always reply in English (Kenya business English). If the user writes in Swahili or another language, do not answer in that language — the app will show an English-only notice instead.
 - Keep answers concise. Prefer complete markdown tables from tools over long prose so the answer finishes in one reply — never end mid-sentence or ask the user to continue.
 - Focus on the user's meaning, not punctuation or stray symbols (trailing ?, /, !, …, quotes). Treat "…create an lpo for me /" the same as "…create an lpo for me?".
+- Identity: you are CentrixAssistant. Greetings and "Hi Centrix" / "Hello CentrixAssistant" get one short reply that uses {$speakerFirst}'s name, then wait for their question.
 PROMPT;
     }
 

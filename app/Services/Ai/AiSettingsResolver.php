@@ -235,6 +235,111 @@ class AiSettingsResolver
     }
 
     /**
+     * Preferred dedicated Talk credential (independent from chat assistant keys).
+     *
+     * @return array{api_key: string, model: string, base_url: string, provider: string}|null
+     */
+    public static function resolvePlatformTalkCredentials(): ?array
+    {
+        $chain = self::resolvePlatformTalkCredentialChain();
+
+        return $chain[0] ?? null;
+    }
+
+    /**
+     * Talk STT candidates in preference order (dedicated Talk keys first, then platform free keys).
+     * Chat-only keys (e.g. DeepSeek) are never included here.
+     *
+     * @return list<array{api_key: string, model: string, base_url: string, provider: string}>
+     */
+    public static function resolvePlatformTalkCredentialChain(): array
+    {
+        $training = self::forPlatformTraining();
+        $preferred = self::platformTalkProvider();
+        $order = $preferred === 'openai' ? ['openai', 'gemini'] : ['gemini', 'openai'];
+        $seen = [];
+        $out = [];
+
+        foreach ($order as $provider) {
+            $creds = self::credentialsForTalkProvider($training, $provider);
+            if (! $creds) {
+                continue;
+            }
+            $fingerprint = $provider.'|'.substr(hash('sha256', $creds['api_key']), 0, 16);
+            if (isset($seen[$fingerprint])) {
+                continue;
+            }
+            $seen[$fingerprint] = true;
+            $out[] = $creds;
+        }
+
+        return $out;
+    }
+
+    /**
+     * @param  array<string, mixed>  $training
+     * @return array{api_key: string, model: string, base_url: string, provider: string}|null
+     */
+    protected static function credentialsForTalkProvider(array $training, string $provider): ?array
+    {
+        if ($provider === 'openai') {
+            $apiKey = trim((string) ($training['talk_api_key'] ?? ''));
+            $model = trim((string) ($training['talk_model'] ?? ''));
+            $baseUrl = trim((string) ($training['talk_base_url'] ?? ''));
+            if ($apiKey === '') {
+                // Do not fall back to platform chat OpenAI key when it may be DeepSeek/chat-only —
+                // Whisper needs a real speech endpoint. Env dedicated Whisper is tried separately.
+                return null;
+            }
+
+            return array_merge(
+                self::resolveOpenAiCompatibleConfig($apiKey, $model, $baseUrl),
+                ['provider' => 'openai'],
+            );
+        }
+
+        $apiKey = trim((string) ($training['talk_gemini_api_key'] ?? ''));
+        $model = trim((string) ($training['talk_gemini_model'] ?? ''));
+        // Legacy: single talk_api_key while preferred provider was Gemini.
+        if ($apiKey === '' && self::platformTalkProvider() === 'gemini') {
+            $legacy = trim((string) ($training['talk_api_key'] ?? ''));
+            if ($legacy !== '' && (self::inferProviderFromApiKey($legacy) === 'gemini' || ! str_starts_with($legacy, 'sk-'))) {
+                $apiKey = $legacy;
+                $model = trim((string) ($training['talk_model'] ?? $model));
+            }
+        }
+        if ($apiKey === '') {
+            $platform = self::resolvePlatformGeminiCredentials();
+            if (! $platform) {
+                return null;
+            }
+
+            return array_merge($platform, ['provider' => 'gemini']);
+        }
+
+        $model = self::normalizeGeminiModel($model);
+        $baseUrl = rtrim((string) config('ai.gemini.base_url'), '/');
+
+        return [
+            'api_key' => $apiKey,
+            'model' => $model,
+            'base_url' => $baseUrl,
+            'provider' => 'gemini',
+        ];
+    }
+
+    public static function platformTalkProvider(): string
+    {
+        $training = self::forPlatformTraining();
+        $provider = strtolower(trim((string) ($training['talk_provider'] ?? 'gemini')));
+        if ($provider === 'chatgpt' || $provider === 'gpt') {
+            $provider = 'openai';
+        }
+
+        return in_array($provider, ['gemini', 'openai'], true) ? $provider : 'gemini';
+    }
+
+    /**
      * Normalize an OpenAI-compatible chat base URL (OpenAI, Groq, Together, OpenRouter, …).
      * Blank stays blank so callers can fall back to the OpenAI default.
      */
@@ -396,13 +501,30 @@ class AiSettingsResolver
             $freeProvider = 'gemini';
         }
         $out['free_ai_provider'] = in_array($freeProvider, ['gemini', 'openai'], true) ? $freeProvider : 'gemini';
+        $talkProvider = strtolower(trim((string) ($out['talk_provider'] ?? 'gemini')));
+        if ($talkProvider === 'chatgpt' || $talkProvider === 'gpt') {
+            $talkProvider = 'openai';
+        }
+        $out['talk_provider'] = in_array($talkProvider, ['gemini', 'openai'], true) ? $talkProvider : 'gemini';
         $provider = strtolower(trim((string) ($out['provider'] ?? config('ai.provider', 'openai'))));
         if ($provider === 'ollama') {
             $provider = 'openai';
         }
         $allowed = ['openai', 'gemini'];
         $out['provider'] = in_array($provider, $allowed, true) ? $provider : 'openai';
-        foreach (['model', 'api_key', 'base_url', 'gemini_api_key', 'gemini_model', 'gemini_base_url'] as $key) {
+        foreach ([
+            'model',
+            'api_key',
+            'base_url',
+            'gemini_api_key',
+            'gemini_model',
+            'gemini_base_url',
+            'talk_api_key',
+            'talk_model',
+            'talk_base_url',
+            'talk_gemini_api_key',
+            'talk_gemini_model',
+        ] as $key) {
             $out[$key] = trim((string) ($out[$key] ?? ''));
         }
         unset($out['ollama_base_url'], $out['ollama_model'], $out['ollama_api_key']);
@@ -729,6 +851,12 @@ class AiSettingsResolver
             'free_ai_provider' => $preferredProvider,
             'effective_free_ai_provider' => $effectiveProvider,
             'free_ai_configured' => $freeConfigured,
+            'talk_provider' => self::platformTalkProvider(),
+            'talk_configured' => self::resolvePlatformTalkCredentialChain() !== [],
+            'talk_gemini_configured' => collect(self::resolvePlatformTalkCredentialChain())
+                ->contains(fn (array $c) => ($c['provider'] ?? '') === 'gemini'),
+            'talk_openai_configured' => collect(self::resolvePlatformTalkCredentialChain())
+                ->contains(fn (array $c) => ($c['provider'] ?? '') === 'openai'),
             'model' => $runtime['model']
                 ?? (($settings['model'] ?? '') !== '' ? $settings['model'] : config('ai.defaults.model')),
             'provider' => $runtime['provider']
@@ -793,6 +921,20 @@ class AiSettingsResolver
             }
         }
 
+        if (array_key_exists('talk_api_key', $incoming)) {
+            $key = trim((string) $incoming['talk_api_key']);
+            if ($key === '' || str_starts_with($key, '••••')) {
+                $next['talk_api_key'] = trim((string) ($current['talk_api_key'] ?? ''));
+            }
+        }
+
+        if (array_key_exists('talk_gemini_api_key', $incoming)) {
+            $key = trim((string) $incoming['talk_gemini_api_key']);
+            if ($key === '' || str_starts_with($key, '••••')) {
+                $next['talk_gemini_api_key'] = trim((string) ($current['talk_gemini_api_key'] ?? ''));
+            }
+        }
+
         return $next;
     }
 
@@ -809,6 +951,16 @@ class AiSettingsResolver
         unset($out['gemini_api_key']);
         $out['gemini_api_key_set'] = $geminiKey !== '';
         $out['gemini_api_key_hint'] = $geminiKey !== '' ? '••••'.substr($geminiKey, -4) : '';
+
+        $talkKey = $out['talk_api_key'] ?? '';
+        unset($out['talk_api_key']);
+        $out['talk_api_key_set'] = $talkKey !== '';
+        $out['talk_api_key_hint'] = $talkKey !== '' ? '••••'.substr($talkKey, -4) : '';
+
+        $talkGeminiKey = $out['talk_gemini_api_key'] ?? '';
+        unset($out['talk_gemini_api_key']);
+        $out['talk_gemini_api_key_set'] = $talkGeminiKey !== '';
+        $out['talk_gemini_api_key_hint'] = $talkGeminiKey !== '' ? '••••'.substr($talkGeminiKey, -4) : '';
 
         return $out;
     }

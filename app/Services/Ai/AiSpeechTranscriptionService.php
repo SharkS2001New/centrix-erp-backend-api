@@ -45,8 +45,35 @@ class AiSpeechTranscriptionService
         $chatHost = $this->hostLabel((string) ($runtime['base_url'] ?? ''));
         $chatIsWhisperIncapable = ! $this->hostSupportsWhisper((string) ($runtime['base_url'] ?? ''));
         $geminiRateLimited = false;
+        $triedFingerprints = [];
 
-        // 1) Optional dedicated Whisper key (best when platform chat is DeepSeek / chat-only).
+        // 0) Dedicated Talk credentials (Gemini and/or ChatGPT) — independent of chat keys.
+        // Prefer Talk keys in order; on quota / rate-limit / balance failure, try the next.
+        foreach (AiSettingsResolver::resolvePlatformTalkCredentialChain() as $talk) {
+            $fingerprint = ($talk['provider'] ?? '').'|'.substr(hash('sha256', (string) ($talk['api_key'] ?? '')), 0, 16);
+            if (isset($triedFingerprints[$fingerprint])) {
+                continue;
+            }
+            $triedFingerprints[$fingerprint] = true;
+            $talkProvider = strtolower((string) ($talk['provider'] ?? 'gemini'));
+            try {
+                if ($talkProvider === 'openai') {
+                    return $this->transcribeViaOpenAiCompatible($talk, $bytes, $filename, $mime);
+                }
+
+                return $this->transcribeViaGemini($talk, $bytes, $mime);
+            } catch (ValidationException $e) {
+                $msg = $this->firstValidationMessage($e);
+                $errors[] = $msg;
+                if ($talkProvider === 'gemini' && $this->isTransientProviderFailure($msg)) {
+                    $geminiRateLimited = true;
+                }
+                // Continue to next Talk / fallback provider instead of failing hard.
+                continue;
+            }
+        }
+
+        // 1) Optional dedicated Whisper key (env AI_TRANSCRIPTION_*).
         $dedicated = $this->resolveDedicatedTranscriptionCredentials();
         if ($dedicated) {
             try {
@@ -66,7 +93,7 @@ class AiSpeechTranscriptionService
                 } catch (ValidationException $e) {
                     $msg = $this->firstValidationMessage($e);
                     $errors[] = $msg;
-                    if ($this->isRateLimitMessage($msg)) {
+                    if ($this->isTransientProviderFailure($msg)) {
                         $geminiRateLimited = true;
                     }
                 }
@@ -91,7 +118,7 @@ class AiSpeechTranscriptionService
             } catch (ValidationException $e) {
                 $msg = $this->firstValidationMessage($e);
                 $errors[] = $msg;
-                if ($this->isRateLimitMessage($msg)) {
+                if ($this->isTransientProviderFailure($msg)) {
                     $geminiRateLimited = true;
                 }
             }
@@ -157,6 +184,7 @@ class AiSpeechTranscriptionService
                 ->post($baseUrl.'/audio/transcriptions', [
                     'model' => $model,
                     'language' => 'en',
+                    'prompt' => 'CentrixAssistant, Centrix ERP, Kenya business English. Hi Centrix, sales, inventory, LPO, payroll, till, M-Pesa, KES.',
                     'response_format' => 'json',
                 ]);
         } catch (\Throwable $e) {
@@ -231,7 +259,10 @@ class AiSpeechTranscriptionService
                 'role' => 'user',
                 'parts' => [
                     [
-                        'text' => 'Transcribe this voice recording exactly. Return only the spoken words in English (or the language spoken). No quotes, labels, or commentary.',
+                        'text' => 'Transcribe this CentrixAssistant voice question in English only. '
+                            .'Return only the spoken English words (Kenya business English is fine). '
+                            .'Wake phrases like Hi Centrix or Hello CentrixAssistant should be kept. '
+                            .'Do not translate into another language, and do not add quotes, labels, or commentary.',
                     ],
                     [
                         'inline_data' => [
@@ -502,9 +533,37 @@ class AiSpeechTranscriptionService
 
     protected function isRateLimitMessage(string $message): bool
     {
-        return str_contains(strtolower($message), 'rate-limited')
-            || str_contains(strtolower($message), 'rate limited')
-            || str_contains(strtolower($message), 'resource_exhausted');
+        return $this->isTransientProviderFailure($message);
+    }
+
+    /**
+     * Quota / balance / rate-limit failures should fall through to the next Talk provider.
+     */
+    protected function isTransientProviderFailure(string $message): bool
+    {
+        $lower = strtolower($message);
+
+        foreach ([
+            'rate-limited',
+            'rate limited',
+            'resource_exhausted',
+            'quota',
+            'insufficient_quota',
+            'billing',
+            'no balance',
+            'out of credit',
+            'credit balance',
+            'exceeded your current quota',
+            'payment required',
+            '402',
+            '429',
+        ] as $needle) {
+            if (str_contains($lower, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     protected function hostLabel(string $baseUrl): string
