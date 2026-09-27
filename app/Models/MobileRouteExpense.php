@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class MobileRouteExpense extends Model
 {
@@ -48,6 +49,11 @@ class MobileRouteExpense extends Model
     public function rejectedByUser(): BelongsTo
     {
         return $this->belongsTo(User::class, 'rejected_by');
+    }
+
+    public function ledgerExpense(): HasOne
+    {
+        return $this->hasOne(Expense::class, 'mobile_route_expense_id');
     }
 
     public function isPending(): bool

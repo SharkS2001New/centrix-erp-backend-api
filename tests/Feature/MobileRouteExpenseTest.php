@@ -302,6 +302,101 @@ class MobileRouteExpenseTest extends TestCase
         );
     }
 
+    public function test_mobile_expense_appears_on_erp_expenses_list_and_reject_removes_it(): void
+    {
+        $rep = $this->makeMobileUser(['full_name' => 'Ledger Sync Rep']);
+        $token = $this->loginMobile($rep);
+        $today = now()->toDateString();
+
+        $created = $this->withToken($token)
+            ->postJson('/api/v1/mobile/expenses', [
+                'description' => 'Route lunch',
+                'expense_amount' => 275,
+                'expense_date' => $today,
+            ])
+            ->assertCreated()
+            ->json();
+
+        $ledger = \App\Models\Expense::query()
+            ->where('mobile_route_expense_id', (int) $created['id'])
+            ->first();
+        $this->assertNotNull($ledger);
+        $this->assertEqualsWithDelta(275.0, (float) $ledger->expense_amount, 0.001);
+        $this->assertSame('MOBILE-'.$created['id'], $ledger->invoice_no);
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $this->withoutToken();
+        Sanctum::actingAs($admin);
+
+        $list = $this->getJson('/api/v1/expenses?from_date='.$today.'&to_date='.$today.'&per_page=100')
+            ->assertOk()
+            ->json('data');
+        $this->assertTrue(
+            collect($list)->contains(fn ($row) => (int) ($row['id'] ?? 0) === (int) $ledger->id),
+            'Mobile expense should appear on GET /api/v1/expenses',
+        );
+
+        $this->postJson('/api/v1/sales/mobile-orders/reject-expenses', [
+            'expense_ids' => [(int) $created['id']],
+            'reason' => 'Duplicate claim',
+        ])->assertOk()->assertJsonPath('rejected_count', 1);
+
+        $this->assertTrue(
+            \App\Models\Expense::withTrashed()
+                ->where('mobile_route_expense_id', (int) $created['id'])
+                ->whereNotNull('deleted_at')
+                ->exists(),
+        );
+
+        $afterReject = $this->getJson('/api/v1/expenses?from_date='.$today.'&to_date='.$today.'&per_page=100')
+            ->assertOk()
+            ->json('data');
+        $this->assertFalse(
+            collect($afterReject)->contains(fn ($row) => (int) ($row['id'] ?? 0) === (int) $ledger->id),
+            'Rejected mobile expense should leave the active ERP expenses list',
+        );
+    }
+
+    public function test_deleting_erp_expense_removes_it_from_list_and_rejects_mobile_row(): void
+    {
+        $rep = $this->makeMobileUser(['full_name' => 'Delete Ledger Rep']);
+        $token = $this->loginMobile($rep);
+        $today = now()->toDateString();
+
+        $created = $this->withToken($token)
+            ->postJson('/api/v1/mobile/expenses', [
+                'description' => 'Toll fee',
+                'expense_amount' => 120,
+                'expense_date' => $today,
+            ])
+            ->assertCreated()
+            ->json();
+
+        $ledger = \App\Models\Expense::query()
+            ->where('mobile_route_expense_id', (int) $created['id'])
+            ->firstOrFail();
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $this->withoutToken();
+        Sanctum::actingAs($admin);
+
+        $this->deleteJson('/api/v1/expenses/'.$ledger->id)->assertNoContent();
+
+        $this->assertNotNull($ledger->fresh()->deleted_at);
+        $this->assertSame(
+            'rejected',
+            \App\Models\MobileRouteExpense::query()->findOrFail($created['id'])->status,
+        );
+
+        $list = $this->getJson('/api/v1/expenses?from_date='.$today.'&to_date='.$today.'&per_page=100')
+            ->assertOk()
+            ->json('data');
+        $this->assertFalse(
+            collect($list)->contains(fn ($row) => (int) ($row['id'] ?? 0) === (int) $ledger->id),
+            'Deleted expense must leave the active ERP expenses list',
+        );
+    }
+
     protected function enableExpensesCard(User $user): void
     {
         $this->setExpensesCard($user, true);

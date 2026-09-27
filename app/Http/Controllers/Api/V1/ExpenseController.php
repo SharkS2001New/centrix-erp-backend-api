@@ -181,6 +181,13 @@ class ExpenseController extends BaseResourceController
             );
         }
 
+        if ((int) ($expense->mobile_route_expense_id ?? 0) > 0) {
+            app(\App\Services\Sales\MobileRouteExpenseLedgerSync::class)
+                ->rejectMobileRouteAfterLedgerDelete($expense, $user);
+        }
+
+        $expense->deleted_by = (int) $user->id;
+        $expense->save();
         $expense->delete();
 
         return response()->json(null, 204);

@@ -16,6 +16,7 @@ class MobileRouteExpenseService
     public function __construct(
         protected OrganizationPlatformConfigService $platformConfig,
         protected UserAccessService $access,
+        protected MobileRouteExpenseLedgerSync $ledgerSync,
     ) {}
 
     public function isEnabledForOrganization(Organization $organization): bool
@@ -103,6 +104,9 @@ class MobileRouteExpenseService
             'status' => MobileRouteExpense::STATUS_PENDING,
         ]);
 
+        // Mirror into Accounting `expenses` so backoffice / ERP lists show it.
+        $this->ledgerSync->syncOnCreate($expense, $user);
+
         return $this->serialize($expense->load(['user:id,username,full_name']));
     }
 
@@ -184,6 +188,8 @@ class MobileRouteExpenseService
             $expense->reject_reason = null;
             $expense->save();
 
+            $this->ledgerSync->syncOnApprove($expense, $manager);
+
             $this->invalidateRepSales($expense);
             $approved[] = $this->serialize(
                 $expense->load(['user:id,username,full_name', 'approvedByUser:id,username,full_name']),
@@ -226,6 +232,8 @@ class MobileRouteExpenseService
             $expense->rejected_at = now();
             $expense->reject_reason = $trimmedReason ?: null;
             $expense->save();
+
+            $this->ledgerSync->removeOnReject($expense, $manager);
 
             $rejected[] = $this->serialize(
                 $expense->load(['user:id,username,full_name']),

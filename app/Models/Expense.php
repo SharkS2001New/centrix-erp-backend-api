@@ -17,6 +17,7 @@ class Expense extends Model
         'expense_group_id',
         'float_session_id',
         'dispatch_trip_id',
+        'mobile_route_expense_id',
         'description',
         'expense_amount',
         'expense_date',
@@ -49,5 +50,10 @@ class Expense extends Model
     public function dispatchTrip()
     {
         return $this->belongsTo(DispatchTrip::class, 'dispatch_trip_id');
+    }
+
+    public function mobileRouteExpense()
+    {
+        return $this->belongsTo(MobileRouteExpense::class, 'mobile_route_expense_id');
     }
 }
