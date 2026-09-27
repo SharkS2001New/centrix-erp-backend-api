@@ -57,7 +57,11 @@ class DatabaseBackupCommand extends Command
         }
 
         if ($result['pruned'] > 0) {
-            $this->line("Pruned {$result['pruned']} old backup(s).");
+            $this->line("Pruned {$result['pruned']} old local backup(s).");
+        }
+
+        if (($result['r2_pruned'] ?? 0) > 0) {
+            $this->line("Pruned {$result['r2_pruned']} old Cloudflare R2 backup(s).");
         }
 
         if (! $this->option('no-email')) {

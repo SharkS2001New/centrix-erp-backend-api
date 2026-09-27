@@ -213,6 +213,7 @@ class DatabaseBackupService
      *     r2_skipped_reason: string|null,
      *     email_sent: bool,
      *     pruned: int,
+     *     r2_pruned: int,
      * }
      */
     public function runBackupCycle(
@@ -224,6 +225,7 @@ class DatabaseBackupService
         $r2 = null;
         $r2Error = null;
         $r2SkippedReason = null;
+        $r2Pruned = 0;
         $uploader = app(CloudflareR2BackupUploader::class);
 
         if ($uploadR2) {
@@ -250,6 +252,18 @@ class DatabaseBackupService
         }
 
         $pruned = $prune ? $this->pruneOldBackups() : 0;
+
+        // Prune offsite SQL dumps even when upload was skipped this run (credentials may still work).
+        if ($prune && $uploader->isConfigured()) {
+            try {
+                $r2Pruned = $uploader->pruneOldBackups();
+            } catch (\Throwable $e) {
+                Log::warning('Cloudflare R2 backup prune failed', [
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
         $emailSent = $sendEmail ? $this->notifyByEmail($backup) : false;
 
         return [
@@ -259,6 +273,7 @@ class DatabaseBackupService
             'r2_skipped_reason' => $r2SkippedReason,
             'email_sent' => $emailSent,
             'pruned' => $pruned,
+            'r2_pruned' => $r2Pruned,
         ];
     }
 

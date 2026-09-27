@@ -37,5 +37,7 @@ return [
         'prefix' => env('BACKUP_R2_PREFIX', 'backups/database'),
         // Optional public/custom domain base for UI links, e.g. https://backups.example.com
         'public_url' => env('BACKUP_R2_PUBLIC_URL'),
+        /** Auto-delete .sql / .sql.gz objects under the backup prefix older than this many days. */
+        'retention_days' => max(1, min(365, (int) env('BACKUP_R2_RETENTION_DAYS', 7))),
     ],
 ];

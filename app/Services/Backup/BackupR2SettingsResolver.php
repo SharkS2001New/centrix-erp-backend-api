@@ -21,6 +21,7 @@ class BackupR2SettingsResolver
             'prefix' => trim((string) config('backup.r2.prefix', 'backups/database')) ?: 'backups/database',
             'public_url' => trim((string) config('backup.r2.public_url', '')),
             'use_path_style_endpoint' => (bool) config('backup.r2.use_path_style_endpoint', true),
+            'retention_days' => max(1, min(365, (int) config('backup.r2.retention_days', 7))),
         ];
     }
 
@@ -80,6 +81,14 @@ class BackupR2SettingsResolver
             if (array_key_exists('use_path_style_endpoint', $stored)) {
                 $merged['use_path_style_endpoint'] = (bool) $stored['use_path_style_endpoint'];
             }
+
+            if (array_key_exists('retention_days', $stored) && is_numeric($stored['retention_days'])) {
+                $merged['retention_days'] = (int) $stored['retention_days'];
+            }
+            // API / form may send r2_retention_days to avoid clashing with local schedule retention.
+            if (array_key_exists('r2_retention_days', $stored) && is_numeric($stored['r2_retention_days'])) {
+                $merged['retention_days'] = (int) $stored['r2_retention_days'];
+            }
         }
 
         return self::normalize($merged);
@@ -103,6 +112,8 @@ class BackupR2SettingsResolver
                 'region' => $masked['region'],
                 'prefix' => $masked['prefix'],
                 'public_url' => $masked['public_url'],
+                'retention_days' => (int) $masked['retention_days'],
+                'r2_retention_days' => (int) ($masked['r2_retention_days'] ?? $masked['retention_days']),
                 'access_key_id' => $masked['access_key_id'],
                 'secret_access_key_set' => $masked['secret_access_key_set'],
                 'source' => self::sourceLabel($effective),
@@ -110,6 +121,7 @@ class BackupR2SettingsResolver
             'hints' => [
                 'endpoint' => 'https://<ACCOUNT_ID>.r2.cloudflarestorage.com',
                 'secret' => 'Leave blank to keep the current secret access key.',
+                'retention' => 'SQL dump objects under the backup prefix older than this many days are deleted after each backup run.',
                 'env_fallback' => 'Until you save here, empty fields can still fall back to BACKUP_R2_* environment variables.',
             ],
         ];
@@ -164,6 +176,7 @@ class BackupR2SettingsResolver
             'backup.r2.region' => $cfg['region'],
             'backup.r2.prefix' => $cfg['prefix'],
             'backup.r2.public_url' => $cfg['public_url'],
+            'backup.r2.retention_days' => (int) $cfg['retention_days'],
             'backup.r2.use_path_style_endpoint' => (bool) $cfg['use_path_style_endpoint'],
             'filesystems.disks.r2.key' => $cfg['access_key_id'],
             'filesystems.disks.r2.secret' => $cfg['secret_access_key'],
@@ -207,6 +220,12 @@ class BackupR2SettingsResolver
      */
     public static function mergeStored(array $current, array $incoming): array
     {
+        // Accept either key from the client; persist as retention_days in module_settings.
+        if (array_key_exists('r2_retention_days', $incoming) && ! array_key_exists('retention_days', $incoming)) {
+            $incoming['retention_days'] = $incoming['r2_retention_days'];
+        }
+        unset($incoming['r2_retention_days']);
+
         $next = self::normalize(array_merge(self::emptyStored(), $current, $incoming));
 
         if (array_key_exists('secret_access_key', $incoming)) {
@@ -229,6 +248,8 @@ class BackupR2SettingsResolver
         unset($out['secret_access_key']);
         $out['secret_access_key_set'] = $secret !== '';
         $out['secret_access_key_hint'] = $secret !== '' ? '••••'.substr($secret, -4) : '';
+        // Expose under both names so Platform UI can bind r2_retention_days safely.
+        $out['r2_retention_days'] = (int) $out['retention_days'];
 
         return $out;
     }
@@ -249,6 +270,7 @@ class BackupR2SettingsResolver
             'prefix' => trim((string) ($settings['prefix'] ?? 'backups/database')) ?: 'backups/database',
             'public_url' => trim((string) ($settings['public_url'] ?? '')),
             'use_path_style_endpoint' => (bool) ($settings['use_path_style_endpoint'] ?? true),
+            'retention_days' => max(1, min(365, (int) ($settings['retention_days'] ?? 7))),
         ];
     }
 
@@ -265,6 +287,7 @@ class BackupR2SettingsResolver
             'prefix' => 'backups/database',
             'public_url' => '',
             'use_path_style_endpoint' => true,
+            'retention_days' => 7,
         ];
     }
 

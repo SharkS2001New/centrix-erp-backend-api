@@ -123,6 +123,8 @@ class PlatformDatabaseBackupController extends Controller
             'prefix' => ['nullable', 'string', 'max:255'],
             'public_url' => ['nullable', 'string', 'max:500'],
             'use_path_style_endpoint' => ['sometimes', 'boolean'],
+            // Separate from schedule retention_days (local files).
+            'r2_retention_days' => ['sometimes', 'integer', 'min:1', 'max:365'],
         ];
     }
 
@@ -200,6 +202,7 @@ class PlatformDatabaseBackupController extends Controller
                 'r2_skipped_reason' => $result['r2_skipped_reason'],
                 'email_sent' => $result['email_sent'],
                 'pruned' => $result['pruned'],
+                'r2_pruned' => $result['r2_pruned'] ?? 0,
             ], 201);
         } catch (\Throwable $e) {
             report($e);

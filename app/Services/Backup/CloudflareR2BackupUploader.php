@@ -61,6 +61,8 @@ class CloudflareR2BackupUploader
         $setupNotes = [];
         if ($configured) {
             $setupNotes[] = 'Backups are uploaded to Cloudflare R2 after each local dump.';
+            $days = max(1, min(365, (int) ($cfg['retention_days'] ?? 7)));
+            $setupNotes[] = "R2 SQL dumps under the backup prefix older than {$days} day(s) are deleted after each backup run.";
             if (trim((string) ($cfg['public_url'] ?? '')) === '') {
                 $setupNotes[] = 'Optional: set a public/custom domain URL for clickable object links.';
             }
@@ -77,6 +79,7 @@ class CloudflareR2BackupUploader
             'endpoint' => $this->nonEmpty($effective['endpoint'] ?? null),
             'prefix' => $this->nonEmpty($effective['prefix'] ?? null) ?: 'backups/database',
             'public_url' => $this->nonEmpty($effective['public_url'] ?? null),
+            'retention_days' => max(1, min(365, (int) ($effective['retention_days'] ?? $cfg['retention_days'] ?? 7))),
             'source' => $effective['source'] ?? null,
             'issues' => array_values(array_unique($issues)),
             'setup_notes' => $setupNotes,
@@ -154,6 +157,78 @@ class CloudflareR2BackupUploader
             'web_view_link' => $this->objectUrl($objectKey, $cfg['public_url'] ?? ''),
             'bucket' => (string) $cfg['bucket'],
         ];
+    }
+
+    /**
+     * Delete .sql / .sql.gz objects under the backup prefix older than retention_days.
+     * Skips connection-tests/ and non-SQL objects. Returns number of objects deleted.
+     */
+    public function pruneOldBackups(?int $retentionDays = null): int
+    {
+        $cfg = BackupR2SettingsResolver::applyToRuntime();
+        if (! BackupR2SettingsResolver::isConfigured($cfg)) {
+            return 0;
+        }
+
+        $days = $retentionDays ?? (int) ($cfg['retention_days'] ?? config('backup.r2.retention_days', 7));
+        $days = max(1, min(365, $days));
+        $cutoff = now()->subDays($days)->getTimestamp();
+        $diskName = (string) config('backup.r2.disk', 'r2');
+        $prefix = trim((string) ($cfg['prefix'] ?? 'backups/database'), '/');
+
+        Storage::forgetDisk($diskName);
+
+        try {
+            $disk = Storage::disk($diskName);
+            $paths = $prefix !== ''
+                ? $disk->allFiles($prefix)
+                : $disk->allFiles();
+        } catch (\Throwable $e) {
+            Log::warning('Cloudflare R2 backup prune listing failed', [
+                'prefix' => $prefix,
+                'error' => $e->getMessage(),
+            ]);
+
+            return 0;
+        }
+
+        $deleted = 0;
+        foreach ($paths as $path) {
+            $path = str_replace('\\', '/', (string) $path);
+            $base = basename($path);
+
+            // Only SQL dumps — never wipe connection tests, MSI hosts, or other prefixes.
+            if (! preg_match('/\.sql(\.gz)?$/i', $base)) {
+                continue;
+            }
+            if (str_contains($path, '/connection-tests/')) {
+                continue;
+            }
+
+            try {
+                if ($disk->lastModified($path) >= $cutoff) {
+                    continue;
+                }
+                if ($disk->delete($path)) {
+                    $deleted++;
+                }
+            } catch (\Throwable $e) {
+                Log::warning('Cloudflare R2 backup prune delete failed', [
+                    'object_key' => $path,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        if ($deleted > 0) {
+            Log::info('Cloudflare R2 backup prune completed', [
+                'deleted' => $deleted,
+                'retention_days' => $days,
+                'prefix' => $prefix,
+            ]);
+        }
+
+        return $deleted;
     }
 
     /**
