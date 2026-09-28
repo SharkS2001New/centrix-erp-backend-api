@@ -1224,38 +1224,74 @@ class AiToolResultReplyBuilder
 
         $label = $name !== '' ? $name : $code;
         $lines = ["### {$label}".($code !== '' && $name !== '' ? " (`{$code}`)" : '')];
+        $lines[] = '';
 
+        $sellUnit = trim((string) ($product['selling_unit_label'] ?? ''));
         $measurements = is_array($result['measurements'] ?? null) ? $result['measurements'] : [];
+        if ($sellUnit === '') {
+            $sellUnit = trim((string) ($measurements['full_package_label'] ?? $measurements['small_package_label'] ?? 'unit'));
+        }
+        if ($sellUnit === '') {
+            $sellUnit = 'unit';
+        }
+
+        $unitPrice = $product['unit_price'] ?? null;
+        if ($unitPrice !== null && is_numeric($unitPrice)) {
+            $lines[] = 'Selling price: **KES '.$this->money((float) $unitPrice).'** per '.$sellUnit.' (catalogue unit price).';
+        } else {
+            $lines[] = 'Selling price: **not set** on the catalogue card.';
+        }
+
+        $cost = $product['last_cost_price'] ?? null;
+        if ($cost !== null && is_numeric($cost) && (float) $cost > 0) {
+            $lines[] = 'Cost price: **KES '.$this->money((float) $cost).'**.';
+            if ($unitPrice !== null && is_numeric($unitPrice) && (float) $unitPrice > 0) {
+                $margin = ((float) $unitPrice - (float) $cost) / (float) $unitPrice * 100;
+                $lines[] = 'Gross margin vs catalogue price: **'.number_format($margin, 1).'%**.';
+            }
+        } else {
+            $lines[] = 'Cost price: **not set** — Centrix cannot show a margin yet.';
+        }
+
+        $vat = is_array($result['vat'] ?? null) ? $result['vat'] : [];
+        if (! empty($vat['configured']) && ! empty($vat['label'])) {
+            $lines[] = 'VAT: **'.$vat['label'].'**.';
+        } elseif (! empty($vat['message'])) {
+            $lines[] = 'VAT: '.(string) $vat['message'];
+        }
+
+        if (! empty($product['sell_on_retail'])) {
+            $lines[] = 'Sell on retail: **on** — POS can use retail packaging / retail entry.';
+        } else {
+            $lines[] = 'Sell on retail: **off** — POS sells at the wholesale / catalogue unit price.';
+        }
+
+        $stock = is_array($result['stock'] ?? null) ? $result['stock'] : [];
+        $totalLabel = trim((string) ($stock['total_qty_label'] ?? ''));
+        $shopLabel = trim((string) ($stock['shop_qty_label'] ?? ''));
+        $storeLabel = trim((string) ($stock['store_qty_label'] ?? ''));
+        if ($totalLabel !== '') {
+            $lines[] = '';
+            $lines[] = '| Location | Stock |';
+            $lines[] = '| --- | --- |';
+            if ($shopLabel !== '') {
+                $lines[] = '| Shop | '.$this->cell($shopLabel).' |';
+            }
+            if ($storeLabel !== '') {
+                $lines[] = '| Store | '.$this->cell($storeLabel).' |';
+            }
+            $lines[] = '| **Total** | **'.$this->cell($totalLabel).'** |';
+            $lines[] = '';
+            $lines[] = 'Quote stock labels **exactly** as in the table — do not shorten unit names.';
+        }
+
         if (! empty($measurements['configured'])) {
             $meaning = trim((string) ($measurements['conversion_meaning'] ?? ''));
             if ($meaning !== '') {
                 $lines[] = $meaning;
-            } else {
-                $full = trim((string) ($measurements['full_package_label'] ?? $measurements['full_name'] ?? 'pack'));
-                $small = trim((string) ($measurements['small_package_label'] ?? 'unit'));
-                $factor = $measurements['conversion_factor'] ?? null;
-                if ($factor !== null) {
-                    $lines[] = "UoM: **1 {$full} = {$factor} {$small}** (stock stored in {$small}).";
-                }
-            }
-            if (! empty($measurements['hierarchy']) && is_array($measurements['hierarchy'])) {
-                foreach ($measurements['hierarchy'] as $level) {
-                    if (is_array($level) && ! empty($level['label'])) {
-                        $role = trim((string) ($level['role'] ?? ''));
-                        $lines[] = '- '.$level['label'].($role !== '' ? " — {$role}" : '');
-                    }
-                }
             }
         } elseif (! empty($measurements['message'])) {
             $lines[] = (string) $measurements['message'];
-        } else {
-            $lines[] = 'No unit of measure is linked on this product yet (/uoms).';
-        }
-
-        $stock = is_array($result['stock'] ?? null) ? $result['stock'] : [];
-        if (! empty($stock['total_qty_label'])) {
-            $lines[] = 'On hand: **'.$stock['total_qty_label'].'**'
-                .(isset($stock['shop_qty_label']) ? ' (shop '.$stock['shop_qty_label'].', store '.($stock['store_qty_label'] ?? '—').')' : '');
         }
 
         $retail = is_array($result['retail_packaging'] ?? null) ? $result['retail_packaging'] : [];

@@ -36,11 +36,12 @@ class GetProductDetailsTool implements AiToolInterface
 
     public function description(): string
     {
-        return 'Look up a Centrix product by SKU/code or name and return measurements (UoM hierarchy: '
-            .'full pack / middle / small base units), current stock with qty_label, sell-on-retail flag, '
-            .'and retail packaging / pricing tiers. Use for questions like "is Sugar in kg or bags?", '
-            .'"UoM for product X", "how is retail packaging set?", "what is the conversion factor?", '
-            .'or product measurement explainers. Always call this for named-product packaging questions. '
+        return 'Look up a Centrix product by SKU/code or name and return catalogue selling/cost prices, VAT, '
+            .'measurements (UoM hierarchy: full pack / middle / small base units), current stock with qty_label, '
+            .'sell-on-retail flag, and retail packaging / pricing tiers. Use for price checks ("what is TOP FRY selling at?"), '
+            .'"is Sugar in kg or bags?", "UoM for product X", "how is retail packaging set?", "what is the conversion factor?", '
+            .'or product measurement explainers. Always call this for named-product price or packaging questions. '
+            .'Always quote stock *_qty_label exactly — never abbreviate unit names. '
             .'For formal price-change history (when unit/cost price changed), use get_product_price_history instead.';
     }
 
@@ -148,6 +149,12 @@ class GetProductDetailsTool implements AiToolInterface
 
         $measurements = $this->buildMeasurements($uom, $total);
         $retail = $this->buildRetailPackaging((string) $product->product_code, (bool) $product->sell_on_retail, $uom);
+        $vat = $this->buildVatPayload($product);
+
+        $sellUnit = trim((string) ($measurements['full_package_label'] ?? $measurements['small_package_label'] ?? 'unit'));
+        if ($sellUnit === '') {
+            $sellUnit = 'unit';
+        }
 
         return [
             'organization_id' => $orgId,
@@ -156,6 +163,7 @@ class GetProductDetailsTool implements AiToolInterface
                 'product_name' => $product->product_name,
                 'unit_price' => $product->unit_price !== null ? (float) $product->unit_price : null,
                 'last_cost_price' => $product->last_cost_price !== null ? (float) $product->last_cost_price : null,
+                'selling_unit_label' => $sellUnit,
                 'product_weight_kg' => $product->product_weight !== null ? (float) $product->product_weight : null,
                 'reorder_point_base' => $product->reorder_point !== null ? (float) $product->reorder_point : null,
                 'reorder_point_label' => $product->reorder_point !== null
@@ -165,6 +173,7 @@ class GetProductDetailsTool implements AiToolInterface
                 'sell_on_bar' => (bool) ($product->sell_on_bar ?? false),
                 'sell_on_hotel' => (bool) ($product->sell_on_hotel ?? false),
             ],
+            'vat' => $vat,
             'measurements' => $measurements,
             'stock' => [
                 'shop_base' => $shop,
@@ -173,7 +182,7 @@ class GetProductDetailsTool implements AiToolInterface
                 'store_qty_label' => $storeLabel,
                 'total_base' => $total,
                 'total_qty_label' => $totalLabel,
-                'note' => 'qty_*_base values are smallest packaging units in the ledger. Always quote *_qty_label to the user.',
+                'note' => 'Always quote *_qty_label exactly to the user — never abbreviate unit names (e.g. say "jerrican", not "jer").',
             ],
             'retail_packaging' => $retail,
             'screens' => [
@@ -189,6 +198,43 @@ class GetProductDetailsTool implements AiToolInterface
                 'Sell on retail + retail package settings control POS retail vs wholesale entry and markup tiers — separate from the UoM conversion itself.',
                 'product_weight is an optional kg field on the product card; it is not the stock UoM unless the UoM small unit is also kg.',
             ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function buildVatPayload(Product $product): array
+    {
+        if (! $product->vat_id || ! Schema::hasTable('vats')) {
+            return [
+                'configured' => false,
+                'message' => 'No VAT rate is linked on this product.',
+            ];
+        }
+
+        $vat = \App\Models\Vat::query()->find((int) $product->vat_id);
+        if (! $vat) {
+            return [
+                'configured' => false,
+                'message' => 'No VAT rate is linked on this product.',
+            ];
+        }
+
+        $pct = (float) ($vat->vat_percentage ?? 0);
+        $name = trim((string) ($vat->vat_name ?? ''));
+        $code = trim((string) ($vat->vat_code ?? ''));
+
+        return [
+            'configured' => true,
+            'vat_id' => (int) $vat->id,
+            'vat_code' => $code !== '' ? $code : null,
+            'vat_name' => $name !== '' ? $name : null,
+            'vat_percentage' => $pct,
+            'is_zero_rated' => abs($pct) < 0.0001,
+            'label' => abs($pct) < 0.0001
+                ? ($name !== '' ? $name : 'Zero-rated').' (0%)'
+                : ($name !== '' ? $name.' ('.$pct.'%)' : $pct.'%'),
         ];
     }
 

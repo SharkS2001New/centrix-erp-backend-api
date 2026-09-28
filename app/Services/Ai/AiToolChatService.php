@@ -683,7 +683,10 @@ class AiToolChatService
         $needsFallback = $reply === ''
             || $this->toolResultReplyBuilder->looksLikeModelInstruction($reply)
             || $this->toolResultReplyBuilder->looksLikeEchoedToolTip($reply, $toolResults)
-            || ($truncated && $toolResults !== []);
+            || ($truncated && $toolResults !== [])
+            // Product price/stock answers must use exact qty labels — models often abbreviate
+            // "jerrican" → "jer" in tables. Prefer the structured tool formatter.
+            || $this->shouldPreferProductDetailsFallback($toolResults, $toolsUsed);
 
         $usedCompleteToolFallback = false;
         if ($needsFallback && $toolResults !== []) {
@@ -702,6 +705,48 @@ class AiToolChatService
         $reply = $this->finalizePossiblyTruncatedReply($reply, $finishReason, $usedCompleteToolFallback);
 
         return [$reply, $usedCompleteToolFallback];
+    }
+
+    /**
+     * @param  list<array{id?: string, name?: string, result?: array<string, mixed>}>  $toolResults
+     * @param  list<string>  $toolsUsed
+     */
+    protected function shouldPreferProductDetailsFallback(array $toolResults, array $toolsUsed): bool
+    {
+        $used = false;
+        foreach ($toolsUsed as $name) {
+            if ($name === 'get_product_details') {
+                $used = true;
+                break;
+            }
+        }
+        if (! $used) {
+            foreach ($toolResults as $row) {
+                if ((string) ($row['name'] ?? '') === 'get_product_details') {
+                    $used = true;
+                    break;
+                }
+            }
+        }
+        if (! $used) {
+            return false;
+        }
+
+        foreach ($toolResults as $row) {
+            if ((string) ($row['name'] ?? '') !== 'get_product_details') {
+                continue;
+            }
+            $result = is_array($row['result'] ?? null) ? $row['result'] : [];
+            if (! empty($result['error']) || ! empty($result['near_miss'])) {
+                return false;
+            }
+            // Only force when we have a concrete product payload to format.
+            $product = is_array($result['product'] ?? null) ? $result['product'] : [];
+
+            return trim((string) ($product['product_name'] ?? $product['product_code'] ?? '')) !== '';
+        }
+
+        return false;
     }
 
     /** @return array<string, mixed> */
@@ -1091,12 +1136,14 @@ class AiToolChatService
                     .'For questions: use about 2–3 clear spoken sentences that fully answer (key amount, name, yes/no, count, and one useful detail). Do not cut mid-thought. Optional table for chat after that. '
                     .'Say "Kenyan Shillings" once — never "Kenyan Shillings (Kenyan Shillings)" or "KES (Kenyan Shillings)" in spoken replies. '
                     .'Never speak screen paths like /hr/attendance — say the place in words, e.g. "in HR Attendance" or "in HR Attendance History". '
+                    .'Say "quantity" — never "qty" or "qtys". '
+                    .'Always speak products and suppliers by name (label) — never read product_code, supplier_code, or SKU numbers aloud. Use codes only inside tools. '
                     .'Speak steadily — no reading every table row aloud, no "Open …" links aloud. '
                     .'Prefer a spoken summary with real numbers over completeness; never ramble or restate the question.';
             }
         }
         if ($entityRefs !== []) {
-            $pageLines[] = 'Resolved entities the user @mentioned (prefer these exact codes/ids; do not invent names): '
+            $pageLines[] = 'Resolved entities the user @mentioned (use codes/ids for tools; when speaking aloud always use the label/name, never the code): '
                 .json_encode($entityRefs, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         }
         $this->appendPriceHistoryGuidance($pageLines, $user, $message, $entityRefs);
@@ -1234,7 +1281,7 @@ Rules:
   Values must be plain numbers (no KES commas). Never emit charts for one-row answers, navigation, or when the user did not ask for a chart.
 - Product sales tables: columns like Product | Qty | Amount (KES) — do NOT include a Code column.
 - Quantities: when a tool returns qty_label / stock_on_hand_label / suggested_qty_label (e.g. "2 Bag, 40 kg"), quote that label exactly in answers and table Qty columns — do not invent kg/bags/pcs. qty / qty_base / stock_on_hand numbers are raw base units for math only.
-- Product measurements / UoM / kg vs bags / packaging for a named product (e.g. Sugar): call get_product_details with query=product name (or product_code). Quote measurements.conversion_meaning and stock.*_qty_label. Distinguish UoM (how stock is counted) from retail packaging markups. Do not guess packaging.
+- Product measurements / UoM / kg vs bags / packaging / current selling price / stock for a named product (e.g. Sugar, TOP FRY): call get_product_details with query=product name (or product_code). Quote unit_price, last_cost_price, vat.label, and stock.*_qty_label **exactly** — never abbreviate unit names (write "jerrican", not "jer"). Distinguish UoM (how stock is counted) from retail packaging markups. Do not guess packaging or invent stock.
 - Product price history / previous prices / when price changed / last price changes: ALWAYS call get_product_price_history with limit=5 and product_code from @Product / Conversation focus / product_name. Quote up to the last 5 dated rows (date, unit price, cost, discount, changed by). If the tool returns an empty history, say there are no recorded changes yet and quote current catalog prices from the same tool result. Never claim you cannot pull the ledger. Never answer price-history questions with only get_product_details or realized sales averages. Never speak raw paths like /price-history — say "Price History under Pricing".
 - Licence / license / subscription / "when do we expire" / "days left on Centrix" / trial status: ALWAYS call get_organization_license. Quote plan, status, expiry date, and days remaining. If about_to_expire, warn to renew soon. If expired or missing, say access needs a Centrix administrator to renew. Never invent dates. Platform tenants are not subscription-gated.
 - Catalogue comparisons (cost > selling, zero price, thin margin, missing supplier/reorder/VAT/UoM, stock ≤ reorder): call find_catalogue_exceptions. For cost higher than selling use check=cost_above_selling. For a health overview use check=all. Quote totals and product tables from the tool. Do not invent product lists. Sold-below-cost on recent invoices is run_insight margin_discount_watchdog — different question.

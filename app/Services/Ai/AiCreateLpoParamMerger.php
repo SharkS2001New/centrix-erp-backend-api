@@ -309,7 +309,7 @@ class AiCreateLpoParamMerger
                         continue;
                     }
                     $lineBits[] = trim((string) ($line['product_name'] ?? $line['product_code'] ?? ''))
-                        .' × '.($line['ordered_qty'] ?? '?');
+                        .' quantity '.($line['ordered_qty'] ?? '?');
                 }
                 $summary = ($supplier !== '' ? $supplier : 'Supplier')
                     .($lineBits !== [] ? ' — '.implode(', ', $lineBits) : '');
@@ -327,7 +327,7 @@ class AiCreateLpoParamMerger
 
             $supplierLabel = trim($supplier) !== '' ? trim($supplier) : 'that supplier';
 
-            return 'Got '.$supplierLabel.' — nothing saved yet. Which products and quantities? For example: Sugar x 10. You can also add due date and terms.';
+            return 'Got '.$supplierLabel.' — nothing saved yet. Which products and quantities? For example: Sugar quantity 10. You can also add due date and terms.';
         }
 
         // First turn ("Help me create an LPO") — do not show an empty draft checklist.
