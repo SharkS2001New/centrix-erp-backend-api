@@ -213,6 +213,7 @@ class PlatformAiTrainingController extends Controller
         $data = $request->validate([
             'enabled' => 'sometimes|boolean',
             'talk_enabled' => 'sometimes|boolean',
+            'talk_voice' => 'sometimes|nullable|string|max:40',
             'provider' => 'sometimes|in:openai,gemini',
             'model' => 'sometimes|nullable|string|max:80',
             'api_key' => 'sometimes|nullable|string|max:512',
@@ -231,6 +232,10 @@ class PlatformAiTrainingController extends Controller
 
         if (($data['talk_provider'] ?? null) === 'chatgpt') {
             $data['talk_provider'] = 'openai';
+        }
+
+        if (array_key_exists('talk_voice', $data)) {
+            $data['talk_voice'] = AiSettingsResolver::normalizeTalkVoiceId($data['talk_voice'] ?? null);
         }
 
         return response()->json(AiSettingsResolver::savePlatformTraining($data));

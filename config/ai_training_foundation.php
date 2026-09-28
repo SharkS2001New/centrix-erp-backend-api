@@ -813,4 +813,4 @@ return array_merge([
         'path' => '/sales/shop-debtors/unpaid',
         'workspace_id' => 'backoffice',
     ],
-], require __DIR__.'/ai_training_foundation_order_ops.php', require __DIR__.'/ai_training_foundation_create_flows.php');
+], require __DIR__.'/ai_training_foundation_order_ops.php', require __DIR__.'/ai_training_foundation_create_flows.php', require __DIR__.'/ai_training_foundation_license.php');

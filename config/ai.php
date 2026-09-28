@@ -111,6 +111,7 @@ return [
         'get_purchasing_overview' => true,
         'get_lpo_details' => true,
         'get_order_details' => true,
+        'get_organization_license' => true,
         'list_lpos' => true,
         'get_debtors_summary' => true,
         'get_customer_statement' => true,

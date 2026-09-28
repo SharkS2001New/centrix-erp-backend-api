@@ -13,8 +13,10 @@ class AiActionExecutorNavigationTest extends TestCase
 
         $this->assertTrue($executor->isNavigationAction('navigate_orders'));
         $this->assertTrue($executor->isNavigationAction('open_lpo'));
+        $this->assertTrue($executor->isNavigationAction('open_page'));
         $this->assertFalse($executor->isNavigationAction('create_product'));
         $this->assertFalse($executor->isWriteAction('navigate_orders'));
+        $this->assertFalse($executor->isWriteAction('open_page'));
         $this->assertTrue($executor->isWriteAction('create_supplier'));
         $this->assertTrue($executor->isWriteAction('record_customer_payment'));
     }
@@ -35,5 +37,24 @@ class AiActionExecutorNavigationTest extends TestCase
         $this->assertTrue($outcome['success']);
         $this->assertTrue($outcome['result']['navigate'] ?? false);
         $this->assertSame('/sales/orders?q=mainge', $outcome['result']['path'] ?? null);
+    }
+
+    public function test_open_page_returns_deep_link_without_mutation(): void
+    {
+        $outcome = app(AiActionExecutor::class)->execute(
+            new \App\Models\User,
+            [
+                'type' => 'open_page',
+                'params' => [
+                    'href' => '/products',
+                    'label' => 'Products',
+                ],
+            ],
+        );
+
+        $this->assertTrue($outcome['success']);
+        $this->assertTrue($outcome['result']['navigate'] ?? false);
+        $this->assertSame('/products', $outcome['result']['path'] ?? null);
+        $this->assertSame('Products', $outcome['result']['label'] ?? null);
     }
 }

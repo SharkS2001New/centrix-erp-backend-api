@@ -50,6 +50,7 @@ class AiAssistantController extends Controller
             'supports_streaming' => filter_var(config('ai.stream_responses', true), FILTER_VALIDATE_BOOLEAN),
             'supports_voice_transcribe' => AiSettingsResolver::isTalkEnabled(),
             'talk_enabled' => AiSettingsResolver::isTalkEnabled(),
+            'talk_voice' => AiSettingsResolver::talkVoice(),
             'fast_mode' => filter_var(config('ai.fast_mode', true), FILTER_VALIDATE_BOOLEAN),
             'runtime' => [
                 'status' => $health['status'],

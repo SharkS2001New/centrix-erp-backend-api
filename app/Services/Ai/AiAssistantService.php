@@ -1034,12 +1034,15 @@ class AiAssistantService
         );
     }
 
-    /** Core catalogue/purchasing writes are allowed from any workspace when the user has permission. */
+    /** Core catalogue/purchasing writes + any deep-link navigation from any ERP workspace. */
     protected function isAlwaysAllowedWriteAction(string $type): bool
     {
+        if ($this->actionExecutor->isNavigationAction($type)) {
+            return true;
+        }
+
         return in_array($type, [
             'create_lpo',
-            'open_lpo',
             'create_product',
             'update_product',
             'create_supplier',

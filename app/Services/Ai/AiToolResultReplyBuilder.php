@@ -68,6 +68,7 @@ class AiToolResultReplyBuilder
                 'find_screen' => $this->formatFindScreen($result),
                 'get_lpo_details' => $this->formatLpoDetails($result),
                 'get_order_details' => $this->formatOrderDetails($result),
+                'get_organization_license' => $this->formatOrganizationLicense($result),
                 'list_lpos' => $this->formatListLpos($result),
                 'run_insight' => $this->formatRunInsight($result),
                 default => null,
@@ -871,6 +872,82 @@ class AiToolResultReplyBuilder
             $lines[] = '';
             $lines[] = '**Total:** KES '.$this->money((float) $total);
         }
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * @param  array<string, mixed>  $result
+     */
+    protected function formatOrganizationLicense(array $result): ?string
+    {
+        if (! empty($result['is_platform_tenant'])) {
+            return 'This is the Centrix **platform** tenant — it is not gated by a customer subscription licence.';
+        }
+
+        $org = is_array($result['organization'] ?? null) ? $result['organization'] : [];
+        $orgName = trim((string) ($org['org_name'] ?? $org['company_code'] ?? 'Your organization'));
+        $license = is_array($result['license'] ?? null) ? $result['license'] : [];
+        $sub = is_array($result['subscription'] ?? null) ? $result['subscription'] : [];
+
+        $status = strtolower((string) ($license['status'] ?? 'unknown'));
+        $plan = trim((string) ($license['plan_name'] ?? $sub['plan_name'] ?? ''));
+        $expires = trim((string) ($license['expires_at'] ?? ''));
+        $days = $license['days_remaining'] ?? null;
+        $trial = ! empty($license['is_trial']) || ! empty($sub['is_trial']);
+        $expired = ! empty($result['expired']);
+        $aboutToExpire = ! empty($result['about_to_expire']);
+
+        $lines = ["### Centrix licence — **{$orgName}**", ''];
+
+        if ($status === 'missing' || $license === []) {
+            $lines[] = 'No active Centrix subscription is on file for this organization.';
+            $lines[] = 'Contact your Centrix administrator to activate a plan.';
+
+            return implode("\n", $lines);
+        }
+
+        $planBit = $plan !== '' ? "Plan **{$plan}**" : 'Centrix subscription';
+        $trialBit = $trial ? ' (trial)' : '';
+        $lines[] = "{$planBit}{$trialBit}, status **{$status}**.";
+
+        if ($expires !== '') {
+            if (is_numeric($days)) {
+                $d = (int) $days;
+                if ($d < 0) {
+                    $lines[] = "Expired on **{$expires}** (".abs($d).' day'.(abs($d) === 1 ? '' : 's').' ago).';
+                } elseif ($d === 0) {
+                    $lines[] = "Expires **today** ({$expires}).";
+                } elseif ($d === 1) {
+                    $lines[] = "Expires **tomorrow** ({$expires}) — 1 day remaining.";
+                } else {
+                    $lines[] = "Expires **{$expires}** — **{$d}** days remaining.";
+                }
+            } else {
+                $lines[] = "Expiry date: **{$expires}**.";
+            }
+        }
+
+        if ($aboutToExpire && ! $expired) {
+            $lines[] = 'This licence is **about to expire** — renew soon to avoid losing access.';
+        }
+        if ($expired) {
+            $lines[] = 'Access will be blocked until a Centrix administrator renews or extends the licence.';
+        }
+
+        $seats = $sub['seat_count'] ?? null;
+        if (is_numeric($seats) && (int) $seats > 0) {
+            $lines[] = 'Seats: **'.(int) $seats.'**.';
+        }
+
+        $renewal = $sub['renewal_price'] ?? null;
+        $currency = trim((string) ($sub['currency'] ?? 'KES'));
+        if (is_numeric($renewal)) {
+            $lines[] = 'Renewal price on file: **'.$currency.' '.$this->money((float) $renewal).'**.';
+        }
+
+        $lines[] = '';
+        $lines[] = 'To renew, contact your Centrix administrator.';
 
         return implode("\n", $lines);
     }

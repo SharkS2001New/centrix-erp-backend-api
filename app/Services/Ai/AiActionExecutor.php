@@ -67,7 +67,7 @@ class AiActionExecutor
             'create_employee' => $this->createEmployee($user, $params),
             'create_report_template' => $this->createReportTemplate($user, $params),
             'record_customer_payment' => $this->recordCustomerPayment($user, $params),
-            'navigate_orders', 'open_lpo', 'open_customer_collections', 'open_product' => $this->navigateConfirm($type, $params),
+            'navigate_orders', 'open_lpo', 'open_page', 'open_customer_collections', 'open_product' => $this->navigateConfirm($type, $params),
             default => [
                 'success' => false,
                 'message' => 'Unknown action type.',
@@ -89,6 +89,7 @@ class AiActionExecutor
                 'open_lpo' => ! empty($params['lpo_no'])
                     ? '/lpo/'.rawurlencode((string) $params['lpo_no'])
                     : '/lpo',
+                'open_page' => '/dashboard',
                 'open_customer_collections' => ! empty($params['customer_num'])
                     ? '/customers/'.rawurlencode((string) $params['customer_num'])
                     : '/reports/ar-aging',
@@ -102,8 +103,16 @@ class AiActionExecutor
             }
         }
 
+        $aliases = config('ai_navigation.path_aliases', []);
+        $pathOnly = parse_url($href, PHP_URL_PATH) ?: $href;
+        if (is_string($pathOnly) && isset($aliases[$pathOnly])) {
+            $query = parse_url($href, PHP_URL_QUERY);
+            $href = $aliases[$pathOnly].($query ? '?'.$query : '');
+        }
+
         $label = match ($type) {
             'open_lpo' => 'Purchase orders (LPO)',
+            'open_page' => (string) ($params['label'] ?? 'Centrix screen'),
             'open_customer_collections' => 'Customer collections',
             'open_product' => 'Product',
             default => 'Filtered sales orders',
@@ -111,11 +120,12 @@ class AiActionExecutor
 
         return [
             'success' => true,
-            'message' => "Ready: {$label}. Use the link below to open it.",
+            'message' => "Opening {$label}.",
             'result' => [
                 'navigate' => true,
                 'path' => $href,
                 'href' => $href,
+                'label' => $label,
                 'q' => $params['q'] ?? null,
                 'note' => $params['note'] ?? null,
             ],
@@ -1242,6 +1252,7 @@ class AiActionExecutor
         return in_array($type, [
             'navigate_orders',
             'open_lpo',
+            'open_page',
             'open_customer_collections',
             'open_product',
         ], true);

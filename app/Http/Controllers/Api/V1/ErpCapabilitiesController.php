@@ -278,6 +278,7 @@ class ErpCapabilitiesController extends Controller
                 'enabled' => (bool) ($ai['enabled'] ?? false),
                 'available' => (bool) ($ai['available'] ?? false),
                 'talk_enabled' => ($ai['talk_enabled'] ?? true) !== false,
+                'talk_voice' => \App\Services\Ai\AiSettingsResolver::talkVoice(),
             ];
         }
         if (isset($payload['module_settings']) && is_array($payload['module_settings'])) {

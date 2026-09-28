@@ -30,6 +30,7 @@ class AiToolRegistryTest extends TestCase
             'get_purchasing_overview',
             'get_lpo_details',
             'get_order_details',
+            'get_organization_license',
             'get_debtors_summary',
             'get_customer_statement',
             'get_customer_returns',

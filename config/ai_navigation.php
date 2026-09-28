@@ -310,6 +310,11 @@ return [
             'module' => 'customers_suppliers',
         ],
         [
+            'type' => 'open_page',
+            'label' => 'Open a Centrix screen',
+            'description' => 'Navigate to a named ERP page/screen (e.g. products, customers, stock, payroll). Confirm opens the deep link; ERP switches application when needed.',
+        ],
+        [
             'type' => 'open_customer_collections',
             'label' => 'Open customer for collections',
             'description' => 'Open a debtor customer record to collect / send statement.',

@@ -789,6 +789,12 @@ return [
             'enabled' => false,
             /** Platform-wide: header “Talk to AI” voice Q&A (STT + short TTS). */
             'talk_enabled' => true,
+            /**
+             * Preferred on-device Talk voice (ERP web + Manager).
+             * Clients pick the closest local TTS voice for locale + gender.
+             * Values: en-GB-female | en-GB-male | en-US-female | en-US-male
+             */
+            'talk_voice' => 'en-GB-female',
             'provider' => env('AI_PROVIDER', 'openai'),
             'model' => '',
             'api_key' => '',

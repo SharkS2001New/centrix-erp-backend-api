@@ -179,6 +179,195 @@ class AiIntentResolver
             ];
         }
 
+        if ($navPage = $this->inferOpenPage($message)) {
+            return $navPage;
+        }
+
+        return null;
+    }
+
+    /**
+     * "Open products page" / "go to payroll" → deep-link navigation (ERP switches apps as needed).
+     *
+     * @return array<string, mixed>|null
+     */
+    protected function inferOpenPage(string $message): ?array
+    {
+        $text = $this->normalizeForIntent($message);
+
+        // Create / write flows are not page opens (e.g. "open the form", "create product").
+        if (preg_match('/\b(show|open|use)\b.{0,20}\bform\b/i', $text)) {
+            return null;
+        }
+        if ($this->matchesLpoCreate($text) || $this->matchesProductCreate($text)
+            || $this->matchesSupplierCreate($text) || $this->matchesCustomerCreate($text)) {
+            return null;
+        }
+
+        $query = null;
+        if (preg_match(
+            '/\b(?:open|go\s+to|navigate\s+to|take\s+me\s+to|switch\s+to)\s+(?:the\s+|my\s+|our\s+)?(.+?)(?:\s+(?:page|screen|module|menu))?\s*$/i',
+            $text,
+            $m,
+        )) {
+            $query = trim((string) ($m[1] ?? ''));
+        } elseif (preg_match(
+            '/\b(?:show|show\s+me)\s+(?:the\s+|my\s+|our\s+)?(.+?)\s+(?:page|screen|module)\b/i',
+            $text,
+            $m,
+        )) {
+            $query = trim((string) ($m[1] ?? ''));
+        }
+
+        if ($query === null || $query === '') {
+            return null;
+        }
+
+        $query = preg_replace('/\b(page|screen|module|menu|please|for\s+me)\b/iu', '', $query) ?? $query;
+        $query = trim(preg_replace('/\s+/', ' ', $query) ?? $query);
+        if (mb_strlen($query) < 2) {
+            return null;
+        }
+
+        $match = $this->resolveNavItemFromQuery($query);
+        if ($match === null) {
+            return null;
+        }
+
+        return [
+            'type' => 'open_page',
+            'summary' => 'Open '.$match['label'],
+            'params' => [
+                'href' => $match['path'],
+                'label' => $match['label'],
+            ],
+        ];
+    }
+
+    /**
+     * @return array{label: string, path: string}|null
+     */
+    protected function resolveNavItemFromQuery(string $query): ?array
+    {
+        $needle = mb_strtolower(trim($query));
+        $aliases = [
+            'lpo' => '/lpo',
+            'po' => '/lpo',
+            'purchase order' => '/lpo',
+            'purchase orders' => '/lpo',
+            'grn' => '/inventory/receipts',
+            'goods received' => '/inventory/receipts',
+            'stock receipts' => '/inventory/receipts',
+            'product' => '/products',
+            'products' => '/products',
+            'catalogue' => '/products',
+            'catalog' => '/products',
+            'category' => '/categories',
+            'categories' => '/categories',
+            'customer' => '/customers',
+            'customers' => '/customers',
+            'supplier' => '/suppliers',
+            'suppliers' => '/suppliers',
+            'stock' => '/inventory/stock',
+            'inventory' => '/inventory/stock',
+            'current stock' => '/inventory/stock',
+            'stock take' => '/inventory/stock-take',
+            'stocktake' => '/inventory/stock-take',
+            'adjustments' => '/inventory/adjustments',
+            'stock adjustments' => '/inventory/adjustments',
+            'payroll' => '/hr/payroll',
+            'employees' => '/hr/employees',
+            'employee' => '/hr/employees',
+            'attendance' => '/hr/attendance',
+            'leave' => '/hr/leave',
+            'shifts' => '/hr/shifts',
+            'pos' => '/sales/pos',
+            'cashier' => '/pos',
+            'orders' => '/sales/orders',
+            'sales orders' => '/sales/orders',
+            'expenses' => '/expenses',
+            'expense' => '/expenses',
+            'dashboard' => '/dashboard',
+            'reports' => '/reports',
+            'report builder' => '/reports/builder',
+            'chart of accounts' => '/accounting/chart-of-accounts',
+            'journal' => '/accounting/journal-entries',
+            'journal entries' => '/accounting/journal-entries',
+            'dispatch' => '/fulfillment/dispatch',
+            'trips' => '/fulfillment/trips',
+            'drivers' => '/fulfillment/drivers',
+            'routes' => '/fulfillment/routes',
+            'credit notes' => '/sales/returns',
+            'returns' => '/sales/returns',
+            'vouchers' => '/sales/vouchers',
+            'till' => '/sales/till-management',
+            'till management' => '/sales/till-management',
+            'users' => '/admin/users',
+            'roles' => '/admin/roles',
+            'settings' => '/admin/settings',
+        ];
+
+        foreach ($aliases as $alias => $path) {
+            if ($needle === $alias) {
+                $label = $this->labelForNavPath($path) ?? ucwords($alias);
+
+                return ['label' => $label, 'path' => $path];
+            }
+        }
+        foreach ($aliases as $alias => $path) {
+            // Avoid short alias false positives (e.g. "po" inside "products").
+            if (mb_strlen($alias) < 4) {
+                continue;
+            }
+            if (preg_match('/\b'.preg_quote($alias, '/').'\b/u', $needle)) {
+                $label = $this->labelForNavPath($path) ?? ucwords($alias);
+
+                return ['label' => $label, 'path' => $path];
+            }
+        }
+
+        $best = null;
+        $bestScore = 0;
+        foreach (config('ai_navigation.sections', []) as $section) {
+            foreach ($section['items'] ?? [] as $item) {
+                $path = (string) ($item['path'] ?? '');
+                $label = (string) ($item['label'] ?? '');
+                if ($path === '' || $label === '') {
+                    continue;
+                }
+                $hay = mb_strtolower($label.' '.$path.' '.($section['label'] ?? ''));
+                $score = 0;
+                if ($hay === $needle || mb_strtolower($label) === $needle) {
+                    $score = 100;
+                } elseif (str_contains($hay, $needle)) {
+                    $score = 40 + mb_strlen($needle);
+                } else {
+                    foreach (preg_split('/\s+/', $needle) ?: [] as $token) {
+                        if (mb_strlen($token) >= 3 && str_contains($hay, $token)) {
+                            $score += 8;
+                        }
+                    }
+                }
+                if ($score > $bestScore) {
+                    $bestScore = $score;
+                    $best = ['label' => $label, 'path' => $path];
+                }
+            }
+        }
+
+        return $bestScore >= 8 ? $best : null;
+    }
+
+    protected function labelForNavPath(string $path): ?string
+    {
+        foreach (config('ai_navigation.sections', []) as $section) {
+            foreach ($section['items'] ?? [] as $item) {
+                if (($item['path'] ?? '') === $path) {
+                    return (string) ($item['label'] ?? $path);
+                }
+            }
+        }
+
         return null;
     }
 

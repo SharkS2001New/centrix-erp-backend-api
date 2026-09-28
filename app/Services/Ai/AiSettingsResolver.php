@@ -494,6 +494,7 @@ class AiSettingsResolver
         $out = array_merge($defaults, $settings);
         $out['enabled'] = (bool) ($out['enabled'] ?? false);
         $out['talk_enabled'] = (bool) ($out['talk_enabled'] ?? true);
+        $out['talk_voice'] = self::normalizeTalkVoiceId($out['talk_voice'] ?? null);
         $out['use_platform_gemini'] = (bool) ($out['use_platform_gemini'] ?? false);
         $out['use_platform_ai'] = (bool) ($out['use_platform_ai'] ?? false);
         $freeProvider = strtolower(trim((string) ($out['free_ai_provider'] ?? config('ai.free_provider', 'gemini'))));
@@ -1054,6 +1055,7 @@ class AiSettingsResolver
             'enabled' => $gate->aiPlatformEnabled(),
             'available' => $available,
             'talk_enabled' => self::isTalkEnabled(),
+            'talk_voice' => self::talkVoice(),
             'use_platform_gemini' => $platformOffersFree,
             'use_platform_ai' => $prefersPlatform,
             'platform_offers_free_ai' => $platformOffersFree,
@@ -1070,5 +1072,77 @@ class AiSettingsResolver
         $settings = self::forPlatformTraining();
 
         return (bool) ($settings['talk_enabled'] ?? true);
+    }
+
+    /**
+     * Preferred Talk TTS voice (platform-wide). Clients map this to the closest
+     * on-device browser / phone voice — not a cloud voice ID.
+     *
+     * @return array{id: string, locale: string, gender: string, label: string}
+     */
+    public static function talkVoice(): array
+    {
+        $settings = self::forPlatformTraining();
+        $id = self::normalizeTalkVoiceId($settings['talk_voice'] ?? null);
+
+        return self::talkVoiceCatalog()[$id];
+    }
+
+    /**
+     * @return array<string, array{id: string, locale: string, gender: string, label: string}>
+     */
+    public static function talkVoiceCatalog(): array
+    {
+        return [
+            'en-GB-female' => [
+                'id' => 'en-GB-female',
+                'locale' => 'en-GB',
+                'gender' => 'female',
+                'label' => 'British English · Female',
+            ],
+            'en-GB-male' => [
+                'id' => 'en-GB-male',
+                'locale' => 'en-GB',
+                'gender' => 'male',
+                'label' => 'British English · Male',
+            ],
+            'en-US-female' => [
+                'id' => 'en-US-female',
+                'locale' => 'en-US',
+                'gender' => 'female',
+                'label' => 'American English · Female',
+            ],
+            'en-US-male' => [
+                'id' => 'en-US-male',
+                'locale' => 'en-US',
+                'gender' => 'male',
+                'label' => 'American English · Male',
+            ],
+        ];
+    }
+
+    public static function normalizeTalkVoiceId(mixed $raw): string
+    {
+        $id = strtolower(trim((string) $raw));
+        $id = str_replace('_', '-', $id);
+        $aliases = [
+            'en-gb' => 'en-GB-female',
+            'en-us' => 'en-US-female',
+            'british' => 'en-GB-female',
+            'american' => 'en-US-female',
+            'female' => 'en-GB-female',
+            'male' => 'en-GB-male',
+        ];
+        if (isset($aliases[$id])) {
+            $id = strtolower($aliases[$id]);
+        }
+
+        foreach (array_keys(self::talkVoiceCatalog()) as $valid) {
+            if (strtolower($valid) === $id) {
+                return $valid;
+            }
+        }
+
+        return 'en-GB-female';
     }
 }

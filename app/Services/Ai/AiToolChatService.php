@@ -244,6 +244,9 @@ class AiToolChatService
         if ($this->looksLikePriceHistoryQuestion($message)) {
             $maxLoops = max($maxLoops, min(3, (int) config('ai.max_tool_rounds', 3)));
         }
+        if ($this->looksLikeLicenseQuestion($message)) {
+            $maxLoops = max($maxLoops, min(3, (int) config('ai.max_tool_rounds', 3)));
+        }
 
         $canStream = filter_var(config('ai.stream_responses', true), FILTER_VALIDATE_BOOLEAN);
 
@@ -615,6 +618,55 @@ class AiToolChatService
             .'JSON: '.$encoded;
     }
 
+    protected function looksLikeLicenseQuestion(string $message): bool
+    {
+        return (bool) preg_match(
+            '/\b('
+            .'licen[cs]e|centrix\s+subscription|our\s+subscription|my\s+subscription|'
+            .'subscription\s+(?:status|expir|renew)|plan\s+expir|'
+            .'days?\s+(?:left|remaining)\s+on\s+(?:centrix|the\s+licen|our\s+licen|my\s+licen|subscription)|'
+            .'about\s+to\s+expire|when\s+(?:do|does)\s+(?:my|our|the)\s+(?:licen[cs]e|subscription|plan|centrix)|'
+            .'are\s+we\s+on\s+trial|trial\s+(?:licen[cs]e|period|ends)|'
+            .'renew\s+(?:our\s+|my\s+|the\s+)?(?:licen[cs]e|subscription|centrix)|'
+            .'how\s+long\s+(?:is\s+)?(?:left\s+on|do\s+we\s+have\s+on)\s+(?:centrix|the\s+licen|our\s+sub)'
+            .')\b/i',
+            $message,
+        );
+    }
+
+    /**
+     * Prefetch org licence so Talk/Assistant answers expiry from live data.
+     *
+     * @param  list<string>  $pageLines
+     */
+    protected function appendLicenseGuidance(
+        array &$pageLines,
+        User $user,
+        ?string $message,
+    ): void {
+        if ($message === null || ! $this->looksLikeLicenseQuestion($message)) {
+            return;
+        }
+
+        try {
+            $result = $this->tools->execute('get_organization_license', $user, []);
+        } catch (\Throwable $e) {
+            $pageLines[] = 'REQUIRED THIS TURN: call get_organization_license. '
+                .'Quote plan, status, expiry date, and days remaining. Never invent dates.';
+
+            return;
+        }
+
+        $encoded = json_encode($result, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if ($encoded === false) {
+            $encoded = '{}';
+        }
+        $pageLines[] = 'PREFETCHED get_organization_license — answer ONLY from this JSON. '
+            .'State plan, status, expiry date, and days remaining. If about_to_expire, warn to renew soon. '
+            .'If expired or missing, say a Centrix administrator must renew. Never invent dates. '
+            .'JSON: '.$encoded;
+    }
+
     /**
      * @param  list<array{id?: string, name?: string, result?: array<string, mixed>}>  $toolResults
      * @param  list<string>  $toolsUsed
@@ -673,6 +725,7 @@ class AiToolChatService
             'get_stock_summary', 'get_product_details', 'get_product_price_history', 'find_catalogue_exceptions' => 'Checking inventory…',
             'get_debtors_summary', 'get_customer_statement' => 'Loading customer accounts…',
             'get_order_details' => 'Loading sales order…',
+            'get_organization_license' => 'Checking Centrix licence…',
             'get_supplier_statement', 'get_purchasing_overview', 'get_lpo_details', 'list_lpos' => 'Loading purchase order…',
             'get_employee_attendance', 'get_employee_details', 'get_employee_payroll_preview' => 'Loading HR records…',
             'search_training_notes' => 'Searching Centrix guides…',
@@ -796,6 +849,9 @@ class AiToolChatService
             $maxLoops = max($maxLoops, min(3, (int) config('ai.max_tool_rounds', 3)));
         }
         if ($this->looksLikePriceHistoryQuestion($message)) {
+            $maxLoops = max($maxLoops, min(3, (int) config('ai.max_tool_rounds', 3)));
+        }
+        if ($this->looksLikeLicenseQuestion($message)) {
             $maxLoops = max($maxLoops, min(3, (int) config('ai.max_tool_rounds', 3)));
         }
 
@@ -1044,6 +1100,7 @@ class AiToolChatService
                 .json_encode($entityRefs, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         }
         $this->appendPriceHistoryGuidance($pageLines, $user, $message, $entityRefs);
+        $this->appendLicenseGuidance($pageLines, $user, $message);
         $pageBlock = $pageLines !== [] ? implode("\n", $pageLines)."\n\n" : '';
 
         $focus = $this->focusResolver->resolve($history, $entityRefs, $pageContext);
@@ -1088,6 +1145,7 @@ Tools:
 - list_lpos — list LPOs by status. For "awaiting goods receiving / GRN / to receive" ALWAYS call with filter=awaiting_receive (statuses 3+4 only). Do NOT use get_purchasing_overview for that question. Exclude fully received, cleared, awaiting check/approval unless asked.
 - get_lpo_details — retrieve one LPO by number/reference OR the latest created LPO: status, lines, workflow flags, document_links (Open / Print-Save PDF using the same LPO page template). For "last LPO", "latest purchase order", "most recent LPO we created", or "download the last LPO", call with latest=true (or query="last"). Prefer document_links UI — do not restate Open/Print/PDF/next-step boilerplate in the reply.
 - get_order_details — one sales order / shop invoice by number (S1537, 1537, AR-1537): customer, payment_status, totals, balance_due, payment lines, path. Use for "check invoice", "order S####", wrongly paid / wrong payment on an invoice. Invoice no = order no in Centrix. Never claim there is no invoice/order lookup.
+- get_organization_license — this org’s Centrix licence/subscription: plan, status, expiry date, days remaining, trial, about-to-expire. Use for "when does my licence expire", "subscription status", "how many days left", "are we on trial". Never invent expiry dates.
 - get_debtors_summary — unpaid / AR / who to call
 - get_customer_statement — one customer's balance + period purchases with product line items (qty_label); use for statements, "what did they buy", and pronoun follow-ups about the focused customer
 - get_supplier_statement — one supplier's AP balance + period LPOs/payments with product line items (qty_label); use for supplier statements and "what did we buy from them"
@@ -1114,6 +1172,7 @@ Rules:
 - Platform training notes (CENTRIX_DOCUMENTATION.platform_knowledge and search_training_notes) are SAMPLE Q&A exemplars (usage=exemplar). They show how to think about and structure answers for similar questions — procedures, labels, and screen paths. Do NOT paste sample_answer_style / content / topic verbatim as the reply. Write a fresh answer for THIS user's question, adapting the sample's approach; call live tools for current org numbers and names.
 - For "where is / how do I / which menu" questions, call find_screen (or use CENTRIX_DOCUMENTATION) and answer with the path.
 - For how Centrix works / FAQs / trained procedures: use matching platform_knowledge as guidance for approach; if none fit or you need more depth, call search_training_notes. Still answer in your own words.
+- When the user asks to OPEN a page/screen (e.g. "Open LPO page", "go to products"), give the real Centrix path as a clickable link immediately — do not refuse because of workspace. The ERP client navigates and switches applications when needed.
 - Cancel / void / return an order questions are HOW-TO: call search_training_notes and/or find_screen. Answer with /sales/orders (Cancel order), /sales/returns for credit notes, held cancel on POS. Never ask the user to reply **confirm** to create something, and never start a create-order flow.
 - When page context is present, prefer answering about that screen/filters before asking the user to clarify.
 - Multi-part questions (e.g. "mobile sales yesterday AND expenses AND returns by Jane"): call EVERY needed tool in the SAME turn when possible — get_route_orders + get_expense_summary + get_customer_returns (with the same relative_date / user_name). Do not answer only the first part. Structure the reply with clear headings for each part.
@@ -1177,6 +1236,7 @@ Rules:
 - Quantities: when a tool returns qty_label / stock_on_hand_label / suggested_qty_label (e.g. "2 Bag, 40 kg"), quote that label exactly in answers and table Qty columns — do not invent kg/bags/pcs. qty / qty_base / stock_on_hand numbers are raw base units for math only.
 - Product measurements / UoM / kg vs bags / packaging for a named product (e.g. Sugar): call get_product_details with query=product name (or product_code). Quote measurements.conversion_meaning and stock.*_qty_label. Distinguish UoM (how stock is counted) from retail packaging markups. Do not guess packaging.
 - Product price history / previous prices / when price changed / last price changes: ALWAYS call get_product_price_history with limit=5 and product_code from @Product / Conversation focus / product_name. Quote up to the last 5 dated rows (date, unit price, cost, discount, changed by). If the tool returns an empty history, say there are no recorded changes yet and quote current catalog prices from the same tool result. Never claim you cannot pull the ledger. Never answer price-history questions with only get_product_details or realized sales averages. Never speak raw paths like /price-history — say "Price History under Pricing".
+- Licence / license / subscription / "when do we expire" / "days left on Centrix" / trial status: ALWAYS call get_organization_license. Quote plan, status, expiry date, and days remaining. If about_to_expire, warn to renew soon. If expired or missing, say access needs a Centrix administrator to renew. Never invent dates. Platform tenants are not subscription-gated.
 - Catalogue comparisons (cost > selling, zero price, thin margin, missing supplier/reorder/VAT/UoM, stock ≤ reorder): call find_catalogue_exceptions. For cost higher than selling use check=cost_above_selling. For a health overview use check=all. Quote totals and product tables from the tool. Do not invent product lists. Sold-below-cost on recent invoices is run_insight margin_discount_watchdog — different question.
 - Mixed products: never sum bare qty across different UOMs into one "items sold" without labels; list per product with qty_label in a markdown table, or say totals are in base units.
 - Accuracy: copy amounts and qty_label values from tool JSON without rounding inventively; keep currency as returned.

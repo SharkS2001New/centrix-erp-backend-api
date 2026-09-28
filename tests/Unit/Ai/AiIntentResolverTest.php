@@ -95,6 +95,31 @@ class AiIntentResolverTest extends TestCase
             'open_lpo',
             $this->resolver->inferCreateAction('Open purchase orders', [], null)['type'] ?? null,
         );
+        $this->assertSame(
+            'open_lpo',
+            $this->resolver->inferCreateAction('Open LPO page', [], '/accounting')['type'] ?? null,
+        );
+    }
+
+    public function test_open_page_inferred_for_named_screens(): void
+    {
+        $products = $this->resolver->inferCreateAction('Open products page', [], '/dashboard');
+        $this->assertSame('open_page', $products['type'] ?? null);
+        $this->assertSame('/products', $products['params']['href'] ?? null);
+
+        $payroll = $this->resolver->inferCreateAction('Go to payroll', [], '/sales');
+        $this->assertSame('open_page', $payroll['type'] ?? null);
+        $this->assertSame('/hr/payroll', $payroll['params']['href'] ?? null);
+
+        $grn = $this->resolver->inferCreateAction('Open GRN screen', [], null);
+        $this->assertSame('open_page', $grn['type'] ?? null);
+        $this->assertSame('/inventory/receipts', $grn['params']['href'] ?? null);
+
+        $this->assertSame(
+            'create_product',
+            $this->resolver->inferCreateAction('Create product called Widget', [], null)['type'] ?? null,
+        );
+        $this->assertNull($this->resolver->inferCreateAction('Whats my daily sales', [], null));
     }
 
     public function test_normalize_for_intent_strips_trailing_signs(): void
