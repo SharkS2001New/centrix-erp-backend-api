@@ -141,6 +141,36 @@ class OrganizationCache
         }
     }
 
+    public static function reportsDashboardVersion(int $organizationId): int
+    {
+        return max(1, (int) Cache::get(self::tag($organizationId).':reports.dashboard:version', 1));
+    }
+
+    /**
+     * Bump generation so all branch/date dashboard cache entries miss without enumerating keys.
+     * Safe for KPI summaries (not used for stock mutation or payments).
+     */
+    public static function invalidateReportsDashboard(int $organizationId): void
+    {
+        $versionKey = self::tag($organizationId).':reports.dashboard:version';
+        Cache::put($versionKey, self::reportsDashboardVersion($organizationId) + 1, 86400 * 30);
+    }
+
+    public static function reportsDashboardCacheKey(
+        int $organizationId,
+        ?int $branchId,
+        string $fromDate,
+        string $toDate,
+    ): string {
+        return sprintf(
+            'reports.dashboard:v%d:b%d:%s:%s',
+            self::reportsDashboardVersion($organizationId),
+            (int) $branchId,
+            $fromDate,
+            $toDate,
+        );
+    }
+
     /** @return list<string> */
     public static function cacheableKeys(): array
     {
@@ -148,7 +178,7 @@ class OrganizationCache
             'erp.capabilities' => 'Per-user ERP capabilities (/erp/capabilities), org-scoped generation version',
             'erp.profiles' => 'Deployment profile definitions (global, long-lived)',
             'accounting.quickbooks_oauth_state' => 'QuickBooks OAuth CSRF state (short-lived, per org)',
-            'reports.dashboard' => 'Report dashboard KPIs and charts (org-scoped, 2–5 min TTL)',
+            'reports.dashboard' => 'Report dashboard KPIs and charts (org-scoped, ~2 min TTL, version-invalidated on checkout)',
             'customers.summary' => 'Customer hub summary counts (org-scoped, ~2 min TTL)',
             'completed_sales.detail' => 'Immutable completed sale detail payloads (org-scoped, no expiry)',
             'completed_sales.mobile_day' => 'Per-rep daily completed sale list slices (org-scoped, no expiry)',

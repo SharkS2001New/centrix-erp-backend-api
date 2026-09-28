@@ -297,43 +297,60 @@ class HospitalityReportService
             ->groupBy('hcl.product_code')
             ->get();
 
+        if ($lines->isEmpty()) {
+            return 0.0;
+        }
+
+        $productCodes = $lines->pluck('product_code')->map(fn ($c) => (string) $c)->unique()->values()->all();
+
+        $recipes = DB::table('hospitality_recipes')
+            ->where('organization_id', $org->id)
+            ->where('is_active', true)
+            ->whereIn('menu_product_code', $productCodes)
+            ->get()
+            ->keyBy('menu_product_code');
+
+        $recipeIds = $recipes->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $ingredientsByRecipe = collect();
+        if ($recipeIds !== []) {
+            $ingredientsByRecipe = DB::table('hospitality_recipe_ingredients')
+                ->whereIn('recipe_id', $recipeIds)
+                ->get()
+                ->groupBy('recipe_id');
+        }
+
+        $costCodes = collect($productCodes);
+        foreach ($ingredientsByRecipe as $ings) {
+            foreach ($ings as $ing) {
+                $costCodes->push((string) $ing->ingredient_product_code);
+            }
+        }
+        $costCodes = $costCodes->unique()->filter()->values()->all();
+
+        $costs = DB::table('products')
+            ->where('organization_id', $org->id)
+            ->whereIn('product_code', $costCodes)
+            ->pluck('last_cost_price', 'product_code');
+
         $total = 0.0;
         foreach ($lines as $line) {
             $code = (string) $line->product_code;
             $soldQty = (float) $line->qty;
-            $recipe = DB::table('hospitality_recipes')
-                ->where('organization_id', $org->id)
-                ->where('menu_product_code', $code)
-                ->where('is_active', true)
-                ->first();
+            $recipe = $recipes->get($code);
             if (! $recipe) {
-                $cost = (float) DB::table('products')
-                    ->where('organization_id', $org->id)
-                    ->where('product_code', $code)
-                    ->value('last_cost_price');
-                $total += $soldQty * max(0, $cost);
+                $total += $soldQty * max(0, (float) ($costs[$code] ?? 0));
                 continue;
             }
             if (($recipe->deduct_mode ?? '') === 'direct') {
-                $cost = (float) DB::table('products')
-                    ->where('organization_id', $org->id)
-                    ->where('product_code', $code)
-                    ->value('last_cost_price');
-                $total += $soldQty * max(0, $cost);
+                $total += $soldQty * max(0, (float) ($costs[$code] ?? 0));
                 continue;
             }
             if (($recipe->deduct_mode ?? '') === 'none') {
                 continue;
             }
-            $ings = DB::table('hospitality_recipe_ingredients')
-                ->where('recipe_id', $recipe->id)
-                ->get();
-            foreach ($ings as $ing) {
+            foreach ($ingredientsByRecipe->get((int) $recipe->id, collect()) as $ing) {
                 $eff = (float) $ing->quantity * (1 + ((float) $ing->waste_percent / 100));
-                $cost = (float) DB::table('products')
-                    ->where('organization_id', $org->id)
-                    ->where('product_code', $ing->ingredient_product_code)
-                    ->value('last_cost_price');
+                $cost = (float) ($costs[(string) $ing->ingredient_product_code] ?? 0);
                 $total += $soldQty * $eff * max(0, $cost);
             }
         }

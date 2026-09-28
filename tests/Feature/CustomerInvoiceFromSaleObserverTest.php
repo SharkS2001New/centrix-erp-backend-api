@@ -45,6 +45,48 @@ class CustomerInvoiceFromSaleObserverTest extends TestCase
         ]);
     }
 
+    public function test_sale_create_skips_invoice_when_mobile_deferred_ar_flag_set(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $customer = Customer::firstOrFail();
+
+        $sale = Sale::create([
+            'order_num' => 9011,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $admin->id,
+            'customer_num' => $customer->customer_num,
+            'status' => 'unpaid',
+            'total_vat' => 0,
+            'order_total' => 800,
+            'payment_status' => 'unpaid',
+            'amount_paid' => 0,
+            'fulfillment_meta' => ['mobile_deferred_ar' => true],
+        ]);
+
+        $this->assertDatabaseMissing('customer_invoices', [
+            'sale_id' => $sale->id,
+        ]);
+
+        app(\App\Services\Sales\CheckoutFinalizationService::class)->finalize(
+            $sale,
+            $admin,
+            false,
+            false,
+        );
+
+        $this->assertDatabaseHas('customer_invoices', [
+            'sale_id' => $sale->id,
+            'customer_num' => $customer->customer_num,
+            'invoice_total' => 800,
+        ]);
+
+        $sale->refresh();
+        $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
+        $this->assertArrayNotHasKey('mobile_deferred_ar', $meta);
+    }
+
     public function test_backfill_migration_creates_missing_invoices(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();

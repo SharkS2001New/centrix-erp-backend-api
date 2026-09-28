@@ -452,6 +452,11 @@ class OrganizationPlatformConfigService
 
                 continue;
             }
+            if ($key === 'mobile_cart_reservation_ttl_minutes') {
+                $currentInventory[$key] = min(480, max(0, (int) $salesPlatform[$key]));
+
+                continue;
+            }
             $currentInventory[$key] = (bool) $salesPlatform[$key];
         }
         $moduleSettings['inventory'] = $currentInventory;
@@ -616,6 +621,7 @@ class OrganizationPlatformConfigService
             'backoffice_order_edit_layout' => 'modern',
             'reserve_stock_on_cart' => true,
             'cart_reservation_ttl_minutes' => 15,
+            'mobile_cart_reservation_ttl_minutes' => 30,
             'enable_receive_batch_tracking' => false,
             // Wholesale/retail: 2 weeks list / 1 month search. Distribution: wider operational window.
             'orders_list_default_days' => $isDistribution ? 30 : 14,
@@ -756,6 +762,10 @@ class OrganizationPlatformConfigService
             'cart_reservation_ttl_minutes' => min(
                 15,
                 max(0, (int) ($inventory['cart_reservation_ttl_minutes'] ?? 15)),
+            ),
+            'mobile_cart_reservation_ttl_minutes' => min(
+                480,
+                max(0, (int) ($inventory['mobile_cart_reservation_ttl_minutes'] ?? 30)),
             ),
             'enable_receive_batch_tracking' => (bool) ($inventory['enable_receive_batch_tracking'] ?? false),
             'order_expiry_enabled' => ($sales['order_expiry_enabled'] ?? true) !== false,

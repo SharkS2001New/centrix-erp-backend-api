@@ -3,25 +3,29 @@
 namespace App\Services\Sales;
 
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesInventory;
+use App\Models\LoyaltyCard;
+use App\Models\MpesaIncomingPayment;
 use App\Models\Organization;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\User;
+use App\Services\Accounting\CustomerInvoiceService;
 use App\Services\Accounting\SaleJournalService;
 use App\Services\Audit\OperationalAuditService;
 use App\Services\Cache\CompletedSalesCacheService;
+use App\Services\Cache\OrganizationCache;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Fulfillment\AutoTripAssignmentService;
 use App\Services\Notifications\CustomerNotificationService;
-use App\Services\Sales\MobileSalesService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Throwable;
 
 /**
  * Post-checkout work that must not block the cashier: stock ledger, journals,
- * customer SMS/email, trip assignment, and cache invalidation.
+ * customer SMS/email, trip assignment, cache invalidation, and deferred mobile AR.
  *
  * Stock stays soft-held via reservations until deductSaleStock runs.
  */
@@ -52,6 +56,10 @@ class CheckoutFinalizationService
             }
         }
 
+        // Mobile AR must run even when runSideEffects is false (edge cases),
+        // as long as checkout stamped mobile_deferred_ar on the sale.
+        $this->ensureDeferredMobileAccountsReceivable($sale, $user, $gate);
+
         if (! $runSideEffects) {
             return;
         }
@@ -67,6 +75,31 @@ class CheckoutFinalizationService
             ]);
         }
 
+        // Notifications / audit / trip assign are non-critical — queue when a real
+        // queue driver is configured so cashiers are not blocked; otherwise run inline.
+        if (config('queue.default') !== 'sync') {
+            \App\Jobs\CheckoutSideEffectsJob::dispatch((int) $sale->id, (int) $user->id);
+        } else {
+            $this->runNonCriticalSideEffects($sale, $user);
+        }
+
+        try {
+            app(MobileSalesService::class)->invalidateDashboardForUser($user);
+            app(CompletedSalesCacheService::class)->invalidateForSale($sale);
+            $orgId = (int) ($sale->organization_id ?: $user->organization_id);
+            if ($orgId > 0) {
+                OrganizationCache::invalidateReportsDashboard($orgId);
+            }
+        } catch (Throwable $e) {
+            Log::warning('Deferred checkout cache invalidation failed', [
+                'sale_id' => $sale->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    protected function runNonCriticalSideEffects(Sale $sale, User $user): void
+    {
         try {
             $organization = Organization::find($user->organization_id);
             if ($organization) {
@@ -98,16 +131,104 @@ class CheckoutFinalizationService
                 'error' => $e->getMessage(),
             ]);
         }
+    }
+
+    /**
+     * Mobile checkout skips inline invoice/loyalty so the HTTP response returns fast.
+     * Finish AR settle + points here (afterResponse), then clear the flag.
+     */
+    public function ensureDeferredMobileAccountsReceivable(
+        Sale $sale,
+        User $user,
+        CapabilityGate $gate,
+    ): void {
+        $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
+        if (empty($meta['mobile_deferred_ar'])) {
+            return;
+        }
 
         try {
-            app(MobileSalesService::class)->invalidateDashboardForUser($user);
-            app(CompletedSalesCacheService::class)->invalidateForSale($sale);
+            if (! in_array((string) $sale->status, ['held', 'draft', 'pending_approval', 'cancelled'], true)) {
+                $sale = $sale->fresh(['payments']) ?? $sale;
+                $invoiceService = app(CustomerInvoiceService::class);
+                $invoice = $invoiceService->ensureForSale($sale, $user);
+                if ($invoice) {
+                    $invoice = $invoiceService->settleSaleTendersOntoInvoice($invoice, $sale, $user);
+                    if (Schema::hasTable('mpesa_incoming_payments')) {
+                        MpesaIncomingPayment::query()
+                            ->where('applied_sale_id', $sale->id)
+                            ->whereNull('applied_invoice_id')
+                            ->update(['applied_invoice_id' => (int) $invoice->id]);
+                    }
+                }
+
+                $this->awardLoyaltyPointsForCompletedSale(
+                    (int) $sale->organization_id,
+                    $sale->customer_num ? (int) $sale->customer_num : null,
+                    $gate->moduleSettings('sales'),
+                    (float) $sale->order_total,
+                    $sale->loyalty_card_id ? (int) $sale->loyalty_card_id : null,
+                );
+            }
         } catch (Throwable $e) {
-            Log::warning('Deferred checkout cache invalidation failed', [
+            Log::warning('Deferred mobile AR/loyalty failed', [
                 'sale_id' => $sale->id,
                 'error' => $e->getMessage(),
             ]);
         }
+
+        $fresh = $sale->fresh() ?? $sale;
+        $meta = is_array($fresh->fulfillment_meta) ? $fresh->fulfillment_meta : [];
+        unset($meta['mobile_deferred_ar']);
+        $fresh->update(['fulfillment_meta' => $meta === [] ? null : $meta]);
+    }
+
+    protected function awardLoyaltyPointsForCompletedSale(
+        int $organizationId,
+        ?int $customerNum,
+        array $salesSettings,
+        float $orderTotal,
+        ?int $preferredCardId = null,
+    ): float {
+        if (! $customerNum || empty($salesSettings['enable_redeemable_points'])) {
+            return 0;
+        }
+
+        $kesPerPoint = max(0, (float) ($salesSettings['points_earn_per_kes'] ?? 1000));
+        if ($kesPerPoint <= 0 || $orderTotal <= 0) {
+            return 0;
+        }
+
+        $earned = floor($orderTotal / $kesPerPoint);
+        if ($earned <= 0) {
+            return 0;
+        }
+
+        return (float) DB::transaction(function () use (
+            $organizationId,
+            $customerNum,
+            $preferredCardId,
+            $earned,
+        ) {
+            $query = LoyaltyCard::where('organization_id', $organizationId)
+                ->where('customer_num', $customerNum)
+                ->where('is_active', true);
+
+            if ($preferredCardId) {
+                $query->where('id', $preferredCardId);
+            }
+
+            $card = $query->lockForUpdate()->first();
+            if (! $card) {
+                return 0.0;
+            }
+
+            $card->update([
+                'points_balance' => (float) $card->points_balance + $earned,
+            ]);
+
+            return (float) $earned;
+        });
     }
 
     public function deductSaleStock(Sale $sale, User $user, CapabilityGate $gate): void

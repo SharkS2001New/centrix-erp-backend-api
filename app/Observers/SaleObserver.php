@@ -122,6 +122,13 @@ class SaleObserver
             return;
         }
 
+        // Mobile checkout sets this so AR/loyalty finish after the HTTP response
+        // (SaleObserver ensureForSale + balance refresh are multi-second on busy customers).
+        $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
+        if (! empty($meta['mobile_deferred_ar'])) {
+            return;
+        }
+
         $userId = $sale->cashier_id ?? $sale->created_by;
         if (! $userId) {
             return;

@@ -180,7 +180,7 @@ class OrganizationProvisioningService
         $settings = [
             'security' => $security,
             'distribution' => [],
-            'inventory' => ['reserve_stock_on_cart' => true, 'default_pos_sale_location' => 'shop', 'cart_reservation_ttl_minutes' => 15],
+            'inventory' => ['reserve_stock_on_cart' => true, 'default_pos_sale_location' => 'shop', 'cart_reservation_ttl_minutes' => 15, 'mobile_cart_reservation_ttl_minutes' => 30],
         ];
 
         if ($profile === 'supermarket') {

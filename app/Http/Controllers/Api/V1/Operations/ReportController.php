@@ -20,6 +20,7 @@ use App\Services\Legacy\OrganizationLegacyArchiveService;
 use App\Services\LpoModuleService;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
+use App\Services\Cache\OrganizationCache;
 use App\Services\Pos\TillReportMetrics;
 use App\Services\Sales\CentrixSalesScope;
 use App\Support\AppTimezone;
@@ -254,6 +255,64 @@ class ReportController extends Controller
         $metricStatuses = app(OrderWorkflowService::class)->metricSaleStatuses();
         $dayExpr = EffectiveSaleDate::daySqlExpression();
 
+        $cacheOrgId = (int) ($orgId ?? 0);
+        $build = function () use (
+            $from,
+            $to,
+            $prevFrom,
+            $prevTo,
+            $branchId,
+            $orgId,
+            $metricStatuses,
+            $dayExpr,
+        ) {
+            return $this->buildReportsDashboardPayload(
+                $from,
+                $to,
+                $prevFrom,
+                $prevTo,
+                $branchId,
+                $orgId,
+                $metricStatuses,
+                $dayExpr,
+            );
+        };
+
+        // Read-only KPI snapshot. TTL 120s; invalidated on checkout via version bump.
+        // Never used for payments/stock mutations.
+        if ($cacheOrgId > 0) {
+            $payload = OrganizationCache::remember(
+                $cacheOrgId,
+                OrganizationCache::reportsDashboardCacheKey(
+                    $cacheOrgId,
+                    $branchId,
+                    $from->toDateString(),
+                    $to->toDateString(),
+                ),
+                120,
+                $build,
+            );
+        } else {
+            $payload = $build();
+        }
+
+        return response()->json($payload);
+    }
+
+    /**
+     * @param  list<string>  $metricStatuses
+     * @return array<string, mixed>
+     */
+    protected function buildReportsDashboardPayload(
+        Carbon $from,
+        Carbon $to,
+        Carbon $prevFrom,
+        Carbon $prevTo,
+        ?int $branchId,
+        ?int $orgId,
+        array $metricStatuses,
+        string $dayExpr,
+    ): array {
         $salesBase = function (\Carbon\Carbon $start, \Carbon\Carbon $end) use ($branchId, $orgId, $metricStatuses) {
             $query = DB::table('sales')
                 ->whereIn('status', $metricStatuses)
@@ -322,12 +381,12 @@ class ReportController extends Controller
             ->whereNotNull('s.customer_num')
             ->when($orgId, fn ($q) => $q->where('s.organization_id', $orgId))
             ->when($branchId, fn ($q) => $q->where('s.branch_id', $branchId))
-            ->when($from->toDateString() ?? null, function ($q) use ($from) {
-                $q->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) >= ?', [$from->toDateString()]);
-            })
-            ->when($to->toDateString() ?? null, function ($q) use ($to) {
-                $q->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) <= ?', [$to->toDateString()]);
-            })
+            ->tap(fn ($q) => EffectiveSaleDate::applyFromToDateFilter(
+                $q,
+                $from->toDateString(),
+                $to->toDateString(),
+                's',
+            ))
             ->whereNotExists(function ($sub) {
                 $sub->select(DB::raw(1))
                     ->from('customer_invoices as ci')
@@ -474,7 +533,7 @@ class ReportController extends Controller
 
         $salesByChannel = $this->aggregateSalesByChannel($channelRows);
 
-        $payload = [
+        return [
             'period' => [
                 'from_date' => $from->toDateString(),
                 'to_date' => $to->toDateString(),
@@ -505,8 +564,6 @@ class ReportController extends Controller
             'top_products' => $topProducts,
             'sales_by_channel' => $salesByChannel,
         ];
-
-        return response()->json($payload);
     }
 
     protected function pctChange(float $current, float $previous): ?float

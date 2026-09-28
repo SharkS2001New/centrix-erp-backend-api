@@ -289,6 +289,7 @@ return [
         'inventory' => [
             'reserve_stock_on_cart',
             'cart_reservation_ttl_minutes',
+            'mobile_cart_reservation_ttl_minutes',
             'enable_receive_batch_tracking',
         ],
         'general' => [
@@ -697,6 +698,8 @@ return [
             'default_distribution_sale_location' => 'store',
             'reserve_stock_on_cart' => true,
             'cart_reservation_ttl_minutes' => 15,
+            /** Field-sales cart holds — longer than POS so checkout can transfer instead of re-reserve. */
+            'mobile_cart_reservation_ttl_minutes' => 30,
             /** Capture supplier batch/lot + expiry on goods receipt (platform-controlled). */
             'enable_receive_batch_tracking' => false,
             'stock_adjustment_approval_enabled' => false,

@@ -812,6 +812,7 @@ class OrganizationProvisionController extends Controller
             'sales_platform.order_workflow.reserve_stock_on.backend' => ['sometimes', 'string', $statusRule],
             'sales_platform.reserve_stock_on_cart' => 'sometimes|boolean',
             'sales_platform.cart_reservation_ttl_minutes' => 'sometimes|integer|min:0|max:15',
+            'sales_platform.mobile_cart_reservation_ttl_minutes' => 'sometimes|integer|min:0|max:480',
             'sales_platform.enable_receive_batch_tracking' => 'sometimes|boolean',
             'sales_platform.order_expiry_enabled' => 'sometimes|boolean',
             'sales_platform.order_expiry_days' => 'sometimes|integer|min:1|max:90',

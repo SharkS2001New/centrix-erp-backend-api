@@ -357,14 +357,17 @@ trait HandlesInventory
             ->first();
     }
 
-    protected function reservationExpiresAtForUser(User $user, array $inventorySettings): ?\Illuminate\Support\Carbon
-    {
-        $ttl = $this->cartReservationTtlMinutes($inventorySettings);
+    protected function reservationExpiresAtForUser(
+        User $user,
+        array $inventorySettings,
+        ?string $channel = null,
+    ): ?\Illuminate\Support\Carbon {
+        $ttl = $this->cartReservationTtlMinutes($inventorySettings, $channel);
 
         return $ttl > 0 ? now()->addMinutes($ttl) : null;
     }
 
-    protected function reservationExpiresAt(int $userId): ?\Illuminate\Support\Carbon
+    protected function reservationExpiresAt(int $userId, ?string $channel = null): ?\Illuminate\Support\Carbon
     {
         $user = User::query()->find($userId);
         if (! $user) {
@@ -373,18 +376,72 @@ trait HandlesInventory
 
         $ttl = $this->cartReservationTtlMinutes(
             app(\App\Services\Erp\ErpContext::class)->gateForUser($user)->moduleSettings('inventory'),
+            $channel,
         );
 
         return $ttl > 0 ? now()->addMinutes($ttl) : null;
     }
 
-    protected function cartReservationTtlMinutes(array $inventorySettings): int
+    /**
+     * POS carts stay short-lived (≤15m). Mobile field sales often take longer to build
+     * an order — expired holds force a slow per-SKU re-reserve at checkout.
+     */
+    protected function cartReservationTtlMinutes(array $inventorySettings, ?string $channel = null): int
     {
+        $channel = strtolower(trim((string) $channel));
+        if ($channel === 'mobile') {
+            if (array_key_exists('mobile_cart_reservation_ttl_minutes', $inventorySettings)) {
+                return min(480, max(0, (int) $inventorySettings['mobile_cart_reservation_ttl_minutes']));
+            }
+
+            return min(
+                480,
+                max(0, (int) config(
+                    'erp.module_settings_defaults.inventory.mobile_cart_reservation_ttl_minutes',
+                    30,
+                )),
+            );
+        }
+
         if (array_key_exists('cart_reservation_ttl_minutes', $inventorySettings)) {
             return min(15, max(0, (int) $inventorySettings['cart_reservation_ttl_minutes']));
         }
 
         return min(15, max(0, (int) config('erp.module_settings_defaults.inventory.cart_reservation_ttl_minutes', 15)));
+    }
+
+    /**
+     * Push expiry forward for every active hold on this cart (mobile long-running carts).
+     */
+    protected function refreshCartReservationExpiries(int $cartId, ?\Illuminate\Support\Carbon $expiresAt): void
+    {
+        if ($cartId <= 0 || $expiresAt === null) {
+            return;
+        }
+
+        StockReservation::query()
+            ->where('cart_id', $cartId)
+            ->whereNull('released_at')
+            ->update(['expires_at' => $expiresAt]);
+    }
+
+    /**
+     * Mobile checkout: revive this cart's soft-expired holds so we transfer instead of
+     * re-reserving under per-SKU locks (field visits often outlast the POS 15m TTL).
+     */
+    protected function reviveSoftExpiredCartHoldsForCheckout(int $cartId, string $channel): void
+    {
+        if ($cartId <= 0 || strtolower(trim($channel)) !== 'mobile') {
+            return;
+        }
+
+        StockReservation::query()
+            ->where('cart_id', $cartId)
+            ->whereNull('released_at')
+            ->whereNotNull('expires_at')
+            ->where('expires_at', '<=', now())
+            ->where('expires_at', '>', now()->subHours(12))
+            ->update(['expires_at' => now()->addMinutes(10)]);
     }
 
     protected function orgProduct(?int $orgId, string $productCode): ?Product

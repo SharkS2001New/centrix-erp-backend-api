@@ -417,11 +417,11 @@ class SaleController extends BaseResourceController
 
         // Payment queues already filter by amount maths — KPI buckets must use the same
         // basis (otherwise Partially paid can show Paid=7 from invoice settlements).
+        // Unfiltered list KPIs use invoice/tender settlement math, but never pluck the
+        // full ID set into memory — chunk settlements instead.
         $paymentBuckets = $paymentStatusFilter !== null && trim($paymentStatusFilter) !== ''
             ? $this->paymentBucketsFromAmounts((clone $base)->whereRaw($active))
-            : $this->paymentBucketsFromSettlements(
-                (clone $base)->whereRaw($active)->pluck('sales.id')->map(fn ($id) => (int) $id)->all(),
-            );
+            : $this->paymentBucketsFromSettlementsQuery((clone $base)->whereRaw($active));
 
         return [
             'total' => (int) ($row->total ?? 0),
@@ -458,6 +458,52 @@ class SaleController extends BaseResourceController
             'partial' => (int) ($row->partial ?? 0),
             'paid' => (int) ($row->paid ?? 0),
         ];
+    }
+
+    /**
+     * Settlement-based KPI buckets without loading every sale id into PHP at once.
+     *
+     * @return array{unpaid: int, partial: int, paid: int}
+     */
+    protected function paymentBucketsFromSettlementsQuery(Builder $activeQuery): array
+    {
+        $counts = ['unpaid' => 0, 'partial' => 0, 'paid' => 0];
+        $invoiceService = app(CustomerInvoiceService::class);
+        $batch = [];
+
+        $flush = function () use (&$batch, &$counts, $invoiceService): void {
+            if ($batch === []) {
+                return;
+            }
+            $settlements = $invoiceService->settlementsBySaleId($batch);
+            foreach ($batch as $saleId) {
+                $bucket = (string) (($settlements[$saleId] ?? [])['payment_status'] ?? SalePaymentStatus::UNPAID);
+                if ($bucket === SalePaymentStatus::PAID) {
+                    $counts['paid']++;
+                } elseif ($bucket === SalePaymentStatus::PARTIAL) {
+                    $counts['partial']++;
+                } else {
+                    $counts['unpaid']++;
+                }
+            }
+            $batch = [];
+        };
+
+        // Stream ids (joined list queries stay valid); settle in bounded batches.
+        $rows = (clone $activeQuery)->cloneWithout(['columns', 'orders'])
+            ->select('sales.id')
+            ->orderBy('sales.id')
+            ->cursor();
+
+        foreach ($rows as $row) {
+            $batch[] = (int) $row->id;
+            if (count($batch) >= 500) {
+                $flush();
+            }
+        }
+        $flush();
+
+        return $counts;
     }
 
     /**

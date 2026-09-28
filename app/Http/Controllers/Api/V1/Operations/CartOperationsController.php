@@ -1421,7 +1421,9 @@ class CartOperationsController extends Controller
         $salesSettings = $gate->moduleSettings('sales');
         $allowBelowStock = $this->organizationAllowsBelowStock($user->organization_id);
         $reserveOnCart = ($inventorySettings['reserve_stock_on_cart'] ?? true) && ! $skipStockReserve;
-        $expiresAt = $reserveOnCart ? $this->reservationExpiresAtForUser($user, $inventorySettings) : null;
+        $expiresAt = $reserveOnCart
+            ? $this->reservationExpiresAtForUser($user, $inventorySettings, (string) $cart->channel)
+            : null;
 
         $lineNo = (int) CartLine::where('cart_id', $cart->id)->max('line_no');
         $rows = [];
@@ -1508,6 +1510,9 @@ class CartOperationsController extends Controller
                 $expiresAt,
             );
         }
+        if ($reserveOnCart && $expiresAt !== null) {
+            $this->refreshCartReservationExpiries((int) $cart->id, $expiresAt);
+        }
     }
 
     /**
@@ -1554,7 +1559,9 @@ class CartOperationsController extends Controller
         $salesSettings = $gate->moduleSettings('sales');
         $allowBelowStock = $this->organizationAllowsBelowStock($user->organization_id);
         $reserveOnCart = ($inventorySettings['reserve_stock_on_cart'] ?? true) && ! $skipStockReserve;
-        $expiresAt = $reserveOnCart ? $this->reservationExpiresAtForUser($user, $inventorySettings) : null;
+        $expiresAt = $reserveOnCart
+            ? $this->reservationExpiresAtForUser($user, $inventorySettings, (string) $cart->channel)
+            : null;
         $discountService = app(\App\Services\Sales\DiscountApprovalService::class);
         $allowsManualDiscount = $discountService->allowsManualLineDiscount($salesSettings, $cart->order_source);
         $isOrderEdit = $discountService->cartIsOrderEditSession($cart);
@@ -1691,6 +1698,9 @@ class CartOperationsController extends Controller
                 $line->id,
                 $expiresAt,
             );
+        }
+        if ($reserveOnCart && $expiresAt !== null) {
+            $this->refreshCartReservationExpiries((int) $cart->id, $expiresAt);
         }
     }
 
@@ -1836,7 +1846,11 @@ class CartOperationsController extends Controller
                 $cart->id,
                 $allowBelowStock,
                 $row->id,
-                $this->reservationExpiresAtForUser($user, $settings),
+                $this->reservationExpiresAtForUser($user, $settings, (string) $cart->channel),
+            );
+            $this->refreshCartReservationExpiries(
+                (int) $cart->id,
+                $this->reservationExpiresAtForUser($user, $settings, (string) $cart->channel),
             );
         }
 
@@ -1956,7 +1970,7 @@ class CartOperationsController extends Controller
 
         if ($settings['reserve_stock_on_cart'] ?? true) {
             $allowBelowStock = $this->organizationAllowsBelowStock($user->organization_id);
-            $expiresAt = $this->reservationExpiresAtForUser($user, $settings);
+            $expiresAt = $this->reservationExpiresAtForUser($user, $settings, (string) $cart->channel);
             $branchId = (int) $cart->branch_id;
             $reserveQty = $qty;
             $reserveLocation = $location;
@@ -1995,6 +2009,7 @@ class CartOperationsController extends Controller
             } else {
                 DB::transaction($replaceReservation, 5);
             }
+            $this->refreshCartReservationExpiries($cartId, $expiresAt);
         }
 
         $grossForVat = max(0, $amount);

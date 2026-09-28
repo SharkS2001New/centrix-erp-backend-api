@@ -160,9 +160,13 @@ class CheckoutController extends Controller
             $timing['kra_ms'] = (int) round((microtime(true) - $kraStarted) * 1000);
         }
 
-        // Stock ledger, journals, SMS/email, trip assignment, and cache invalidation
-        // run after the HTTP response so POS can print immediately once KRA returns.
-        if ($deductStock || $runSideEffects) {
+        // Stock ledger, journals, SMS/email, trip assignment, cache invalidation,
+        // and deferred mobile AR/loyalty run after the HTTP response.
+        $fulfillmentMeta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
+        $needsFinalize = $deductStock
+            || $runSideEffects
+            || ! empty($fulfillmentMeta['mobile_deferred_ar']);
+        if ($needsFinalize) {
             FinalizeSaleAfterCheckoutJob::dispatch(
                 (int) $sale->id,
                 (int) $request->user()->id,
@@ -381,8 +385,12 @@ class CheckoutController extends Controller
                 'items_ms' => 0,
                 'stock_ms' => 0,
                 'payments_ms' => 0,
+                'append_ms' => 0,
+                'invoice_ms' => 0,
                 'line_count' => 0,
+                'deferred_ar' => false,
             ];
+            $isMobileChannel = (string) $cart->channel === 'mobile';
 
             // Hold the cart row for the whole checkout so concurrent DELETE /lines
             // waits instead of deadlocking on cart_lines / stock_reservations.
@@ -452,6 +460,7 @@ class CheckoutController extends Controller
             );
             $appendPriorPaid = 0.0;
             if ($appendPriorSale) {
+                $appendStarted = microtime(true);
                 app(PosOrderEditService::class)->fiscalVoidBeforeEdit($appendPriorSale, $user, $gate);
                 if ($appendPriorSale->stock_balanced) {
                     $this->reverseSaleStockDeductions($appendPriorSale, $user);
@@ -462,6 +471,7 @@ class CheckoutController extends Controller
                 $cart->held_order_num = (int) $appendPriorSale->order_num;
                 $input['order_num'] = (int) $appendPriorSale->order_num;
                 $appendPriorPaid = max(0, (float) ($appendPriorSale->amount_paid ?? 0));
+                $txTiming['append_ms'] = (int) round((microtime(true) - $appendStarted) * 1000);
             }
 
             $orderNum = $this->resolveCheckoutOrderNum($cart, $user, $input);
@@ -995,6 +1005,15 @@ class CheckoutController extends Controller
                 $fulfillmentMeta,
                 $input,
             );
+            // Mobile confirmation does not need AR/loyalty inline — SaleObserver + settle
+            // finish after the HTTP response via CheckoutFinalizationService.
+            if (
+                $isMobileChannel
+                && ! in_array($orderStatus, ['held', 'draft', 'pending_approval'], true)
+            ) {
+                $fulfillmentMeta['mobile_deferred_ar'] = true;
+                $txTiming['deferred_ar'] = true;
+            }
 
             $sale = $this->createSaleWithOrderNum($orderNum, [
                 'order_num' => $orderNum,
@@ -1127,6 +1146,9 @@ class CheckoutController extends Controller
 
             if ($pendingStockDeduct || $gate->shouldHoldStockOnCheckout($workflow, $orderStatus, (string) $cart->channel)) {
                 $stockStarted = microtime(true);
+                // Mobile: reclaim soft-expired cart holds before the release pass so
+                // field carts transfer instead of taking the slow re_reserve path.
+                $this->reviveSoftExpiredCartHoldsForCheckout((int) $cart->id, (string) $cart->channel);
                 // Drop timed-out cart holds before deciding transfer vs re-reserve.
                 $this->releaseExpiredReservations((int) $cart->id);
                 $hasActiveCartHolds = $this->activeStockReservationQuery()
@@ -1320,7 +1342,7 @@ class CheckoutController extends Controller
                 }
             }
 
-            if ($workflow->isTerminalStatus($orderStatus, (string) $cart->channel)) {
+            if ($workflow->isTerminalStatus($orderStatus, (string) $cart->channel) && ! $isMobileChannel) {
                 $this->awardLoyaltyPointsForCompletedSale(
                     (int) $sale->organization_id,
                     $customerNum ? (int) $customerNum : null,
@@ -1331,6 +1353,7 @@ class CheckoutController extends Controller
             }
 
             $invoice = null;
+            $invoiceStarted = microtime(true);
             if ($orderStatus === 'pending_approval') {
                 $discountApproval->attachCheckoutToSale(
                     $sale,
@@ -1338,17 +1361,18 @@ class CheckoutController extends Controller
                     $user,
                     isset($input['discount_approval_reason']) ? (string) $input['discount_approval_reason'] : null,
                 );
-            } elseif (! in_array($orderStatus, ['held', 'draft'], true)) {
+            } elseif (! in_array($orderStatus, ['held', 'draft'], true) && ! $isMobileChannel) {
                 $invoiceService = app(CustomerInvoiceService::class);
                 $invoice = $invoiceService->ensureForSale($sale, $user, $total, $amountPaid);
                 if ($invoice) {
                     $invoice = $invoiceService->settleSaleTendersOntoInvoice(
                         $invoice,
-                        $sale->fresh() ?? $sale,
+                        $sale,
                         $user,
                     );
                 }
             }
+            $txTiming['invoice_ms'] = (int) round((microtime(true) - $invoiceStarted) * 1000);
 
             // Link cart-applied STK/till payments to this sale so reconciliation
             // shows the M-Pesa transaction against the sold order number.
@@ -1382,9 +1406,10 @@ class CheckoutController extends Controller
                 $sale->update(['order_change' => $orderChange]);
             }
 
-            $sale = (string) $cart->channel === 'mobile'
-                ? $sale->fresh()
-                : $sale->fresh(['items.product.unit', 'payments.paymentMethod']);
+            // Mobile reply is a slim confirmation — skip heavy eager reloads.
+            if (! $isMobileChannel) {
+                $sale = $sale->fresh(['items.product.unit', 'payments.paymentMethod']) ?? $sale;
+            }
 
             // Held/draft parks are unfinished — do not fiscalize, invoice, journal, or notify.
             $isParkedOrder = in_array($orderStatus, ['held', 'draft'], true);
