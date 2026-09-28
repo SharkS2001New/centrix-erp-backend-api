@@ -84,7 +84,7 @@ class AiSystemContextBuilder
             'entity_schemas' => $this->entitySchemas->summaryForContext($contextUser),
             'platform_knowledge' => $this->knowledge->confirmedForContext(
                 30,
-                $scope['id'] ?? null,
+                $this->knowledge->normalizeKnowledgeWorkspaceId($scope['id'] ?? null),
                 $message,
             ),
         ];
@@ -348,7 +348,11 @@ class AiSystemContextBuilder
             'module_catalog' => $modules,
             'navigation' => array_slice($navigationFlat, 0, $navLimit),
             'workflows' => array_slice($workflows, 0, $workflowLimit),
-            'platform_knowledge' => $this->knowledge->confirmedForContext($knowledgeLimit, $workspaceId, $message),
+            'platform_knowledge' => $this->knowledge->confirmedForContext(
+                $knowledgeLimit,
+                $this->knowledge->normalizeKnowledgeWorkspaceId($workspaceId),
+                $message,
+            ),
             'how_to_use_centrix' => $fastMode ? [] : config('ai_knowledge.how_to_guide', []),
         ];
     }

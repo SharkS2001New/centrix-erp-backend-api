@@ -248,9 +248,12 @@ class AiCreateLpoParamMerger
                         .' × '.($line['ordered_qty'] ?? '?');
                 }
                 $summary = ($supplier !== '' ? $supplier : 'Supplier')
-                    .($lineBits !== [] ? ' - '.implode(', ', $lineBits) : '');
+                    .($lineBits !== [] ? ' — '.implode(', ', $lineBits) : '');
 
-                return 'LPO draft ready: '.$summary.'. Say confirm to create it, or add more products.';
+                return 'LPO draft ready: '.$summary.'. Say confirm to create it, or tell me more products.';
+            }
+            if (in_array('supplier', $missing, true) && in_array('line items', $missing, true)) {
+                return 'Sure — I can create an LPO. Which supplier should I use?';
             }
             if (in_array('supplier', $missing, true)) {
                 return $supplier !== ''
@@ -258,7 +261,23 @@ class AiCreateLpoParamMerger
                     : 'Which supplier is this LPO for?';
             }
 
-            return 'Got supplier '.($supplier !== '' ? $supplier : '').'. Which products and quantities? For example: Kamande x 10.';
+            return 'Got supplier '.trim($supplier).'. Which products and quantities? For example: Sugar x 10.';
+        }
+
+        // First turn ("Help me create an LPO") — do not show an empty draft checklist.
+        if (
+            in_array('supplier', $missing, true)
+            && in_array('line items', $missing, true)
+            && $supplier === ''
+            && $productLines === []
+            && empty($params['due_date'])
+            && empty($params['order_num'])
+            && (int) ($params['sale_id'] ?? 0) <= 0
+        ) {
+            return "Sure — I can create an LPO.\n\n"
+                ."Share the **supplier** and **line items** (product × qty), or a sales order to copy from.\n"
+                ."Example: “Supplier Bidco, Sugar x 10, Cooking Oil x 5”.\n\n"
+                .'Or reply **show form** if you prefer a form.';
         }
 
         $lines = ['Updated draft LPO — here is what I have:'];

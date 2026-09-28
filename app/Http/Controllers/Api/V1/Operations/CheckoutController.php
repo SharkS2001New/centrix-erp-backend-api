@@ -470,7 +470,12 @@ class CheckoutController extends Controller
                 $cart->superseded_sale_id = (int) $appendPriorSale->id;
                 $cart->held_order_num = (int) $appendPriorSale->order_num;
                 $input['order_num'] = (int) $appendPriorSale->order_num;
-                $appendPriorPaid = max(0, (float) ($appendPriorSale->amount_paid ?? 0));
+                // Trust real sale_payments only — stale sales.amount_paid without payment
+                // rows made save-only same-day appends print phantom Cash on the receipt.
+                $appendPriorPaid = round(
+                    (float) $appendPriorSale->payments()->sum('amount'),
+                    2,
+                );
                 $txTiming['append_ms'] = (int) round((microtime(true) - $appendStarted) * 1000);
             }
 
@@ -1399,6 +1404,23 @@ class CheckoutController extends Controller
             $cart->delete();
 
             $this->syncSaleTenderColumnsFromPayments($sale);
+
+            // Save-only / unpaid mobile: paid truth is sale_payments only. Clear phantom
+            // amount_paid / tender columns so thermal receipts show Cash 0 and full balance due.
+            if ($isSaveOnly) {
+                $paidFromPayments = round((float) $sale->payments()->sum('amount'), 2);
+                $sale->update([
+                    'amount_paid' => $paidFromPayments,
+                    'payment_status' => $this->derivePaymentStatus((float) $sale->order_total, $paidFromPayments),
+                    'payment_method_code' => $paidFromPayments > 0.009
+                        ? $sale->payment_method_code
+                        : null,
+                ]);
+                if ($paidFromPayments <= 0.009) {
+                    SalePaymentColumnMapper::resetTenderColumns($sale->fresh() ?? $sale);
+                }
+            }
+
             $txTiming['payments_ms'] = (int) round((microtime(true) - $paymentsStarted) * 1000);
 
             $orderChange = round((float) ($input['order_change'] ?? 0), 2);
@@ -2658,6 +2680,9 @@ class CheckoutController extends Controller
         }
 
         if ($payments->isEmpty()) {
+            // No payment rows — zero tender columns so receipts never show stale Cash.
+            SalePaymentColumnMapper::resetTenderColumns($sale);
+
             return;
         }
 

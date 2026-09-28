@@ -156,7 +156,9 @@ class AiAssistantService
                 && ! $this->actionExecutor->isConfirmation($message)
                 && ! $this->intentResolver->isCancelIntent($message)
                 && (
-                    ! $this->intentResolver->isDataQuestion($message)
+                    // Talk must stay in collect mode and ask the next missing field.
+                    $voiceMode
+                    || ! $this->intentResolver->isDataQuestion($message)
                     || $this->lpoParamMerger->looksLikeFieldFollowUp($message)
                     || $mergedLpo['changed']
                 )

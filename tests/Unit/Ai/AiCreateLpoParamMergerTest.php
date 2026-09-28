@@ -144,7 +144,9 @@ class AiCreateLpoParamMergerTest extends TestCase
             }
             $reply = $merger->statusReply($result['pending'], $result['notes']);
             $this->assertStringNotContainsString('Could not match supplier', $reply, $message);
-            $this->assertMatchesRegularExpression('/supplier/i', $reply);
+            $this->assertStringNotContainsString('Updated draft LPO', $reply, $message);
+            $this->assertStringNotContainsString('still needed', $reply, $message);
+            $this->assertMatchesRegularExpression('/Sure|supplier/i', $reply, $message);
         }
     }
 

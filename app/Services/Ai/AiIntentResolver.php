@@ -326,6 +326,9 @@ class AiIntentResolver
 
     protected function matchesLpoCreate(string $text): bool
     {
+        // Spoken STT often writes "elpo" / "yelpo" / "L P O".
+        $text = preg_replace('/\b(el\s*p\s*o|elpo|yelpo|l\s*p\s*o|l\.?\s*p\.?\s*o\.?)\b/i', 'lpo', $text) ?? $text;
+
         if (preg_match('/\b(create|draft|make|raise|generate|issue|new|save|add|prepare)\b.{0,50}\b(lpo|purchase\s+orders?|po)\b/', $text)) {
             return true;
         }

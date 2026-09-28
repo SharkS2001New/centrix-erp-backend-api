@@ -156,6 +156,11 @@ class AiWorkspaceScope
     /** @param  list<array<string, mixed>>  $sections */
     public function filterNavigation(array $sections, array $scope): array
     {
+        // Manager app is org-wide — keep full ERP navigation for consistent guidance.
+        if (($scope['id'] ?? '') === 'manager') {
+            return $sections;
+        }
+
         $allowedIds = $scope['nav_section_ids'] ?? [];
         $prefixes = $scope['nav_path_prefixes'] ?? [];
         $includeReports = $scope['report_include_paths'] ?? [];

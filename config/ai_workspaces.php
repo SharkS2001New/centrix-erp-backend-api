@@ -200,8 +200,9 @@ return [
     'manager' => [
         'label' => 'Centrix Manager',
         'description' => 'Organization-wide manager assistant across sales, stock, purchasing, distribution, accounting, HR, and admin.',
+        // Empty section/prefix lists = do not strip ERP nav (Manager is cross-module).
         'nav_section_ids' => [],
-        'nav_path_prefixes' => ['/manager'],
+        'nav_path_prefixes' => [],
         'module_catalog_keys' => [
             'catalogue', 'sales', 'inventory', 'purchasing', 'reports', 'distribution',
             'fulfillment', 'accounting', 'payments', 'hr_payroll', 'admin', 'hospitality',

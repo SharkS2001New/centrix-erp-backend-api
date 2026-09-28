@@ -541,13 +541,30 @@ class AiKnowledgeService
     {
         $query = AiKnowledgeEntry::query()->whereNull('organization_id');
 
-        if ($workspaceId) {
-            $query->where(function ($q) use ($workspaceId) {
-                $q->whereNull('workspace_id')->orWhere('workspace_id', $workspaceId);
+        // Centrix Manager is org-wide — use the same platform training as ERP
+        // Assistant (all confirmed notes), not only null/`manager`-tagged rows.
+        $scope = $this->normalizeKnowledgeWorkspaceId($workspaceId);
+        if ($scope) {
+            $query->where(function ($q) use ($scope) {
+                $q->whereNull('workspace_id')->orWhere('workspace_id', $scope);
             });
         }
 
         return $query;
+    }
+
+    /**
+     * Workspace id used when filtering platform training for an AI context.
+     * Manager app answers across modules, so it is treated as unscoped.
+     */
+    public function normalizeKnowledgeWorkspaceId(?string $workspaceId): ?string
+    {
+        $id = strtolower(trim((string) $workspaceId));
+        if ($id === '' || $id === 'manager') {
+            return null;
+        }
+
+        return $id;
     }
 
     /**

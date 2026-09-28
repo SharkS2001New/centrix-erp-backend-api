@@ -86,4 +86,55 @@ class AiKnowledgeRelevanceTest extends TestCase
         $this->assertDatabaseMissing('ai_knowledge_entries', ['id' => $dup['id']]);
         $this->assertStringContainsString('/inventory/receipts', (string) $merged['content']);
     }
+
+    public function test_manager_scope_uses_same_platform_training_as_unscoped(): void
+    {
+        $user = User::where('username', 'admin')->firstOrFail();
+        $service = app(AiKnowledgeService::class);
+
+        $service->teachGlobal(
+            $user,
+            'Q: How do I correct a wrongly paid invoice?',
+            'A: Look up the order with get_order_details, then void the wrong payment and re-collect.',
+            '/sales/orders',
+            'backoffice',
+        );
+        $service->teachGlobal(
+            $user,
+            'Q: How do I run payroll?',
+            'A: Open /hr/payroll and process approved overtime only.',
+            '/hr/payroll',
+            'hr',
+        );
+
+        $this->assertNull($service->normalizeKnowledgeWorkspaceId('manager'));
+        $this->assertSame('backoffice', $service->normalizeKnowledgeWorkspaceId('backoffice'));
+
+        $managerHits = $service->searchRelevant('wrongly paid invoice S1537', 10, 'manager');
+        $unscopedHits = $service->searchRelevant('wrongly paid invoice S1537', 10, null);
+        $backofficeOnly = $service->searchRelevant('wrongly paid invoice S1537', 10, 'backoffice');
+
+        $this->assertNotEmpty($managerHits);
+        $this->assertStringContainsStringIgnoringCase(
+            'invoice',
+            (string) ($managerHits[0]['topic'].' '.$managerHits[0]['content']),
+        );
+        $this->assertSame(
+            collect($unscopedHits)->pluck('id')->sort()->values()->all(),
+            collect($managerHits)->pluck('id')->sort()->values()->all(),
+        );
+        $this->assertTrue(
+            collect($backofficeOnly)->contains(fn ($row) => str_contains(strtolower((string) ($row['topic'] ?? '')), 'invoice')),
+        );
+
+        // Manager must not drop HR-tagged training the way a backoffice-only filter would.
+        $payrollHits = $service->searchRelevant('how do I run payroll?', 10, 'manager');
+        $this->assertTrue(
+            collect($payrollHits)->contains(fn ($row) => str_contains(strtolower((string) ($row['topic'] ?? '')), 'payroll')),
+        );
+        $this->assertFalse(
+            collect($service->searchRelevant('how do I run payroll?', 10, 'backoffice'))
+                ->contains(fn ($row) => str_contains(strtolower((string) ($row['topic'] ?? '')), 'payroll')),
+        );
+    }
 }
