@@ -42,6 +42,7 @@ class ReportBrandingTest extends TestCase
             'module_settings' => [
                 'general' => [
                     'show_organization_on_documents' => true,
+                    'show_watermark_on_documents' => true,
                     'document_header_display' => 'logo_and_name',
                 ],
             ],
@@ -71,6 +72,25 @@ class ReportBrandingTest extends TestCase
         $this->assertStringContainsString('Moonlight Traders', $html);
         $this->assertStringContainsString('class="watermark"', $html);
         $this->assertStringContainsString('Sales Summary', $html);
+        $this->assertStringNotContainsString('watermark-logo', $html);
+    }
+
+    public function test_watermark_omitted_when_org_setting_disabled(): void
+    {
+        $organization = new Organization([
+            'org_name' => 'Quiet Co',
+            'module_settings' => [
+                'general' => [
+                    'show_organization_on_documents' => true,
+                    'show_watermark_on_documents' => false,
+                ],
+            ],
+        ]);
+        $organization->id = 2;
+
+        $branding = (new ReportBrandingService)->forOrganization($organization);
+        $this->assertFalse($branding['show_watermark']);
+        $this->assertSame('', (new ReportBrandingService)->buildWatermarkHtml($branding));
     }
 
     public function test_build_print_html_paginates_named_sections(): void

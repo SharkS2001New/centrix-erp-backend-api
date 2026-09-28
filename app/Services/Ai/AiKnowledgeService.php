@@ -179,6 +179,8 @@ class AiKnowledgeService
         $seeds = config('ai_training_foundation', []);
         $created = [];
         $skipped = 0;
+        $seenTopics = [];
+        $validSeeds = 0;
 
         foreach ($seeds as $seed) {
             if (! is_array($seed)) {
@@ -189,6 +191,14 @@ class AiKnowledgeService
             if ($topic === '' || $content === '') {
                 continue;
             }
+            $validSeeds++;
+
+            $topicKey = mb_strtolower($topic);
+            if (isset($seenTopics[$topicKey])) {
+                $skipped++;
+                continue;
+            }
+            $seenTopics[$topicKey] = true;
 
             $exists = AiKnowledgeEntry::query()
                 ->whereNull('organization_id')
@@ -212,6 +222,8 @@ class AiKnowledgeService
         return [
             'created' => count($created),
             'skipped' => $skipped,
+            'total_in_config' => $validSeeds,
+            'unique_topics' => count($seenTopics),
             'entries' => $created,
         ];
     }
@@ -224,7 +236,7 @@ class AiKnowledgeService
             return null;
         }
 
-        $entry->update([
+        $payload = [
             'topic' => $data['topic'] ?? $entry->topic,
             'content' => $data['content'] ?? $entry->content,
             'path' => array_key_exists('path', $data) ? $data['path'] : $entry->path,
@@ -232,7 +244,14 @@ class AiKnowledgeService
             'confirmed' => true,
             'confirmed_at' => $entry->confirmed_at ?? now(),
             'confirmed_by' => $entry->confirmed_by ?? $user->id,
-        ]);
+        ];
+
+        // Once an admin edits a seeded note, treat it as a platform note so re-sync won't imply it's untouched.
+        if (($entry->source ?? '') === 'foundation_seed') {
+            $payload['source'] = 'platform_training';
+        }
+
+        $entry->update($payload);
 
         return $this->formatEntry($entry->fresh());
     }

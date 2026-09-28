@@ -938,6 +938,7 @@ return [
             'print_footer_trip_chart' => '',
             'print_footer_payroll_receipt' => '',
             'show_organization_on_documents' => true,
+            'show_watermark_on_documents' => false,
             'document_header_display' => 'auto',
             'print_font_family' => 'times',
             'print_font_scale' => 'standard',

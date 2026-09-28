@@ -77,12 +77,37 @@ class AiCreateLpoSentenceExtractTest extends TestCase
             ],
         ], [], true);
         $this->assertStringContainsString('product', mb_strtolower($askLines));
+        $this->assertStringContainsString('nothing saved', mb_strtolower($askLines));
+        $this->assertStringNotContainsString('draft ready', mb_strtolower($askLines));
+
+        $askLinesChat = $merger->statusReply([
+            'type' => 'create_lpo',
+            'params' => [
+                'supplier_id' => 12,
+                'supplier_name' => 'Bidco',
+            ],
+        ], [], false);
+        $this->assertStringContainsString('product', mb_strtolower($askLinesChat));
+        $this->assertStringContainsString('nothing is saved yet', mb_strtolower($askLinesChat));
+        $this->assertStringNotContainsString('Updated draft LPO', $askLinesChat);
+        $askExtras = $merger->statusReply([
+            'type' => 'create_lpo',
+            'params' => [
+                'supplier_id' => 12,
+                'supplier_name' => 'Bidco',
+                'lines' => [
+                    ['product_code' => 'KAM', 'product_name' => 'Kamande', 'ordered_qty' => 10],
+                ],
+            ],
+        ], [], true);
+        $this->assertStringContainsString('due date', mb_strtolower($askExtras));
 
         $ready = $merger->statusReply([
             'type' => 'create_lpo',
             'params' => [
                 'supplier_id' => 12,
                 'supplier_name' => 'Bidco',
+                'extras_prompted' => true,
                 'lines' => [
                     ['product_code' => 'KAM', 'product_name' => 'Kamande', 'ordered_qty' => 10],
                 ],

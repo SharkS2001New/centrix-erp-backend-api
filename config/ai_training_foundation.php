@@ -2,8 +2,9 @@
 
 /**
  * Curated platform training notes that teach Centrix product mechanics.
- * Installed via Platform → AI training → "Install foundation notes".
- * Topics already present are skipped (safe to re-run).
+ * Synced into Platform → AI training when an admin opens that page (or clicks
+ * "Sync foundation notes"). Topics already present are skipped (safe to re-run).
+ * After install, every note appears in the Knowledge list and can be edited there.
  */
 return array_merge([
     [

@@ -50,13 +50,16 @@ class ReportBrandingService
         $hasLogo = $logoDataUri !== null;
         $preference = (string) ($general['document_header_display'] ?? 'auto');
         $showHeader = (bool) ($general['show_organization_on_documents'] ?? true);
+        $showWatermark = (bool) ($general['show_watermark_on_documents'] ?? false);
 
         return [
             'show_header' => $showHeader,
+            'show_watermark' => $showWatermark,
             'display' => $this->resolveDisplay($preference, $hasLogo),
             'organization_name' => $organizationName,
             'logo_data_uri' => $logoDataUri,
-            'watermark_text' => $organizationName !== '' ? $organizationName : 'Centrix ERP',
+            // Watermark text is always the company name (never supplier / customer).
+            'watermark_text' => $organizationName,
             'document_footer_text' => trim((string) ($general['document_footer_text'] ?? '')),
         ];
     }
@@ -101,24 +104,31 @@ class ReportBrandingService
     }
 
     /**
+     * Company-name watermark only — light enough that DomPDF/Manager downloads stay readable.
+     * Logo watermarks are omitted on PDF (DomPDF often ignores low opacity and paints logos opaque).
+     *
      * @param  array<string, mixed>  $branding
      */
     public function buildWatermarkHtml(array $branding): string
     {
+        if (! ($branding['show_watermark'] ?? false)) {
+            return '';
+        }
+
         $text = trim((string) ($branding['watermark_text'] ?? ''));
+        if ($text === '') {
+            $text = trim((string) ($branding['organization_name'] ?? ''));
+        }
         if ($text === '') {
             return '';
         }
 
         $escape = static fn ($value) => htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-        $logo = is_string($branding['logo_data_uri'] ?? null) ? $branding['logo_data_uri'] : null;
+        $len = max(mb_strlen($text), 8);
 
-        $html = '<div class="watermark-text">'.$escape($text).'</div>';
-        if ($logo !== null) {
-            $html .= '<img class="watermark-logo" src="'.$escape($logo).'" alt="">';
-        }
-
-        return '<div class="watermark">'.$html.'</div>';
+        return '<div class="watermark"><div class="watermark-text" style="--wm-len:'.$len.'">'
+            .$escape($text)
+            .'</div></div>';
     }
 
     /** @return array<string, string> */
@@ -140,6 +150,7 @@ th { background: #f8fafc; }
 td.num, th.num { text-align: right; }
 tfoot td { font-weight: 600; background: #f8fafc; }
 CSS,
+            // DomPDF often ignores parent opacity / rgba — keep text light via solid tint + modest size.
             'watermark' => <<<'CSS'
 .watermark { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
 .watermark-text {
@@ -147,21 +158,12 @@ CSS,
   top: 48%;
   left: 50%;
   transform: translate(-50%, -50%) rotate(-32deg);
-  font-size: 64px;
+  font-size: 36px;
   font-weight: 700;
   letter-spacing: 0.04em;
-  color: rgba(15, 23, 42, 0.06);
+  color: #dbe4f0;
   white-space: nowrap;
-}
-.watermark-logo {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  max-width: 70%;
-  max-height: 70%;
-  opacity: 0.05;
-  object-fit: contain;
+  line-height: 1;
 }
 CSS,
         ];
@@ -193,10 +195,11 @@ CSS,
     {
         return [
             'show_header' => false,
+            'show_watermark' => false,
             'display' => 'name',
             'organization_name' => '',
             'logo_data_uri' => null,
-            'watermark_text' => 'Centrix ERP',
+            'watermark_text' => '',
             'document_footer_text' => '',
         ];
     }

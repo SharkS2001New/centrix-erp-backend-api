@@ -49,4 +49,18 @@ class AiLpoWorkflowIntentTest extends TestCase
         $action = $this->resolver->inferCreateAction('Create an LPO for supplier ABC', [], null);
         $this->assertSame('create_lpo', $action['type'] ?? null);
     }
+
+    public function test_delete_lpo_inferred(): void
+    {
+        $action = $this->resolver->inferCreateAction('Delete LPO 88', [], null);
+        $this->assertSame('delete_lpo', $action['type'] ?? null);
+        $this->assertSame(88, $action['params']['lpo_no'] ?? null);
+
+        $cancel = $this->resolver->inferCreateAction('Cancel purchase order 15', [], null);
+        $this->assertSame('delete_lpo', $cancel['type'] ?? null);
+        $this->assertSame(15, $cancel['params']['lpo_no'] ?? null);
+
+        $this->assertFalse($this->resolver->isCancelIntent('Cancel LPO 15'));
+        $this->assertTrue($this->resolver->isCancelIntent('cancel'));
+    }
 }

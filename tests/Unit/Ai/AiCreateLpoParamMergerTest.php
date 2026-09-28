@@ -166,6 +166,12 @@ class AiCreateLpoParamMergerTest extends TestCase
 
         $this->assertTrue($result['changed']);
         $this->assertSame((int) $supplier->id, (int) ($result['pending']['params']['supplier_id'] ?? 0));
+
+        $reply = $merger->statusReply($result['pending'], $result['notes']);
+        $this->assertStringNotContainsString('Updated draft LPO', $reply);
+        $this->assertStringContainsString('nothing is saved yet', mb_strtolower($reply));
+        $this->assertMatchesRegularExpression('/product/i', $reply);
+        $this->assertFalse(app(AiActionExecutor::class)->isReadyToConfirm($result['pending']));
     }
 
     public function test_resolves_supplier_by_name_on_create(): void

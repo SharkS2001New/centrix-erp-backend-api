@@ -69,6 +69,11 @@ class AiIntentResolver
             return false;
         }
 
+        // “Cancel LPO 42” / “delete purchase order 12” = document action, not abort draft.
+        if ($this->matchesDeleteLpo($text)) {
+            return false;
+        }
+
         return (bool) preg_match(
             '/^(cancel|never\s*mind|forget\s+(?:that|it)|stop|discard|ignore)\b/i',
             $text,
@@ -392,6 +397,16 @@ class AiIntentResolver
         $lpoNo = $this->extractLpoNumber($message, $history);
         $params = array_filter(['lpo_no' => $lpoNo]);
 
+        if ($this->matchesDeleteLpo($text)) {
+            return [
+                'type' => 'delete_lpo',
+                'summary' => $lpoNo
+                    ? "Delete / cancel purchase order (LPO) {$lpoNo}"
+                    : 'Delete / cancel a purchase order (LPO)',
+                'params' => $params,
+            ];
+        }
+
         if (preg_match('/\b(submit|send)\b.{0,40}\b(for\s+)?approv/i', $text)
             || preg_match('/\bapprov(?:al|e)\s+request\b/i', $text)) {
             return [
@@ -437,6 +452,22 @@ class AiIntentResolver
         }
 
         return null;
+    }
+
+    /** Delete / cancel / void an existing LPO document (not aborting a chat draft). */
+    protected function matchesDeleteLpo(string $text): bool
+    {
+        if ($this->matchesLpoCreate($text)) {
+            return false;
+        }
+
+        return (bool) preg_match(
+            '/\b(delete|cancel|remove|void|discard|withdraw)\b.{0,50}\b(lpo|purchase\s+orders?|po)\b/i',
+            $text,
+        ) || (bool) preg_match(
+            '/\b(lpo|purchase\s+orders?|po)\b.{0,40}\b(delete|cancel|remove|void|discard|withdraw)\b/i',
+            $text,
+        );
     }
 
     /**
@@ -540,7 +571,9 @@ class AiIntentResolver
         if (preg_match('/\b(want|need|help|start|begin)\b.{0,40}\b(an?\s+|the\s+)?(lpo|purchase\s+orders?)\b/', $text)) {
             return true;
         }
-        if (preg_match('/\b(lpo|purchase\s+order)\b.{0,30}\b(for|from|with)\b/', $text)) {
+        // "LPO for Bidco" / "purchase order from Kamande" — not "LPO for approval" / "submit for approval".
+        if (preg_match('/\b(lpo|purchase\s+order)\b.{0,30}\b(for|from|with)\b/', $text)
+            && ! preg_match('/\b(for\s+)?approv|submit|delete|cancel|void|receive|mark\s+sent|sent\s+to\b/i', $text)) {
             return true;
         }
 

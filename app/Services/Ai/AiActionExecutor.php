@@ -59,6 +59,7 @@ class AiActionExecutor
             'update_product' => $this->updateProduct($user, $params),
             'create_supplier' => $this->createSupplier($user, $params),
             'create_lpo' => $this->createLpo($user, $params),
+            'delete_lpo' => $this->deleteLpo($user, $params),
             'submit_lpo_for_approval' => $this->lpoWorkflow($user, $params, 'submit_for_approval'),
             'approve_lpo' => $this->lpoWorkflow($user, $params, 'approve'),
             'mark_lpo_sent' => $this->lpoWorkflow($user, $params, 'mark_sent'),
@@ -629,6 +630,53 @@ class AiActionExecutor
                     'Reply “submit LPO for approval” when ready for manager approval.',
                     'After approval, mark as sent, then receive goods when they arrive.',
                 ],
+            ],
+        ];
+    }
+
+    /**
+     * Soft-delete / cancel an LPO (draft or pre-receive; admins may delete later statuses).
+     *
+     * @param  array<string, mixed>  $params
+     */
+    protected function deleteLpo(User $user, array $params): array
+    {
+        $this->assertModule($user, 'customers_suppliers');
+        $this->assertPermission($user, 'purchasing.lpo.delete');
+
+        $module = app(LpoModuleService::class);
+        $lpoNo = (int) ($params['lpo_no'] ?? $params['lpo'] ?? 0);
+        if ($lpoNo <= 0) {
+            throw ValidationException::withMessages([
+                'lpo_no' => ['Provide the LPO number to delete or cancel.'],
+            ]);
+        }
+
+        $lpo = $module->findForOrganization($lpoNo, (int) $user->organization_id);
+        $statusCode = (int) ($lpo->lpo_status_code ?? 0);
+
+        if (! $module->canDeleteLpo($user, $statusCode)) {
+            throw ValidationException::withMessages([
+                'lpo' => ['Only draft or pre-receive purchase orders can be deleted. Ask an administrator to remove sent or received orders.'],
+            ]);
+        }
+
+        $payload = ['deleted_at' => now()];
+        if ($user->id && \Illuminate\Support\Facades\Schema::hasColumn($lpo->getTable(), 'deleted_by')) {
+            $payload['deleted_by'] = $user->id;
+        }
+        $lpo->update($payload);
+
+        $label = $lpo->lpo_seq ? "PO {$lpo->lpo_seq}" : "LPO {$lpo->lpo_no}";
+
+        return [
+            'success' => true,
+            'message' => "{$label} (LPO {$lpo->lpo_no}) has been deleted / cancelled.",
+            'result' => [
+                'lpo_no' => (int) $lpo->lpo_no,
+                'lpo_seq' => $lpo->lpo_seq !== null ? (int) $lpo->lpo_seq : null,
+                'deleted' => true,
+                'path' => '/lpo',
             ],
         ];
     }
@@ -1264,6 +1312,7 @@ class AiActionExecutor
         return str_starts_with($type, 'create_')
             || str_starts_with($type, 'update_')
             || $type === 'record_customer_payment'
+            || $type === 'delete_lpo'
             || in_array($type, [
                 'submit_lpo_for_approval',
                 'approve_lpo',
@@ -1280,6 +1329,7 @@ class AiActionExecutor
             'approve_lpo',
             'mark_lpo_sent',
             'receive_lpo_goods',
+            'delete_lpo',
         ];
     }
 
@@ -1330,7 +1380,7 @@ class AiActionExecutor
             'record_customer_payment' => $this->paymentParamsReady($params),
             'create_report_template' => trim((string) ($params['name'] ?? '')) !== ''
                 && trim((string) ($params['instruction'] ?? $params['description'] ?? '')) !== '',
-            'submit_lpo_for_approval', 'approve_lpo', 'mark_lpo_sent', 'receive_lpo_goods' => trim((string) ($params['lpo_no'] ?? '')) !== '',
+            'submit_lpo_for_approval', 'approve_lpo', 'mark_lpo_sent', 'receive_lpo_goods', 'delete_lpo' => (int) ($params['lpo_no'] ?? 0) > 0,
             default => false,
         };
     }
@@ -1393,6 +1443,7 @@ class AiActionExecutor
             'record_customer_payment' => 'Not ready to save yet — share the **order** and **payment amount**. When those are set, I will ask you to confirm.',
             'create_report_template' => 'Not ready to save yet — share the **report name** and what it should show. When those are set, I will ask you to confirm.',
             'submit_lpo_for_approval', 'approve_lpo', 'mark_lpo_sent', 'receive_lpo_goods' => 'Share the **LPO number** first, then I will ask you to confirm.',
+            'delete_lpo' => 'Share the **LPO number** to delete or cancel (e.g. “delete LPO 42”), then reply **confirm**.',
             default => 'Share the required details first. I will ask you to confirm only when everything is ready to save.',
         };
     }

@@ -151,12 +151,9 @@ class LpoDocumentPdfService
             $rows = '<tr><td colspan="7">No line items</td></tr>';
         }
 
-        // ERP watermark uses supplier name; fall back to org branding.
-        $wmBranding = $branding;
-        if (trim($supplierName) !== '' && strcasecmp($supplierName, 'Supplier') !== 0) {
-            $wmBranding['watermark_text'] = $supplierName;
-        }
-        $watermarkHtml = $this->branding->buildWatermarkHtml($wmBranding);
+        // Watermark is company name only when org has show_watermark_on_documents enabled.
+        $watermarkHtml = $this->branding->buildWatermarkHtml($branding);
+        $wmStyles = $this->branding->documentStyles()['watermark'] ?? '';
 
         $titleBand = $this->themes->titleBandHtml($theme, 'LOCAL PURCHASE ORDER', $po);
         $proHeader = $this->buildProfessionalHeaderHtml($branding, $organization, $orgPhones, $e);
@@ -211,9 +208,7 @@ class LpoDocumentPdfService
         return '<!DOCTYPE html><html><head><meta charset="utf-8"><style>
             body{color:#0f172a;font-size:10.5px;}
             '.$themeCss.'
-            .watermark{position:fixed;top:38%;left:10%;width:80%;text-align:center;opacity:0.07;z-index:0;}
-            .watermark-text{font-size:42px;font-weight:700;transform:rotate(-28deg);}
-            .watermark-logo{max-width:220px;opacity:0.5;margin-top:8px;}
+            '.$wmStyles.'
             h1.doc-title{font-size:15px;margin:4px 0 2px;letter-spacing:0.04em;}
             .po-no{font-size:12px;font-weight:700;margin:0 0 8px;}
             table.items{width:100%;border-collapse:collapse;margin-top:6px;}

@@ -55,6 +55,14 @@ class AiCreateLpoParamMerger
         $notes = [];
         $changed = false;
 
+        // "skip" / "none" / "no due date" while collecting optional extras.
+        if ($this->looksLikeSkipExtras(trim($message))) {
+            $params['extras_prompted'] = true;
+            $params['extras_skipped'] = true;
+            $changed = true;
+            $notes[] = 'Optional details skipped';
+        }
+
         foreach (['due_date', 'delivery_address', 'reference_number', 'terms', 'instructions', 'order_num'] as $key) {
             if (! array_key_exists($key, $extracted)) {
                 continue;
@@ -158,12 +166,65 @@ class AiCreateLpoParamMerger
         return ['pending' => $pending, 'changed' => $changed, 'notes' => $notes];
     }
 
+    /** @param  array<string, mixed>  $pending */
+    public function shouldPromptExtras(array $pending): bool
+    {
+        $params = is_array($pending['params'] ?? null) ? $pending['params'] : [];
+
+        return $this->requiredLpoFieldsReady($params)
+            && ! $this->hasOptionalExtras($params)
+            && empty($params['extras_prompted']);
+    }
+
+    /** @param  array<string, mixed>  $params */
+    public function requiredLpoFieldsReady(array $params): bool
+    {
+        if ((int) ($params['supplier_id'] ?? 0) <= 0) {
+            return false;
+        }
+        $lines = is_array($params['lines'] ?? null) ? $params['lines'] : [];
+        if ($lines !== []) {
+            return true;
+        }
+
+        return trim((string) ($params['order_num'] ?? '')) !== ''
+            || (int) ($params['sale_id'] ?? 0) > 0;
+    }
+
+    /** @param  array<string, mixed>  $params */
+    public function hasOptionalExtras(array $params): bool
+    {
+        return ! empty($params['due_date'])
+            || ! empty($params['terms'])
+            || ! empty($params['delivery_address'])
+            || ! empty($params['reference_number'])
+            || ! empty($params['instructions'])
+            || ! empty($params['extras_skipped']);
+    }
+
+    protected function looksLikeSkipExtras(string $message): bool
+    {
+        $text = mb_strtolower(trim($message));
+        if ($text === '') {
+            return false;
+        }
+
+        return (bool) preg_match(
+            '/^(skip|none|n\/?a|no\s*(thanks)?|no\s+extras?|no\s+due\s*date|no\s+terms|create\s+now|that\'?s\s+all|nothing\s+else|no\s+more)\b/i',
+            $text,
+        );
+    }
+
     /** True when the message looks like filling / editing LPO draft fields. */
     public function looksLikeFieldFollowUp(string $message): bool
     {
         $text = trim($message);
         if ($text === '') {
             return false;
+        }
+
+        if ($this->looksLikeSkipExtras($text)) {
+            return true;
         }
 
         if (preg_match(
@@ -239,6 +300,9 @@ class AiCreateLpoParamMerger
                 }
             }
             if ($missing === []) {
+                if ($this->shouldPromptExtras($pending)) {
+                    return 'Got '.trim($supplier).' and the products — nothing saved yet. Any due date, payment terms, or delivery address? Or say skip, then confirm to create.';
+                }
                 $lineBits = [];
                 foreach (array_slice($productLines, 0, 3) as $line) {
                     if (! is_array($line)) {
@@ -250,10 +314,10 @@ class AiCreateLpoParamMerger
                 $summary = ($supplier !== '' ? $supplier : 'Supplier')
                     .($lineBits !== [] ? ' — '.implode(', ', $lineBits) : '');
 
-                return 'LPO draft ready: '.$summary.'. Say confirm to create it, or tell me more products.';
+                return 'Ready to create the LPO for '.$summary.'. Nothing is saved yet — say confirm to create it, or tell me more products.';
             }
             if (in_array('supplier', $missing, true) && in_array('line items', $missing, true)) {
-                return 'Sure — I can create an LPO. Which supplier should I use?';
+                return 'Sure — I can create an LPO. Tell me the supplier, products with quantities, and if you have them the due date and payment terms.';
             }
             if (in_array('supplier', $missing, true)) {
                 return $supplier !== ''
@@ -261,7 +325,9 @@ class AiCreateLpoParamMerger
                     : 'Which supplier is this LPO for?';
             }
 
-            return 'Got supplier '.trim($supplier).'. Which products and quantities? For example: Sugar x 10.';
+            $supplierLabel = trim($supplier) !== '' ? trim($supplier) : 'that supplier';
+
+            return 'Got '.$supplierLabel.' — nothing saved yet. Which products and quantities? For example: Sugar x 10. You can also add due date and terms.';
         }
 
         // First turn ("Help me create an LPO") — do not show an empty draft checklist.
@@ -274,20 +340,47 @@ class AiCreateLpoParamMerger
             && empty($params['order_num'])
             && (int) ($params['sale_id'] ?? 0) <= 0
         ) {
-            return "Sure — I can create an LPO.\n\n"
-                ."Share the **supplier** and **line items** (product × qty), or a sales order to copy from.\n"
-                ."Example: “Supplier Bidco, Sugar x 10, Cooking Oil x 5”.\n\n"
+            return "Sure — I can create an LPO. I’ll collect the details with you.\n\n"
+                ."Please share:\n"
+                ."1. **Supplier** name\n"
+                ."2. **Products** and quantities (e.g. Sugar × 10, Cooking Oil × 5)\n"
+                ."3. **Due date** (optional)\n"
+                ."4. **Payment terms** (optional, e.g. 30 days)\n"
+                ."5. **Delivery address** or reference (optional)\n\n"
+                ."Example: “Supplier Bidco, Sugar x 10, Cooking Oil x 5, due 30/09/2026, terms 30 days”.\n\n"
                 .'Or reply **show form** if you prefer a form.';
         }
 
-        $lines = ['Updated draft LPO — here is what I have:'];
+        // Supplier captured but no lines yet — lead with the ask (never sound like an LPO was saved).
+        if (
+            in_array('line items', $missing, true)
+            && ! in_array('supplier', $missing, true)
+        ) {
+            $label = $supplier !== '' ? $supplier : 'that supplier';
+
+            return "Got **{$label}** — nothing is saved yet.\n\n"
+                ."Which **products and quantities** should I add?\n"
+                ."Example: “Sugar x 10, Cooking Oil x 5”.\n\n"
+                .'You can also share due date, terms, or a sales order to copy from.';
+        }
+
+        if (in_array('supplier', $missing, true) && ! in_array('line items', $missing, true)) {
+            return "I have the line items — nothing is saved yet.\n\n"
+                .'Which **supplier** is this LPO for?';
+        }
+
+        $lines = ['Nothing saved yet — collecting LPO details:'];
         $lines[] = '• Supplier: '.($supplier !== '' ? $supplier : '— still needed');
 
         if (! empty($params['due_date'])) {
             $lines[] = '• Due date: '.$params['due_date'];
+        } else {
+            $lines[] = '• Due date: — not set yet';
         }
         if (! empty($params['terms'])) {
             $lines[] = '• Terms: '.$params['terms'];
+        } else {
+            $lines[] = '• Terms: — not set yet';
         }
         if (! empty($params['delivery_address'])) {
             $lines[] = '• Delivery: '.$params['delivery_address'];
@@ -323,9 +416,7 @@ class AiCreateLpoParamMerger
         }
 
         $lines[] = '';
-        if ($missing === []) {
-            $lines[] = 'Ready to save. Reply **confirm** or **save** to create the LPO (PDF/print links will appear after). Or reply **show form** to review.';
-        } else {
+        if ($missing !== []) {
             $need = [];
             if (in_array('supplier', $missing, true)) {
                 $need[] = 'supplier';
@@ -334,7 +425,16 @@ class AiCreateLpoParamMerger
                 $need[] = 'line items (or a sales order to copy from)';
             }
             $lines[] = 'Still need: '.implode(', ', $need).'.';
-            $lines[] = 'You can reply in one sentence, e.g. “Supplier Bidco, Kamande x 10, due 30/09/2026”.';
+            $lines[] = 'You can reply in one sentence, e.g. “Supplier Bidco, Kamande x 10, due 30/09/2026, terms 30 days”.';
+        } elseif ($this->shouldPromptExtras($pending)) {
+            $lines[] = 'Core details look good — nothing is saved yet. To complete the LPO, please also share (or reply **skip**):';
+            $lines[] = '• **Due date** (e.g. 30/09/2026)';
+            $lines[] = '• **Payment terms** (e.g. 30 days / COD)';
+            $lines[] = '• **Delivery address** or reference (if needed)';
+            $lines[] = '';
+            $lines[] = 'Or reply **confirm** / **save** now to create with what we have.';
+        } else {
+            $lines[] = 'Ready to save. Reply **confirm** or **save** to create the LPO (PDF/print links will appear after). Or reply **show form** to review.';
         }
 
         return implode("\n", $lines);

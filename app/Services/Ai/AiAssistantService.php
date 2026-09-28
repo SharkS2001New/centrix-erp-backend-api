@@ -140,9 +140,50 @@ class AiAssistantService
             && ! $this->actionExecutor->isConfirmation($message)
             && ! $this->intentResolver->isCancelIntent($message)
         ) {
-            $seedLpo = $this->intentResolver->inferCreateAction($message, $history, $pathname);
-            if (is_array($seedLpo) && (string) ($seedLpo['type'] ?? '') === 'create_lpo') {
-                $pendingAction = $seedLpo;
+            $seedAction = $this->intentResolver->inferCreateAction($message, $history, $pathname);
+            if (is_array($seedAction) && (string) ($seedAction['type'] ?? '') === 'create_lpo') {
+                $pendingAction = $seedAction;
+            } elseif (is_array($seedAction) && (string) ($seedAction['type'] ?? '') === 'delete_lpo') {
+                $pendingAction = $seedAction;
+            }
+        }
+
+        // Continue delete/cancel LPO: accept a bare number as the LPO id.
+        if (is_array($pendingAction) && (string) ($pendingAction['type'] ?? '') === 'delete_lpo') {
+            $params = is_array($pendingAction['params'] ?? null) ? $pendingAction['params'] : [];
+            if ((int) ($params['lpo_no'] ?? 0) <= 0 && preg_match('/\b(\d{1,12})\b/', $message, $m)) {
+                $params['lpo_no'] = (int) $m[1];
+                $pendingAction['params'] = $params;
+                $pendingAction['summary'] = 'Delete / cancel purchase order (LPO) '.$params['lpo_no'];
+            }
+
+            if (
+                ! $confirmAction
+                && ! $this->actionExecutor->isConfirmation($message)
+                && ! $this->intentResolver->isCancelIntent($message)
+            ) {
+                $gate = $this->contextBuilder->gateForUser($user);
+                $scope = $this->workspaceScope->resolve($user, $gate, $workspaceId, $pathname);
+                $lpoNo = (int) ($pendingAction['params']['lpo_no'] ?? 0);
+                $reply = $lpoNo > 0
+                    ? "Ready to delete / cancel LPO {$lpoNo}. Reply **confirm** to proceed (draft or pre-receive only; admins can remove later statuses)."
+                    : 'Which LPO number should I delete or cancel? (Example: “delete LPO 42”.)';
+
+                return $this->attachPendingAction(
+                    $user,
+                    $this->withSpokenEntityMeta([
+                        'success' => true,
+                        'reply' => $reply,
+                        'message' => $reply,
+                        'tools_used' => [],
+                        'active_workspace' => $scope['id'],
+                        'provider' => $runtime['provider'] ?? null,
+                    ], $normalizedRefsEarly, $spokenResolved),
+                    $pendingAction,
+                    $message,
+                    $pathname,
+                    $scope,
+                );
             }
         }
 
@@ -166,6 +207,11 @@ class AiAssistantService
                 $gate = $this->contextBuilder->gateForUser($user);
                 $scope = $this->workspaceScope->resolve($user, $gate, $workspaceId, $pathname);
                 $reply = $this->lpoParamMerger->statusReply($pendingAction, $mergedLpo['notes'], $voiceMode);
+                if ($this->lpoParamMerger->shouldPromptExtras($pendingAction)) {
+                    $params = is_array($pendingAction['params'] ?? null) ? $pendingAction['params'] : [];
+                    $params['extras_prompted'] = true;
+                    $pendingAction['params'] = $params;
+                }
 
                 return $this->attachPendingAction(
                     $user,
@@ -1155,8 +1201,8 @@ PROMPT;
         }
 
         $pendingType = (string) ($pending['type'] ?? '');
-        if ($pendingType === 'create_lpo') {
-            // Keep the LPO draft for any non-cancel follow-up so edits don't restart collection.
+        if ($pendingType === 'create_lpo' || $pendingType === 'delete_lpo') {
+            // Keep the LPO draft / delete flow for any non-cancel follow-up.
             return true;
         }
 
@@ -1301,6 +1347,7 @@ PROMPT;
                 'approve_lpo' => 'Confirm below to approve this LPO.',
                 'mark_lpo_sent' => 'Confirm below to mark this LPO as sent.',
                 'receive_lpo_goods' => 'Confirm below to receive goods against this LPO.',
+                'delete_lpo' => 'Confirm below to delete / cancel this LPO.',
                 default => 'Fill in the form below, then click Confirm & create.',
             };
         }
@@ -1314,11 +1361,12 @@ PROMPT;
             'create_sales_order', 'create_held_order' => 'Share the customer and line items here in chat. Reply **confirm** or **save** when ready, or **show form** for a form.',
             'record_customer_payment' => 'Share the order and payment details here in chat. Reply **confirm** or **save** when ready, or **show form** for a form.',
             'create_report_template' => 'Share the report name and what it should show here in chat. Reply **confirm** or **save** when ready, or **show form** for a form.',
-            'create_lpo' => 'Share the supplier and line items here in chat. Reply **confirm** or **save** when ready — I will create the LPO. Or reply **show form** for a form.',
+            'create_lpo' => 'Share the supplier, products with quantities, due date, and terms here in chat. Reply **confirm** or **save** when ready — I will create the LPO. Or reply **show form** for a form.',
             'submit_lpo_for_approval' => 'Share the LPO number if needed, then reply **confirm** to submit it for approval.',
             'approve_lpo' => 'Share the LPO number if needed, then reply **confirm** to approve it.',
             'mark_lpo_sent' => 'Share the LPO number if needed, then reply **confirm** to mark it as sent. You can also download the PDF to share with the supplier.',
             'receive_lpo_goods' => 'Share the LPO number if needed, then reply **confirm** to receive remaining quantities into stock.',
+            'delete_lpo' => 'Share the LPO number to delete or cancel, then reply **confirm**.',
             default => 'Share the details here in chat, or reply **show form** if you prefer a form.',
         };
     }

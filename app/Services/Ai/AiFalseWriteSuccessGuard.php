@@ -36,6 +36,14 @@ class AiFalseWriteSuccessGuard
             return true;
         }
 
+        // “Updated/prepared draft LPO” sounds finished even when nothing was POSTed.
+        if (preg_match(
+            '/\b(?:updated|prepared|saved|created)\s+(?:a\s+|the\s+)?draft\s+(?:lpo|purchase\s+order)\b/i',
+            $reply,
+        )) {
+            return true;
+        }
+
         return false;
     }
 

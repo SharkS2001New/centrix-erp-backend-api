@@ -44,7 +44,8 @@ class AiKnowledgeRelevanceTest extends TestCase
 
         $this->assertGreaterThan(0, $first['created']);
         $this->assertSame(0, $second['created']);
-        $this->assertSame($first['created'], $second['skipped']);
+        $this->assertSame($first['total_in_config'], $second['skipped']);
+        $this->assertSame($first['created'] + $first['skipped'], $first['total_in_config']);
         $this->assertGreaterThan(
             0,
             AiKnowledgeEntry::query()->whereNull('organization_id')->where('source', 'foundation_seed')->count(),
@@ -136,5 +137,40 @@ class AiKnowledgeRelevanceTest extends TestCase
             collect($service->searchRelevant('how do I run payroll?', 10, 'backoffice'))
                 ->contains(fn ($row) => str_contains(strtolower((string) ($row['topic'] ?? '')), 'payroll')),
         );
+    }
+
+    public function test_install_foundation_reports_total_in_config(): void
+    {
+        $user = User::where('username', 'admin')->firstOrFail();
+        $service = app(AiKnowledgeService::class);
+
+        $result = $service->installFoundationNotes($user);
+
+        $this->assertArrayHasKey('total_in_config', $result);
+        $this->assertGreaterThan(0, $result['total_in_config']);
+        $this->assertSame($result['created'] + $result['skipped'], $result['total_in_config']);
+    }
+
+    public function test_editing_foundation_seed_marks_source_as_platform_training(): void
+    {
+        $user = User::where('username', 'admin')->firstOrFail();
+        $service = app(AiKnowledgeService::class);
+        $service->installFoundationNotes($user);
+
+        $entry = AiKnowledgeEntry::query()
+            ->whereNull('organization_id')
+            ->where('source', 'foundation_seed')
+            ->first();
+        $this->assertNotNull($entry);
+
+        $updated = $service->updateGlobal($user, (int) $entry->id, [
+            'content' => $entry->content.' (edited for tenant clarity)',
+        ]);
+
+        $this->assertSame('platform_training', $updated['source'] ?? null);
+        $this->assertDatabaseHas('ai_knowledge_entries', [
+            'id' => $entry->id,
+            'source' => 'platform_training',
+        ]);
     }
 }

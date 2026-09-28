@@ -26,6 +26,9 @@ class AiFalseWriteSuccessGuardTest extends TestCase
         $this->assertTrue($this->guard->looksLikeFalseWriteSuccess(
             'I have saved the product and set the selling price.'
         ));
+        $this->assertTrue($this->guard->looksLikeFalseWriteSuccess(
+            'Updated draft LPO — here is what I have:'
+        ));
     }
 
     public function test_allows_non_success_replies(): void

@@ -240,6 +240,13 @@ return [
             'module' => 'customers_suppliers',
         ],
         [
+            'type' => 'delete_lpo',
+            'label' => 'Delete / cancel an LPO',
+            'description' => 'Soft-delete a draft or pre-receive purchase order. Admins may also remove later statuses.',
+            'permission' => 'purchasing.lpo.delete',
+            'module' => 'customers_suppliers',
+        ],
+        [
             'type' => 'submit_lpo_for_approval',
             'label' => 'Submit LPO for approval',
             'description' => 'Move a draft LPO into the approval queue (or awaiting send if approval is off).',

@@ -2396,6 +2396,12 @@ class ReportController extends Controller
     {
         $filters = $this->filters($request);
         $allowedCols = ['expense_date', 'branch_id', 'expense_group_id'];
+
+        // Mobile / line detail: individual expenses with name (description) + user.
+        if ($request->boolean('lines') || $request->input('view') === 'lines') {
+            return response()->json($this->expensesLinesReport($request, $filters));
+        }
+
         $payload = $this->reportFromView('v_expenses_summary', $filters, $allowedCols);
 
         $q = DB::table('v_expenses_summary');
@@ -2433,6 +2439,145 @@ class ReportController extends Controller
         ]);
 
         return response()->json($payload);
+    }
+
+    /**
+     * Expense lines for manager mobile: description (expense name), category, recorder.
+     *
+     * @param  array<string, mixed>  $filters
+     * @return array<string, mixed>
+     */
+    protected function expensesLinesReport(Request $request, array $filters): array
+    {
+        abort_unless(Schema::hasTable('expenses'), 404);
+
+        $access = app(UserAccessService::class);
+        $user = $request->user();
+        $orgId = $access->organizationId($user, $request);
+        abort_unless($orgId, 403);
+
+        $q = DB::table('expenses as e')
+            ->leftJoin('expense_groups as eg', 'eg.id', '=', 'e.expense_group_id')
+            ->leftJoin('branches as b', 'b.id', '=', 'e.branch_id')
+            ->leftJoin('users as u', 'u.id', '=', 'e.recorded_by')
+            ->whereNull('e.deleted_at')
+            ->where('e.organization_id', $orgId);
+
+        if (! $access->isOrgWide($user)) {
+            $branchId = $access->branchId($user);
+            if ($branchId !== null) {
+                $q->where('e.branch_id', $branchId);
+            }
+        }
+
+        if (! empty($filters['branch_id'])) {
+            $q->where('e.branch_id', (int) $filters['branch_id']);
+        }
+        if (! empty($filters['expense_group_id'])) {
+            $q->where('e.expense_group_id', (int) $filters['expense_group_id']);
+        }
+        if ($request->filled('recorded_by')) {
+            $q->where('e.recorded_by', (int) $request->input('recorded_by'));
+        } elseif (! empty($filters['recorded_by'])) {
+            $q->where('e.recorded_by', (int) $filters['recorded_by']);
+        }
+
+        $dateCol = 'e.expense_date';
+        if (! empty($filters['from_date'])) {
+            $q->whereDate($dateCol, '>=', $filters['from_date']);
+        }
+        if (! empty($filters['to_date'])) {
+            $q->whereDate($dateCol, '<=', $filters['to_date']);
+        }
+
+        $search = trim((string) ($request->input('q') ?? $request->input('search') ?? ''));
+        if ($search !== '') {
+            $like = '%'.$search.'%';
+            $q->where(function ($inner) use ($like) {
+                $inner->where('e.description', 'like', $like)
+                    ->orWhere('eg.group_name', 'like', $like)
+                    ->orWhere('u.full_name', 'like', $like)
+                    ->orWhere('u.username', 'like', $like)
+                    ->orWhere('e.invoice_no', 'like', $like);
+            });
+        }
+
+        $summaryQ = clone $q;
+        $totalAmount = (float) $summaryQ->sum('e.expense_amount');
+        $byGroup = (clone $q)
+            ->selectRaw("COALESCE(NULLIF(TRIM(eg.group_name), ''), 'Other') as group_name")
+            ->selectRaw('COALESCE(SUM(e.expense_amount), 0) as total_amount')
+            ->groupByRaw("COALESCE(NULLIF(TRIM(eg.group_name), ''), 'Other')")
+            ->orderByDesc('total_amount')
+            ->get()
+            ->map(fn ($row) => [
+                'group_name' => (string) ($row->group_name ?? 'Other'),
+                'total_amount' => round((float) ($row->total_amount ?? 0), 2),
+            ])
+            ->values()
+            ->all();
+
+        $perPage = min(max((int) $request->input('per_page', 25), 1), 100);
+        $page = max((int) $request->input('page', 1), 1);
+
+        $paginator = $q
+            ->select([
+                'e.id',
+                'e.expense_date',
+                'e.description',
+                'e.expense_amount',
+                'e.invoice_no',
+                'e.recorded_by',
+                'e.branch_id',
+                'e.expense_group_id',
+                'b.branch_name',
+                'eg.group_name',
+                'u.full_name as recorded_by_name',
+                'u.username as recorded_by_username',
+            ])
+            ->orderByDesc('e.expense_date')
+            ->orderByDesc('e.id')
+            ->paginate($perPage, ['*'], 'page', $page);
+
+        $rows = collect($paginator->items())->map(function ($row) {
+            $description = trim((string) ($row->description ?? ''));
+            $expenseName = $description !== ''
+                ? explode(' — ', $description)[0]
+                : (string) ($row->group_name ?: 'Expense');
+            $recorder = trim((string) ($row->recorded_by_name ?? ''));
+            if ($recorder === '') {
+                $recorder = trim((string) ($row->recorded_by_username ?? ''));
+            }
+
+            return [
+                'id' => (int) ($row->id ?? 0),
+                'expense_date' => $row->expense_date,
+                'expense_name' => $expenseName,
+                'description' => $description,
+                'group_name' => (string) ($row->group_name ?? 'Other'),
+                'branch_name' => (string) ($row->branch_name ?? ''),
+                'branch_id' => (int) ($row->branch_id ?? 0),
+                'expense_amount' => round((float) ($row->expense_amount ?? 0), 2),
+                'total_amount' => round((float) ($row->expense_amount ?? 0), 2),
+                'invoice_no' => (string) ($row->invoice_no ?? ''),
+                'recorded_by' => (int) ($row->recorded_by ?? 0),
+                'recorded_by_name' => $recorder !== '' ? $recorder : null,
+                'user_name' => $recorder !== '' ? $recorder : null,
+            ];
+        })->values()->all();
+
+        return [
+            'data' => $rows,
+            'current_page' => $paginator->currentPage(),
+            'last_page' => $paginator->lastPage(),
+            'per_page' => $paginator->perPage(),
+            'total' => $paginator->total(),
+            'summary' => [
+                'total_amount' => round($totalAmount, 2),
+                'by_group' => $byGroup,
+                'group_count' => count($byGroup),
+            ],
+        ];
     }
 
     public function damages(Request $request)
@@ -2752,6 +2897,7 @@ class ReportController extends Controller
             'supplier_id', 'route_name', 'sale_date', 'sale_day', 'period',
             'from_date', 'to_date', 'date_column', 'per_page', 'aging_bucket',
             'status', 'document_type', 'payment_status', 'lpo_no', 'organization_id', 'expense_group_id',
+            'recorded_by',
             'order_date', 'loading_date', 'receipt_date', 'return_date', 'damage_date',
             'scheduled_date', 'capture_date', 'delivery_date',
             'transfer_date', 'payment_date', 'entry_date', 'session_date', 'method_code',
