@@ -352,12 +352,14 @@ class AiAssistantService
                 'role' => 'system',
                 'content' => 'VOICE / TALK MODE: Reply in clear, fluent, natural English — complete sentences, '
                     .'correct grammar, smooth phrasing suitable for speaking aloud. No telegraphic or robotic wording. '
-                    .'Speak key figures in the first 1–2 sentences (totals, order count, best day). '
+                    .'Answer in about 2–3 full spoken sentences so the answer is complete (do not trail off mid-word). '
+                    .'Speak key figures early (totals, order count, best day). '
                     .'Put full day-by-day tables after that for the chat sidebar. '
                     .'Never ask "did you want the daily breakdown?" when they already asked for it or history has the sales context. '
                     .'Do not answer with only a clarify question when numbers are already available. '
                     .'Answer naturally — do not address the user by first name every turn (or at all unless they ask). '
-                    .'Greetings: one short line like "Hi — how can I help?" — no personal-name opener.',
+                    .'Greetings: one short line like "Hi — how can I help?" — no personal-name opener. '
+                    .'Say "Kenyan Shillings" once — never "Kenyan Shillings (Kenyan Shillings)".',
             ];
         }
 
