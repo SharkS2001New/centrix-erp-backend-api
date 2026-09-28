@@ -6,18 +6,20 @@ use App\Models\Organization;
 use App\Models\Supplier;
 use App\Services\Background\ReportBrandingService;
 use App\Services\LpoModuleService;
+use App\Services\Print\OrgDocumentThemeService;
 use Dompdf\Dompdf;
 use Dompdf\Options;
 
 /**
- * AI / API LPO PDF — mirrors org document branding and procurement print settings
- * (same content family as the on-screen LPO print from Printouts settings).
+ * API / Manager LPO PDF — content + visual themes aligned with ERP
+ * `buildLpoPrintHtml` / Printouts → LPO document template.
  */
 class LpoDocumentPdfService
 {
     public function __construct(
         protected LpoModuleService $lpoModule,
         protected ReportBrandingService $branding,
+        protected OrgDocumentThemeService $themes,
     ) {}
 
     /**
@@ -79,6 +81,10 @@ class LpoDocumentPdfService
     ): string {
         $e = static fn ($value) => htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         $money = static fn ($value) => number_format((float) $value, 2);
+
+        $templateId = (string) ($procurement['lpo_document_template'] ?? 'default');
+        $theme = $this->themes->themeFor($templateId);
+        $accent = $theme['accent'] ?? '#2563eb';
 
         $po = (string) ($lpo['po_number'] ?? $lpo['lpo_no'] ?? '');
         $supplierName = (string) ($lpo['supplier_name'] ?? $supplier?->supplier_name ?? 'Supplier');
@@ -145,13 +151,20 @@ class LpoDocumentPdfService
             $rows = '<tr><td colspan="7">No line items</td></tr>';
         }
 
-        $headerHtml = $this->branding->buildOrgHeaderHtml($branding);
-        $watermarkHtml = $this->branding->buildWatermarkHtml($branding);
-        $styles = $this->branding->documentStyles();
+        // ERP watermark uses supplier name; fall back to org branding.
+        $wmBranding = $branding;
+        if (trim($supplierName) !== '' && strcasecmp($supplierName, 'Supplier') !== 0) {
+            $wmBranding['watermark_text'] = $supplierName;
+        }
+        $watermarkHtml = $this->branding->buildWatermarkHtml($wmBranding);
+
+        $titleBand = $this->themes->titleBandHtml($theme, 'LOCAL PURCHASE ORDER', $po);
+        $proHeader = $this->buildProfessionalHeaderHtml($branding, $organization, $orgPhones, $e);
+        $themeCss = $this->themes->themeCss($theme);
 
         $notesHtml = '';
         if ($deliveryNotes !== []) {
-            $notesHtml .= '<div class="block"><strong>Delivery notes</strong><ul>';
+            $notesHtml .= '<div class="block"><strong class="accent">Delivery notes</strong><ul>';
             foreach ($deliveryNotes as $note) {
                 $notesHtml .= '<li>'.$e($note).'</li>';
             }
@@ -180,21 +193,36 @@ class LpoDocumentPdfService
                 .'<div class="sig-name">'.$e($value).'</div></div>';
         };
 
+        $metaHtml = '<ul class="meta-list">'
+            .'<li><span class="k">Supplier</span> <strong>'.$e($supplierName).'</strong></li>'
+            .'<li><span class="k">Address</span> '.($supplierAddress !== '' ? $e($supplierAddress) : '—').'</li>'
+            .'<li><span class="k">Email</span> '.$e($supplierEmail).'</li>'
+            .'<li><span class="k">Phone</span> '.$e($supplierPhone).'</li>'
+            .($supplierPin !== '' ? '<li><span class="k">PIN</span> '.$e($supplierPin).'</li>' : '')
+            .($supplierTown !== '' ? '<li><span class="k">Town</span> '.$e($supplierTown).'</li>' : '')
+            .'<li><span class="k">Order date</span> '.$e($orderDate).'</li>'
+            .'<li><span class="k">Due date</span> '.$e($dueDate).'</li>'
+            .'<li><span class="k">Reference</span> '.$e($ref).'</li>'
+            .'<li><span class="k">Payment terms</span> '.$e($paymentTerms).'</li>'
+            .'<li><span class="k">Deliver to</span> '.$e($delivery).'</li>'
+            .'<li><span class="k">Valid for</span> '.$e((string) $validityDays).' day'.($validityDays === 1 ? '' : 's').'</li>'
+            .'</ul>';
+
         return '<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-            '.$styles['base'].'
-            '.$styles['watermark'].'
-            body{margin:16px 18px;font-size:10.5px;}
-            h1.doc-title{font-size:15px;margin:8px 0 2px;text-align:center;letter-spacing:0.04em;}
-            .po-no{text-align:center;font-size:12px;font-weight:700;margin:0 0 10px;}
-            .grid{width:100%;border-collapse:collapse;margin-bottom:10px;}
-            .grid td{border:none;padding:2px 8px 2px 0;vertical-align:top;width:50%;}
-            .label{color:#64748b;font-size:9px;text-transform:uppercase;letter-spacing:0.03em;}
-            table.items th,table.items td{border:1px solid #cbd5e1;padding:5px 4px;font-size:9.5px;}
-            table.items th{background:#f1f5f9;font-size:9px;text-transform:uppercase;}
+            body{color:#0f172a;font-size:10.5px;}
+            '.$themeCss.'
+            .watermark{position:fixed;top:38%;left:10%;width:80%;text-align:center;opacity:0.07;z-index:0;}
+            .watermark-text{font-size:42px;font-weight:700;transform:rotate(-28deg);}
+            .watermark-logo{max-width:220px;opacity:0.5;margin-top:8px;}
+            h1.doc-title{font-size:15px;margin:4px 0 2px;letter-spacing:0.04em;}
+            .po-no{font-size:12px;font-weight:700;margin:0 0 8px;}
+            table.items{width:100%;border-collapse:collapse;margin-top:6px;}
+            table.items th,table.items td{padding:5px 4px;font-size:9.5px;}
+            table.items th{font-size:9px;}
             .c{text-align:center;} .r{text-align:right;}
             .totals{width:240px;margin-left:auto;margin-top:8px;border-collapse:collapse;}
             .totals td{border:none;padding:2px 0;}
-            .totals .grand{font-weight:700;border-top:2px solid #0f172a;padding-top:5px;}
+            .totals .grand{font-weight:700;padding-top:5px;}
             .block{margin-top:10px;} .block ul{margin:4px 0 0 16px;padding:0;}
             .warn{color:#9a3412;font-weight:600;margin-top:8px;}
             .muted{color:#64748b;margin-top:4px;}
@@ -203,36 +231,14 @@ class LpoDocumentPdfService
             .sig-line{border-top:1px solid #94a3b8;margin-top:28px;margin-bottom:4px;}
             .sig-label{font-size:9px;color:#64748b;text-transform:uppercase;}
             .sig-name{font-size:10px;font-weight:600;}
-            .phones{text-align:center;font-size:9px;color:#475569;margin-top:2px;}
             .doc-footer{margin-top:14px;text-align:center;font-size:9px;color:#64748b;line-height:1.4;}
+            .theme-id{display:none;}
         </style></head><body>
+            <span class="theme-id">'.$e($templateId).'</span>
             '.$watermarkHtml.'
-            '.$headerHtml.'
-            '.($orgPhones !== '' ? '<div class="phones">'.$e($orgPhones).'</div>' : '').'
-            <h1 class="doc-title">LOCAL PURCHASE ORDER</h1>
-            <div class="po-no">'.$e($po).'</div>
-            <table class="grid">
-                <tr>
-                    <td>
-                        <div class="label">Supplier</div>
-                        <div><strong>'.$e($supplierName).'</strong></div>
-                        <div>'.($supplierAddress !== '' ? $e($supplierAddress) : '—').'</div>
-                        <div>Email: '.$e($supplierEmail).'</div>
-                        <div>Phone: '.$e($supplierPhone).'</div>
-                        '.($supplierPin !== '' ? '<div>PIN: '.$e($supplierPin).'</div>' : '').'
-                        '.($supplierTown !== '' ? '<div>Town: '.$e($supplierTown).'</div>' : '').'
-                    </td>
-                    <td>
-                        <div class="label">Order details</div>
-                        <div>Order date: '.$e($orderDate).'</div>
-                        <div>Due date: '.$e($dueDate).'</div>
-                        <div>Reference: '.$e($ref).'</div>
-                        <div>Payment terms: '.$e($paymentTerms).'</div>
-                        <div>Deliver to: '.$e($delivery).'</div>
-                        <div>Valid for: '.$e((string) $validityDays).' day'.($validityDays === 1 ? '' : 's').'</div>
-                    </td>
-                </tr>
-            </table>
+            '.$proHeader.'
+            '.$titleBand.'
+            '.$metaHtml.'
             <table class="items">
                 <thead><tr>
                     <th class="c" style="width:6%;">No.</th>
@@ -244,6 +250,10 @@ class LpoDocumentPdfService
                     <th class="r" style="width:14%;">Amount KSh</th>
                 </tr></thead>
                 <tbody>'.$rows.'</tbody>
+                <tfoot><tr>
+                    <td colspan="6" class="r" style="font-weight:700;border-top:2px solid '.$accent.';padding-top:6px;">TOTAL :</td>
+                    <td class="r" style="font-weight:700;border-top:2px solid '.$accent.';padding-top:6px;color:'.$accent.';">'.$money($total).'</td>
+                </tr></tfoot>
             </table>
             <table class="totals">
                 <tr><td>Subtotal</td><td class="r">'.$money($subtotal).'</td></tr>
@@ -258,6 +268,59 @@ class LpoDocumentPdfService
             </div>
             <div class="doc-footer">'.$footerHtml.'</div>
         </body></html>';
+    }
+
+    /**
+     * @param  array<string, mixed>  $branding
+     * @param  callable(string): string  $e
+     */
+    protected function buildProfessionalHeaderHtml(
+        array $branding,
+        ?Organization $organization,
+        string $orgPhones,
+        callable $e,
+    ): string {
+        if (! ($branding['show_header'] ?? false)) {
+            return '';
+        }
+
+        $display = (string) ($branding['display'] ?? 'name');
+        $name = trim((string) ($branding['organization_name'] ?? $organization?->org_name ?? ''));
+        $logo = is_string($branding['logo_data_uri'] ?? null) ? $branding['logo_data_uri'] : null;
+        $address = trim((string) ($organization?->org_address ?? ''));
+        $email = trim((string) ($organization?->org_email ?? ''));
+        $pin = trim((string) ($organization?->org_pin ?? ''));
+
+        $showLogo = ($display === 'logo' || $display === 'logo_and_name') && $logo !== null;
+        $showName = ($display === 'name' || $display === 'logo_and_name') && $name !== '';
+
+        $left = '<div class="org-block">';
+        if ($showName) {
+            $left .= '<div class="org-name">'.$e($name).'</div>';
+        }
+        if ($address !== '') {
+            $left .= '<div class="org-line">'.$e($address).'</div>';
+        }
+        if ($email !== '') {
+            $left .= '<div class="org-line">'.$e($email).'</div>';
+        }
+        if ($orgPhones !== '') {
+            $left .= '<div class="org-line">'.$e($orgPhones).'</div>';
+        }
+        if ($pin !== '') {
+            $left .= '<div class="org-line">PIN: '.$e($pin).'</div>';
+        }
+        $left .= '</div>';
+
+        $right = $showLogo
+            ? '<td class="org-logo-cell"><img src="'.$e($logo).'" alt="'.$e($name).'"></td>'
+            : '<td></td>';
+
+        if (! $showName && ! $showLogo && trim(strip_tags($left)) === '') {
+            return '';
+        }
+
+        return '<table class="pro-header"><tr><td>'.$left.'</td>'.$right.'</tr></table>';
     }
 
     protected function formatDate(mixed $value): string

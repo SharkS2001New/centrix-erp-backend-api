@@ -3,48 +3,20 @@
 namespace App\Services\Platform;
 
 use App\Models\PlatformInvoice;
+use App\Services\Print\OrgDocumentThemeService;
 use Dompdf\Dompdf;
 use Dompdf\Options;
 
 class PlatformInvoiceDocumentService
 {
     /**
-     * Accent / background themes aligned with frontend platform-invoice-print.js.
+     * Accent / background themes aligned with frontend document-print-templates.js.
      *
-     * @return array{accent: string, bg: string, header: string, border?: bool}
+     * @return array{accent: string, bg: string, header: string, border?: bool, serif?: bool, compact?: bool}
      */
     public function themeFor(string $templateId): array
     {
-        $themes = [
-            'modern' => ['accent' => '#2563eb', 'bg' => '#f8fafc', 'header' => 'top'],
-            'classic' => ['accent' => '#1e293b', 'bg' => '#ffffff', 'header' => 'plain', 'border' => true],
-            'minimal' => ['accent' => '#64748b', 'bg' => '#ffffff', 'header' => 'plain'],
-            'corporate' => ['accent' => '#0f172a', 'bg' => '#ffffff', 'header' => 'solid'],
-            'bold' => ['accent' => '#dc2626', 'bg' => '#ffffff', 'header' => 'solid'],
-            'elegant' => ['accent' => '#78350f', 'bg' => '#fffbeb', 'header' => 'top'],
-            'stripe' => ['accent' => '#635bff', 'bg' => '#ffffff', 'header' => 'stripe'],
-            'compact' => ['accent' => '#334155', 'bg' => '#ffffff', 'header' => 'top'],
-            'ocean' => ['accent' => '#0d9488', 'bg' => '#f0fdfa', 'header' => 'top'],
-            'forest' => ['accent' => '#166534', 'bg' => '#f7fee7', 'header' => 'solid'],
-            'sunset' => ['accent' => '#ea580c', 'bg' => '#fff7ed', 'header' => 'top'],
-            'slate' => ['accent' => '#475569', 'bg' => '#f8fafc', 'header' => 'solid'],
-            'rose' => ['accent' => '#e11d48', 'bg' => '#fff1f2', 'header' => 'top'],
-            'indigo' => ['accent' => '#4338ca', 'bg' => '#eef2ff', 'header' => 'solid'],
-            'gold' => ['accent' => '#b45309', 'bg' => '#fffbeb', 'header' => 'top'],
-            'paper' => ['accent' => '#78716c', 'bg' => '#fafaf9', 'header' => 'plain', 'border' => true],
-            'ledger' => ['accent' => '#1c1917', 'bg' => '#ffffff', 'header' => 'top'],
-            'midnight' => ['accent' => '#020617', 'bg' => '#f8fafc', 'header' => 'solid'],
-            'emerald' => ['accent' => '#059669', 'bg' => '#ecfdf5', 'header' => 'top'],
-            'mono' => ['accent' => '#0f766e', 'bg' => '#f8fafc', 'header' => 'top'],
-            'coastal' => ['accent' => '#0284c7', 'bg' => '#f0f9ff', 'header' => 'top'],
-            'graphite' => ['accent' => '#374151', 'bg' => '#f9fafb', 'header' => 'solid'],
-            'ivory' => ['accent' => '#78350f', 'bg' => '#fffdf7', 'header' => 'top'],
-            'magenta' => ['accent' => '#c026d3', 'bg' => '#ffffff', 'header' => 'stripe'],
-            'safari' => ['accent' => '#92400e', 'bg' => '#fffbeb', 'header' => 'solid'],
-            'rounded' => ['accent' => '#0ea5e9', 'bg' => '#f0f9ff', 'header' => 'top'],
-        ];
-
-        return $themes[$templateId] ?? $themes['modern'];
+        return app(OrgDocumentThemeService::class)->themeFor($templateId);
     }
 
     public function buildHtml(PlatformInvoice $invoice): string
