@@ -9,6 +9,7 @@ use App\Models\Organization;
 use App\Models\PaymentMethod;
 use App\Models\PlatformSubscription;
 use App\Models\Sale;
+use App\Models\SalePayment;
 use App\Models\User;
 use App\Services\Fulfillment\TripAutoCloseService;
 use Laravel\Sanctum\Sanctum;
@@ -276,5 +277,84 @@ class CustomerInvoicePaymentDeleteTest extends TestCase
             ->first(fn ($row) => ($row['invoice_number'] ?? null) === $invoice->invoice_number);
 
         $this->assertNull($agingRow, 'Fully paid invoice should not appear in AR aging.');
+    }
+
+    public function test_deleting_mirrored_order_tenders_reopens_invoice_and_does_not_remirror(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $this->ensureActiveSubscription($admin);
+        Sanctum::actingAs($admin);
+
+        $customer = Customer::query()
+            ->where('organization_id', $admin->organization_id)
+            ->whereNull('deleted_at')
+            ->firstOrFail();
+
+        $method = PaymentMethod::query()->firstOrFail();
+
+        $sale = Sale::create([
+            'order_num' => 92004,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'pos',
+            'cashier_id' => $admin->id,
+            'customer_num' => $customer->customer_num,
+            'status' => 'completed',
+            'total_vat' => 0,
+            'order_total' => 10800,
+            'payment_status' => 'paid',
+            'amount_paid' => 10800,
+        ]);
+
+        SalePayment::create([
+            'sale_id' => $sale->id,
+            'payment_method_id' => $method->id,
+            'amount' => 10800,
+            'reference_number' => 'POS-TENDER',
+            'paid_at' => now(),
+        ]);
+
+        $invoice = CustomerInvoice::query()->where('sale_id', $sale->id)->whereNull('deleted_at')->firstOrFail();
+
+        $service = app(\App\Services\Accounting\CustomerInvoiceService::class);
+        $invoice = $service->settleSaleTendersOntoInvoice($invoice->fresh(), $sale->fresh(), $admin);
+
+        $mirrored = CustomerInvoicePayment::query()
+            ->where('customer_invoice_id', $invoice->id)
+            ->where('notes', \App\Services\Accounting\CustomerInvoiceService::MIRRORED_ORDER_TENDERS_NOTE)
+            ->first();
+
+        $this->assertNotNull($mirrored);
+        $this->assertEquals(10800.0, (float) $invoice->fresh()->amount_paid);
+        $this->assertSame(2, (int) $invoice->fresh()->payment_status);
+
+        $this->deleteJson("/api/v1/customer-invoice-payments/{$mirrored->id}")
+            ->assertNoContent();
+
+        $this->assertNull(CustomerInvoicePayment::query()->find($mirrored->id));
+        $this->assertEquals(0.0, (float) SalePayment::query()->where('sale_id', $sale->id)->sum('amount'));
+
+        $invoice->refresh();
+        $sale->refresh();
+
+        $this->assertEquals(0.0, (float) $invoice->amount_paid);
+        $this->assertSame(0, (int) $invoice->payment_status);
+        $this->assertEquals(0.0, (float) $sale->amount_paid);
+        $this->assertSame('unpaid', $sale->payment_status);
+
+        // Reloading the invoice must not recreate the mirrored tender row.
+        $show = $this->getJson("/api/v1/customer-invoices/{$invoice->id}")
+            ->assertOk()
+            ->json();
+
+        $this->assertEquals(0.0, (float) ($show['amount_paid'] ?? -1));
+        $this->assertEquals(10800.0, (float) ($show['balance_due'] ?? -1));
+        $this->assertSame(0, (int) ($show['payment_status'] ?? -1));
+
+        $remirrored = CustomerInvoicePayment::query()
+            ->where('customer_invoice_id', $invoice->id)
+            ->where('notes', \App\Services\Accounting\CustomerInvoiceService::MIRRORED_ORDER_TENDERS_NOTE)
+            ->exists();
+        $this->assertFalse($remirrored);
     }
 }

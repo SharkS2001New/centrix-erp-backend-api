@@ -20,6 +20,9 @@ use Illuminate\Validation\ValidationException;
 
 class CustomerInvoiceService
 {
+    /** Notes stamped when POS sale_payments are copied onto AR for display. */
+    public const MIRRORED_ORDER_TENDERS_NOTE = 'Order tenders not yet on the invoice';
+
     public function ensureForSale(
         Sale $sale,
         User $user,
@@ -341,7 +344,7 @@ class CustomerInvoiceService
             'received_by' => $user->id,
             'organization_id' => $sale->organization_id,
             'branch_id' => $sale->branch_id ? (int) $sale->branch_id : null,
-            'notes' => 'Order tenders not yet on the invoice',
+            'notes' => self::MIRRORED_ORDER_TENDERS_NOTE,
         ]);
     }
 
@@ -506,15 +509,24 @@ class CustomerInvoiceService
             $organizationId = (int) $payment->organization_id;
             $customerNum = (int) $payment->customer_num;
             $sale = $invoice->sale;
+            $reverseSaleTenders = $sale
+                && $this->shouldReverseSaleTendersOnVoid($payment, $invoice);
 
             $payment->delete();
 
-            $invoice = $this->syncPaidTotalsFromPayments($invoice);
+            // Mirrored CIP rows are copies of sale_payments. Deleting only the CIP leaves
+            // tenders in place, so syncPaidTotalsFromPayments keeps Paid via max(cip, tenders)
+            // and the next invoice show remirrors the same row. Reverse tenders first.
+            if ($reverseSaleTenders) {
+                $this->reduceSaleTendersByAmount((int) $sale->id, $amount, $paymentMethodId);
+            }
+
+            $invoice = $this->syncPaidTotalsFromPayments($invoice->fresh());
 
             if ($sale) {
                 $gate = app(ErpContext::class)->gateForUser($user);
                 app(TripAutoCloseService::class)->syncSaleFromInvoicePaidTotal(
-                    $sale,
+                    $sale->fresh(),
                     $user,
                     (float) $invoice->amount_paid,
                     $paymentMethodId,
@@ -530,6 +542,83 @@ class CustomerInvoiceService
 
             $this->refreshCustomerBalance($organizationId, $customerNum);
         });
+    }
+
+    /**
+     * True when this CIP row is (or acts as) a mirror of POS order tenders.
+     * Deleting it must also reduce sale_payments or the invoice stays Paid.
+     */
+    protected function shouldReverseSaleTendersOnVoid(
+        CustomerInvoicePayment $payment,
+        CustomerInvoice $invoice,
+    ): bool {
+        if (! Schema::hasTable('sale_payments') || ! $invoice->sale_id) {
+            return false;
+        }
+
+        $notes = trim((string) ($payment->notes ?? ''));
+        if ($notes === self::MIRRORED_ORDER_TENDERS_NOTE) {
+            return true;
+        }
+
+        // Fallback: CIP amount still fully accounts for sale tenders beyond other CIP rows
+        // (e.g. older mirrors without the standard notes string).
+        $otherCip = round((float) CustomerInvoicePayment::query()
+            ->where('customer_invoice_id', $invoice->id)
+            ->where('id', '!=', $payment->id)
+            ->sum('amount_paid'), 2);
+        $tenders = $this->saleTenderTotal((int) $invoice->sale_id);
+        $gapCoveredByThisPayment = round(max(0, $tenders - $otherCip), 2);
+        $amount = round((float) $payment->amount_paid, 2);
+
+        return $gapCoveredByThisPayment > 0.01
+            && abs($amount - $gapCoveredByThisPayment) <= 0.02;
+    }
+
+    /**
+     * Reduce or remove sale_payments so tender sum drops by $amount (newest first,
+     * preferring the voided payment's method when present).
+     */
+    protected function reduceSaleTendersByAmount(int $saleId, float $amount, ?int $preferMethodId = null): void
+    {
+        $remaining = round($amount, 2);
+        if ($saleId <= 0 || $remaining <= 0.01 || ! Schema::hasTable('sale_payments')) {
+            return;
+        }
+
+        $rows = SalePayment::query()
+            ->where('sale_id', $saleId)
+            ->orderByDesc('id')
+            ->get();
+
+        if ($preferMethodId) {
+            $rows = $rows->sortByDesc(function (SalePayment $row) use ($preferMethodId) {
+                $methodMatch = (int) ($row->payment_method_id ?? 0) === (int) $preferMethodId ? 1 : 0;
+
+                return [$methodMatch, (int) $row->id];
+            })->values();
+        }
+
+        foreach ($rows as $row) {
+            if ($remaining <= 0.01) {
+                break;
+            }
+
+            $rowAmount = round((float) ($row->amount ?? 0), 2);
+            if ($rowAmount <= 0.01) {
+                $row->delete();
+
+                continue;
+            }
+
+            if ($rowAmount <= $remaining + 0.01) {
+                $remaining = round($remaining - $rowAmount, 2);
+                $row->delete();
+            } else {
+                $row->update(['amount' => round($rowAmount - $remaining, 2)]);
+                $remaining = 0.0;
+            }
+        }
     }
 
     public function voidForCancelledSale(Sale $sale, User $user): void

@@ -932,12 +932,15 @@ class AiToolChatService
                     .'reply with one short friendly line that uses their first name — e.g. "Hi '.$speakerFirst.', how can I help?" — then wait. '
                     .'Do not lecture, list features, or ask multiple questions. '
                     .'This is a continuous 1:1 conversation: answer this turn briefly, then listen for their next question; keep context of what they just asked. '
+                    .'Kenyan English / accent / fast speech: the mic transcript may be imperfect (misheard LPO, KES, M-Pesa, customer/product names, dropped words). '
+                    .'Interpret intended Kenya retail ERP meaning; do not nitpick grammar or ask them to repeat for accent alone. '
+                    .'If one catalog name is a clear fuzzy match, use it; if several are plausible, ask which one in one short question. '
                     .'ACTIONS (create supplier, create LPO, create product, update product unit price, payments, LPO approve/send/receive, etc.): '
                     .'You CAN and SHOULD perform them when the user asks — collect missing details briefly, then ask them to say confirm / yes / save / create it. '
                     .'Never refuse write actions or tell them to open a screen and type it themselves after they asked you to do it. '
                     .'After a successful action, say what you did in one short sentence, then ask "Anything else I can help with?" '
-                    .'For questions: at most 1–2 short sentences that directly summarize the result (key amount, name, yes/no, or count). '
-                    .'Do not read tables, bullet lists, screen paths, or "Open …" links aloud. '
+                    .'For questions: at most 1–2 short calm sentences that directly summarize the result (key amount, name, yes/no, or count). '
+                    .'Speak steadily — no lists, no tables, no screen paths, no "Open …" links aloud. '
                     .'Prefer a spoken summary over completeness; never ramble or restate the question.';
             }
         }

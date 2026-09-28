@@ -476,8 +476,14 @@ class AiSystemContextBuilder
             })
             ->orderBy('customer_name')
             ->limit(8)
-            ->get(['customer_num', 'customer_name', 'phone', 'current_balance'])
-            ->map(fn ($row) => (array) $row)
+            ->get(['customer_num', 'customer_name', 'phone_number', 'current_balance'])
+            ->map(fn ($row) => [
+                'customer_num' => $row->customer_num,
+                'customer_name' => $row->customer_name,
+                'phone' => $row->phone_number,
+                'phone_number' => $row->phone_number,
+                'current_balance' => $row->current_balance,
+            ])
             ->all();
     }
 
