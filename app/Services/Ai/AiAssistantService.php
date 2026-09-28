@@ -345,6 +345,16 @@ class AiAssistantService
             ],
         ];
 
+        if (! empty($pageContext['voice_mode'])) {
+            $messages[] = [
+                'role' => 'system',
+                'content' => 'VOICE / TALK MODE: Speak key figures in the first 1–2 sentences (totals, order count, best day). '
+                    .'Put full day-by-day tables after that for the chat sidebar. '
+                    .'Never ask "did you want the daily breakdown?" when they already asked for it or history has the sales context. '
+                    .'Do not answer with only a clarify question when numbers are already available.',
+            ];
+        }
+
         foreach (array_slice($history, -10) as $turn) {
             if (! empty($turn['role']) && ! empty($turn['content'])) {
                 $messages[] = ['role' => $turn['role'], 'content' => (string) $turn['content']];

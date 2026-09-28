@@ -23,6 +23,7 @@ class PlatformSpeedTest extends TestCase
                 'checked_at',
                 'status',
                 'server_ms',
+                'health_ms',
                 'latency_probe' => [
                     'db_ms',
                     'redis_ms',
@@ -48,6 +49,15 @@ class PlatformSpeedTest extends TestCase
 
         $this->assertContains($response->json('status'), ['ok', 'degraded', 'critical']);
         $this->assertIsInt($response->json('server_ms'));
+        $this->assertIsInt($response->json('health_ms'));
+
+        // Probe time must be the cheap DB/Redis ping — not the 3s queue worker wait.
+        $queueCheck = collect($response->json('health.checks') ?? [])
+            ->firstWhere('id', 'queue');
+        if (is_array($queueCheck) && config('queue.default') !== 'sync') {
+            $this->assertStringContainsString('skipped', (string) ($queueCheck['detail'] ?? ''));
+        }
+        $this->assertLessThan(2000, (int) $response->json('server_ms'));
     }
 
     public function test_non_super_admin_cannot_load_platform_speed(): void

@@ -33,18 +33,23 @@ class AiCreateLpoParamMerger
         $extracted = $this->extractFields($message);
 
         // Bare name reply: prefer supplier if still missing, otherwise treat as a product line.
+        // Never treat create/help questions ("can you help me create an LPO") as a supplier name.
         if (
             empty($extracted['supplier'])
             && empty($extracted['lines_raw'])
-            && preg_match('/^[A-Za-z][\w\s&.\'-]{2,80}$/u', trim($message))
-            && ! preg_match('/\b(confirm|save|yes|no|show\s*form|cancel)\b/i', $message)
+            && $this->looksLikeBareSupplierName(trim($message))
+            && (int) ($params['supplier_id'] ?? 0) <= 0
         ) {
-            if ((int) ($params['supplier_id'] ?? 0) <= 0) {
-                $extracted['supplier'] = trim($message);
-            } else {
-                $extracted['lines_raw'] = trim($message).' x 1';
-                $extracted['replace_lines'] = false;
-            }
+            $extracted['supplier'] = trim($message);
+        } elseif (
+            empty($extracted['supplier'])
+            && empty($extracted['lines_raw'])
+            && $this->looksLikeBareSupplierName(trim($message))
+            && (int) ($params['supplier_id'] ?? 0) > 0
+            && ! $this->isMetaEntityName(trim($message))
+        ) {
+            $extracted['lines_raw'] = trim($message).' x 1';
+            $extracted['replace_lines'] = false;
         }
 
         $notes = [];
@@ -664,6 +669,49 @@ class AiCreateLpoParamMerger
         }
 
         return false;
+    }
+
+    /**
+     * True when the whole message is likely just a supplier/company name reply
+     * (e.g. "Bidco", "Kamande Supplies Ltd") — not a create/help question.
+     */
+    protected function looksLikeBareSupplierName(string $message): bool
+    {
+        $text = trim($message);
+        if ($text === '' || mb_strlen($text) > 60) {
+            return false;
+        }
+        if (! preg_match('/^[A-Za-z][\w\s&.\'-]{1,60}$/u', $text)) {
+            return false;
+        }
+        if (preg_match('/\b(confirm|save|yes|no|show\s*form|cancel)\b/i', $text)) {
+            return false;
+        }
+        if ($this->isMetaEntityName($text)) {
+            return false;
+        }
+        if (str_contains($text, '?')) {
+            return false;
+        }
+        // Conversational / intent phrasing — never a supplier name.
+        if (preg_match(
+            '/\b(can|could|would|will|please|help|want|need|like|how|what|where|when|who|which|should|may|might)\b/i',
+            $text,
+        )) {
+            return false;
+        }
+        if (preg_match(
+            '/\b(create|draft|make|raise|generate|issue|prepare|start|begin|open|add|new)\b.{0,50}\b(lpo|purchase\s*order|po|product|supplier|customer|order|employee|payment|invoice)\b/i',
+            $text,
+        )) {
+            return false;
+        }
+        $words = preg_split('/\s+/', $text) ?: [];
+        if (count($words) > 6) {
+            return false;
+        }
+
+        return true;
     }
 
     protected function looksLikeOrderNumber(string $value): bool

@@ -18,6 +18,8 @@ class PlatformHealthProbe
     public const QUEUE_PROBE_KEY = 'platform:queue:probe';
 
     /**
+     * @param  bool  $liveQueueProbe  When false, skip the 3s dispatch/wait (used by ERP Speed
+     *                                so latency KPIs are not poisoned by the worker probe).
      * @return array{
      *   ok: bool,
      *   checked_at: string,
@@ -27,13 +29,13 @@ class PlatformHealthProbe
      *   checks: list<array{id: string, label: string, ok: bool|null, detail: string}>
      * }
      */
-    public function run(): array
+    public function run(bool $liveQueueProbe = true): array
     {
         $checks = [
             $this->checkApp(),
             $this->checkDatabase(),
             $this->checkRedis(),
-            $this->checkQueue(),
+            $this->checkQueue($liveQueueProbe),
             $this->checkScheduler(),
             $this->checkReverb(),
             $this->checkAi(),
@@ -122,7 +124,7 @@ class PlatformHealthProbe
     }
 
     /** @return array{id: string, label: string, ok: bool|null, detail: string} */
-    protected function checkQueue(): array
+    protected function checkQueue(bool $liveProbe = true): array
     {
         $driver = (string) config('queue.default', 'sync');
 
@@ -140,6 +142,15 @@ class PlatformHealthProbe
             $failed = 0;
             if (DB::getSchemaBuilder()->hasTable('failed_jobs')) {
                 $failed = (int) DB::table('failed_jobs')->count();
+            }
+
+            if (! $liveProbe) {
+                return [
+                    'id' => 'queue',
+                    'label' => 'Queue worker',
+                    'ok' => null,
+                    'detail' => "Pending {$pending} · failed {$failed} · driver {$driver} (live worker probe skipped — open Infrastructure health to test)",
+                ];
             }
 
             $token = (string) Str::uuid();

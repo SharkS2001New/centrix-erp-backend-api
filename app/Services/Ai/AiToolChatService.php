@@ -935,13 +935,17 @@ class AiToolChatService
                     .'Kenyan English / accent / fast speech: the mic transcript may be imperfect (misheard LPO, KES, M-Pesa, customer/product names, dropped words). '
                     .'Interpret intended Kenya retail ERP meaning; do not nitpick grammar or ask them to repeat for accent alone. '
                     .'If one catalog name is a clear fuzzy match, use it; if several are plausible, ask which one in one short question. '
+                    .'Follow-ups like "daily breakdown", "by figures", "give me the numbers", "the table": answer immediately — never ask "did you want the daily breakdown?" when they already asked for it or history already has that sales context. '
+                    .'FIGURES IN TALK: put key totals in the FIRST 1–2 spoken sentences (who, period, total Kenyan Shillings, order count, best or quiet day). '
+                    .'Then include the full day-by-day markdown table in the same chat reply for the sidebar. '
+                    .'If the day list is long, still speak the totals and say the full breakdown is in the assistant chat. Never reply with only a clarify question when tools/history already returned the numbers. '
                     .'ACTIONS (create supplier, create LPO, create product, update product unit price, payments, LPO approve/send/receive, etc.): '
                     .'You CAN and SHOULD perform them when the user asks — collect missing details briefly, then ask them to say confirm / yes / save / create it. '
                     .'Never refuse write actions or tell them to open a screen and type it themselves after they asked you to do it. '
                     .'After a successful action, say what you did in one short sentence, then ask "Anything else I can help with?" '
-                    .'For questions: at most 1–2 short calm sentences that directly summarize the result (key amount, name, yes/no, or count). '
-                    .'Speak steadily — no lists, no tables, no screen paths, no "Open …" links aloud. '
-                    .'Prefer a spoken summary over completeness; never ramble or restate the question.';
+                    .'For questions: at most 1–2 short calm sentences that directly summarize the result (key amount, name, yes/no, or count), then optional table for chat. '
+                    .'Speak steadily — no reading every table row aloud, no screen paths, no "Open …" links aloud. '
+                    .'Prefer a spoken summary with real numbers over completeness; never ramble or restate the question.';
             }
         }
         if ($entityRefs !== []) {

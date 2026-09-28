@@ -116,6 +116,56 @@ class AiCreateLpoParamMergerTest extends TestCase
         $this->assertStringContainsString('confirm', strtolower($reply));
     }
 
+    public function test_help_create_lpo_question_is_not_treated_as_supplier_name(): void
+    {
+        $merger = app(AiCreateLpoParamMerger::class);
+        $pending = [
+            'type' => 'create_lpo',
+            'params' => [],
+        ];
+
+        foreach ([
+            'can you help me create an LPO',
+            'Can you help me create an LPO?',
+            'help me create a purchase order',
+            'I want to raise an LPO',
+            'please create an LPO',
+        ] as $message) {
+            $result = $merger->merge($this->user, $pending, $message);
+            $params = $result['pending']['params'] ?? [];
+            $this->assertSame(0, (int) ($params['supplier_id'] ?? 0), $message);
+            $this->assertTrue(
+                empty($params['supplier_name'])
+                || ! str_contains(strtolower((string) $params['supplier_name']), 'help'),
+                $message,
+            );
+            foreach ($result['notes'] as $note) {
+                $this->assertStringNotContainsString('Could not match supplier', $note, $message);
+            }
+            $reply = $merger->statusReply($result['pending'], $result['notes']);
+            $this->assertStringNotContainsString('Could not match supplier', $reply, $message);
+            $this->assertMatchesRegularExpression('/supplier/i', $reply);
+        }
+    }
+
+    public function test_bare_supplier_name_still_accepted(): void
+    {
+        $supplier = Supplier::query()
+            ->where('organization_id', $this->user->organization_id)
+            ->whereNull('deleted_at')
+            ->first();
+        $this->assertNotNull($supplier);
+
+        $merger = app(AiCreateLpoParamMerger::class);
+        $result = $merger->merge($this->user, [
+            'type' => 'create_lpo',
+            'params' => [],
+        ], (string) $supplier->supplier_name);
+
+        $this->assertTrue($result['changed']);
+        $this->assertSame((int) $supplier->id, (int) ($result['pending']['params']['supplier_id'] ?? 0));
+    }
+
     public function test_resolves_supplier_by_name_on_create(): void
     {
         $supplier = Supplier::query()

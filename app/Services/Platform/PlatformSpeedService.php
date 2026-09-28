@@ -22,6 +22,7 @@ class PlatformSpeedService
      *   checked_at: string,
      *   status: 'ok'|'degraded'|'critical',
      *   server_ms: int,
+     *   health_ms: int,
      *   latency_probe: array{db_ms: int|null, redis_ms: int|null, redis_skipped: bool},
      *   health: array<string, mixed>,
      *   slow_queries: array<string, mixed>,
@@ -30,19 +31,24 @@ class PlatformSpeedService
      */
     public function snapshot(): array
     {
-        $started = hrtime(true);
-
+        // Cheap DB/Redis timings only — never fold the full health/queue wait into server_ms.
+        $latencyStarted = hrtime(true);
         $latencyProbe = $this->latencyProbe();
-        $health = $this->health->run();
+        $serverMs = max(0, (int) round((hrtime(true) - $latencyStarted) / 1_000_000));
+
+        // Skip the 3s live queue worker probe so Measure stays snappy and KPIs stay honest.
+        $healthStarted = hrtime(true);
+        $health = $this->health->run(liveQueueProbe: false);
+        $healthMs = max(0, (int) round((hrtime(true) - $healthStarted) / 1_000_000));
+
         $slowQueries = $this->slowQueries->topQueries(5);
         $slowIssues = $this->slowIssuesSummary();
-
-        $serverMs = max(0, (int) round((hrtime(true) - $started) / 1_000_000));
 
         return [
             'checked_at' => now()->toIso8601String(),
             'status' => $this->overallStatus($health, $latencyProbe, $slowQueries, $slowIssues),
             'server_ms' => $serverMs,
+            'health_ms' => $healthMs,
             'latency_probe' => $latencyProbe,
             'health' => $health,
             'slow_queries' => $slowQueries,
