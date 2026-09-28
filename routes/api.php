@@ -86,6 +86,7 @@ use App\Http\Controllers\Api\V1\PermissionController;
 use App\Http\Controllers\Api\V1\PlatformActiveSessionsController;
 use App\Http\Controllers\Api\V1\PlatformAiTrainingController;
 use App\Http\Controllers\Api\V1\PlatformContractController;
+use App\Http\Controllers\Api\V1\PlatformMarketingPortfolioController;
 use App\Http\Controllers\Api\V1\PlatformMailController;
 use App\Http\Controllers\Api\V1\PlatformPlanController;
 use App\Http\Controllers\Api\V1\PlatformSubscriptionController;
@@ -166,6 +167,8 @@ Broadcast::routes([
 
 Route::prefix('v1')->group(function () {
     Route::get('health', [AuthController::class, 'health']);
+    Route::get('marketing-portfolios/shared/{token}', [PlatformMarketingPortfolioController::class, 'shared'])
+        ->where('token', '[A-Za-z0-9]{20,64}');
     Route::get('auth/organization-preview', [AuthController::class, 'organizationPreview'])
         ->middleware('throttle:auth-org-preview');
     Route::prefix('company-mobile-attendance')->group(function () {
@@ -429,6 +432,9 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::post('admin/whats-new', [PlatformWhatsNewController::class, 'store'])
             ->middleware(['erp.super_admin']);
+        Route::get('admin/whats-new/{id}/reads', [PlatformWhatsNewController::class, 'reads'])
+            ->middleware(['erp.super_admin'])
+            ->whereNumber('id');
         Route::get('admin/whats-new/{id}', [PlatformWhatsNewController::class, 'show'])
             ->middleware(['erp.super_admin']);
         Route::patch('admin/whats-new/{id}', [PlatformWhatsNewController::class, 'update'])
@@ -552,6 +558,28 @@ Route::prefix('v1')->group(function () {
                 Route::post('{platform_contract}/provision', [PlatformContractController::class, 'provision'])->whereNumber('platform_contract');
                 Route::get('{platform_contract}/pdf', [PlatformContractController::class, 'pdf'])->whereNumber('platform_contract');
                 Route::post('{platform_contract}/email', [PlatformContractController::class, 'email'])->whereNumber('platform_contract');
+            });
+
+        Route::prefix('admin/platform-marketing-portfolios')
+            ->middleware(['erp.super_admin'])
+            ->group(function () {
+                Route::get('meta', [PlatformMarketingPortfolioController::class, 'meta']);
+                Route::get('/', [PlatformMarketingPortfolioController::class, 'index']);
+                Route::post('/', [PlatformMarketingPortfolioController::class, 'store']);
+                Route::get('{platform_marketing_portfolio}', [PlatformMarketingPortfolioController::class, 'show'])
+                    ->whereNumber('platform_marketing_portfolio');
+                Route::patch('{platform_marketing_portfolio}', [PlatformMarketingPortfolioController::class, 'update'])
+                    ->whereNumber('platform_marketing_portfolio');
+                Route::delete('{platform_marketing_portfolio}', [PlatformMarketingPortfolioController::class, 'destroy'])
+                    ->whereNumber('platform_marketing_portfolio');
+                Route::post('{platform_marketing_portfolio}/generate', [PlatformMarketingPortfolioController::class, 'generate'])
+                    ->whereNumber('platform_marketing_portfolio');
+                Route::post('{platform_marketing_portfolio}/regenerate-section', [PlatformMarketingPortfolioController::class, 'regenerateSection'])
+                    ->whereNumber('platform_marketing_portfolio');
+                Route::post('{platform_marketing_portfolio}/share', [PlatformMarketingPortfolioController::class, 'share'])
+                    ->whereNumber('platform_marketing_portfolio');
+                Route::get('{platform_marketing_portfolio}/pdf', [PlatformMarketingPortfolioController::class, 'pdf'])
+                    ->whereNumber('platform_marketing_portfolio');
             });
 
         Route::get('admin/organizations/{organization}/platform-contracts', [PlatformContractController::class, 'forOrganization'])

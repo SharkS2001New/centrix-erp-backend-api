@@ -99,7 +99,8 @@ class AiSystemContextBuilder
         if ($this->needsLookup($lower, 'order', 'sale', 'checkout')) {
             $context['entity_detail']['sales_order'] = $this->entitySchemas->forEntityWithOptions($contextUser, 'sales_order');
         }
-        if ($this->needsLookup($lower, 'product', 'stock', 'reorder', 'catalog', 'category', 'sku')) {
+        if ($this->needsLookup($lower, 'product', 'stock', 'reorder', 'catalog', 'category', 'sku')
+            || $this->looksLikeCatalogNameQuery($message)) {
             $context['product_summary'] = $this->productSummary($contextUser);
             $context['product_search'] = $this->searchProducts($contextUser, $message);
         }
@@ -118,8 +119,13 @@ class AiSystemContextBuilder
         if ($this->needsLookup($lower, 'employee', 'hire', 'staff', 'hr', 'salary', 'payroll', 'department')) {
             $context['hr_reference'] = $this->hrReference($contextUser);
         }
-        if ($this->needsLookup($lower, 'customer', 'order', 'held')) {
+        if ($this->needsLookup($lower, 'customer', 'order', 'held')
+            || $this->looksLikeCatalogNameQuery($message)) {
             $context['customer_search'] = $this->searchCustomers($contextUser, $message);
+        }
+        if ($this->needsLookup($lower, 'supplier', 'purchase', 'lpo', 'vendor')
+            || $this->looksLikeCatalogNameQuery($message)) {
+            $context['supplier_search'] = $this->searchSuppliers($contextUser, $message);
         }
 
         return $context;
@@ -139,6 +145,14 @@ class AiSystemContextBuilder
         }
 
         return false;
+    }
+
+    /** True when the message likely names a catalog entity (local product/customer/supplier). */
+    protected function looksLikeCatalogNameQuery(string $message): bool
+    {
+        $terms = app(AiSpokenEntityResolver::class)->extractTerms($message);
+
+        return $terms !== [];
     }
 
     protected function contextUser(User $user, ?Organization $organization, int $orgId, bool $trainingMode = false): User
@@ -434,20 +448,31 @@ class AiSystemContextBuilder
     /** @return list<array<string, mixed>> */
     protected function searchCustomers(User $user, string $message): array
     {
-        if (! preg_match('/["\']([^"\']+)["\']|customer\s+(\w+)/i', $message, $m)) {
-            return [];
+        $terms = app(AiSpokenEntityResolver::class)->extractTerms($message);
+        if ($terms === []) {
+            if (! preg_match('/["\']([^"\']+)["\']|customer\s+(\w+)/i', $message, $m)) {
+                return [];
+            }
+            $terms = [trim($m[1] ?? $m[2] ?? '')];
         }
-        $term = trim($m[1] ?? $m[2] ?? '');
-        if (strlen($term) < 2) {
+        $terms = array_values(array_filter($terms, fn ($t) => mb_strlen($t) >= 2));
+        if ($terms === []) {
             return [];
         }
 
         return DB::table('customers')
             ->where('organization_id', $user->organization_id)
             ->whereNull('deleted_at')
-            ->where(function ($q) use ($term) {
-                $q->where('customer_name', 'like', "%{$term}%")
-                    ->orWhere('customer_num', 'like', "%{$term}%");
+            ->where(function ($q) use ($terms) {
+                foreach ($terms as $term) {
+                    $token = trim(explode(' ', $term)[0] ?? '');
+                    if ($token === '') {
+                        continue;
+                    }
+                    $like = '%'.$token.'%';
+                    $q->orWhere('customer_name', 'like', $like)
+                        ->orWhere('customer_num', 'like', $like);
+                }
             })
             ->orderBy('customer_name')
             ->limit(8)
@@ -459,24 +484,64 @@ class AiSystemContextBuilder
     /** @return list<array<string, mixed>> */
     protected function searchProducts(User $user, string $message): array
     {
-        if (! preg_match('/(\d+)\s*(?:x|×|bags?|units?|pcs?)?\s*(?:of\s+)?(.+)/i', $message, $m)) {
-            return [];
+        $terms = app(AiSpokenEntityResolver::class)->extractTerms($message);
+        if ($terms === []) {
+            if (! preg_match('/(\d+)\s*(?:x|×|bags?|units?|pcs?)?\s*(?:of\s+)?(.+)/i', $message, $m)) {
+                return [];
+            }
+            $terms = [trim($m[2] ?? '')];
         }
-        $term = trim($m[2] ?? '');
-        if (strlen($term) < 2) {
+        $terms = array_values(array_filter($terms, fn ($t) => mb_strlen($t) >= 2));
+        if ($terms === []) {
             return [];
         }
 
         return DB::table('products')
             ->where('organization_id', $user->organization_id)
             ->whereNull('deleted_at')
-            ->where(function ($q) use ($term) {
-                $q->where('product_name', 'like', "%{$term}%")
-                    ->orWhere('product_code', 'like', "%{$term}%");
+            ->where(function ($q) use ($terms) {
+                foreach ($terms as $term) {
+                    $token = trim(explode(' ', $term)[0] ?? '');
+                    if ($token === '') {
+                        continue;
+                    }
+                    $like = '%'.$token.'%';
+                    $q->orWhere('product_name', 'like', $like)
+                        ->orWhere('product_code', 'like', $like);
+                }
             })
             ->orderBy('product_name')
             ->limit(8)
             ->get(['product_code', 'product_name', 'unit_price'])
+            ->map(fn ($row) => (array) $row)
+            ->all();
+    }
+
+    /** @return list<array<string, mixed>> */
+    protected function searchSuppliers(User $user, string $message): array
+    {
+        $terms = app(AiSpokenEntityResolver::class)->extractTerms($message);
+        if ($terms === []) {
+            return [];
+        }
+
+        return DB::table('suppliers')
+            ->where('organization_id', $user->organization_id)
+            ->whereNull('deleted_at')
+            ->where(function ($q) use ($terms) {
+                foreach ($terms as $term) {
+                    $token = trim(explode(' ', $term)[0] ?? '');
+                    if ($token === '') {
+                        continue;
+                    }
+                    $like = '%'.$token.'%';
+                    $q->orWhere('supplier_name', 'like', $like)
+                        ->orWhere('supplier_code', 'like', $like);
+                }
+            })
+            ->orderBy('supplier_name')
+            ->limit(8)
+            ->get(['id', 'supplier_code', 'supplier_name'])
             ->map(fn ($row) => (array) $row)
             ->all();
     }

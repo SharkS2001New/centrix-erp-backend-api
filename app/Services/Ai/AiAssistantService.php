@@ -28,6 +28,7 @@ class AiAssistantService
         protected AiAssistantHelpGuide $helpGuide,
         protected AiCreateProductParamMerger $productParamMerger,
         protected AiCreateLpoParamMerger $lpoParamMerger,
+        protected AiSpokenEntityResolver $spokenEntityResolver,
     ) {}
 
     public function isAvailableForUser(User $user): bool
@@ -125,7 +126,26 @@ class AiAssistantService
             }
         }
 
+        $voiceMode = ! empty($pageContext['voice_mode']);
+        $spokenResolved = $this->spokenEntityResolver->resolve($user, $message, $voiceMode);
+        $entityRefs = $this->mergeSpokenEntityRefs($entityRefs, $spokenResolved['refs'] ?? []);
+
         $normalizedRefsEarly = \App\Support\EntityMentionRefs::normalize($entityRefs);
+
+        // Start / continue LPO drafts deterministically (no LLM) so Talk + chat can collect
+        // supplier/lines from natural sentences and ask for each missing detail.
+        if (
+            ! is_array($pendingAction)
+            && ! $confirmAction
+            && ! $this->actionExecutor->isConfirmation($message)
+            && ! $this->intentResolver->isCancelIntent($message)
+        ) {
+            $seedLpo = $this->intentResolver->inferCreateAction($message, $history, $pathname);
+            if (is_array($seedLpo) && (string) ($seedLpo['type'] ?? '') === 'create_lpo') {
+                $pendingAction = $seedLpo;
+            }
+        }
+
         if (is_array($pendingAction) && (string) ($pendingAction['type'] ?? '') === 'create_lpo') {
             $pendingAction = $this->enrichPendingActionFromEntityRefs($pendingAction, $normalizedRefsEarly);
             $mergedLpo = $this->lpoParamMerger->merge($user, $pendingAction, $message, $history, $normalizedRefsEarly);
@@ -138,23 +158,23 @@ class AiAssistantService
                 && (
                     ! $this->intentResolver->isDataQuestion($message)
                     || $this->lpoParamMerger->looksLikeFieldFollowUp($message)
+                    || $mergedLpo['changed']
                 )
-                && ($mergedLpo['changed'] || $this->lpoParamMerger->looksLikeFieldFollowUp($message))
             ) {
                 $gate = $this->contextBuilder->gateForUser($user);
                 $scope = $this->workspaceScope->resolve($user, $gate, $workspaceId, $pathname);
-                $reply = $this->lpoParamMerger->statusReply($pendingAction, $mergedLpo['notes']);
+                $reply = $this->lpoParamMerger->statusReply($pendingAction, $mergedLpo['notes'], $voiceMode);
 
                 return $this->attachPendingAction(
                     $user,
-                    [
+                    $this->withSpokenEntityMeta([
                         'success' => true,
                         'reply' => $reply,
                         'message' => $reply,
                         'tools_used' => ['create_lpo_param_merger'],
                         'active_workspace' => $scope['id'],
                         'provider' => $runtime['provider'] ?? null,
-                    ],
+                    ], $normalizedRefsEarly, $spokenResolved),
                     $pendingAction,
                     $message,
                     $pathname,
@@ -258,7 +278,9 @@ class AiAssistantService
             );
             if (! empty($toolResult['success']) || ! empty($toolResult['declined_off_topic']) || ! empty($toolResult['declined_language'])) {
                 // Tool chat has no write executors — scrub hallucinated "I created…" claims.
-                return app(AiFalseWriteSuccessGuard::class)->scrub($toolResult, $pendingAction);
+                $scrubbed = app(AiFalseWriteSuccessGuard::class)->scrub($toolResult, $pendingAction);
+
+                return $this->withSpokenEntityMeta($scrubbed, $normalizedRefs, $spokenResolved);
             }
 
             Log::info('AI tool chat failed; falling back to classic assistant', [
@@ -306,6 +328,12 @@ class AiAssistantService
         if ($normalizedRefs !== []) {
             $systemContext['resolved_entities'] = $normalizedRefs;
             $systemContext['resolved_entity_lines'] = \App\Support\EntityMentionRefs::contextLines($normalizedRefs);
+        }
+        if (! empty($spokenResolved['hints'])) {
+            $systemContext['spoken_name_hints'] = $spokenResolved['hints'];
+        }
+        if (! empty($spokenResolved['candidates'])) {
+            $systemContext['spoken_name_candidates'] = $spokenResolved['candidates'];
         }
         $messages = [
             ['role' => 'system', 'content' => $this->systemPrompt($scope)],
@@ -469,7 +497,7 @@ class AiAssistantService
                 $result['pending_action'] = null;
             }
 
-            return $result;
+            return $this->withSpokenEntityMeta($result, $normalizedRefs, $spokenResolved);
         } catch (AiProviderException $e) {
             Log::warning('AI chat provider failure', [
                 'provider' => $runtime['provider'] ?? null,
@@ -1064,6 +1092,7 @@ RULES:
 19. User-facing wording: never say "backend" to the user. Say "Backoffice" (sales channel `backend`/`erp` = Backoffice). Internal module keys like sales.backend stay internal only.
 20. After a successful create/update/confirm, end with a short "Anything else I can help with?" so the conversation can continue.
 21. CRITICAL — never claim you created, saved, drafted, or posted an LPO / product / supplier / customer / order unless the system has already executed the action and returned a real id (e.g. LPO number). Until then, say what is still missing or ask them to reply **confirm**. Hallucinated success is not allowed.
+22. Spoken / fuzzy names: when context has resolved_entities, spoken_name_hints, or spoken_name_candidates, prefer those org catalog matches (products, suppliers, customers) over guessing. Local names like "Kamande" may be mis-heard by the microphone — if a hint says spoken text matched a catalog name, use that record. If several candidates are listed, ask which one they meant.
 
 ```action
 {"type":"create_product","summary":"New product Widget","params":{"product_name":"Widget","unit_price":150,"last_cost_price":140,"subcategory_id":1,"unit_id":1,"vat_id":1}}
@@ -1267,6 +1296,47 @@ PROMPT;
             'receive_lpo_goods' => 'Share the LPO number if needed, then reply **confirm** to receive remaining quantities into stock.',
             default => 'Share the details here in chat, or reply **show form** if you prefer a form.',
         };
+    }
+
+    /**
+     * Merge auto-resolved spoken/typed catalog matches into client entity_refs.
+     *
+     * @param  array<int, mixed>|null  $entityRefs
+     * @param  list<array{type: string, id: ?string, code: ?string, label: string}>  $spokenRefs
+     * @return list<array{type: string, id: ?string, code: ?string, label: string}>
+     */
+    protected function mergeSpokenEntityRefs(?array $entityRefs, array $spokenRefs): array
+    {
+        $merged = \App\Support\EntityMentionRefs::normalize($entityRefs);
+        foreach ($spokenRefs as $ref) {
+            if (! is_array($ref)) {
+                continue;
+            }
+            $merged[] = $ref;
+        }
+
+        return \App\Support\EntityMentionRefs::normalize($merged);
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @param  list<array{type: string, id: ?string, code: ?string, label: string}>  $refs
+     * @param  array{refs?: list<mixed>, candidates?: list<mixed>, hints?: list<string>}  $spoken
+     * @return array<string, mixed>
+     */
+    protected function withSpokenEntityMeta(array $payload, array $refs, array $spoken): array
+    {
+        if ($refs !== []) {
+            $payload['resolved_entities'] = $refs;
+        }
+        if (! empty($spoken['candidates'])) {
+            $payload['spoken_name_candidates'] = $spoken['candidates'];
+        }
+        if (! empty($spoken['hints'])) {
+            $payload['spoken_name_hints'] = $spoken['hints'];
+        }
+
+        return $payload;
     }
 
     /**

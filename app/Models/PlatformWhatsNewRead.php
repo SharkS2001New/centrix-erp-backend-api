@@ -30,4 +30,9 @@ class PlatformWhatsNewRead extends Model
     {
         return $this->belongsTo(User::class);
     }
+
+    public function organization(): BelongsTo
+    {
+        return $this->belongsTo(Organization::class);
+    }
 }

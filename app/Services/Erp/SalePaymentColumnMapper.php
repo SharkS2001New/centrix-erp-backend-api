@@ -54,17 +54,25 @@ class SalePaymentColumnMapper
 
     /**
      * Replace tender columns from a method_code => amount map (absolute values).
+     * Single UPDATE — no per-method refresh round-trips.
      *
      * @param  array<string, float>  $methodAmounts
      */
     public static function replaceFromMethodMap(Sale $sale, array $methodAmounts): void
     {
-        self::resetTenderColumns($sale);
-        $sale->refresh();
+        $columns = [
+            'cash' => 0.0,
+            'mpesa_amount' => 0.0,
+            'equity_amount' => 0.0,
+            'kcb_amount' => 0.0,
+        ];
+
         foreach ($methodAmounts as $methodCode => $amount) {
-            if ((float) $amount > 0) {
-                self::applyToSale($sale->fresh(), (string) $methodCode, (float) $amount);
+            foreach (self::incrementsForMethod((string) $methodCode, (float) $amount) as $column => $delta) {
+                $columns[$column] = ($columns[$column] ?? 0.0) + $delta;
             }
         }
+
+        $sale->update($columns);
     }
 }

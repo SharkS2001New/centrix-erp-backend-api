@@ -99,6 +99,9 @@ class CheckoutController extends Controller
         $pendingKra = (bool) ($result['pending_kra'] ?? false);
         $buyerPin = isset($result['buyer_pin']) ? (string) $result['buyer_pin'] : null;
         $buyerPin = $buyerPin !== '' ? $buyerPin : null;
+        if (is_array($result['timing'] ?? null)) {
+            $timing = array_merge($timing, $result['timing']);
+        }
 
         // Previous-order edit: finish deferred restore side-effects before re-fiscalizing
         // or deducting stock for the revision (background job may still be in flight).
@@ -345,7 +348,7 @@ class CheckoutController extends Controller
      * Persist the sale (and optional KRA) synchronously; stock ledger / journals /
      * notifications are finalized after the HTTP response.
      *
-     * @return array{sale: Sale, deduct_stock: bool, run_side_effects: bool}
+     * @return array{sale: Sale, deduct_stock: bool, run_side_effects: bool, pending_kra?: bool, buyer_pin?: ?string, timing?: array<string, mixed>}
      */
     protected function checkoutFromCart(TemporaryCart $cart, User $user, CapabilityGate $gate, array $input): array
     {
@@ -373,6 +376,14 @@ class CheckoutController extends Controller
         $salesSettings = $gate->moduleSettings('sales');
 
         return DB::transaction(function () use ($cart, $user, $gate, $input, $salesSettings, $canHydrateOfflineLines, $offlineLines) {
+            $txTiming = [
+                'stock_path' => 'none',
+                'items_ms' => 0,
+                'stock_ms' => 0,
+                'payments_ms' => 0,
+                'line_count' => 0,
+            ];
+
             // Hold the cart row for the whole checkout so concurrent DELETE /lines
             // waits instead of deadlocking on cart_lines / stock_reservations.
             $lockedCart = TemporaryCart::query()->whereKey($cart->id)->lockForUpdate()->first();
@@ -1053,6 +1064,8 @@ class CheckoutController extends Controller
             // available stock stays blocked (same as cart reservations) until then.
             $pendingStockDeduct = $shouldDeductNow;
 
+            $itemsStarted = microtime(true);
+            $saleItemRows = [];
             foreach ($lines->values() as $i => $line) {
                 $code = trim((string) $line->product_code);
                 $product = $productsByCode->get(strtolower($code));
@@ -1064,7 +1077,7 @@ class CheckoutController extends Controller
                     $snapshottedName = $code;
                 }
 
-                SaleItem::create([
+                $saleItemRows[] = [
                     'sale_id' => $sale->id,
                     'product_code' => $line->product_code,
                     'product_name' => $snapshottedName,
@@ -1081,8 +1094,16 @@ class CheckoutController extends Controller
                     'product_vat' => $line->product_vat ?? 0,
                     'amount' => $line->amount,
                     'on_wholesale_retail' => $line->on_wholesale_retail,
-                ]);
+                ];
             }
+            if ($saleItemRows !== []) {
+                // Chunk large carts — one INSERT is far cheaper than N Eloquent creates.
+                foreach (array_chunk($saleItemRows, 100) as $chunk) {
+                    SaleItem::insert($chunk);
+                }
+            }
+            $txTiming['items_ms'] = (int) round((microtime(true) - $itemsStarted) * 1000);
+            $txTiming['line_count'] = count($saleItemRows);
 
             if ($isPreviousOrderEditSettlement) {
                 $priorSale = Sale::query()->find((int) $cart->superseded_sale_id);
@@ -1105,15 +1126,18 @@ class CheckoutController extends Controller
             }
 
             if ($pendingStockDeduct || $gate->shouldHoldStockOnCheckout($workflow, $orderStatus, (string) $cart->channel)) {
+                $stockStarted = microtime(true);
                 // Drop timed-out cart holds before deciding transfer vs re-reserve.
                 $this->releaseExpiredReservations((int) $cart->id);
                 $hasActiveCartHolds = $this->activeStockReservationQuery()
                     ->where('cart_id', $cart->id)
                     ->exists();
                 if ($hasActiveCartHolds) {
+                    $txTiming['stock_path'] = 'transfer';
                     $this->transferCartReservationsToSale((int) $cart->id, (int) $sale->id);
                 } else {
                     // Re-check live available stock (blocks oversell when holds expired).
+                    $txTiming['stock_path'] = 're_reserve';
                     $this->reserveSaleStockIfNeeded($sale->fresh(['items']), $user, $gate);
                 }
                 if ($pendingStockDeduct) {
@@ -1121,9 +1145,13 @@ class CheckoutController extends Controller
                     $meta['pending_stock_deduct'] = true;
                     $sale->update(['fulfillment_meta' => $meta]);
                 }
+                $txTiming['stock_ms'] = (int) round((microtime(true) - $stockStarted) * 1000);
             } else {
+                $txTiming['stock_path'] = 'release';
                 $this->releaseCartReservations($cart->id);
             }
+
+            $paymentsStarted = microtime(true);
 
             if ($voucherPayment > 0 && $cart->payment_voucher_id) {
                 $voucher = Voucher::lockForUpdate()->find($cart->payment_voucher_id);
@@ -1234,24 +1262,23 @@ class CheckoutController extends Controller
                             'reference_number' => $split['reference_number'] ?? null,
                             'paid_at' => $input['payment_date'] ?? now(),
                         ]);
-                        SalePaymentColumnMapper::applyToSale($sale->fresh(), $methodCode, (float) $split['amount']);
+                        // Tender columns rebuilt once via syncSaleTenderColumnsFromPayments.
                     }
                 } else {
                     $method = $this->resolveCheckoutPaymentMethod(
                         (int) $sale->organization_id,
                         (string) $sale->payment_method_code,
                     );
-                if ($method) {
-                    SalePayment::create([
-                        'sale_id' => $sale->id,
-                        'float_session_id' => $floatSessionId,
-                        'payment_method_id' => $method->id,
-                        'amount' => $payNow,
-                        'reference_number' => $input['payment_reference'] ?? null,
-                        'paid_at' => $input['payment_date'] ?? now(),
-                    ]);
-                }
-                SalePaymentColumnMapper::applyToSale($sale, $paymentMethodCode, $payNow);
+                    if ($method) {
+                        SalePayment::create([
+                            'sale_id' => $sale->id,
+                            'float_session_id' => $floatSessionId,
+                            'payment_method_id' => $method->id,
+                            'amount' => $payNow,
+                            'reference_number' => $input['payment_reference'] ?? null,
+                            'paid_at' => $input['payment_date'] ?? now(),
+                        ]);
+                    }
                     $mpesaRecordedInSplits = strtoupper((string) $paymentMethodCode) === 'MPESA';
                 }
 
@@ -1272,7 +1299,6 @@ class CheckoutController extends Controller
                                 ?? ($input['payment_reference'] ?? null),
                             'paid_at' => $input['payment_date'] ?? now(),
                         ]);
-                        SalePaymentColumnMapper::applyToSale($sale->fresh(), 'MPESA', $mpesaOnCart);
                     }
                 }
             } elseif ($mpesaOnCart > 0) {
@@ -1291,7 +1317,6 @@ class CheckoutController extends Controller
                             ?? ($input['payment_reference'] ?? null),
                         'paid_at' => $input['payment_date'] ?? now(),
                     ]);
-                    SalePaymentColumnMapper::applyToSale($sale->fresh(), 'MPESA', $mpesaOnCart);
                 }
             }
 
@@ -1350,6 +1375,7 @@ class CheckoutController extends Controller
             $cart->delete();
 
             $this->syncSaleTenderColumnsFromPayments($sale);
+            $txTiming['payments_ms'] = (int) round((microtime(true) - $paymentsStarted) * 1000);
 
             $orderChange = round((float) ($input['order_change'] ?? 0), 2);
             if ($orderChange > 0) {
@@ -1417,6 +1443,7 @@ class CheckoutController extends Controller
                 'run_side_effects' => $runSideEffects,
                 'pending_kra' => $pendingKra,
                 'buyer_pin' => $buyerPin,
+                'timing' => $txTiming,
             ];
         }, 5);
     }
@@ -2569,7 +2596,7 @@ class CheckoutController extends Controller
 
     protected function copyPriorSalePaymentsToSale(Sale $prior, Sale $sale, ?int $floatSessionId): void
     {
-        $prior->loadMissing('payments');
+        $prior->loadMissing('payments.paymentMethod');
         foreach ($prior->payments ?? [] as $payment) {
             SalePayment::create([
                 'sale_id' => $sale->id,
@@ -2579,13 +2606,8 @@ class CheckoutController extends Controller
                 'reference_number' => $payment->reference_number,
                 'paid_at' => $payment->paid_at ?? now(),
             ]);
-            $methodCode = strtoupper((string) ($payment->paymentMethod?->method_code
-                ?? PaymentMethod::query()->find($payment->payment_method_id)?->method_code
-                ?? ''));
-            if ($methodCode !== '') {
-                SalePaymentColumnMapper::applyToSale($sale->fresh(), $methodCode, (float) $payment->amount);
-            }
         }
+        // Tender columns rebuilt once via syncSaleTenderColumnsFromPayments.
     }
 
     protected function resolveCheckoutPaymentMethod(int $organizationId, string $methodCode): ?PaymentMethod

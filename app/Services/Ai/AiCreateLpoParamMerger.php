@@ -31,6 +31,22 @@ class AiCreateLpoParamMerger
 
         $params = is_array($pending['params'] ?? null) ? $pending['params'] : [];
         $extracted = $this->extractFields($message);
+
+        // Bare name reply: prefer supplier if still missing, otherwise treat as a product line.
+        if (
+            empty($extracted['supplier'])
+            && empty($extracted['lines_raw'])
+            && preg_match('/^[A-Za-z][\w\s&.\'-]{2,80}$/u', trim($message))
+            && ! preg_match('/\b(confirm|save|yes|no|show\s*form|cancel)\b/i', $message)
+        ) {
+            if ((int) ($params['supplier_id'] ?? 0) <= 0) {
+                $extracted['supplier'] = trim($message);
+            } else {
+                $extracted['lines_raw'] = trim($message).' x 1';
+                $extracted['replace_lines'] = false;
+            }
+        }
+
         $notes = [];
         $changed = false;
 
@@ -57,6 +73,14 @@ class AiCreateLpoParamMerger
                 $changed = true;
                 $notes[] = 'Supplier: '.$resolved['name'];
             }
+        } elseif ((int) ($params['supplier_id'] ?? 0) <= 0 && ! empty($params['supplier_name'])) {
+            $resolved = $this->resolveSupplier($user, (string) $params['supplier_name']);
+            if ($resolved !== null) {
+                $params['supplier_id'] = (int) $resolved['id'];
+                $params['supplier_name'] = $resolved['name'];
+                $changed = true;
+                $notes[] = 'Supplier: '.$resolved['name'];
+            }
         } elseif ((int) ($params['supplier_id'] ?? 0) <= 0) {
             // Fall back to schema options / labeled supplier from history on first fill.
             $schema = $this->schemas->forEntityWithOptions($user, 'lpo');
@@ -71,6 +95,44 @@ class AiCreateLpoParamMerger
                     $changed = true;
                     $notes[] = 'Supplier: '.$match['label'];
                 }
+            }
+        }
+
+        // Resolve draft line rows that still only have product_name (from intent extract).
+        if (is_array($params['lines'] ?? null) && $params['lines'] !== []) {
+            $resolvedSeedLines = [];
+            $seedChanged = false;
+            foreach ($params['lines'] as $line) {
+                if (! is_array($line)) {
+                    continue;
+                }
+                if (! empty($line['product_code'])) {
+                    $resolvedSeedLines[] = $line;
+                    continue;
+                }
+                $name = trim((string) ($line['product_name'] ?? ''));
+                if ($name === '') {
+                    continue;
+                }
+                $product = $this->resolveProductByName($user, $name);
+                if (! $product) {
+                    $notes[] = 'Could not find product “'.$name.'” in your catalog.';
+                    $seedChanged = true;
+                    continue;
+                }
+                $resolvedSeedLines[] = [
+                    'product_code' => $product->product_code,
+                    'product_name' => $product->product_name,
+                    'ordered_qty' => (float) ($line['ordered_qty'] ?? 1),
+                    'cost_price' => array_key_exists('cost_price', $line) && $line['cost_price'] !== null && $line['cost_price'] !== ''
+                        ? (float) $line['cost_price']
+                        : (float) ($product->last_cost_price ?? 0),
+                ];
+                $seedChanged = true;
+            }
+            if ($seedChanged) {
+                $params['lines'] = $resolvedSeedLines;
+                $changed = true;
             }
         }
 
@@ -117,13 +179,26 @@ class AiCreateLpoParamMerger
             return true;
         }
 
-        // "Cooking Oil 20L x 10" / multiline product lists
+        // Natural language: "for Bidco", "from Kamande supplies", "with 10 bags of sugar"
+        if (preg_match('/\b(?:supplier|vendor|for|from|with)\b/i', $text)) {
+            return true;
+        }
+
+        // "Cooking Oil 20L x 10" / "10 bags of Kamande" / multiline product lists
         if (preg_match('/\bx\s*\d+(?:\.\d+)?\b/i', $text) && preg_match('/[A-Za-z]{2,}/', $text)) {
+            return true;
+        }
+        if (preg_match('/\d+(?:\.\d+)?\s*(?:bags?|units?|pcs?|pieces?|kg|kgs|litres?|l|cartons?)?\s*(?:of|x|×)\s+[A-Za-z]/i', $text)) {
             return true;
         }
 
         // @Product mentions with trailing qty
         if (str_contains($text, '@') && preg_match('/\d+(?:\.\d+)?\s*$/m', $text)) {
+            return true;
+        }
+
+        // Bare supplier / product name reply during an LPO draft turn.
+        if (preg_match('/^[A-Za-z][\w\s&.\'-]{2,80}$/u', $text)) {
             return true;
         }
 
@@ -134,15 +209,54 @@ class AiCreateLpoParamMerger
      * @param  array<string, mixed>  $pending
      * @param  list<string>  $notes
      */
-    public function statusReply(array $pending, array $notes = []): string
+    public function statusReply(array $pending, array $notes = [], bool $voiceBrief = false): string
     {
         $params = is_array($pending['params'] ?? null) ? $pending['params'] : [];
-        $lines = ['Updated draft LPO — here is what I have:'];
+        $productLines = is_array($params['lines'] ?? null) ? $params['lines'] : [];
 
         $supplier = trim((string) ($params['supplier_name'] ?? ''));
         if ($supplier === '' && (int) ($params['supplier_id'] ?? 0) > 0) {
             $supplier = 'Supplier #'.(int) $params['supplier_id'];
         }
+
+        $missing = [];
+        if ((int) ($params['supplier_id'] ?? 0) <= 0) {
+            $missing[] = 'supplier';
+        }
+        if ($productLines === [] && trim((string) ($params['order_num'] ?? '')) === '' && (int) ($params['sale_id'] ?? 0) <= 0) {
+            $missing[] = 'line items';
+        }
+
+        if ($voiceBrief) {
+            foreach ($notes as $note) {
+                if (str_starts_with($note, 'Could not match') || str_starts_with($note, 'Could not find')) {
+                    return $note.' Which name should I use?';
+                }
+            }
+            if ($missing === []) {
+                $lineBits = [];
+                foreach (array_slice($productLines, 0, 3) as $line) {
+                    if (! is_array($line)) {
+                        continue;
+                    }
+                    $lineBits[] = trim((string) ($line['product_name'] ?? $line['product_code'] ?? ''))
+                        .' × '.($line['ordered_qty'] ?? '?');
+                }
+                $summary = ($supplier !== '' ? $supplier : 'Supplier')
+                    .($lineBits !== [] ? ' - '.implode(', ', $lineBits) : '');
+
+                return 'LPO draft ready: '.$summary.'. Say confirm to create it, or add more products.';
+            }
+            if (in_array('supplier', $missing, true)) {
+                return $supplier !== ''
+                    ? 'I heard supplier “'.$supplier.'” but could not match it. Say the exact supplier name.'
+                    : 'Which supplier is this LPO for?';
+            }
+
+            return 'Got supplier '.($supplier !== '' ? $supplier : '').'. Which products and quantities? For example: Kamande x 10.';
+        }
+
+        $lines = ['Updated draft LPO — here is what I have:'];
         $lines[] = '• Supplier: '.($supplier !== '' ? $supplier : '— still needed');
 
         if (! empty($params['due_date'])) {
@@ -158,7 +272,6 @@ class AiCreateLpoParamMerger
             $lines[] = '• Reference: '.$params['reference_number'];
         }
 
-        $productLines = is_array($params['lines'] ?? null) ? $params['lines'] : [];
         if ($productLines !== []) {
             $lines[] = '• Lines:';
             foreach ($productLines as $line) {
@@ -185,19 +298,19 @@ class AiCreateLpoParamMerger
             }
         }
 
-        $missing = [];
-        if ((int) ($params['supplier_id'] ?? 0) <= 0) {
-            $missing[] = 'supplier';
-        }
-        if ($productLines === [] && trim((string) ($params['order_num'] ?? '')) === '' && (int) ($params['sale_id'] ?? 0) <= 0) {
-            $missing[] = 'line items (or a sales order to copy from)';
-        }
-
         $lines[] = '';
         if ($missing === []) {
             $lines[] = 'Ready to save. Reply **confirm** or **save** to create the LPO (PDF/print links will appear after). Or reply **show form** to review.';
         } else {
-            $lines[] = 'Still need: '.implode(', ', $missing).'.';
+            $need = [];
+            if (in_array('supplier', $missing, true)) {
+                $need[] = 'supplier';
+            }
+            if (in_array('line items', $missing, true)) {
+                $need[] = 'line items (or a sales order to copy from)';
+            }
+            $lines[] = 'Still need: '.implode(', ', $need).'.';
+            $lines[] = 'You can reply in one sentence, e.g. “Supplier Bidco, Kamande x 10, due 30/09/2026”.';
         }
 
         return implode("\n", $lines);
@@ -213,11 +326,18 @@ class AiCreateLpoParamMerger
         }
 
         if (preg_match('/(?:^|>)\s*supplier\s*[:=]\s*([^\n]+)/im', $text, $m)
-            || preg_match('/\bsupplier\s*[:=]\s*([^\n,;]+)/i', $text, $m)) {
-            $params['supplier'] = trim($m[1], " \t\"'>");
+            || preg_match('/\bsupplier\s*[:=]\s*([^\n,;]+)/i', $text, $m)
+            || preg_match('/\b(?:supplier|vendor)\s+(?:is\s+|named\s+)?([A-Za-z0-9][\w\s&.\'-]{1,60}?)(?=\s*(?:,|;|\.|$|\band\b|\bwith\b|\bdue\b|\bterms\b|\bfor\b|\bproducts?\b|\blines?\b|\d))/iu', $text, $m)
+            || preg_match('/\b(?:lpo|purchase\s+order|po)\s+(?:for|from)\s+([A-Za-z0-9][\w\s&.\'-]{1,60}?)(?=\s*(?:,|;|\.|$|\band\b|\bwith\b|\bdue\b|\bterms\b|\bfor\b|\bproducts?\b|\blines?\b|\d))/iu', $text, $m)
+            || preg_match('/\b(?:for|from)\s+(?:supplier\s+|vendor\s+)?([A-Za-z][\w\s&.\'-]{1,50}?)(?=\s*(?:,|;|\.|$|\band\b|\bwith\b|\bdue\b|\bterms\b|\bproducts?\b|\blines?\b|\bfor\b|\d+\s*(?:bags?|units?|x|×|of)))/iu', $text, $m)) {
+            $candidate = $this->cleanEntityName($m[1]);
+            if ($candidate !== null && ! $this->isMetaEntityName($candidate)) {
+                $params['supplier'] = $candidate;
+            }
         }
 
-        if (preg_match('/(?:change|update|set|make)?\s*due\s*date\s*(?:to|=|:)?\s*([^\n,;]+)/i', $text, $m)) {
+        if (preg_match('/(?:change|update|set|make)?\s*due\s*date\s*(?:to|=|:)?\s*([^\n,;]+)/i', $text, $m)
+            || preg_match('/\bdue(?:\s*date)?\s*(?:on|by|to|=|:)?\s*([^\n,;]+?)(?=\s*(?:,|;|\.|$|\bterms\b|\band\b|\bwith\b)|\s*$)/i', $text, $m)) {
             $parsed = $this->parseDate(trim($m[1]));
             if ($parsed !== null) {
                 $params['due_date'] = $parsed;
@@ -225,7 +345,8 @@ class AiCreateLpoParamMerger
         }
 
         if (preg_match('/(?:^|>)\s*terms\s*[:=]\s*([^\n]+)/im', $text, $m)
-            || preg_match('/\bterms\s*[:=]\s*([^\n]+)/i', $text, $m)) {
+            || preg_match('/\bterms\s*[:=]\s*([^\n]+)/i', $text, $m)
+            || preg_match('/\bterms\s+(\d+\s*days?(?:\s+credit)?|net\s*\d+|cod|cash)\b/i', $text, $m)) {
             $params['terms'] = trim($m[1], " \t\"'>");
         }
 
@@ -243,10 +364,23 @@ class AiCreateLpoParamMerger
         } elseif (preg_match('/(?:^|>)\s*products?\s*[:=]\s*([\s\S]+)/im', $text, $m)) {
             $params['lines_raw'] = trim($m[1]);
             $params['replace_lines'] = true;
+        } else {
+            $naturalLines = $this->extractNaturalProductQtyPhrases($text);
+            if ($naturalLines !== []) {
+                $params['lines_raw'] = implode(', ', array_map(
+                    fn ($line) => ($line['product_name'] ?? '').' x '.($line['ordered_qty'] ?? 1),
+                    $naturalLines,
+                ));
+                $params['replace_lines'] = (bool) preg_match('/\b(lines?|products?|items?)\b/i', $text)
+                    || preg_match('/\b(create|draft|make|raise)\b.{0,40}\b(lpo|purchase\s+order)\b/i', $text);
+            }
         }
 
         if (preg_match('/\b(?:order|sale)\s*[#:]?\s*([A-Z0-9][\w\-\/]{2,40})\b/i', $text, $m)) {
-            $params['order_num'] = trim($m[1]);
+            $orderNum = trim($m[1]);
+            if ($this->looksLikeOrderNumber($orderNum)) {
+                $params['order_num'] = $orderNum;
+            }
         }
 
         return $params;
@@ -379,6 +513,12 @@ class AiCreateLpoParamMerger
             return [];
         }
 
+        // Prefer whole-sentence natural phrases first ("10 bags of Kamande and Sugar x 5").
+        $natural = $this->extractNaturalProductQtyPhrases($chunk);
+        if ($natural !== []) {
+            return $natural;
+        }
+
         // Split on commas / newlines / "and"
         $parts = preg_split('/\n+|,(?![^(]*\))|\band\b/i', $chunk) ?: [];
         foreach ($parts as $part) {
@@ -389,21 +529,151 @@ class AiCreateLpoParamMerger
                 continue;
             }
 
-            // Name x qty  OR  Name × qty  OR  trailing qty
-            if (preg_match('/^(.+?)\s*[x×]\s*(\d+(?:\.\d+)?)\s*$/iu', $part, $m)
-                || preg_match('/^(.+?)\s+(\d+(?:\.\d+)?)\s*$/u', $part, $m)) {
+            $name = null;
+            $qty = 0.0;
+            if (preg_match('/^(.+?)\s*[x×]\s*(\d+(?:\.\d+)?)\s*$/iu', $part, $m)) {
                 $name = trim($m[1], " \t\"'");
                 $qty = (float) $m[2];
-                if ($name !== '' && $qty > 0 && ! preg_match('/^\d+$/', $name)) {
-                    $lines[] = [
-                        'product_name' => $name,
-                        'ordered_qty' => $qty,
-                    ];
-                }
+            } elseif (preg_match('/^(\d+(?:\.\d+)?)\s*(?:bags?|units?|pcs?|pieces?|kg|kgs|litres?|l|cartons?|crates?)?\s*(?:of|x|×)\s+(.+)$/iu', $part, $m)) {
+                $qty = (float) $m[1];
+                $name = trim($m[2], " \t\"'");
+            } elseif (preg_match('/^(.+?)\s+(\d+(?:\.\d+)?)\s*(?:bags?|units?|pcs?|pieces?|kg|kgs)?\s*$/u', $part, $m)) {
+                $name = trim($m[1], " \t\"'");
+                $qty = (float) $m[2];
+            }
+            $name = $name !== null ? ($this->cleanEntityName($name) ?? $name) : '';
+            if ($name !== '' && $qty > 0 && ! preg_match('/^\d+$/', $name)) {
+                $lines[] = [
+                    'product_name' => $name,
+                    'ordered_qty' => $qty,
+                ];
             }
         }
 
         return $lines;
+    }
+
+    /**
+     * Pull "10 bags of Kamande", "Kamande x 10" style phrases from a free sentence.
+     *
+     * @return list<array{product_name: string, ordered_qty: float}>
+     */
+    public function extractNaturalProductQtyPhrases(string $text): array
+    {
+        $out = [];
+        $seen = [];
+
+        $add = function (string $name, float $qty) use (&$out, &$seen): void {
+            $name = $this->cleanEntityName($name) ?? '';
+            if ($name === '' || $qty <= 0 || $this->isMetaEntityName($name)) {
+                return;
+            }
+            $key = mb_strtolower($name).'|'.$qty;
+            if (isset($seen[$key])) {
+                return;
+            }
+            $seen[$key] = true;
+            $out[] = [
+                'product_name' => $name,
+                'ordered_qty' => $qty,
+            ];
+        };
+
+        // "10 bags of Kamande" / "20 units of sugar" / "10 x Cooking Oil"
+        if (preg_match_all(
+            '/(\d+(?:\.\d+)?)\s*(?:bags?|units?|pcs?|pieces?|kg|kgs|litres?|l|cartons?|crates?)?\s*(?:of|x|×)\s+([A-Za-z][\w&.\'-]{1,40}(?:\s+[A-Za-z][\w&.\'-]{0,40}){0,4}?)(?=\s*(?:,|\band\b|\bdue\b|\bterms\b|\bfor\b|\bfrom\b|\bwith\b|\.|$))/iu',
+            $text,
+            $matches,
+            PREG_SET_ORDER,
+        )) {
+            foreach ($matches as $m) {
+                $add($m[2], (float) $m[1]);
+            }
+        }
+
+        // "Kamande x 10" — walk back from each ×/x qty so sentence prefixes are not swallowed.
+        if (preg_match_all('/[x×]\s*(\d+(?:\.\d+)?)\b/iu', $text, $xMatches, PREG_OFFSET_CAPTURE)) {
+            $stop = [
+                'for', 'from', 'with', 'and', 'due', 'terms', 'lpo', 'po', 'supplier', 'vendor',
+                'create', 'draft', 'make', 'raise', 'generate', 'issue', 'prepare', 'purchase',
+                'order', 'products', 'product', 'items', 'item', 'lines', 'line', 'a', 'an', 'the',
+                'me', 'my', 'our', 'please', 'help', 'need', 'want',
+            ];
+            foreach ($xMatches[0] as $i => $full) {
+                $qty = (float) $xMatches[1][$i][0];
+                $before = substr($text, 0, (int) $full[1]);
+                if (! preg_match('/([A-Za-z][\w&.\'-]*(?:\s+[A-Za-z0-9][\w&.\'-]*){0,5})\s*$/u', $before, $bm)) {
+                    continue;
+                }
+                $tokens = preg_split('/\s+/', trim($bm[1])) ?: [];
+                $nameTokens = [];
+                foreach (array_reverse($tokens) as $tok) {
+                    $plain = mb_strtolower(preg_replace('/[^a-z0-9]+/i', '', $tok) ?? $tok);
+                    if ($plain === '' || in_array($plain, $stop, true)) {
+                        break;
+                    }
+                    array_unshift($nameTokens, $tok);
+                    if (count($nameTokens) >= 5) {
+                        break;
+                    }
+                }
+                if ($nameTokens === []) {
+                    continue;
+                }
+                $add(implode(' ', $nameTokens), $qty);
+            }
+        }
+
+        return $out;
+    }
+
+    protected function cleanEntityName(?string $raw): ?string
+    {
+        $name = trim((string) $raw, " \t\"'.,;:");
+        $name = preg_replace('/\s+/', ' ', $name) ?? $name;
+        $name = preg_replace('/\b(please|thanks|today|tomorrow)\b/i', '', $name) ?? $name;
+        $name = preg_replace('/\b(for|from|with|and)$/i', '', $name) ?? $name;
+        $name = trim($name, " \t\"'.,;:");
+        if ($name === '' || mb_strlen($name) < 2) {
+            return null;
+        }
+        if (preg_match('/^(a|an|the|me|us|my|our|this|that)$/i', $name)) {
+            return null;
+        }
+
+        return $name;
+    }
+
+    protected function isMetaEntityName(string $name): bool
+    {
+        $n = mb_strtolower(trim($name));
+        if ($n === '') {
+            return true;
+        }
+        if (preg_match('/^(supplier|vendor|lpo|purchase|order|purchase\s+order|po|terms|due|due\s*date|products?|items?|lines?|units?|bags?|pcs?|pieces?)$/i', $n)) {
+            return true;
+        }
+        if (preg_match('/\b(create|draft|make|raise|generate|issue|prepare|help|need|want)\b/i', $n)) {
+            return true;
+        }
+        if (preg_match('/\b(lpo|purchase\s+order|supplier|vendor)\b/i', $n)) {
+            return true;
+        }
+        if (preg_match('/^(units?|bags?|pcs?|pieces?|kg|kgs|litres?|cartons?|crates?)\s+of\b/i', $n)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    protected function looksLikeOrderNumber(string $value): bool
+    {
+        $value = trim($value);
+        if ($value === '' || preg_match('/^(from|for|with|the|a|an|to|and|of|order|sale)$/i', $value)) {
+            return false;
+        }
+
+        return (bool) preg_match('/\d/', $value) || (bool) preg_match('/^(ORD|SO|POS|INV|LPO)[-_]?\w+/i', $value);
     }
 
     /**
@@ -473,7 +743,7 @@ class AiCreateLpoParamMerger
                     ->orWhere('supplier_code', 'like', '%'.$needle.'%');
             })
             ->orderBy('supplier_name')
-            ->limit(5)
+            ->limit(8)
             ->get(['id', 'supplier_name']);
 
         if ($like->count() === 1) {
@@ -482,20 +752,28 @@ class AiCreateLpoParamMerger
             return ['id' => (int) $row->id, 'name' => (string) $row->supplier_name];
         }
 
-        // Prefer best contains match
+        $scorer = app(AiSpokenEntityResolver::class);
+        $pool = $like;
+        if ($pool->isEmpty()) {
+            $pool = Supplier::query()
+                ->where('organization_id', $user->organization_id)
+                ->whereNull('deleted_at')
+                ->orderBy('supplier_name')
+                ->limit(250)
+                ->get(['id', 'supplier_name']);
+        }
+
         $best = null;
-        $bestScore = 0;
-        foreach ($like as $row) {
-            $label = mb_strtolower((string) $row->supplier_name);
-            $n = mb_strtolower($needle);
-            $score = $label === $n ? 100 : (str_contains($label, $n) ? 80 : 40);
+        $bestScore = 0.0;
+        foreach ($pool as $row) {
+            $score = $scorer->scoreSpoken($needle, (string) $row->supplier_name);
             if ($score > $bestScore) {
                 $bestScore = $score;
                 $best = $row;
             }
         }
 
-        if ($best && $bestScore >= 80) {
+        if ($best && $bestScore >= 72) {
             return ['id' => (int) $best->id, 'name' => (string) $best->supplier_name];
         }
 
@@ -529,26 +807,38 @@ class AiCreateLpoParamMerger
                     ->orWhere('product_code', 'like', '%'.$needle.'%');
             })
             ->orderBy('product_name')
-            ->limit(8)
+            ->limit(12)
             ->get(['product_code', 'product_name', 'last_cost_price']);
 
         if ($matches->count() === 1) {
             return $matches->first();
         }
 
+        $scorer = app(AiSpokenEntityResolver::class);
+        $pool = $matches;
+        if ($pool->isEmpty()) {
+            $pool = Product::query()
+                ->where('organization_id', $user->organization_id)
+                ->whereNull('deleted_at')
+                ->orderBy('product_name')
+                ->limit(400)
+                ->get(['product_code', 'product_name', 'last_cost_price']);
+        }
+
         $best = null;
-        $bestScore = 0;
-        $n = mb_strtolower($needle);
-        foreach ($matches as $row) {
-            $label = mb_strtolower((string) $row->product_name);
-            $score = $label === $n ? 100 : (str_starts_with($label, $n) ? 90 : (str_contains($label, $n) ? 70 : 0));
+        $bestScore = 0.0;
+        foreach ($pool as $row) {
+            $score = max(
+                $scorer->scoreSpoken($needle, (string) $row->product_name),
+                $scorer->scoreSpoken($needle, (string) $row->product_code),
+            );
             if ($score > $bestScore) {
                 $bestScore = $score;
                 $best = $row;
             }
         }
 
-        return $bestScore >= 70 ? $best : null;
+        return ($best && $bestScore >= 70) ? $best : null;
     }
 
     public function parseDate(string $raw): ?string

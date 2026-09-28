@@ -298,6 +298,13 @@ class AiIntentResolver
         if (preg_match('/\b(help|want|need)\b.{0,40}\b(create|creating|make|making|save|saving)\b.{0,40}\b(lpo|purchase\s+order)\b/', $text)) {
             return true;
         }
+        // Conversational: "I need an LPO", "help with a purchase order for Bidco", "LPO for Bidco with sugar x 10"
+        if (preg_match('/\b(want|need|help|start|begin)\b.{0,40}\b(an?\s+|the\s+)?(lpo|purchase\s+orders?)\b/', $text)) {
+            return true;
+        }
+        if (preg_match('/\b(lpo|purchase\s+order)\b.{0,30}\b(for|from|with)\b/', $text)) {
+            return true;
+        }
 
         return false;
     }
@@ -354,13 +361,36 @@ class AiIntentResolver
         $blob = implode("\n", $sources);
 
         if (preg_match('/\b(?:order|sale|receipt)\s*[#:]?\s*([A-Z0-9][\w\-\/]{2,40})\b/i', $blob, $m)) {
-            $params['order_num'] = trim($m[1]);
-        } elseif (preg_match('/\b(ORD[-\w]+|SO[-\w]+|POS[-\w]+)\b/i', $blob, $m)) {
+            $orderNum = trim($m[1]);
+            if (preg_match('/\d/', $orderNum) || preg_match('/^(ORD|SO|POS|INV|LPO)[-_]?\w+/i', $orderNum)) {
+                $params['order_num'] = $orderNum;
+            }
+        } elseif (preg_match('/\b((?:ORD|SO|POS)[-_][A-Z0-9\-]+|(?:ORD|SO|POS)\d[\w\-]*)\b/i', $blob, $m)) {
             $params['order_num'] = trim($m[1]);
         }
 
         if (preg_match('/\bsale_id\s*[:=]?\s*(\d+)\b/i', $blob, $m)) {
             $params['sale_id'] = (int) $m[1];
+        }
+
+        // Fold natural-language supplier / due date / lines from the latest message.
+        $fields = app(AiCreateLpoParamMerger::class)->extractFields($message);
+        if (! empty($fields['supplier'])) {
+            $params['supplier_name'] = (string) $fields['supplier'];
+        }
+        foreach (['due_date', 'terms', 'delivery_address', 'reference_number'] as $key) {
+            if (! empty($fields[$key])) {
+                $params[$key] = $fields[$key];
+            }
+        }
+        if (! empty($fields['order_num'])) {
+            $params['order_num'] = (string) $fields['order_num'];
+        }
+        if (! empty($fields['lines_raw'])) {
+            $parsed = app(AiCreateLpoParamMerger::class)->parseLineList((string) $fields['lines_raw']);
+            if ($parsed !== []) {
+                $params['lines'] = $parsed;
+            }
         }
 
         return $params;
@@ -416,6 +446,10 @@ class AiIntentResolver
 
     protected function matchesProductCreate(string $text): bool
     {
+        if ($this->matchesLpoCreate($text)) {
+            return false;
+        }
+
         return (bool) preg_match('/\b(create|add|new|register)\b.*\b(product|item|sku|catalog)/i', $text)
             || (bool) preg_match('/\b(product|item|sku)\b.*\b(create|add|new)\b/i', $text);
     }

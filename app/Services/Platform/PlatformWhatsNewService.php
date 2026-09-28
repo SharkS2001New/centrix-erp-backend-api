@@ -304,6 +304,46 @@ class PlatformWhatsNewService
         );
     }
 
+    /**
+     * Users who dismissed (saw and closed) the login popup for this note.
+     *
+     * @return array{data: list<array<string, mixed>>, meta: array{total: int}}
+     */
+    public function listReads(PlatformWhatsNewNote $note): array
+    {
+        $reads = PlatformWhatsNewRead::query()
+            ->where('note_id', $note->id)
+            ->with([
+                'user:id,full_name,username,email,organization_id',
+                'organization:id,org_name,company_code',
+            ])
+            ->orderByDesc('dismissed_at')
+            ->orderByDesc('id')
+            ->limit(500)
+            ->get();
+
+        $data = $reads->map(function (PlatformWhatsNewRead $read) {
+            $user = $read->user;
+            $org = $read->organization;
+
+            return [
+                'user_id' => (int) $read->user_id,
+                'full_name' => $user?->full_name,
+                'username' => $user?->username,
+                'email' => $user?->email,
+                'organization_id' => $read->organization_id !== null ? (int) $read->organization_id : null,
+                'organization_name' => $org?->org_name,
+                'company_code' => $org?->company_code,
+                'dismissed_at' => $read->dismissed_at?->toIso8601String(),
+            ];
+        })->values()->all();
+
+        return [
+            'data' => $data,
+            'meta' => ['total' => count($data)],
+        ];
+    }
+
     /** @return array<string, mixed> */
     public function present(PlatformWhatsNewNote $note): array
     {
@@ -316,6 +356,11 @@ class PlatformWhatsNewService
                 'label' => is_array($def) ? (string) ($def['label'] ?? $id) : $id,
             ];
         })->values()->all();
+
+        $attrs = $note->getAttributes();
+        $readsCount = array_key_exists('reads_count', $attrs)
+            ? (int) $attrs['reads_count']
+            : (int) $note->reads()->count();
 
         return [
             'id' => (int) $note->id,
@@ -332,6 +377,7 @@ class PlatformWhatsNewService
             'show_on_login' => (bool) $note->show_on_login,
             'published_at' => $note->published_at?->toIso8601String(),
             'notified_count' => (int) $note->notified_count,
+            'reads_count' => $readsCount,
             'created_at' => $note->created_at?->toIso8601String(),
             'updated_at' => $note->updated_at?->toIso8601String(),
             'created_by' => $note->creator ? [

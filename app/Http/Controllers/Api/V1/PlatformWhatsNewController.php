@@ -17,6 +17,7 @@ class PlatformWhatsNewController extends Controller
         $status = $request->query('status');
         $notes = PlatformWhatsNewNote::query()
             ->with(['creator:id,full_name', 'publisher:id,full_name'])
+            ->withCount('reads')
             ->when(
                 is_string($status) && $status !== '',
                 fn ($q) => $q->where('status', $status),
@@ -35,12 +36,23 @@ class PlatformWhatsNewController extends Controller
     {
         $note = PlatformWhatsNewNote::query()
             ->with(['creator:id,full_name', 'publisher:id,full_name'])
+            ->withCount('reads')
             ->findOrFail($id);
 
         return response()->json([
             'data' => $this->service->present($note),
             'workspaces' => $this->workspaceOptions(),
         ]);
+    }
+
+    /**
+     * Users who dismissed the login “What's new” popup for this note.
+     */
+    public function reads(int $id)
+    {
+        $note = PlatformWhatsNewNote::query()->findOrFail($id);
+
+        return response()->json($this->service->listReads($note));
     }
 
     public function store(Request $request)

@@ -203,4 +203,53 @@ class PlatformWhatsNewTest extends TestCase
 
         $this->assertFalse(collect($pending)->contains(fn ($row) => (int) ($row['id'] ?? 0) === $noteId));
     }
+
+    public function test_admin_can_list_users_who_dismissed_note(): void
+    {
+        Queue::fake();
+
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        $tenantAdmin = User::where('username', 'admin')->firstOrFail();
+        $org = Organization::findOrFail($tenantAdmin->organization_id);
+
+        Sanctum::actingAs($superAdmin);
+        $create = $this->postJson('/api/v1/admin/whats-new', [
+            'title' => 'Seen-by tracking note',
+            'body' => 'Track who dismissed this popup.',
+            'audience' => 'all_users',
+            'organization_ids' => [$org->id],
+            'workspace_ids' => ['pos', 'backoffice'],
+            'show_on_login' => true,
+        ])->assertCreated();
+
+        $noteId = (int) $create->json('data.id');
+        $this->postJson("/api/v1/admin/whats-new/{$noteId}/publish")->assertOk();
+
+        Sanctum::actingAs($superAdmin);
+        $this->getJson("/api/v1/admin/whats-new/{$noteId}/reads")
+            ->assertOk()
+            ->assertJsonPath('meta.total', 0)
+            ->assertJsonCount(0, 'data');
+
+        Sanctum::actingAs($tenantAdmin);
+        $this->postJson("/api/v1/whats-new/{$noteId}/dismiss")->assertOk();
+
+        Sanctum::actingAs($superAdmin);
+        $reads = $this->getJson("/api/v1/admin/whats-new/{$noteId}/reads")
+            ->assertOk()
+            ->assertJsonPath('meta.total', 1)
+            ->assertJsonPath('data.0.user_id', $tenantAdmin->id)
+            ->assertJsonPath('data.0.organization_id', $org->id)
+            ->json('data');
+
+        $this->assertNotEmpty($reads[0]['dismissed_at'] ?? null);
+        $this->assertSame($tenantAdmin->full_name, $reads[0]['full_name'] ?? null);
+
+        $this->getJson('/api/v1/admin/whats-new')
+            ->assertOk()
+            ->assertJsonFragment([
+                'id' => $noteId,
+                'reads_count' => 1,
+            ]);
+    }
 }
