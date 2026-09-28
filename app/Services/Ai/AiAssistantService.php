@@ -359,7 +359,8 @@ class AiAssistantService
                     .'Do not answer with only a clarify question when numbers are already available. '
                     .'Answer naturally — do not address the user by first name every turn (or at all unless they ask). '
                     .'Greetings: one short line like "Hi — how can I help?" — no personal-name opener. '
-                    .'Say "Kenyan Shillings" once — never "Kenyan Shillings (Kenyan Shillings)".',
+                    .'Say "Kenyan Shillings" once — never "Kenyan Shillings (Kenyan Shillings)". '
+                    .'Never speak paths like /hr/attendance — say "in HR Attendance" (full location in words).',
             ];
         }
 

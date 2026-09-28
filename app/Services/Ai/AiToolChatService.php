@@ -241,6 +241,9 @@ class AiToolChatService
         if ($this->looksLikeMultiPartQuestion($message)) {
             $maxLoops = max($maxLoops, min(3, (int) config('ai.max_tool_rounds', 3)));
         }
+        if ($this->looksLikePriceHistoryQuestion($message)) {
+            $maxLoops = max($maxLoops, min(3, (int) config('ai.max_tool_rounds', 3)));
+        }
 
         $canStream = filter_var(config('ai.stream_responses', true), FILTER_VALIDATE_BOOLEAN);
 
@@ -531,6 +534,87 @@ class AiToolChatService
         ) || (bool) preg_match('/(?:^|\n)\s*([0-9]+[\).\]]|[-*•])\s+\S+/u', $message);
     }
 
+    protected function looksLikePriceHistoryQuestion(string $message): bool
+    {
+        return (bool) preg_match(
+            '/\b(price\s*history|previous\s+pric(?:e|es)|old\s+pric(?:e|es)|prior\s+pric(?:e|es)|'
+            .'when\s+(?:did|was)\s+(?:the\s+)?(?:price|cost)\s+chang|'
+            .'last\s+(?:\d+\s+)?(?:price|cost)\s+chang|'
+            .'pric(?:e|es)\s+chang(?:e|ed|es)|cost\s+price\s+history)\b/i',
+            $message,
+        );
+    }
+
+    /**
+     * Prefetch / force price-history answers so Talk does not fall back to current catalog only.
+     *
+     * @param  list<string>  $pageLines
+     * @param  list<array{type?: string, id?: ?string, code?: ?string, label?: string}>  $entityRefs
+     */
+    protected function appendPriceHistoryGuidance(
+        array &$pageLines,
+        User $user,
+        ?string $message,
+        array $entityRefs,
+    ): void {
+        if ($message === null || ! $this->looksLikePriceHistoryQuestion($message)) {
+            return;
+        }
+
+        $productCode = '';
+        $productName = '';
+        foreach ($entityRefs as $ref) {
+            if (! is_array($ref) || strtolower((string) ($ref['type'] ?? '')) !== 'product') {
+                continue;
+            }
+            $productCode = trim((string) ($ref['code'] ?? $ref['id'] ?? ''));
+            $productName = trim((string) ($ref['label'] ?? ''));
+            break;
+        }
+        if ($productCode === '' && $productName === ''
+            && preg_match('/price\s*history\s+(?:of|for)\s+(.+?)(?:\?|$)/iu', $message, $m)
+        ) {
+            $productName = trim((string) ($m[1] ?? ''));
+        }
+
+        if ($productCode === '' && $productName === '') {
+            $pageLines[] = 'REQUIRED THIS TURN: call get_product_price_history with limit=5 and product_name/product_code from the question. '
+                .'Quote up to the last 5 dated changes. Never answer with only current catalog price. '
+                .'Never say you cannot pull the ledger. Never speak raw paths — say "Price History under Pricing".';
+
+            return;
+        }
+
+        $args = ['limit' => 5];
+        if ($productCode !== '') {
+            $args['product_code'] = $productCode;
+        }
+        if ($productName !== '') {
+            $args['product_name'] = $productName;
+        }
+
+        try {
+            $result = $this->tools->execute('get_product_price_history', $user, $args);
+        } catch (\Throwable $e) {
+            $pageLines[] = 'REQUIRED THIS TURN: call get_product_price_history with limit=5'
+                .($productCode !== '' ? " product_code={$productCode}" : '')
+                .($productName !== '' ? " product_name=\"{$productName}\"" : '')
+                .'. Quote up to the last 5 dated changes. Never refuse or send the user to a screen instead.';
+
+            return;
+        }
+
+        $encoded = json_encode($result, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if ($encoded === false) {
+            $encoded = '{}';
+        }
+        $pageLines[] = 'PREFETCHED get_product_price_history (last 5, newest first) — answer ONLY from this JSON. '
+            .'Speak up to 5 dated changes (date, unit price, cost). If history is empty, say no recorded price changes yet, '
+            .'then quote current catalog prices from the same JSON. Do not call get_product_details instead. '
+            .'Do not say you cannot pull the ledger. Do not speak /price-history — say "Price History under Pricing". '
+            .'JSON: '.$encoded;
+    }
+
     /**
      * @param  list<array{id?: string, name?: string, result?: array<string, mixed>}>  $toolResults
      * @param  list<string>  $toolsUsed
@@ -709,6 +793,9 @@ class AiToolChatService
         }
         // Compound questions often need several tools in one or two rounds.
         if ($this->looksLikeMultiPartQuestion($message)) {
+            $maxLoops = max($maxLoops, min(3, (int) config('ai.max_tool_rounds', 3)));
+        }
+        if ($this->looksLikePriceHistoryQuestion($message)) {
             $maxLoops = max($maxLoops, min(3, (int) config('ai.max_tool_rounds', 3)));
         }
 
@@ -947,7 +1034,8 @@ class AiToolChatService
                     .'After a successful action, say what you did in one short sentence, then ask "Anything else I can help with?" '
                     .'For questions: use about 2–3 clear spoken sentences that fully answer (key amount, name, yes/no, count, and one useful detail). Do not cut mid-thought. Optional table for chat after that. '
                     .'Say "Kenyan Shillings" once — never "Kenyan Shillings (Kenyan Shillings)" or "KES (Kenyan Shillings)" in spoken replies. '
-                    .'Speak steadily — no reading every table row aloud, no screen paths, no "Open …" links aloud. '
+                    .'Never speak screen paths like /hr/attendance — say the place in words, e.g. "in HR Attendance" or "in HR Attendance History". '
+                    .'Speak steadily — no reading every table row aloud, no "Open …" links aloud. '
                     .'Prefer a spoken summary with real numbers over completeness; never ramble or restate the question.';
             }
         }
@@ -955,6 +1043,7 @@ class AiToolChatService
             $pageLines[] = 'Resolved entities the user @mentioned (prefer these exact codes/ids; do not invent names): '
                 .json_encode($entityRefs, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         }
+        $this->appendPriceHistoryGuidance($pageLines, $user, $message, $entityRefs);
         $pageBlock = $pageLines !== [] ? implode("\n", $pageLines)."\n\n" : '';
 
         $focus = $this->focusResolver->resolve($history, $entityRefs, $pageContext);
@@ -993,7 +1082,7 @@ Tools:
 - get_stock_summary — items currently in stock (in_stock_items), low stock / reorder alerts, recent movers; also point to /inventory/stock
 - get_inventory_valuation — money tied in stock (cost/retail value); not the primary answer for "which items are in stock"
 - get_product_details — product UoM measurements (kg/bags/packs), stock qty_label, sell-on-retail + retail packaging tiers; use for "is it kg or bags?" / packaging questions
-- get_product_price_history — formal Centrix price-change ledger (/price-history): unit price, cost, discount %, who changed it, when. Use for "price history" / "when did the price change". Never say Centrix lacks price history.
+- get_product_price_history — formal Centrix price-change ledger (Price History under Pricing): unit price, cost, discount %, who changed it, when. Use for "price history" / "when did the price change" / "last price changes". Default limit=5 (newest). Never say Centrix lacks price history. Never answer with only current catalog price.
 - find_catalogue_exceptions — scan products for catalogue comparisons: cost > selling (check=cost_above_selling), zero selling/cost, thin margin, missing supplier/reorder/VAT/UoM, stock ≤ reorder, or check=all. Use for "which products have cost higher than selling price". Not the same as margin_discount_watchdog (sold-below-cost lines).
 - get_purchasing_overview — supplier count + recent LPOs snapshot only (not status-filtered). Point to /suppliers and /lpo.
 - list_lpos — list LPOs by status. For "awaiting goods receiving / GRN / to receive" ALWAYS call with filter=awaiting_receive (statuses 3+4 only). Do NOT use get_purchasing_overview for that question. Exclude fully received, cleared, awaiting check/approval unless asked.
@@ -1087,7 +1176,7 @@ Rules:
 - Product sales tables: columns like Product | Qty | Amount (KES) — do NOT include a Code column.
 - Quantities: when a tool returns qty_label / stock_on_hand_label / suggested_qty_label (e.g. "2 Bag, 40 kg"), quote that label exactly in answers and table Qty columns — do not invent kg/bags/pcs. qty / qty_base / stock_on_hand numbers are raw base units for math only.
 - Product measurements / UoM / kg vs bags / packaging for a named product (e.g. Sugar): call get_product_details with query=product name (or product_code). Quote measurements.conversion_meaning and stock.*_qty_label. Distinguish UoM (how stock is counted) from retail packaging markups. Do not guess packaging.
-- Product price history / previous prices / when price changed: call get_product_price_history with product_code from @Product. Quote the history table (date, unit price, cost, discount, changed by). Link /price-history. Never claim Centrix has no price-change log. Do not answer price-history questions with only current catalog price or realized sales averages.
+- Product price history / previous prices / when price changed / last price changes: ALWAYS call get_product_price_history with limit=5 and product_code from @Product / Conversation focus / product_name. Quote up to the last 5 dated rows (date, unit price, cost, discount, changed by). If the tool returns an empty history, say there are no recorded changes yet and quote current catalog prices from the same tool result. Never claim you cannot pull the ledger. Never answer price-history questions with only get_product_details or realized sales averages. Never speak raw paths like /price-history — say "Price History under Pricing".
 - Catalogue comparisons (cost > selling, zero price, thin margin, missing supplier/reorder/VAT/UoM, stock ≤ reorder): call find_catalogue_exceptions. For cost higher than selling use check=cost_above_selling. For a health overview use check=all. Quote totals and product tables from the tool. Do not invent product lists. Sold-below-cost on recent invoices is run_insight margin_discount_watchdog — different question.
 - Mixed products: never sum bare qty across different UOMs into one "items sold" without labels; list per product with qty_label in a markdown table, or say totals are in base units.
 - Accuracy: copy amounts and qty_label values from tool JSON without rounding inventively; keep currency as returned.

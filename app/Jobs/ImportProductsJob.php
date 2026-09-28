@@ -205,7 +205,7 @@ class ImportProductsJob implements ShouldQueue
         ?int $catalogBranchId,
     ): bool {
         if ($codeKey !== '') {
-            $byCode = Product::query()
+            $byCode = Product::withTrashed()
                 ->where('organization_id', $organizationId)
                 ->whereRaw('LOWER(TRIM(product_code)) = ?', [$codeKey])
                 ->exists();

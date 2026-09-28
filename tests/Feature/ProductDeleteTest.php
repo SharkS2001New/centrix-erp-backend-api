@@ -161,4 +161,70 @@ class ProductDeleteTest extends TestCase
             ->assertOk()
             ->assertJsonFragment(['product_code' => $code]);
     }
+
+    public function test_create_rejects_duplicate_active_product_code(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $this->ensureActiveSubscription($admin);
+        Sanctum::actingAs($admin);
+
+        $code = 'DUP-ACTIVE-'.uniqid();
+        Product::query()->create([
+            'product_code' => $code,
+            'product_name' => 'Existing product',
+            'subcategory_id' => 1,
+            'unit_id' => 1,
+            'unit_price' => 10,
+            'vat_id' => 1,
+            'organization_id' => $admin->organization_id,
+            'created_by' => $admin->id,
+        ]);
+
+        $this->postJson('/api/v1/products', [
+            'product_code' => $code,
+            'product_name' => 'Duplicate attempt',
+            'subcategory_id' => 1,
+            'unit_id' => 1,
+            'unit_price' => 20,
+            'vat_id' => 1,
+        ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['product_code'])
+            ->assertJsonPath('errors.product_code.0', "Product code '{$code}' is already in use.");
+    }
+
+    public function test_create_rejects_soft_deleted_product_code_with_restore_hint(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $this->ensureActiveSubscription($admin);
+        Sanctum::actingAs($admin);
+
+        $code = 'DUP-DELETED-'.uniqid();
+        $product = Product::query()->create([
+            'product_code' => $code,
+            'product_name' => 'Soft deleted duplicate target',
+            'subcategory_id' => 1,
+            'unit_id' => 1,
+            'unit_price' => 10,
+            'vat_id' => 1,
+            'organization_id' => $admin->organization_id,
+            'created_by' => $admin->id,
+        ]);
+        $product->delete();
+
+        $this->postJson('/api/v1/products', [
+            'product_code' => $code,
+            'product_name' => 'Recreate attempt',
+            'subcategory_id' => 1,
+            'unit_id' => 1,
+            'unit_price' => 20,
+            'vat_id' => 1,
+        ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['product_code'])
+            ->assertJsonPath(
+                'errors.product_code.0',
+                "Product code '{$code}' belongs to a deleted product. Restore it instead of creating a new one."
+            );
+    }
 }

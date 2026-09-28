@@ -37,7 +37,7 @@ class AiProductPriceHistoryReplyTest extends TestCase
 
         $this->assertStringContainsString('SUGAR 50 KG', $reply);
         $this->assertStringContainsString('6,200.00', $reply);
-        $this->assertStringContainsString('/price-history', $reply);
+        $this->assertStringContainsString('last 5', $reply);
         $this->assertStringNotContainsString('doesn\'t keep a formal price-change log', $reply);
         $this->assertStringNotContainsString('Answer from this formal', $reply);
     }

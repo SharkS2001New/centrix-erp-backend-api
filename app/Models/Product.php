@@ -82,10 +82,11 @@ class Product extends Model
     /**
      * Suggest a unique 6-digit SKU for the organization (scan-code style).
      * Prefers the next number after existing 6-digit codes, then random free codes.
+     * Includes soft-deleted rows so a deleted SKU is never re-suggested (unique key still holds it).
      */
     public static function generateNextProductCode(int $organizationId): string
     {
-        $existing = static::query()
+        $existing = static::withTrashed()
             ->where('organization_id', $organizationId)
             ->pluck('product_code')
             ->map(static fn ($code) => (string) $code)

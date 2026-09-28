@@ -22,6 +22,7 @@ use App\Support\SqlLikeSearch;
 use App\Support\StoredPublicFile;
 use App\Support\UploadedImageProcessor;
 use Illuminate\Database\QueryException;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Collection;
@@ -637,6 +638,8 @@ class ProductController extends BaseResourceController
             $data = $this->catalogScope->normalizeWriteData($request->user(), $data);
         }
 
+        $this->assertProductCodeAvailableForCreate($data);
+
         $openingStock = $data['opening_stock'] ?? null;
         unset($data['opening_stock'], $data['stock_in_shop'], $data['stock_in_store']);
 
@@ -650,32 +653,41 @@ class ProductController extends BaseResourceController
 
         $user = $request->user();
 
-        $model = DB::transaction(function () use ($data, $openingStock, $user) {
-            $model = Product::create($data);
+        try {
+            $model = DB::transaction(function () use ($data, $openingStock, $user) {
+                $model = Product::create($data);
 
-            if ($openingStock !== null) {
-                if (! $user) {
-                    throw new InvalidArgumentException('Opening stock requires an authenticated user.');
+                if ($openingStock !== null) {
+                    if (! $user) {
+                        throw new InvalidArgumentException('Opening stock requires an authenticated user.');
+                    }
+
+                    $this->openingStock->applyOnProductCreate(
+                        $user,
+                        (string) $model->product_code,
+                        (int) $model->id,
+                        $openingStock,
+                    );
                 }
 
-                $this->openingStock->applyOnProductCreate(
+                $this->logPriceChange(
+                    $model,
+                    (float) $model->unit_price,
+                    (float) ($model->last_cost_price ?? 0),
+                    (float) ($model->discount_percentage ?? 0),
                     $user,
-                    (string) $model->product_code,
-                    (int) $model->id,
-                    $openingStock,
                 );
+
+                return $model;
+            });
+        } catch (UniqueConstraintViolationException $e) {
+            $this->throwDuplicateProductCode($data);
+        } catch (QueryException $e) {
+            if ($this->isDuplicateProductCodeViolation($e)) {
+                $this->throwDuplicateProductCode($data);
             }
-
-            $this->logPriceChange(
-                $model,
-                (float) $model->unit_price,
-                (float) ($model->last_cost_price ?? 0),
-                (float) ($model->discount_percentage ?? 0),
-                $user,
-            );
-
-            return $model;
-        });
+            throw $e;
+        }
 
         return response()->json($this->presentProduct($model->load('branch:id,branch_code,branch_name'), $request), 201);
     }
@@ -982,5 +994,72 @@ class ProductController extends BaseResourceController
         }
 
         return $data;
+    }
+
+    /**
+     * Fail early with a clear 422 instead of MySQL unique violation 500.
+     *
+     * @param  array<string, mixed>  $data
+     */
+    protected function assertProductCodeAvailableForCreate(array $data): void
+    {
+        $code = trim((string) ($data['product_code'] ?? ''));
+        $orgId = (int) ($data['organization_id'] ?? 0);
+        if ($code === '' || $orgId <= 0) {
+            return;
+        }
+
+        $existing = Product::withTrashed()
+            ->where('organization_id', $orgId)
+            ->whereRaw('LOWER(TRIM(product_code)) = ?', [mb_strtolower($code)])
+            ->first();
+
+        if (! $existing) {
+            return;
+        }
+
+        $this->throwDuplicateProductCode($data, $existing);
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    protected function throwDuplicateProductCode(array $data, ?Product $existing = null): never
+    {
+        $code = trim((string) ($data['product_code'] ?? ''));
+        $orgId = (int) ($data['organization_id'] ?? 0);
+
+        $existing ??= Product::withTrashed()
+            ->where('organization_id', $orgId)
+            ->whereRaw('LOWER(TRIM(product_code)) = ?', [mb_strtolower($code)])
+            ->first();
+
+        if ($existing?->trashed()) {
+            throw ValidationException::withMessages([
+                'product_code' => [
+                    "Product code '{$code}' belongs to a deleted product. Restore it instead of creating a new one.",
+                ],
+            ]);
+        }
+
+        throw ValidationException::withMessages([
+            'product_code' => [
+                "Product code '{$code}' is already in use.",
+            ],
+        ]);
+    }
+
+    protected function isDuplicateProductCodeViolation(QueryException $e): bool
+    {
+        $sqlState = (string) ($e->errorInfo[0] ?? '');
+        $driverCode = (int) ($e->errorInfo[1] ?? 0);
+        $message = $e->getMessage();
+
+        if ($sqlState === '23000' && $driverCode === 1062) {
+            return str_contains($message, 'uq_org_product_code')
+                || str_contains($message, 'product_code');
+        }
+
+        return false;
     }
 }

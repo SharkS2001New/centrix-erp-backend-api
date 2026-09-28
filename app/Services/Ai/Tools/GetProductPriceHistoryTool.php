@@ -32,9 +32,9 @@ class GetProductPriceHistoryTool implements AiToolInterface
     public function description(): string
     {
         return 'Get Centrix formal price history for a product (unit price, cost price, discount %, who changed it, when). '
-            .'Use for "price history", "when did the price change", "previous selling price", or price-change audit questions. '
-            .'This is the /price-history ledger — not realized averages from sales. '
-            .'Pass product_code from @Product mentions when available. Never claim Centrix lacks price history.';
+            .'Use for "price history", "when did the price change", "previous selling price", "last price changes", or price-change audit questions. '
+            .'Default to the newest 5 rows (pass limit=5). This is the Price History ledger — not realized averages from sales. '
+            .'Pass product_code from @Product mentions when available. Never claim Centrix lacks price history or tell the user to open a screen instead of quoting the rows.';
     }
 
     public function parametersSchema(): array
@@ -56,7 +56,7 @@ class GetProductPriceHistoryTool implements AiToolInterface
                 ],
                 'limit' => [
                     'type' => 'integer',
-                    'description' => 'Max history rows (default 40, max 100).',
+                    'description' => 'Max history rows, newest first (default 5, max 100). Use 5 unless the user asks for more.',
                 ],
                 'days' => [
                     'type' => 'integer',
@@ -121,7 +121,7 @@ class GetProductPriceHistoryTool implements AiToolInterface
         /** @var Product $product */
         $product = $resolved['product'];
         $productCode = (string) $product->product_code;
-        $limit = max(1, min(100, (int) ($arguments['limit'] ?? 40)));
+        $limit = max(1, min(100, (int) ($arguments['limit'] ?? 5)));
         $days = (int) ($arguments['days'] ?? 0);
 
         $query = PriceHistory::query()
@@ -148,7 +148,7 @@ class GetProductPriceHistoryTool implements AiToolInterface
         foreach ($chronological as $row) {
             $unit = $row->unit_price !== null ? round((float) $row->unit_price, 4) : null;
             $cost = $row->cost_price !== null ? round((float) $row->cost_price, 4) : null;
-            $userName = $row->changedByUser;
+            $userRel = $row->changedByUser;
             $changedByName = $userRel
                 ? trim((string) ($userRel->full_name ?: $userRel->username))
                 : null;
@@ -192,9 +192,10 @@ class GetProductPriceHistoryTool implements AiToolInterface
             'count' => count($historyNewestFirst),
             'history' => $historyNewestFirst,
             'screens' => $this->screens($productCode),
-            'tip' => 'Answer from this formal Centrix price_history ledger. Show a markdown table: Date | Unit price | Cost price | Discount % | Changed by. '
+            'tip' => 'Answer from this formal Centrix price_history ledger. Show up to the newest 5 rows as a markdown table: Date | Unit price | Cost price | Discount % | Changed by. '
                 .'Name the product; never show product_code in the user-facing table. '
-                .'Link /price-history and the product card. Do NOT say Centrix lacks a price-change log. '
+                .'In Talk / voice: speak the last up to 5 dated changes (date + unit/cost). If history is empty, say there are no recorded price changes yet, then quote current catalog prices from this payload. '
+                .'Do NOT say you cannot pull the ledger. Do NOT speak raw paths like /price-history — say "Price History under Pricing". '
                 .'Do not substitute realized sales averages for this question unless the user also asks for average selling price.',
         ];
     }

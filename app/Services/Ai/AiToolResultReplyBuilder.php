@@ -903,16 +903,16 @@ class AiToolResultReplyBuilder
         if ($history === []) {
             $lines[] = 'No formal price-change rows yet for this product in Centrix price history.';
             $lines[] = '';
-            $lines[] = 'Open [/price-history](/price-history) to review the ledger, or edit the product price on the product card.';
+            $lines[] = 'Say that clearly, then quote the current catalog prices above. Do not invent dated changes.';
 
             return implode("\n", $lines);
         }
 
-        $lines[] = 'Formal Centrix price-change log (newest first):';
+        $lines[] = 'Formal Centrix price-change log (newest first, last 5):';
         $lines[] = '';
         $lines[] = '| Date | Unit price (KES) | Cost price (KES) | Discount % | Changed by |';
         $lines[] = '| --- | ---: | ---: | ---: | --- |';
-        foreach (array_slice($history, 0, 40) as $row) {
+        foreach (array_slice($history, 0, 5) as $row) {
             if (! is_array($row)) {
                 continue;
             }
@@ -926,7 +926,7 @@ class AiToolResultReplyBuilder
             );
         }
         $lines[] = '';
-        $lines[] = 'Full ledger: [/price-history](/price-history).';
+        $lines[] = 'Speak these last '.min(5, count($history)).' changes. Mention Price History under Pricing only if useful — never as a raw path.';
 
         return implode("\n", $lines);
     }
