@@ -25,6 +25,7 @@ use App\Services\Ai\Tools\SearchTrainingNotesTool;
 use App\Services\Ai\Tools\GetProductDetailsTool;
 use App\Services\Ai\Tools\GetProductPriceHistoryTool;
 use App\Services\Ai\Tools\GetLpoDetailsTool;
+use App\Services\Ai\Tools\GetOrderDetailsTool;
 use App\Services\Ai\Tools\GetPurchasingOverviewTool;
 use App\Services\Ai\Tools\ListLposTool;
 use App\Services\Ai\Tools\GetRouteDetailsTool;
@@ -60,6 +61,7 @@ class AiToolRegistry
         protected SearchTrainingNotesTool $searchTrainingNotes,
         protected GetPurchasingOverviewTool $getPurchasingOverview,
         protected GetLpoDetailsTool $getLpoDetails,
+        protected GetOrderDetailsTool $getOrderDetails,
         protected ListLposTool $listLpos,
         protected GetDebtorsSummaryTool $getDebtorsSummary,
         protected GetCustomerStatementTool $getCustomerStatement,
@@ -201,6 +203,7 @@ class AiToolRegistry
             $this->searchTrainingNotes,
             $this->getPurchasingOverview,
             $this->getLpoDetails,
+            $this->getOrderDetails,
             $this->listLpos,
             $this->getDebtorsSummary,
             $this->getCustomerStatement,

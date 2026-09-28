@@ -48,7 +48,24 @@ class PlatformMarketingPortfolioController extends Controller
         $data = $this->validated($request);
         $portfolio = $this->portfolios->create($request->user(), $data);
 
-        return response()->json(['data' => $portfolio, 'message' => 'Portfolio created.'], 201);
+        $message = 'Portfolio created.';
+        if ($request->boolean('generate_now') || filled($request->input('instruction'))) {
+            try {
+                $portfolio = $this->portfolios->generate(
+                    $portfolio,
+                    $data['instruction'] ?? $request->input('instruction'),
+                );
+                $message = 'Portfolio generated.';
+            } catch (\RuntimeException $e) {
+                return response()->json([
+                    'data' => $portfolio->fresh(),
+                    'message' => 'Portfolio created, but generate failed: '.$e->getMessage(),
+                    'generate_error' => $e->getMessage(),
+                ], 201);
+            }
+        }
+
+        return response()->json(['data' => $portfolio, 'message' => $message], 201);
     }
 
     public function show(PlatformMarketingPortfolio $platform_marketing_portfolio)
@@ -172,7 +189,7 @@ class PlatformMarketingPortfolioController extends Controller
             'status' => 'sometimes|string|in:draft,ready,shared',
             'industry' => 'sometimes|string|max:40',
             'vertical' => ($creating ? 'required' : 'sometimes').'|string|in:'.implode(',', $verticals ?: ['small_shop']),
-            'prospect_name' => ($creating ? 'required' : 'sometimes').'|string|max:200',
+            'prospect_name' => ($creating ? 'nullable' : 'sometimes').'|string|max:200',
             'prospect_contact' => 'nullable|string|max:200',
             'prospect_email' => 'nullable|email|max:200',
             'prospect_phone' => 'nullable|string|max:64',
@@ -190,6 +207,7 @@ class PlatformMarketingPortfolioController extends Controller
             'organization_id' => 'nullable|integer',
             'quote_id' => 'nullable|integer',
             'instruction' => 'nullable|string|max:4000',
+            'generate_now' => 'sometimes|boolean',
             'save_brief_first' => 'sometimes|boolean',
         ]);
     }

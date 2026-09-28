@@ -226,4 +226,45 @@ class AiToolResultReplyBuilderTest extends TestCase
         $this->assertStringContainsString('No unusual large orders', $reply);
         $this->assertFalse($builder->isGenericFailureReply($reply));
     }
+
+    public function test_formats_order_details_with_payments_and_correction_guidance(): void
+    {
+        $builder = new AiToolResultReplyBuilder;
+        $reply = $builder->build([
+            [
+                'name' => 'get_order_details',
+                'result' => [
+                    'order_num' => 1537,
+                    'order_num_display' => 'S1537',
+                    'customer_name' => 'Kilimani Distributors',
+                    'payment_status' => 'paid',
+                    'order_total' => 12500,
+                    'amount_paid' => 12500,
+                    'balance_due' => 0,
+                    'path' => '/sales/orders/99',
+                    'payments' => [
+                        [
+                            'method_name' => 'M-Pesa',
+                            'amount' => 12500,
+                            'reference_number' => 'QWER123',
+                            'paid_at' => '2026-09-20T10:00:00+03:00',
+                        ],
+                    ],
+                    'correction_guidance' => [
+                        'Right customer, wrong amount — reverse then re-apply.',
+                    ],
+                    'tip' => 'Never say you cannot look up an invoice/order by number.',
+                ],
+            ],
+        ], ['get_order_details']);
+
+        $this->assertStringContainsString('S1537', $reply);
+        $this->assertStringContainsString('Kilimani Distributors', $reply);
+        $this->assertStringContainsString('12,500.00', $reply);
+        $this->assertStringContainsString('M-Pesa', $reply);
+        $this->assertStringContainsString('/sales/orders/99', $reply);
+        $this->assertStringContainsString('wrong', strtolower($reply));
+        $this->assertStringNotContainsString('Never say you cannot', $reply);
+        $this->assertFalse($builder->isGenericFailureReply($reply));
+    }
 }

@@ -21,17 +21,63 @@ class AiIntentResolver
         );
     }
 
+    /**
+     * How-to / FAQ / “where do I…” questions — never start a create/confirm write flow.
+     * Includes “If I wanted to cancel an order, what can I do?”
+     */
+    public function isHowToQuestion(string $message): bool
+    {
+        $text = $this->normalizeForIntent($message);
+
+        if ($this->hasWriteVerb($text) && preg_match(
+            '/\b(create|add|new|place|draft|make|raise|save|record|submit|approve)\b.{0,40}\b(product|supplier|customer|employee|lpo|purchase\s+order|sales?\s+order)\b/i',
+            $text,
+        )) {
+            return false;
+        }
+
+        if (preg_match(
+            '/\b(how\s+(do|can|to|should)\s+(i|we|you)|where\s+(do|can|is|are)|what\s+(can|do|should)\s+(i|we)|steps?\s+to|walk\s+me\s+through|explain\s+how)\b/i',
+            $text,
+        )) {
+            return true;
+        }
+
+        if (preg_match(
+            '/\b(if\s+i\s+(wanted|want|need)|i\s+want(ed)?\s+to|i\s+need\s+to)\b.{0,80}\b(cancel|void|return|edit|hold|resume|print|reprint|collect|deliver|complete)\b/i',
+            $text,
+        )) {
+            return true;
+        }
+
+        if (preg_match(
+            '/\b(cancel|void)\b.{0,40}\b(order|sale|held|check)\b/i',
+            $text,
+        ) && ! preg_match('/^(cancel|never\s*mind|forget\s+(?:that|it)|stop|discard|ignore)\b/i', $text)) {
+            return true;
+        }
+
+        return false;
+    }
+
     public function isCancelIntent(string $message): bool
     {
+        $text = $this->normalizeForIntent($message);
+
+        // Abort the in-chat draft — not “how do I cancel an order?”
+        if ($this->isHowToQuestion($message)) {
+            return false;
+        }
+
         return (bool) preg_match(
             '/^(cancel|never\s*mind|forget\s+(?:that|it)|stop|discard|ignore)\b/i',
-            $this->normalizeForIntent($message),
+            $text,
         );
     }
 
     public function inferCreateAction(string $message, array $history = [], ?string $pathname = null): ?array
     {
-        if ($this->isCancelIntent($message)) {
+        if ($this->isCancelIntent($message) || $this->isHowToQuestion($message)) {
             return null;
         }
 
@@ -572,6 +618,12 @@ class AiIntentResolver
     protected function matchesOrderCreate(string $text): bool
     {
         if ($this->matchesLpoCreate($text) || preg_match('/\bpurchase\s+order\b/', $text)) {
+            return false;
+        }
+
+        // How-to cancel/void/return — not creating an order.
+        if (preg_match('/\b(cancel|void|return|credit\s+note)\b.{0,40}\b(order|sale)\b/i', $text)
+            || preg_match('/\b(order|sale)\b.{0,40}\b(cancel|void|return)\b/i', $text)) {
             return false;
         }
 

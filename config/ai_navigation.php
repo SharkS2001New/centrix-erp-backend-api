@@ -25,6 +25,7 @@ return [
                 ['label' => 'Cashier terminal', 'path' => '/pos', 'module' => 'sales.pos', 'permission' => 'pos.terminal.view'],
                 ['label' => 'Till management', 'path' => '/sales/till-management', 'module' => 'sales.pos', 'permission' => 'pos.till_management.view'],
                 ['label' => 'Sales orders', 'path' => '/sales/orders', 'module' => 'sales.backend', 'permission' => 'sales.order_queue_all.view'],
+                ['label' => 'Cancelled orders', 'path' => '/sales/orders/queues/cancelled', 'module' => 'sales.backend', 'permission' => 'sales.order_queue_all.view'],
                 ['label' => 'Unpaid Debtors', 'path' => '/sales/shop-debtors/unpaid', 'module' => 'sales.backend', 'permission' => 'shop_debtors.unpaid.view'],
                 ['label' => 'Partially Paid Debtors', 'path' => '/sales/shop-debtors/partial', 'module' => 'sales.backend', 'permission' => 'shop_debtors.partial.view'],
                 ['label' => 'Paid Debtors', 'path' => '/sales/shop-debtors/paid', 'module' => 'sales.backend', 'permission' => 'shop_debtors.paid.view'],

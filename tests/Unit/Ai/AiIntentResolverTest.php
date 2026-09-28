@@ -40,6 +40,17 @@ class AiIntentResolverTest extends TestCase
         $this->assertTrue($this->resolver->isCancelIntent('never mind'));
     }
 
+    public function test_how_to_cancel_order_is_not_abort_or_create(): void
+    {
+        $msg = 'If i wanted to cancel an order, what can i do ?';
+        $this->assertTrue($this->resolver->isHowToQuestion($msg));
+        $this->assertFalse($this->resolver->isCancelIntent($msg));
+        $this->assertNull($this->resolver->inferCreateAction($msg, [], '/dashboard'));
+
+        $this->assertTrue($this->resolver->isHowToQuestion('How do I cancel an order?'));
+        $this->assertNull($this->resolver->inferCreateAction('How do I cancel a sales order?', [], null));
+    }
+
     public function test_data_question_is_detected(): void
     {
         $this->assertTrue($this->resolver->isDataQuestion('Whats my daily sales for yesterday'));

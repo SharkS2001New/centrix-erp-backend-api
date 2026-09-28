@@ -242,6 +242,7 @@ class AiAssistantService
 
         if ($pendingAction && (
             $this->intentResolver->isCancelIntent($message)
+            || $this->intentResolver->isHowToQuestion($message)
             || (
                 $this->intentResolver->isDataQuestion($message)
                 && ! $this->lpoParamMerger->looksLikeFieldFollowUp($message)
@@ -1093,6 +1094,8 @@ RULES:
 20. After a successful create/update/confirm, end with a short "Anything else I can help with?" so the conversation can continue.
 21. CRITICAL — never claim you created, saved, drafted, or posted an LPO / product / supplier / customer / order unless the system has already executed the action and returned a real id (e.g. LPO number). Until then, say what is still missing or ask them to reply **confirm**. Hallucinated success is not allowed.
 22. Spoken / fuzzy names: when context has resolved_entities, spoken_name_hints, or spoken_name_candidates, prefer those org catalog matches (products, suppliers, customers) over guessing. Local names like "Kamande" may be mis-heard by the microphone — if a hint says spoken text matched a catalog name, use that record. If several candidates are listed, ask which one they meant.
+23. HOW-TO / FAQ (cancel order, void, return, hold, where is X, what can I do to …): answer with screen paths and steps. Call search_training_notes and/or find_screen. Do NOT start a create/confirm write flow and do NOT ask them to reply **confirm** to create something. Canceling an order is done on /sales/orders (Cancel order) — not by creating a new order in chat.
+24. Invoice / order by number (invoice 1537, S1537, wrongly paid): in Centrix the printed invoice number is the sales order number (S-prefix). Prefer the get_order_details tool path when available. Never say Centrix cannot look up an invoice or order by number — open /sales/orders/{id} from tool results, summarize payment status and tenders, and guide reversal from that order’s payment history (returns at /sales/returns; bank/M-Pesa match at /accounting/bank-reconciliation).
 
 ```action
 {"type":"create_product","summary":"New product Widget","params":{"product_name":"Widget","unit_price":150,"last_cost_price":140,"subcategory_id":1,"unit_id":1,"vat_id":1}}
@@ -1113,7 +1116,7 @@ PROMPT;
         ?string $pathname,
         ?array $pending = null,
     ): bool {
-        if ($this->intentResolver->isCancelIntent($message) || $this->intentResolver->isDataQuestion($message)) {
+        if ($this->intentResolver->isCancelIntent($message) || $this->intentResolver->isDataQuestion($message) || $this->intentResolver->isHowToQuestion($message)) {
             return false;
         }
 

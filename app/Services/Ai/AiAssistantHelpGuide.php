@@ -87,6 +87,9 @@ Type naturally. You are in **{$scope}**. Tip: type **Help** anytime to see this 
 #### Where to go / how to
 - Where is GRN / till / payroll / suppliers?
 - How do I hold an order / open a till / run night audit?
+- How do I cancel an order? / What can I do to cancel an order?
+- How do I return goods / create a credit note?
+- Difference between cancel, void, return, and held order
 
 #### Accounting & bank reconciliation
 - How do I do bank reconciliation?
@@ -100,7 +103,7 @@ Type naturally. You are in **{$scope}**. Tip: type **Help** anytime to see this 
 - Create product, supplier, customer, employee, sales order, or LPO  
   Share details in chat first → when ready, reply **confirm** (or **show form**)
 
-Ask one clear question next — for example: *“Yesterday’s sales”*, *“How do I do bank reconciliation?”*, or *“Create an LPO”*.
+Ask one clear question next — for example: *“Yesterday’s sales”*, *“How do I cancel an order?”*, or *“Create an LPO”*.
 MD;
     }
 }

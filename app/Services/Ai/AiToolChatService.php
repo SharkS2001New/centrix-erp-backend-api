@@ -588,6 +588,7 @@ class AiToolChatService
             'get_expense_summary' => 'Loading expenses…',
             'get_stock_summary', 'get_product_details', 'get_product_price_history', 'find_catalogue_exceptions' => 'Checking inventory…',
             'get_debtors_summary', 'get_customer_statement' => 'Loading customer accounts…',
+            'get_order_details' => 'Loading sales order…',
             'get_supplier_statement', 'get_purchasing_overview', 'get_lpo_details', 'list_lpos' => 'Loading purchase order…',
             'get_employee_attendance', 'get_employee_details', 'get_employee_payroll_preview' => 'Loading HR records…',
             'search_training_notes' => 'Searching Centrix guides…',
@@ -965,6 +966,7 @@ For "today", "yesterday", or "last 7 days", pass relative_date on sales/attendan
 For a calendar month, pass relative_date=this_month/last_month, year_month=YYYY-MM (e.g. 2026-08), or month=august with year=2026.
 For VAT / "VAT sales" / "VAT I need to pay" for a month, call get_vat_collected with that period — return vat_collected_total in KES and link /reports/vat-collected. Do not answer VAT amount questions with find_screen only.
 For one cashier/user, pass cashier_name or username to get_sales_by_cashier (never numeric user ids in the reply). Quote tool fields exactly: gross_sales, amount_collected, and fully_paid_sales (till-style). Say which username was matched and branch_scope. Do not use get_sales_summary for a named cashier — that is org-wide. If the user means till X/Z, prefer fully_paid_sales and say so.
+For one sales order / shop invoice by number ("invoice 1537", "S1537", "order 1537", "I wrongly paid invoice S1537"), call get_order_details with that reference — never say Centrix cannot look up invoices by number. In Centrix the printed invoice number is the order number (S-prefix).
 For one customer statement or "what did they buy" / "what has she been buying", call get_customer_statement with customer_num from Conversation focus, @Customer, or customer_name — never invent an insight_type.
 For one supplier statement or "what did we buy from them", call get_supplier_statement with supplier_id from Conversation focus, @Supplier, or supplier_name and the period.
 For sales by product / "@Product sales report", call get_sales_by_product with product_codes from the resolved @Product mentions (and a date range). Do not invent totals.
@@ -985,6 +987,7 @@ Tools:
 - get_purchasing_overview — supplier count + recent LPOs snapshot only (not status-filtered). Point to /suppliers and /lpo.
 - list_lpos — list LPOs by status. For "awaiting goods receiving / GRN / to receive" ALWAYS call with filter=awaiting_receive (statuses 3+4 only). Do NOT use get_purchasing_overview for that question. Exclude fully received, cleared, awaiting check/approval unless asked.
 - get_lpo_details — retrieve one LPO by number/reference OR the latest created LPO: status, lines, workflow flags, document_links (Open / Print-Save PDF using the same LPO page template). For "last LPO", "latest purchase order", "most recent LPO we created", or "download the last LPO", call with latest=true (or query="last"). Prefer document_links UI — do not restate Open/Print/PDF/next-step boilerplate in the reply.
+- get_order_details — one sales order / shop invoice by number (S1537, 1537, AR-1537): customer, payment_status, totals, balance_due, payment lines, path. Use for "check invoice", "order S####", wrongly paid / wrong payment on an invoice. Invoice no = order no in Centrix. Never claim there is no invoice/order lookup.
 - get_debtors_summary — unpaid / AR / who to call
 - get_customer_statement — one customer's balance + period purchases with product line items (qty_label); use for statements, "what did they buy", and pronoun follow-ups about the focused customer
 - get_supplier_statement — one supplier's AP balance + period LPOs/payments with product line items (qty_label); use for supplier statements and "what did we buy from them"
@@ -1011,10 +1014,12 @@ Rules:
 - Platform training notes (CENTRIX_DOCUMENTATION.platform_knowledge and search_training_notes) are SAMPLE Q&A exemplars (usage=exemplar). They show how to think about and structure answers for similar questions — procedures, labels, and screen paths. Do NOT paste sample_answer_style / content / topic verbatim as the reply. Write a fresh answer for THIS user's question, adapting the sample's approach; call live tools for current org numbers and names.
 - For "where is / how do I / which menu" questions, call find_screen (or use CENTRIX_DOCUMENTATION) and answer with the path.
 - For how Centrix works / FAQs / trained procedures: use matching platform_knowledge as guidance for approach; if none fit or you need more depth, call search_training_notes. Still answer in your own words.
+- Cancel / void / return an order questions are HOW-TO: call search_training_notes and/or find_screen. Answer with /sales/orders (Cancel order), /sales/returns for credit notes, held cancel on POS. Never ask the user to reply **confirm** to create something, and never start a create-order flow.
 - When page context is present, prefer answering about that screen/filters before asking the user to clarify.
 - Multi-part questions (e.g. "mobile sales yesterday AND expenses AND returns by Jane"): call EVERY needed tool in the SAME turn when possible — get_route_orders + get_expense_summary + get_customer_returns (with the same relative_date / user_name). Do not answer only the first part. Structure the reply with clear headings for each part.
 - Expenses / returns for a named person (CHEGE, Jane, @User): Centrix stores who did them — expenses.recorded_by, mobile_route_expenses.user_id, customer_returns.returned_by. ALWAYS call get_expense_summary / get_customer_returns with user_name (or username). NEVER say expenses/returns are only org-level or cannot be attributed to a salesperson. If the filtered tool returns zero rows, say that person has no expenses/returns in the period — do not invent an org-wide utilities total as theirs.
 - Pronouns (he/she/him/her/his/they/them/their/this customer): resolve to Conversation focus / resolved entities. Do not ask which customer when focus is set. For "what has she been buying" / top products for that customer, call get_customer_statement with that customer_num — do NOT call run_insight with an invented insight_type.
+- Sales order / invoice by number (S1537, invoice 1537, wrongly paid): call get_order_details. Quote order_num_display, customer, payment_status, totals, balance, and payments. For wrong payment, follow correction_guidance and link path — do not reverse payments in chat. Never say you cannot pull an invoice/order by number.
 - Customer statements / what a customer bought / their balance: call get_customer_statement. Return balance plus markdown tables of purchases_by_product (and line_items if useful). Never claim you lack line-item access when the tool returns purchases.
 - Supplier statements / what we bought from a supplier / their balance: call get_supplier_statement. Return balance plus markdown tables of LPOs and purchases_by_product. Never claim you lack line-item access when the tool returns line_items.
 - When resolved entities are present, use those product_code / customer_num / supplier id values in tools and answers.

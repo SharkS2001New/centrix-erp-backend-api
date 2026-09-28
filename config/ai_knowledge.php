@@ -12,6 +12,8 @@ return [
         'Purchasing: Suppliers at /suppliers, purchase orders (LPO) at /lpo, receive goods (GRN) at /inventory/receipts, pay suppliers at /suppliers/payments.',
         'Inventory: Current stock at /inventory/stock, adjustments at /inventory/adjustments, stock take at /inventory/stock-take, products at /products.',
         'Sales (retail): Orders at /sales/orders, POS at /sales/pos or /pos, debtors under /sales/shop-debtors/*, Sales by User report at /reports (Sales by user).',
+        'Cancel an order: open Sales → Sales orders at /sales/orders (or open the order summary), then use Cancel order. Stock is restored when cancellation succeeds. If the org requires cancellation approval, submit a cancellation request for a manager instead of direct cancel. Held/save-only orders: cancel from held-orders on POS or /sales/orders (cancel-held). Cancelled list: /sales/orders/queues/cancelled. Do NOT start a create-order confirm flow for cancel how-to questions.',
+        'Cancel vs return vs void: Cancel removes/stops the sales order (status cancelled) and restores stock when allowed. Customer returns / credit notes are at /sales/returns (goods came back after a sale). Hotel/bar voids are on hospitality checks — not the same as retail Cancel order. Do not confuse chat “cancel” (abort a draft) with canceling a saved sales order.',
         'Order workflow vs payment: Delivered means goods were fulfilled — the order may still be unpaid or partially paid. Completed means the order is fully paid (amount paid covers order total); Centrix blocks marking Completed while a balance remains. Paid is the payment stage; Delivered is fulfillment. Do not tell users that Delivered implies payment, or that unpaid orders can be Completed.',
         'Unpaid / Partially paid queues use amount maths (nothing / something / fully collected), not the workflow label alone — a Delivered order with zero collected still counts as unpaid on Sales → Unpaid.',
         'Sales by User: Collected = money taken (incl. partials) + Orders collected count. Unpaid = remaining balance on zero-paid and partially paid orders (Gross − Collected) + Orders unpaid count. Sales → Unpaid queue is still zero-paid orders only for collection work.',
@@ -59,7 +61,9 @@ return [
                 'POS checkout — create cart, add lines, pay with cash/M-Pesa/voucher',
                 'Backoffice sales orders — customer + line items + checkout',
                 'Held orders — save_only checkout with status held (resume or cancel later)',
+                'Cancel order from /sales/orders (or order summary) — restores stock; may need manager approval',
                 'Credit sales, vouchers, loyalty points, order discounts',
+                'Customer returns / credit notes at /sales/returns',
                 'Shop debtors queues — unpaid / partial / paid',
                 'Advance fulfillment (processed / delivered) even when unpaid; Completed only after full payment',
             ],
@@ -259,6 +263,15 @@ return [
             'notes' => 'Use get_lpo_details for one LPO; use latest=true for "last/latest LPO we created" or download-the-last-LPO. '
                 .'Use list_lpos with filter=awaiting_receive for goods-receiving lists. '
                 .'Do not invent status. Prefer chat document_links buttons — do not restate Open/Print/PDF in prose when links are present.',
+        ],
+        'retrieve_sales_order' => [
+            'summary' => 'Retrieve one sales order / shop invoice by number (S1537 = order 1537)',
+            'path' => '/sales/orders',
+            'notes' => 'Call get_order_details with order_num or query (S1537, 1537, AR-1537). '
+                .'Invoice number and order number are the same S-prefix reference in Centrix. '
+                .'Return customer, payment_status, totals, balance_due, and payment lines. '
+                .'For wrongly paid / wrong payment: use correction_guidance — reverse from order payment history at path; '
+                .'sale errors → /sales/returns; bank/M-Pesa → /accounting/bank-reconciliation. Never say Centrix cannot look up invoices by number.',
         ],
         'retrieve_latest_lpo' => [
             'summary' => 'Find the most recently created purchase order and offer Print / Save PDF',

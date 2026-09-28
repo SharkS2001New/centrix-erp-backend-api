@@ -38,6 +38,19 @@ class AiFalseWriteSuccessGuardTest extends TestCase
         ));
     }
 
+    public function test_how_to_cancel_order_wording_is_not_false_success(): void
+    {
+        $howto = 'To cancel an order that was created by mistake, open /sales/orders and use Cancel order. Stock is restored when cancel succeeds.';
+        $this->assertFalse($this->guard->looksLikeFalseWriteSuccess($howto));
+
+        $scrubbed = $this->guard->scrub([
+            'reply' => $howto,
+            'message' => $howto,
+        ]);
+        $this->assertSame($howto, $scrubbed['reply']);
+        $this->assertArrayNotHasKey('false_success_scrubbed', $scrubbed);
+    }
+
     public function test_scrub_replaces_hallucinated_success_without_action_result(): void
     {
         $result = $this->guard->scrub([

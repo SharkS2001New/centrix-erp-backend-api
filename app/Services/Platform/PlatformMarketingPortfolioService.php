@@ -54,22 +54,35 @@ class PlatformMarketingPortfolioService
         $vertical = (string) ($data['vertical'] ?? 'small_shop');
         $vCfg = config("marketing_portfolio.verticals.{$vertical}", []);
         $industry = (string) ($data['industry'] ?? ($vCfg['industry'] ?? 'commerce'));
+        $prospect = trim((string) ($data['prospect_name'] ?? ''));
+        $business = trim((string) ($data['business_name'] ?? ''));
+        if ($prospect === '') {
+            $prospect = $business !== '' ? $business : 'Prospect';
+        }
+        $painPoints = trim((string) ($data['pain_points'] ?? ''));
+        $instruction = trim((string) ($data['instruction'] ?? ''));
+        if ($painPoints === '' && $instruction !== '') {
+            $painPoints = $instruction;
+        }
 
         $portfolio = PlatformMarketingPortfolio::query()->create([
-            'title' => $data['title'] ?? $this->defaultTitle($data),
+            'title' => $data['title'] ?? $this->defaultTitle([
+                'business_name' => $business,
+                'prospect_name' => $prospect,
+            ]),
             'status' => 'draft',
             'industry' => $industry,
             'vertical' => $vertical,
-            'prospect_name' => $data['prospect_name'],
+            'prospect_name' => $prospect,
             'prospect_contact' => $data['prospect_contact'] ?? null,
             'prospect_email' => $data['prospect_email'] ?? null,
             'prospect_phone' => $data['prospect_phone'] ?? null,
-            'business_name' => $data['business_name'] ?? null,
+            'business_name' => $business !== '' ? $business : null,
             'location' => $data['location'] ?? null,
             'business_size' => $data['business_size'] ?? null,
             'branch_count' => $data['branch_count'] ?? null,
             'till_count' => $data['till_count'] ?? null,
-            'pain_points' => $data['pain_points'] ?? null,
+            'pain_points' => $painPoints !== '' ? $painPoints : null,
             'focus_modules' => $data['focus_modules'] ?? ($vCfg['default_modules'] ?? []),
             'tone' => $data['tone'] ?? 'professional',
             'hero_image_key' => $data['hero_image_key'] ?? ($vCfg['hero_image_key'] ?? 'hero_retail'),
@@ -81,7 +94,7 @@ class PlatformMarketingPortfolioService
 
         // Seed readable draft copy so preview/PDF work before AI generate.
         $portfolio->forceFill([
-            'sections' => $this->fallbackSections($portfolio),
+            'sections' => $this->fallbackSections($portfolio, $instruction !== '' ? $instruction : null),
         ])->save();
 
         return $portfolio->fresh();
@@ -120,18 +133,35 @@ class PlatformMarketingPortfolioService
 
     public function generate(PlatformMarketingPortfolio $portfolio, ?string $instruction = null): PlatformMarketingPortfolio
     {
+        $instruction = $instruction !== null ? trim($instruction) : null;
+        if ($instruction === '') {
+            $instruction = null;
+        }
+
+        // Thin briefs: fold the instruction into pain_points so fallback + AI both see it.
+        if ($instruction && ! trim((string) $portfolio->pain_points)) {
+            $portfolio->forceFill(['pain_points' => $instruction])->save();
+        }
+
         $runtime = AiSettingsResolver::resolveRuntimeForPlatformTraining();
         if (! $runtime) {
-            throw new \RuntimeException(
-                'No Gemini or OpenAI key is saved for platform tools. Add a key under Platform → AI training → Credentials.',
-            );
+            // Still produce a usable general portfolio from vertical templates + instruction.
+            $portfolio->forceFill([
+                'sections' => $this->fallbackSections($portfolio, $instruction),
+                'ai_brief' => Str::limit($instruction ?: 'Template portfolio (no AI key)', 2000),
+                'status' => $portfolio->status === 'shared' ? 'shared' : 'ready',
+                'hero_image_key' => $portfolio->hero_image_key
+                    ?: config("marketing_portfolio.verticals.{$portfolio->vertical}.hero_image_key", 'hero_retail'),
+            ])->save();
+
+            return $portfolio->fresh();
         }
 
         $prompt = $this->buildGeneratePrompt($portfolio, $instruction);
         $raw = $this->callModel($runtime, $prompt);
         $parsed = $this->parseSectionsJson($raw);
         if ($parsed === []) {
-            $parsed = $this->fallbackSections($portfolio);
+            $parsed = $this->fallbackSections($portfolio, $instruction);
         }
 
         $portfolio->forceFill([
@@ -252,18 +282,21 @@ class PlatformMarketingPortfolioService
     }
 
     /** @return list<array<string, mixed>> */
-    protected function fallbackSections(PlatformMarketingPortfolio $portfolio): array
+    protected function fallbackSections(PlatformMarketingPortfolio $portfolio, ?string $instruction = null): array
     {
         $vCfg = config("marketing_portfolio.verticals.{$portfolio->vertical}", []);
         $labels = config('marketing_portfolio.section_labels', []);
         $modules = config('marketing_portfolio.module_catalog', []);
-        $biz = $portfolio->business_name ?: $portfolio->prospect_name;
+        $biz = $portfolio->business_name ?: $portfolio->prospect_name ?: 'your business';
         $focus = collect($portfolio->focus_modules ?? [])
             ->map(fn ($k) => $modules[$k] ?? $k)
             ->filter()
             ->values()
             ->all();
         $values = $vCfg['value_bullets'] ?? [];
+        $instruction = $instruction !== null ? trim($instruction) : '';
+        $pain = trim((string) ($portfolio->pain_points ?: ''));
+        $briefLine = $instruction !== '' ? $instruction : ($pain !== '' ? $pain : null);
         $sections = $this->skeletonSections($portfolio->vertical);
 
         foreach ($sections as &$section) {
@@ -272,11 +305,14 @@ class PlatformMarketingPortfolioService
             $section['body'] = match ($key) {
                 'cover' => "A tailored Centrix overview for {$biz}"
                     .($portfolio->location ? ' in '.$portfolio->location : '')
-                    .'. Built for '.($vCfg['label'] ?? 'your industry').' operations in Kenya (Kenyan Shillings).',
-                'understanding' => trim((string) ($portfolio->pain_points ?: 'You need clearer stock, sales, and cash visibility without juggling spreadsheets.')),
+                    .'. Built for '.($vCfg['label'] ?? 'your industry').' operations in Kenya (Kenyan Shillings).'
+                    .($briefLine ? "\n\nFocus: {$briefLine}" : ''),
+                'understanding' => $briefLine
+                    ?: 'You need clearer stock, sales, and cash visibility without juggling spreadsheets.',
                 'fit' => 'Centrix connects the tools your team already needs — '
                     .($focus !== [] ? implode(', ', $focus) : 'POS, stock, purchasing, and reports')
-                    .' — in one Kenya-ready ERP.',
+                    .' — in one Kenya-ready ERP.'
+                    .($briefLine ? " This portfolio emphasises: {$briefLine}." : ''),
                 'day_in_life' => 'Morning stock checks, mid-day sales on till or counter, afternoon purchasing and credit follow-ups, and evening end-of-day — all visible to managers on web or Centrix Manager.',
                 'outcomes' => 'Tighter stock control, cleaner end-of-day cash, faster purchasing, and live visibility for owners and managers.',
                 'included' => 'A practical Centrix footprint for '.($vCfg['label'] ?? 'your business')
@@ -305,6 +341,10 @@ class PlatformMarketingPortfolioService
             ->implode(', ');
         $sectionList = collect($labels)->map(fn ($label, $key) => "- {$key}: {$label}")->implode("\n");
 
+        $thinBrief = ! trim((string) $portfolio->business_name)
+            && ! trim((string) $portfolio->pain_points)
+            && trim((string) $portfolio->prospect_name) === 'Prospect';
+
         $brief = json_encode([
             'prospect_name' => $portfolio->prospect_name,
             'business_name' => $portfolio->business_name,
@@ -319,6 +359,7 @@ class PlatformMarketingPortfolioService
             'focus_modules' => $focus,
             'tone' => $portfolio->tone,
             'extra_instruction' => $instruction,
+            'thin_brief' => $thinBrief,
         ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
 
         return <<<PROMPT
@@ -352,8 +393,10 @@ Required section keys (in order):
 
 Rules:
 - Currency is Kenyan Shillings (say Kenyan Shillings / KES clearly).
-- Address the prospect by name where natural.
-- Be specific to their vertical and pain points.
+- If the brief is thin or prospect is generic ("Prospect"), write a strong GENERAL sales portfolio for this vertical that a Centrix seller can reuse — still concrete and Kenya SME-aware.
+- If extra_instruction is set, treat it as the primary creative brief (even when other fields are empty). Shape the whole portfolio around that instruction.
+- Address the prospect by name when a real name is given; otherwise say "your business" / the vertical label.
+- Be specific to their vertical and pain points (or the instruction).
 - image_key must be one of: hero_retail, hero_supermarket, hero_hotel, hero_spa, hero_distribution, ill_pos, ill_stock, ill_finance, ill_hr, ill_manager, ill_hotel, ill_spa.
 - No markdown fences. JSON only.
 PROMPT;
@@ -544,6 +587,7 @@ PROMPT;
         $biz = $portfolio->business_name ?: $portfolio->prospect_name;
         $sections = is_array($portfolio->sections) ? $portfolio->sections : [];
         $body = '';
+        $illustrations = config('marketing_portfolio.illustrations', []);
         foreach ($sections as $section) {
             if (! is_array($section)) {
                 continue;
@@ -554,7 +598,19 @@ PROMPT;
             foreach (($section['bullets'] ?? []) as $b) {
                 $bullets .= '<li>'.$e($b).'</li>';
             }
-            $body .= '<section class="sec"><h2>'.$title.'</h2><div class="body">'.$text.'</div>'
+            $imageKey = (string) ($section['image_key'] ?? $portfolio->hero_image_key ?? 'ill_manager');
+            $ill = $illustrations[$imageKey] ?? $illustrations['ill_manager'] ?? null;
+            $g0 = $e($ill['gradient'][0] ?? '#4C5BA4');
+            $g1 = $e($ill['gradient'][1] ?? '#2DB88A');
+            $illLabel = $e($ill['label'] ?? $imageKey);
+            $illHint = $e($ill['hint'] ?? '');
+            $body .= '<section class="sec">'
+                .'<div class="ill" style="background:linear-gradient(135deg,'.$g0.' 0%,'.$g1.' 100%);">'
+                .'<div class="ill-brand">Centrix</div>'
+                .'<div class="ill-label">'.$illLabel.'</div>'
+                .($illHint !== '' ? '<div class="ill-hint">'.$illHint.'</div>' : '')
+                .'</div>'
+                .'<h2>'.$title.'</h2><div class="body">'.$text.'</div>'
                 .($bullets !== '' ? '<ul>'.$bullets.'</ul>' : '')
                 .'</section>';
         }
@@ -565,6 +621,10 @@ PROMPT;
             h1{font-size:22px;margin:8px 0 4px;}
             .meta{color:#64748b;margin-bottom:18px;}
             .sec{margin:16px 0;padding-top:10px;border-top:1px solid #e2e8f0;}
+            .ill{color:#fff;border-radius:8px;padding:14px 16px;margin:0 0 10px;}
+            .ill-brand{font-size:9px;letter-spacing:0.14em;text-transform:uppercase;opacity:0.85;font-weight:700;}
+            .ill-label{font-size:13px;font-weight:700;margin-top:4px;}
+            .ill-hint{font-size:10px;opacity:0.9;margin-top:2px;}
             h2{font-size:14px;margin:0 0 6px;color:#4C5BA4;}
             ul{margin:8px 0 0 18px;padding:0;}
             li{margin:3px 0;}

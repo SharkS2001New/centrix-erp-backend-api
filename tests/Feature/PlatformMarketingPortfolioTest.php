@@ -127,4 +127,25 @@ class PlatformMarketingPortfolioTest extends TestCase
         $this->assertNotEmpty($pdf['binary']);
         $this->assertStringEndsWith('.pdf', $pdf['filename']);
     }
+
+    public function test_quick_generate_from_instruction_without_prospect_name(): void
+    {
+        Sanctum::actingAs($this->superAdmin);
+
+        $create = $this->postJson('/api/v1/admin/platform-marketing-portfolios', [
+            'vertical' => 'supermarket',
+            'instruction' => 'General Centrix portfolio for Nairobi supermarket SMEs — multi-till EOD and stock alerts.',
+            'generate_now' => true,
+            'tone' => 'professional',
+        ])->assertCreated();
+
+        $this->assertSame('Prospect', $create->json('data.prospect_name'));
+        $this->assertSame('ready', $create->json('data.status'));
+        $sections = $create->json('data.sections');
+        $this->assertNotEmpty($sections);
+        $this->assertStringContainsString(
+            'multi-till',
+            strtolower(implode(' ', array_column($sections, 'body'))),
+        );
+    }
 }

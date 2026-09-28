@@ -862,10 +862,15 @@ class AiActionExecutor
         if ($saleId > 0) {
             $sale = (clone $query)->whereKey($saleId)->first();
         } elseif ($orderRef !== '') {
+            $parsedOrderNum = \App\Support\SalesOrderReference::parseOrderNum($orderRef);
             $sale = (clone $query)
-                ->where(function ($q) use ($orderRef) {
-                    $q->where('order_num', $orderRef)
-                        ->orWhere('pos_order_num', $orderRef)
+                ->where(function ($q) use ($orderRef, $parsedOrderNum) {
+                    if ($parsedOrderNum !== null) {
+                        $q->where('order_num', $parsedOrderNum);
+                    } else {
+                        $q->where('order_num', $orderRef);
+                    }
+                    $q->orWhere('pos_order_num', $orderRef)
                         ->orWhere('id', ctype_digit($orderRef) ? (int) $orderRef : 0);
                 })
                 ->orderByDesc('id')
@@ -1170,10 +1175,19 @@ class AiActionExecutor
         }
 
         if (! empty($params['order_num'])) {
-            $sale = Sale::query()
-                ->where('organization_id', $orgId)
-                ->where('order_num', trim((string) $params['order_num']))
-                ->first();
+            $raw = trim((string) $params['order_num']);
+            $orderNum = \App\Support\SalesOrderReference::parseOrderNum($raw);
+            $saleQuery = Sale::query()->where('organization_id', $orgId);
+            if ($orderNum !== null) {
+                $sale = (clone $saleQuery)->where('order_num', $orderNum)->first();
+            } else {
+                $sale = (clone $saleQuery)
+                    ->where(function ($q) use ($raw) {
+                        $q->where('order_num', $raw)
+                            ->orWhere('pos_order_num', $raw);
+                    })
+                    ->first();
+            }
 
             if ($sale) {
                 return $sale;

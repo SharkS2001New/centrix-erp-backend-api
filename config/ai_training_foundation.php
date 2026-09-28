@@ -5,7 +5,7 @@
  * Installed via Platform → AI training → "Install foundation notes".
  * Topics already present are skipped (safe to re-run).
  */
-return [
+return array_merge([
     [
         'topic' => 'How Centrix stores stock quantities (base units)',
         'content' => 'All stock quantities in Centrix are stored in the product UoM base (smallest) unit — e.g. kg, pcs, or litres. Display mixes full packs and remaining small units (example: "2 Bag, 40 kg"). Never invent kg vs bags; quote qty_label from tools or product details. Configure packs at /uoms and assign the UoM on each product.',
@@ -813,4 +813,4 @@ return [
         'path' => '/sales/shop-debtors/unpaid',
         'workspace_id' => 'backoffice',
     ],
-];
+], require __DIR__.'/ai_training_foundation_order_ops.php');

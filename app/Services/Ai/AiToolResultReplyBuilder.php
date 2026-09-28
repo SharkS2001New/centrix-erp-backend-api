@@ -67,6 +67,7 @@ class AiToolResultReplyBuilder
                 'search_training_notes' => $this->formatTrainingNotes($result),
                 'find_screen' => $this->formatFindScreen($result),
                 'get_lpo_details' => $this->formatLpoDetails($result),
+                'get_order_details' => $this->formatOrderDetails($result),
                 'list_lpos' => $this->formatListLpos($result),
                 'run_insight' => $this->formatRunInsight($result),
                 default => null,
@@ -1461,6 +1462,68 @@ class AiToolResultReplyBuilder
         $next = is_array($result['next_steps'] ?? null) ? $result['next_steps'] : [];
         if ($next !== []) {
             $lines[] = 'Next: '.(string) $next[0];
+        }
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * @param  array<string, mixed>  $result
+     */
+    protected function formatOrderDetails(array $result): ?string
+    {
+        $display = (string) ($result['order_num_display'] ?? '');
+        if ($display === '' && ! empty($result['order_num'])) {
+            $display = 'S'.(int) $result['order_num'];
+        }
+        if ($display === '') {
+            return null;
+        }
+
+        $customer = (string) ($result['customer_name'] ?? 'Customer');
+        $payStatus = (string) ($result['payment_status'] ?? '');
+        $total = number_format((float) ($result['order_total'] ?? 0), 2);
+        $paid = number_format((float) ($result['amount_paid'] ?? 0), 2);
+        $balance = number_format((float) ($result['balance_due'] ?? 0), 2);
+        $path = (string) ($result['path'] ?? '');
+
+        $lines = [
+            "**{$display}** — {$customer}",
+            "Payment: {$payStatus}. Total KES {$total}; paid KES {$paid}; balance due KES {$balance}.",
+        ];
+
+        $payments = is_array($result['payments'] ?? null) ? $result['payments'] : [];
+        if ($payments !== []) {
+            $lines[] = '';
+            $lines[] = 'Payments:';
+            foreach (array_slice($payments, 0, 12) as $pay) {
+                $method = (string) ($pay['method_name'] ?? $pay['method_code'] ?? 'Tender');
+                $amt = number_format((float) ($pay['amount'] ?? 0), 2);
+                $ref = trim((string) ($pay['reference_number'] ?? ''));
+                $when = trim((string) ($pay['paid_at'] ?? ''));
+                $bit = "- {$method}: KES {$amt}";
+                if ($ref !== '') {
+                    $bit .= " (ref {$ref})";
+                }
+                if ($when !== '') {
+                    $bit .= " — {$when}";
+                }
+                $lines[] = $bit;
+            }
+        }
+
+        $guidance = is_array($result['correction_guidance'] ?? null) ? $result['correction_guidance'] : [];
+        if ($guidance !== []) {
+            $lines[] = '';
+            $lines[] = 'If this payment was wrong:';
+            foreach (array_slice($guidance, 0, 4) as $step) {
+                $lines[] = '• '.(string) $step;
+            }
+        }
+
+        if ($path !== '') {
+            $lines[] = '';
+            $lines[] = "Open [{$display}]({$path}) to reverse or re-apply from payment history.";
         }
 
         return implode("\n", $lines);
