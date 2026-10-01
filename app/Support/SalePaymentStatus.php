@@ -129,6 +129,10 @@ class SalePaymentStatus
      * Restrict a list query to unpaid / partial / paid using amount maths.
      * Also accepts legacy partially_paid filter value.
      *
+     * Unpaid also includes rows whose workflow status is still `unpaid` even when
+     * amount_paid / tenders were written incorrectly (mobile save-only phantoms).
+     * Those show an Unpaid badge on All Orders and must appear on Unpaid Orders.
+     *
      * @param  Builder<\Illuminate\Database\Eloquent\Model>|QueryBuilder  $query
      */
     public static function applyListFilter($query, string $paymentStatus): void
@@ -143,9 +147,15 @@ class SalePaymentStatus
         }
 
         match ($bucket) {
-            self::PAID => $query->whereRaw(self::isPaidSql('sales.')),
+            self::PAID => $query
+                ->whereRaw(self::isPaidSql('sales.'))
+                // Workflow-unpaid rows belong on Unpaid Orders even with phantom tenders.
+                ->where('sales.status', '!=', self::UNPAID),
             self::PARTIAL => $query->whereRaw(self::isPartialSql('sales.')),
-            default => $query->whereRaw(self::isUnpaidSql('sales.')),
+            default => $query->where(function ($sub) {
+                $sub->whereRaw(self::isUnpaidSql('sales.'))
+                    ->orWhere('sales.status', self::UNPAID);
+            }),
         };
     }
 }

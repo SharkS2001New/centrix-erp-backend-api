@@ -392,7 +392,18 @@ class SaleController extends BaseResourceController
             || ($request->boolean('shop_debtors') && ! $hasPaymentStatusFilter)
         ) {
             $query->whereNotIn('sales.status', ['cancelled', 'expired']);
-            $query->whereRaw('(sales.order_total - COALESCE(sales.amount_paid, 0)) > 0.01');
+            $unpaidPaymentQueue = $hasPaymentStatusFilter
+                && SalePaymentStatus::normalizeLabel((string) $paymentStatusFilter) === SalePaymentStatus::UNPAID;
+            if ($unpaidPaymentQueue) {
+                // Unpaid Orders may send outstanding_balance=1 with payment_status=unpaid.
+                // Still include workflow-unpaid rows whose amount_paid was inflated (phantoms).
+                $query->where(function ($sub) {
+                    $sub->whereRaw('(sales.order_total - COALESCE(sales.amount_paid, 0)) > 0.01')
+                        ->orWhere('sales.status', SalePaymentStatus::UNPAID);
+                });
+            } else {
+                $query->whereRaw('(sales.order_total - COALESCE(sales.amount_paid, 0)) > 0.01');
+            }
         }
 
         if ($hasPaymentStatusFilter) {
@@ -521,12 +532,15 @@ class SaleController extends BaseResourceController
         $unpaidSql = SalePaymentStatus::isUnpaidSql('sales.');
         $partialSql = SalePaymentStatus::isPartialSql('sales.');
         $paidSql = SalePaymentStatus::isPaidSql('sales.');
+        // Keep KPI cards aligned with Unpaid Orders: workflow-unpaid counts as unpaid.
+        $unpaidBucketSql = "(({$unpaidSql}) OR sales.status = 'unpaid')";
+        $paidBucketSql = "(({$paidSql}) AND sales.status != 'unpaid')";
 
         $row = (clone $activeQuery)->cloneWithout(['columns', 'orders'])
             ->selectRaw("
-                SUM(CASE WHEN {$unpaidSql} THEN 1 ELSE 0 END) as unpaid,
-                SUM(CASE WHEN {$partialSql} THEN 1 ELSE 0 END) as partial,
-                SUM(CASE WHEN {$paidSql} THEN 1 ELSE 0 END) as paid
+                SUM(CASE WHEN {$unpaidBucketSql} THEN 1 ELSE 0 END) as unpaid,
+                SUM(CASE WHEN {$partialSql} AND sales.status != 'unpaid' THEN 1 ELSE 0 END) as partial,
+                SUM(CASE WHEN {$paidBucketSql} THEN 1 ELSE 0 END) as paid
             ")
             ->first();
 
@@ -552,8 +566,19 @@ class SaleController extends BaseResourceController
             if ($batch === []) {
                 return;
             }
-            $settlements = $invoiceService->settlementsBySaleId($batch);
-            foreach ($batch as $saleId) {
+            $ids = array_column($batch, 'id');
+            $statuses = [];
+            foreach ($batch as $row) {
+                $statuses[(int) $row['id']] = (string) ($row['status'] ?? '');
+            }
+            $settlements = $invoiceService->settlementsBySaleId($ids);
+            foreach ($ids as $saleId) {
+                $workflowStatus = strtolower(trim((string) ($statuses[$saleId] ?? '')));
+                // Match the Unpaid badge: workflow-unpaid is never a Paid KPI.
+                if ($workflowStatus === SalePaymentStatus::UNPAID) {
+                    $counts['unpaid']++;
+                    continue;
+                }
                 $bucket = (string) (($settlements[$saleId] ?? [])['payment_status'] ?? SalePaymentStatus::UNPAID);
                 if ($bucket === SalePaymentStatus::PAID) {
                     $counts['paid']++;
@@ -568,12 +593,15 @@ class SaleController extends BaseResourceController
 
         // Stream ids (joined list queries stay valid); settle in bounded batches.
         $rows = (clone $activeQuery)->cloneWithout(['columns', 'orders'])
-            ->select('sales.id')
+            ->select(['sales.id', 'sales.status'])
             ->orderBy('sales.id')
             ->cursor();
 
         foreach ($rows as $row) {
-            $batch[] = (int) $row->id;
+            $batch[] = [
+                'id' => (int) $row->id,
+                'status' => (string) ($row->status ?? ''),
+            ];
             if (count($batch) >= 500) {
                 $flush();
             }
@@ -597,7 +625,15 @@ class SaleController extends BaseResourceController
         }
 
         $settlements = app(CustomerInvoiceService::class)->settlementsBySaleId($saleIds);
+        $statuses = Sale::query()
+            ->whereIn('id', $saleIds)
+            ->pluck('status', 'id');
         foreach ($saleIds as $saleId) {
+            $workflowStatus = strtolower(trim((string) ($statuses[$saleId] ?? '')));
+            if ($workflowStatus === SalePaymentStatus::UNPAID) {
+                $counts['unpaid']++;
+                continue;
+            }
             $bucket = (string) (($settlements[$saleId] ?? [])['payment_status'] ?? SalePaymentStatus::UNPAID);
             if ($bucket === SalePaymentStatus::PAID) {
                 $counts['paid']++;

@@ -865,4 +865,45 @@ class SaleOrderListDateFilterTest extends TestCase
             'Unpaid stage queue must not pull processed+unpaid rows (those belong on Processed / payment queues).',
         );
     }
+
+    public function test_payment_unpaid_queue_includes_workflow_unpaid_with_phantom_amount_paid(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        // Matches S1554-style rows: badge Unpaid, but amount_paid was inflated so
+        // amount-only unpaid filters and outstanding_balance=1 previously hid them.
+        $phantom = Sale::query()->create([
+            'order_num' => 993554,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $admin->id,
+            'status' => 'unpaid',
+            'payment_status' => 'paid',
+            'order_total' => 4730,
+            'amount_paid' => 4730,
+            'archived' => 0,
+        ]);
+        \Illuminate\Support\Facades\DB::table('sales')->where('id', $phantom->id)->update([
+            'payment_status' => 'paid',
+            'amount_paid' => 4730,
+            'status' => 'unpaid',
+        ]);
+
+        $list = $this->getJson(
+            '/api/v1/sales?filter[payment_status]=unpaid&outstanding_balance=1&exclude_statuses=cancelled,expired&per_page=200',
+        )->assertOk();
+        $ids = collect($list->json('data'))->pluck('id');
+        $this->assertTrue(
+            $ids->contains($phantom->id),
+            'Unpaid Orders must list workflow-unpaid rows even when amount_paid looks settled.',
+        );
+
+        $summary = $this->getJson(
+            '/api/v1/sales?q=993554&per_page=50&date_field=placed',
+        )->assertOk()->json('summary');
+        $this->assertSame(1, (int) ($summary['unpaid'] ?? 0), 'All Orders KPI must count workflow-unpaid as unpaid');
+        $this->assertSame(0, (int) ($summary['paid'] ?? 0));
+    }
 }
