@@ -2597,58 +2597,186 @@ class ReportController extends Controller
     public function kraReceipts(Request $request)
     {
         // List/print preview fetch full payloads via GET /kra-responses/{id}.
-        // Shipping request/response JSON on every list row dominates TTFB.
-        $listColumns = [
-            'kra_response_id',
-            'sale_id',
-            'order_no',
-            'sale_order_num',
-            'pos_order_num',
-            'customer_name',
-            'receipt_date',
-            'receipt_at',
-            'invoice_number',
-            'serial_number',
-            'signature_link',
-            'kra_timestamp',
-            'status',
-            'error_message',
-            'document_type',
-            'relevant_invoice_number',
-            'cashier_id',
-            'cashier_name',
-            'branch_id',
-            'branch_name',
-            'channel',
+        // Query base tables page-by-page — the v_kra_receipts view embeds large JSON
+        // payloads and JSON_EXTRACT expressions that dominate TTFB on big orgs.
+        $filters = $this->filters($request);
+        $perPage = min((int) ($filters['per_page'] ?? 20), 200);
+
+        $base = $this->buildKraReceiptsLeanQuery($request, $filters);
+
+        $summary = $this->aggregateLeanReportSummary(clone $base, [
             'order_total',
             'amount_paid',
             'total_vat',
-            'organization_id',
+        ]);
+
+        $includeDocumentType = ! empty($filters['document_type'])
+            || $request->boolean('include_document_type', true);
+
+        $select = [
+            'kr.id as kra_response_id',
+            'kr.sale_id',
+            DB::raw("CASE
+                WHEN LOWER(COALESCE(s.channel, '')) = 'pos' AND s.pos_order_num IS NOT NULL
+                THEN s.pos_order_num
+                ELSE COALESCE(kr.order_no, s.order_num)
+            END AS order_no"),
+            's.order_num as sale_order_num',
+            's.pos_order_num',
+            DB::raw("COALESCE(
+                NULLIF(TRIM(c.customer_name), ''),
+                NULLIF(TRIM(s.customer_name_override), ''),
+                'Walk-in'
+            ) AS customer_name"),
+            DB::raw('DATE(kr.created_at) AS receipt_date'),
+            'kr.created_at as receipt_at',
+            'kr.invoice_number',
+            'kr.serial_number',
+            'kr.signature_link',
+            'kr.kra_timestamp',
+            'kr.status',
+            'kr.error_message',
+            's.cashier_id',
+            DB::raw("COALESCE(
+                NULLIF(TRIM(u.full_name), ''),
+                NULLIF(TRIM(u.username), '')
+            ) AS cashier_name"),
+            's.branch_id',
+            'b.branch_name',
+            's.channel',
+            's.order_total',
+            's.amount_paid',
+            's.total_vat',
+            DB::raw('COALESCE(kr.organization_id, s.organization_id) AS organization_id'),
         ];
 
-        return response()->json($this->reportFromView(
-            'v_kra_receipts',
-            $this->filters($request),
-            [
-                'receipt_date',
-                'branch_id',
-                'channel',
-                'status',
-                'document_type',
-                'organization_id',
-                'order_no',
-                'invoice_number',
-            ],
-            function ($q) {
-                $q->orderByDesc('receipt_at')->orderByDesc('kra_response_id');
-            },
-            [
-                'select' => $listColumns,
-                'lean_summary' => ['order_total', 'amount_paid', 'total_vat'],
-                // Prefer timestamp range so (organization_id, created_at) can be used.
-                'prefer_timestamp_date_column' => 'receipt_at',
-            ],
-        ));
+        // JSON_EXTRACT only for the current page (or when filtering credit notes).
+        if ($includeDocumentType) {
+            $select[] = DB::raw($this->kraReceiptsDocumentTypeSql().' AS document_type');
+            $select[] = DB::raw($this->kraReceiptsRelevantInvoiceSql().' AS relevant_invoice_number');
+        } else {
+            $select[] = DB::raw("'sale' AS document_type");
+            $select[] = DB::raw('NULL AS relevant_invoice_number');
+        }
+
+        $pageQuery = (clone $base)
+            ->select($select)
+            ->orderByDesc('kr.created_at')
+            ->orderByDesc('kr.id');
+
+        $paginator = $pageQuery->paginate($perPage);
+
+        return response()->json(array_merge($paginator->toArray(), [
+            'summary' => $summary,
+        ]));
+    }
+
+    /**
+     * Lean kra_responses + sales join (no payload columns) for list filters / aggregates.
+     *
+     * @param  array<string, mixed>  $filters
+     * @return \Illuminate\Database\Query\Builder
+     */
+    protected function buildKraReceiptsLeanQuery(Request $request, array $filters)
+    {
+        $q = DB::table('kra_responses as kr')
+            ->join('sales as s', 's.id', '=', 'kr.sale_id')
+            ->leftJoin('users as u', 'u.id', '=', 's.cashier_id')
+            ->leftJoin('branches as b', 'b.id', '=', 's.branch_id')
+            ->leftJoin('customers as c', function ($join) {
+                $join->on('c.customer_num', '=', 's.customer_num')
+                    ->on('c.organization_id', '=', 's.organization_id')
+                    ->whereNull('c.deleted_at');
+            });
+
+        $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
+        if ($orgId) {
+            $q->where(function ($inner) use ($orgId) {
+                $inner->where('kr.organization_id', $orgId)
+                    ->orWhere('s.organization_id', $orgId);
+            });
+        }
+
+        if (! empty($filters['branch_id'])) {
+            $q->where('s.branch_id', $filters['branch_id']);
+        }
+        if (! empty($filters['channel'])) {
+            $q->where('s.channel', $filters['channel']);
+        }
+        if (! empty($filters['status'])) {
+            $q->where('kr.status', $filters['status']);
+        }
+        if (! empty($filters['organization_id'])) {
+            $q->where(function ($inner) use ($filters) {
+                $inner->where('kr.organization_id', $filters['organization_id'])
+                    ->orWhere('s.organization_id', $filters['organization_id']);
+            });
+        }
+        if (! empty($filters['invoice_number'])) {
+            $q->where('kr.invoice_number', $filters['invoice_number']);
+        }
+        if (! empty($filters['order_no'])) {
+            $orderNo = $filters['order_no'];
+            $q->where(function ($inner) use ($orderNo) {
+                $inner->where('kr.order_no', $orderNo)
+                    ->orWhere('s.order_num', $orderNo)
+                    ->orWhere('s.pos_order_num', $orderNo);
+            });
+        }
+        if (! empty($filters['document_type'])) {
+            $q->whereRaw($this->kraReceiptsDocumentTypeSql().' = ?', [$filters['document_type']]);
+        }
+
+        if (! empty($filters['from_date'])) {
+            $q->where('kr.created_at', '>=', $filters['from_date'].' 00:00:00');
+        }
+        if (! empty($filters['to_date'])) {
+            $q->where('kr.created_at', '<=', $filters['to_date'].' 23:59:59');
+        }
+
+        if ($search = trim((string) $request->input('q', ''))) {
+            $amountNeedle = $this->normalizeReportAmountSearch($search);
+            $q->where(function ($inner) use ($search, $amountNeedle) {
+                $inner->where('kr.invoice_number', 'like', "%{$search}%")
+                    ->orWhere('kr.serial_number', 'like', "%{$search}%")
+                    ->orWhere('kr.order_no', 'like', "%{$search}%")
+                    ->orWhere('s.order_num', 'like', "%{$search}%")
+                    ->orWhere('s.pos_order_num', 'like', "%{$search}%")
+                    ->orWhere('c.customer_name', 'like', "%{$search}%")
+                    ->orWhere('s.customer_name_override', 'like', "%{$search}%")
+                    ->orWhere('u.full_name', 'like', "%{$search}%")
+                    ->orWhere('u.username', 'like', "%{$search}%");
+                if ($amountNeedle !== null) {
+                    $inner->orWhere('s.order_total', $amountNeedle)
+                        ->orWhere('s.amount_paid', $amountNeedle);
+                }
+            });
+        }
+
+        return $q;
+    }
+
+    protected function kraReceiptsDocumentTypeSql(): string
+    {
+        return "CASE
+            WHEN LOWER(COALESCE(
+                NULLIF(JSON_UNQUOTE(JSON_EXTRACT(kr.response_payload, '$.document_type')), ''),
+                ''
+            )) IN ('credit_note', 'credit', 'creditnote') THEN 'credit_note'
+            WHEN LOWER(COALESCE(
+                NULLIF(JSON_UNQUOTE(JSON_EXTRACT(kr.request_payload, '$.sign_structure.InvoiceType')), ''),
+                ''
+            )) IN ('credit', 'credit_note', 'creditnote') THEN 'credit_note'
+            ELSE 'sale'
+        END";
+    }
+
+    protected function kraReceiptsRelevantInvoiceSql(): string
+    {
+        return "COALESCE(
+            NULLIF(JSON_UNQUOTE(JSON_EXTRACT(kr.response_payload, '$.relevant_invoice_number')), ''),
+            NULLIF(JSON_UNQUOTE(JSON_EXTRACT(kr.request_payload, '$.sign_structure.relevantInvoiceNumber')), '')
+        )";
     }
 
     public function kraComplianceSummary(Request $request)
@@ -3183,7 +3311,14 @@ class ReportController extends Controller
             $selects[] = "COALESCE(SUM(`{$escaped}`), 0) as `{$escaped}`";
         }
 
-        $agg = (clone $query)->selectRaw(implode(', ', $selects))->first();
+        $aggQuery = clone $query;
+        // Clear prior select columns (Eloquent Builder or Query\Builder).
+        if (method_exists($aggQuery, 'getQuery')) {
+            $aggQuery->getQuery()->columns = null;
+        } else {
+            $aggQuery->columns = null;
+        }
+        $agg = $aggQuery->selectRaw(implode(', ', $selects))->first();
         $summary = [
             'row_count' => (int) ($agg->row_count ?? 0),
         ];

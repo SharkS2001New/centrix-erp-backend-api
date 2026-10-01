@@ -74,7 +74,7 @@ class KraReceiptsReportTest extends TestCase
             'updated_at' => now(),
         ]);
 
-        $res = $this->getJson('/api/v1/reports/kra-receipts?from_date='.now()->toDateString().'&to_date='.now()->toDateString().'&date_column=receipt_date')
+        $res = $this->getJson('/api/v1/reports/kra-receipts?from_date='.now()->toDateString().'&to_date='.now()->toDateString().'&date_column=receipt_date&per_page=20&page=1')
             ->assertOk();
 
         $rows = collect($res->json('data') ?? []);
@@ -90,6 +90,9 @@ class KraReceiptsReportTest extends TestCase
         $this->assertArrayNotHasKey('response_payload', $hit);
         $this->assertArrayHasKey('document_type', $hit);
         $this->assertArrayHasKey('order_total', $hit);
+        $this->assertArrayHasKey('summary', $res->json());
+        $this->assertArrayHasKey('current_page', $res->json());
+        $this->assertSame(1, (int) $res->json('current_page'));
     }
 
     public function test_kra_compliance_summary_and_unfiscalized_sales(): void

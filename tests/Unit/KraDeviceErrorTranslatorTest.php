@@ -94,4 +94,35 @@ class KraDeviceErrorTranslatorTest extends TestCase
         $this->assertSame('314', $result['code']);
         $this->assertStringContainsString('receipt or invoice reference', strtolower($result['message']));
     }
+
+    public function test_code_34_on_plu_upload_maps_to_product_data_message(): void
+    {
+        $raw = 'SetPluDataInfoEX failed: Error processing PLU data (Code 34)';
+
+        $result = KraDeviceErrorTranslator::translate($raw);
+
+        $this->assertSame('34', $result['code']);
+        $this->assertStringContainsString('product upload data is invalid', strtolower($result['message']));
+        $this->assertStringNotContainsString('receipt number', strtolower($result['message']));
+    }
+
+    public function test_code_34_on_sale_still_maps_to_receipt_number_message(): void
+    {
+        $raw = 'receiptNo is error (Code 34)';
+
+        $result = KraDeviceErrorTranslator::translate($raw);
+
+        $this->assertSame('34', $result['code']);
+        $this->assertStringContainsString('receipt number', strtolower($result['message']));
+    }
+
+    public function test_e034_maps_to_product_upload_message(): void
+    {
+        $raw = 'E034: Error processing PLU data';
+
+        $result = KraDeviceErrorTranslator::translate($raw);
+
+        $this->assertSame('034', $result['code']);
+        $this->assertStringContainsString('product upload data is invalid', strtolower($result['message']));
+    }
 }

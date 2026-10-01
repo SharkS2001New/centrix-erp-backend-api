@@ -529,17 +529,31 @@ class CartOperationsController extends Controller
 
         $editMeta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
         $alreadyEditing = ! empty($editMeta['pos_editing_in_progress']);
+        $stockReverseStillPending = ! empty($editMeta['stock_reverse_pending']);
 
-        // Resume an in-progress edit of the same sale — skip KRA void + stock reverse.
+        // Resume an in-progress edit of the same sale — skip KRA void + stock reverse
+        // unless a prior reverse job failed and left stock_reverse_pending.
         if (
             (int) ($cart->superseded_sale_id ?? 0) === (int) $sale->id
             && (int) ($cart->held_order_num ?? 0) === (int) $sale->order_num
             && $cart->lines()->exists()
         ) {
+            if ($stockReverseStillPending && (bool) $sale->stock_balanced) {
+                FinalizePosOrderEditRestoreJob::dispatch(
+                    (int) $sale->id,
+                    (int) $user->id,
+                    true,
+                    false,
+                )->afterResponse();
+            }
+
             return $this->cartResponse(
                 $cart->loadMissing('lines'),
                 $user,
-                extra: ['restored_from_sale' => $this->restoredFromSalePayload($sale)],
+                extra: [
+                    'restored_from_sale' => $this->restoredFromSalePayload($sale),
+                    'stock_reverse_pending' => $stockReverseStillPending && (bool) $sale->stock_balanced,
+                ],
             );
         }
 
@@ -568,7 +582,7 @@ class CartOperationsController extends Controller
             && app(PosOrderEditService::class)->saleNeedsFiscalVoidBeforeEdit($sale, $gate);
         $needsStockReverse = false;
 
-        $cart = DB::transaction(function () use ($cart, $sale, $user, $gate, $alreadyEditing, &$needsStockReverse) {
+        $cart = DB::transaction(function () use ($cart, $sale, $user, $gate, $alreadyEditing, $stockReverseStillPending, &$needsStockReverse) {
             $locked = TemporaryCart::query()->whereKey($cart->id)->lockForUpdate()->first();
             if (! $locked) {
                 throw new InvalidArgumentException(
@@ -585,10 +599,10 @@ class CartOperationsController extends Controller
                 && $this->saleHasActiveReservations((int) $sale->id);
 
             // Defer ledger reverse to afterResponse — keep stock_balanced until then.
-            // A second restore (outbox sync onto a dedicated cart) must not reverse twice.
-            $needsStockReverse = ! $alreadyEditing
-                && (bool) $sale->stock_balanced
-                && ! $hadReservations;
+            // Retry reverse when a prior job left stock_reverse_pending (failed reverse).
+            $needsStockReverse = (bool) $sale->stock_balanced
+                && ! $hadReservations
+                && (! $alreadyEditing || $stockReverseStillPending);
             if (! $sale->stock_balanced && ! $hadReservations) {
                 $this->releaseSaleReservations((int) $sale->id);
             }

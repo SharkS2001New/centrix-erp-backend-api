@@ -35,8 +35,8 @@ return [
         '341' => 'Line amounts do not match the invoice totals, or VAT fields were filled for the wrong tax bracket. Check product tax types and amounts.',
         '351' => 'Insufficient stock on the KRA device for one or more items. Increase change_qty when uploading the product PLU.',
 
-        // PLU upload (Comstore PDF)
-        '034' => 'Product upload data is invalid. Check product names (English characters only), prices, and classification codes.',
+        // PLU upload (Comstore PDF) — E034 / (Code 34) on upload-plu-data
+        '034' => 'Product upload data is invalid. Check product names (English characters only), prices, and classification codes, then retry the upload.',
         '353' => 'A product with this name is already registered on the KRA device. Use a unique product name or update the existing PLU.',
 
         // Legacy / middleware aliases still seen in the field
@@ -59,7 +59,8 @@ return [
         '10' => 'The trader KRA PIN configured on the device is invalid. Check Finance / KRA settings.',
         '32' => 'The KRA PIN in the request is wrong. Verify the organization PIN on the device.',
 
-        // KRA TIS / OSCU-VSCU spec (when returned directly)
+        // KRA TIS / OSCU-VSCU spec (when returned directly on sale/credit — not PLU upload)
+        // Note: Comstore PLU also returns Code 34 for invalid upload data; translator disambiguates.
         '34' => 'The receipt number sent to KRA is invalid. The system will assign a new number on retry.',
         '31' => 'The data sent to the KRA device was in the wrong format. Contact support if this persists.',
         '40' => 'The KRA control unit is not activated. Complete device activation with your KRA supplier.',

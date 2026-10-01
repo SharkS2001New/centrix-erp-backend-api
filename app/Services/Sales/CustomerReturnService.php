@@ -637,6 +637,7 @@ class CustomerReturnService
                 'max_return_qty' => $maxReturnQty,
                 'return_qty' => $returnQty,
                 'unit_price' => round($unitPrice, 2),
+                'display_unit_price' => round($unitPrice, 2),
                 'line_total' => $lineAmount,
                 'amount' => $returnAmount,
                 'line_no' => $item->line_no,
@@ -1001,7 +1002,12 @@ class CustomerReturnService
             ->select(['customer_return_lines.sale_item_id', 'customer_return_lines.product_code', 'customer_return_lines.return_qty'])
             ->join('customer_returns', 'customer_returns.id', '=', 'customer_return_lines.customer_return_id')
             ->where('customer_returns.sale_id', $saleId)
-            ->where('customer_returns.status', 'pending');
+            ->where('customer_returns.status', 'pending')
+            // Fiscal / credit-only kinds do not restock and must not reduce returnable qty.
+            ->where(function ($q) {
+                $q->whereNull('customer_returns.return_kind')
+                    ->orWhereNotIn('customer_returns.return_kind', ['pos_edit', 'credit_note']);
+            });
 
         if ($excludeReturnId) {
             $query->where('customer_returns.id', '!=', $excludeReturnId);
@@ -1242,7 +1248,12 @@ class CustomerReturnService
             ->select(['customer_return_lines.sale_item_id', 'customer_return_lines.product_code', 'customer_return_lines.return_qty'])
             ->join('customer_returns', 'customer_returns.id', '=', 'customer_return_lines.customer_return_id')
             ->where('customer_returns.sale_id', $saleId)
-            ->where('customer_returns.status', 'approved');
+            ->where('customer_returns.status', 'approved')
+            // POS edit KRA voids and credit notes do not restock — exclude from qty caps.
+            ->where(function ($q) {
+                $q->whereNull('customer_returns.return_kind')
+                    ->orWhereNotIn('customer_returns.return_kind', ['pos_edit', 'credit_note']);
+            });
 
         if ($excludeReturnId) {
             $query->where('customer_returns.id', '!=', $excludeReturnId);
@@ -1265,8 +1276,11 @@ class CustomerReturnService
 
     protected function returnedQtyForLine(array $returned, ?int $saleItemId, string $productCode): float
     {
-        if ($saleItemId && isset($returned['by_sale_item'][$saleItemId])) {
-            return (float) $returned['by_sale_item'][$saleItemId];
+        // When the sale line is known, only count returns tied to that line.
+        // Falling back to by_product made multi-line same-SKU orders share one
+        // remaining qty (e.g. 3 lines of 1 → only 1 returnable total).
+        if ($saleItemId) {
+            return (float) ($returned['by_sale_item'][$saleItemId] ?? 0);
         }
 
         return (float) ($returned['by_product'][$productCode] ?? 0);

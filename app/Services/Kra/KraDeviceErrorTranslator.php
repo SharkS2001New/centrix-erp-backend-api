@@ -14,7 +14,7 @@ final class KraDeviceErrorTranslator
         $code = self::extractCode($technical);
 
         if ($code !== null) {
-            $mapped = config("kra_device_errors.codes.{$code}");
+            $mapped = self::mappedMessageForCode($code, $technical);
             if (is_string($mapped) && $mapped !== '') {
                 return [
                     'message' => $mapped,
@@ -168,6 +168,57 @@ final class KraDeviceErrorTranslator
         }
 
         return null;
+    }
+
+    /**
+     * Resolve a user-facing message for a device error code.
+     * Comstore PLU upload uses E034; KRA TIS uses 34 for invalid receiptNo —
+     * both collide when the device returns "(Code 34)".
+     */
+    public static function mappedMessageForCode(?string $code, string $technical = ''): ?string
+    {
+        if ($code === null || $code === '') {
+            return null;
+        }
+
+        $unpadded = ltrim($code, '0');
+        if ($unpadded === '') {
+            $unpadded = '0';
+        }
+        $padded = strlen($code) < 3 ? str_pad($code, 3, '0', STR_PAD_LEFT) : $code;
+
+        // Ambiguous 34 ↔ 034: pick by PLU vs receipt context.
+        if (in_array($code, ['34', '034'], true) || ($unpadded === '34' && $padded === '034')) {
+            if (self::looksLikePluUploadFailure($technical)) {
+                $plu = config('kra_device_errors.codes.034');
+                if (is_string($plu) && $plu !== '') {
+                    return $plu;
+                }
+            }
+
+            $receipt = config('kra_device_errors.codes.34');
+            if (is_string($receipt) && $receipt !== '') {
+                return $receipt;
+            }
+        }
+
+        foreach (array_values(array_unique([$code, $padded, $unpadded])) as $candidate) {
+            $mapped = config("kra_device_errors.codes.{$candidate}");
+            if (is_string($mapped) && $mapped !== '') {
+                return $mapped;
+            }
+        }
+
+        return null;
+    }
+
+    /** True when the raw device fault is about product / PLU registration, not a sale receipt. */
+    public static function looksLikePluUploadFailure(string $technical): bool
+    {
+        return (bool) preg_match(
+            '/\bPLU\b|SetPluData|upload-plu|register-plu|plu_items|plu_data|Error processing PLU|product upload|UploadPlu|register products/i',
+            $technical,
+        );
     }
 
     protected static function fallbackMessage(string $technical): string

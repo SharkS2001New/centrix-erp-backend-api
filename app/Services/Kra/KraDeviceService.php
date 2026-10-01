@@ -482,19 +482,19 @@ class KraDeviceService
         if ($pluNo === '' || $pluNo === '0') {
             $pluNo = $productCode !== '' ? $productCode : (string) ($defaults['plu_no'] ?? '1');
         }
-        $barcode = $barcodePrefix.$productCode;
-        $pluName = trim((string) ($product->product_name ?? 'Product'));
-        $uploadUnitPrice = (string) ($defaults['unit_price'] ?? '1');
-
-        if ($pluName === '') {
-            $pluName = 'Product';
-        }
+        $safeCode = preg_replace('/[^A-Za-z0-9]/', '', $productCode) ?? '';
+        $barcode = $barcodePrefix.($safeCode !== '' ? $safeCode : $pluNo);
+        $pluName = self::sanitizeComstorePluName((string) ($product->product_name ?? 'Product'));
+        $fallbackUnitPrice = (string) ($defaults['unit_price'] ?? '1');
+        $unitPrice = $price > 0
+            ? self::formatComstoreUnitPrice($price)
+            : ($fallbackUnitPrice !== '' ? $fallbackUnitPrice : '1');
 
         return [
             'plu_no' => $pluNo,
             'barcode' => $barcode,
-            'plu_name' => mb_substr($pluName, 0, 50),
-            'unit_price' => $uploadUnitPrice !== '' ? $uploadUnitPrice : self::formatComstoreUnitPrice($price),
+            'plu_name' => $pluName,
+            'unit_price' => $unitPrice,
             'item_cls_code' => (string) ($defaults['item_cls_code'] ?? '99010000'),
             'pkg_unit_cd' => (string) ($defaults['pkg_unit_cd'] ?? 'BG-Bag'),
             'qty_unit_cd' => (string) ($defaults['qty_unit_cd'] ?? 'U-Pieces/item [Number]'),
@@ -509,6 +509,45 @@ class KraDeviceService
             'stocks' => '0',
             'use_yor_n' => '1',
         ];
+    }
+
+    /**
+     * Comstore PLU names must be English/ASCII — non-Latin characters cause E034.
+     */
+    public static function sanitizeComstorePluName(string $name): string
+    {
+        $name = trim($name);
+        if ($name === '') {
+            return 'Product';
+        }
+
+        $name = strtr($name, [
+            '—' => '-',
+            '–' => '-',
+            '‘' => "'",
+            '’' => "'",
+            '“' => '"',
+            '”' => '"',
+            '×' => 'x',
+            '…' => '...',
+            '°' => ' deg',
+        ]);
+
+        if (function_exists('iconv')) {
+            $converted = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $name);
+            if (is_string($converted) && trim($converted) !== '') {
+                $name = $converted;
+            }
+        }
+
+        $name = preg_replace('/[^A-Za-z0-9 .,#\\-\/+()%&\']/u', '', $name) ?? '';
+        $name = preg_replace('/\s+/', ' ', trim($name)) ?? '';
+
+        if ($name === '') {
+            return 'Product';
+        }
+
+        return mb_substr($name, 0, 50);
     }
 
     protected static function formatComstoreUnitPrice(float $price): string
@@ -1217,6 +1256,7 @@ class KraDeviceService
                         (string) $responseData['message'],
                         $payload,
                         $this->mapResponse($responseData),
+                        $path,
                     );
                 }
 
@@ -1241,6 +1281,7 @@ class KraDeviceService
                         $rawMessage,
                         $payload,
                         $this->mapResponse(is_array($responseData) ? $responseData : null),
+                        $path,
                     );
                 }
 
@@ -1279,6 +1320,7 @@ class KraDeviceService
                     (string) $responseData['message'],
                     $payload,
                     $this->mapResponse($responseData),
+                    $path,
                 );
             }
 
@@ -1287,7 +1329,12 @@ class KraDeviceService
                 : $response->body();
 
             if (! $successful) {
-                return $this->deviceFailureResult((string) $rawMessage, $payload, $this->mapResponse(is_array($responseData) ? $responseData : null));
+                return $this->deviceFailureResult(
+                    (string) $rawMessage,
+                    $payload,
+                    $this->mapResponse(is_array($responseData) ? $responseData : null),
+                    $path,
+                );
             }
 
             return [
@@ -1302,17 +1349,39 @@ class KraDeviceService
                 'via_agent' => $this->usesAgentBridge(),
             ], $context));
 
-            return $this->deviceFailureResult('Exception: ' . $e->getMessage(), $payload);
+            return $this->deviceFailureResult('Exception: ' . $e->getMessage(), $payload, null, $path);
         }
     }
 
     /** @return array<string, mixed> */
-    protected function deviceFailureResult(string $rawMessage, array $payload, ?array $response = null): array
-    {
+    protected function deviceFailureResult(
+        string $rawMessage,
+        array $payload,
+        ?array $response = null,
+        string $path = '',
+    ): array {
         $translated = KraDeviceErrorTranslator::translate($rawMessage);
         $message = (string) ($translated['message'] ?? '');
         $technical = (string) ($translated['technical_message'] ?? $rawMessage);
         $code = $translated['code'] ?? null;
+
+        // Product upload path: Code 34/034 is PLU data invalid — never "receipt number".
+        if (
+            $this->usesUploadPluDataPayload($path)
+            || str_contains(strtolower($path), 'register-plu')
+            || isset($payload['plu_items'])
+            || isset($payload['plu_data'])
+        ) {
+            if (in_array((string) $code, ['34', '034'], true)
+                || KraDeviceErrorTranslator::looksLikePluUploadFailure($technical.$message)
+            ) {
+                $pluMessage = config('kra_device_errors.codes.034');
+                if (is_string($pluMessage) && $pluMessage !== '') {
+                    $message = $pluMessage;
+                    $code = $code ?: '034';
+                }
+            }
+        }
 
         // Prefer the exact PLU / SKU token from the device when present.
         // Do NOT list every sale line as missing — that made the UI mark every

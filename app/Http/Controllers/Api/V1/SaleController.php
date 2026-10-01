@@ -123,21 +123,32 @@ class SaleController extends BaseResourceController
         $statusFilter = data_get($request->input('filter', []), 'status');
         $isHeldList = strtolower((string) $statusFilter) === 'held';
         $shopDebtors = $request->boolean('shop_debtors');
+        $paymentStatusFilterEarly = data_get($request->input('filter', []), 'payment_status');
+        $hasPaymentStatusFilterEarly = is_string($paymentStatusFilterEarly)
+            && trim($paymentStatusFilterEarly) !== '';
 
         // Exact order # lookups (returns / invoice load) must see the sale regardless of
         // which sales queue permissions the user has for list browsing.
         // POS previous-order browse and held parks also skip queue gates — cashiers rarely
         // have backoffice queue view rights.
         // Shop Debtors queues use shop_debtors.{unpaid|partial|paid}.view.
+        // Payment-status queues (unpaid/partial/paid by amount) must not be narrowed by
+        // workflow queue permissions — a processed credit sale is still unpaid by amount.
         // scope would hide POS credit sales whose workflow status is completed/paid.
-        if (! $isExactOrderLookup && ! $forPosOrderEdit && ! $isHeldList && ! $shopDebtors) {
-        SalesOrderQueuePermissions::applyIndexScope(
-            $query,
-            $request->user(),
-            $gate,
-            app(UserPermissionService::class),
-            $channel,
-        );
+        if (
+            ! $isExactOrderLookup
+            && ! $forPosOrderEdit
+            && ! $isHeldList
+            && ! $shopDebtors
+            && ! $hasPaymentStatusFilterEarly
+        ) {
+            SalesOrderQueuePermissions::applyIndexScope(
+                $query,
+                $request->user(),
+                $gate,
+                app(UserPermissionService::class),
+                $channel,
+            );
         }
 
         if ($forPosOrderEdit) {
@@ -221,6 +232,19 @@ class SaleController extends BaseResourceController
             }
         }
 
+        $stageQueueStatus = is_string($statusFilter) ? strtolower(trim($statusFilter)) : '';
+        $isStageQueueBrowse = $stageQueueStatus !== ''
+            && $stageQueueStatus !== 'all'
+            && ! $request->filled('from_date')
+            && ! $request->filled('to_date')
+            && ! $hasRequiredDateFilter;
+        // Amount-based unpaid/partial/paid queues need the full open set, not only the
+        // recent hot window — same rationale as workflow stage queues.
+        $isPaymentQueueBrowse = $hasPaymentStatusFilterEarly
+            && ! $request->filled('from_date')
+            && ! $request->filled('to_date')
+            && ! $hasRequiredDateFilter;
+
         if ($hasRequiredDateFilter && $deliveryFrom !== null && $deliveryTo !== null) {
             // Delivery-date filters are authoritative; still bound created_at so MySQL
             // does not scan the full sales table for the COALESCE expression.
@@ -236,6 +260,21 @@ class SaleController extends BaseResourceController
                 'from_archive' => true,
                 'hot_window_days' => $hotWindowDays,
                 'search_window' => false,
+            ];
+        } elseif ($isStageQueueBrowse || $isPaymentQueueBrowse) {
+            // Workflow / payment queues must list every matching order — the default hot
+            // window was hiding older rows users still need to advance or collect.
+            // Explicit From/To still apply when the user sets a date range.
+            $listScope = [
+                'from' => null,
+                'to' => null,
+                'applied' => false,
+                'skipped_for_search' => false,
+                'from_archive' => true,
+                'hot_window_days' => $hotWindowDays,
+                'search_window' => false,
+                'skipped_for_stage_queue' => $isStageQueueBrowse,
+                'skipped_for_payment_queue' => $isPaymentQueueBrowse,
             ];
         } else {
             $listScope = app(SalesListDateScope::class)->apply(

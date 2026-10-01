@@ -694,4 +694,132 @@ class SaleOrderListDateFilterTest extends TestCase
         $response->assertOk();
         $this->assertTrue(collect($response->json('data'))->pluck('id')->contains($sale->id));
     }
+
+    public function test_stage_queue_lists_old_orders_without_hot_window(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $oldUnpaid = Sale::query()->create([
+            'order_num' => 993401,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'status' => 'unpaid',
+            'payment_status' => 'unpaid',
+            'order_total' => 440,
+            'amount_paid' => 0,
+            'archived' => 0,
+        ]);
+        \Illuminate\Support\Facades\DB::table('sales')->where('id', $oldUnpaid->id)->update([
+            'created_at' => now()->subDays(45),
+        ]);
+
+        $response = $this->getJson('/api/v1/sales?filter[status]=unpaid&per_page=200');
+
+        $response->assertOk()
+            ->assertJsonPath('list_scope.applied', false)
+            ->assertJsonPath('list_scope.skipped_for_stage_queue', true);
+
+        $ids = collect($response->json('data'))->pluck('id');
+        $this->assertTrue(
+            $ids->contains($oldUnpaid->id),
+            'Unpaid stage queue must list older open-stage orders outside the default hot window.',
+        );
+    }
+
+    public function test_stage_queue_still_respects_explicit_date_filter(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $oldUnpaid = Sale::query()->create([
+            'order_num' => 993402,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'status' => 'unpaid',
+            'payment_status' => 'unpaid',
+            'order_total' => 450,
+            'amount_paid' => 0,
+            'archived' => 0,
+        ]);
+        \Illuminate\Support\Facades\DB::table('sales')->where('id', $oldUnpaid->id)->update([
+            'created_at' => now()->subDays(45),
+        ]);
+
+        $from = now()->subDays(7)->toDateString();
+        $to = now()->toDateString();
+        $response = $this->getJson("/api/v1/sales?filter[status]=unpaid&from_date={$from}&to_date={$to}&date_field=placed&per_page=200");
+
+        $response->assertOk()
+            ->assertJsonPath('list_scope.applied', true);
+
+        $ids = collect($response->json('data'))->pluck('id');
+        $this->assertFalse($ids->contains($oldUnpaid->id));
+    }
+
+    public function test_payment_status_filter_is_not_narrowed_by_workflow_queue_permissions(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        \App\Services\Erp\PermissionMatrixService::ensure();
+
+        $role = \App\Models\Role::create([
+            'role_name' => 'Booked Queue Only '.uniqid(),
+            'scope' => 'branch',
+            'is_active' => true,
+        ]);
+
+        $bookedViewId = (int) \App\Models\Permission::where('permission_code', 'sales.order_queue_booked.view')->value('id');
+        $this->assertGreaterThan(0, $bookedViewId);
+
+        \Illuminate\Support\Facades\DB::table('role_permissions')->insert([
+            'role_id' => $role->id,
+            'permission_id' => $bookedViewId,
+        ]);
+
+        $viewer = User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $role->id,
+            'username' => 'booked_only_'.uniqid(),
+            'password' => bcrypt('password'),
+            'full_name' => 'Booked Queue Only',
+            'access_scope' => 'branch',
+            'is_active' => true,
+        ]);
+
+        Sanctum::actingAs($viewer);
+
+        $processedUnpaid = Sale::query()->create([
+            'order_num' => 993403,
+            'branch_id' => $viewer->branch_id,
+            'organization_id' => $viewer->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $viewer->id,
+            'status' => 'processed',
+            'payment_status' => 'unpaid',
+            'is_credit_sale' => true,
+            'order_total' => 880,
+            'amount_paid' => 0,
+            'archived' => 0,
+        ]);
+
+        // Without payment_status filter, booked-only permission hides processed rows.
+        $stageOnly = $this->getJson('/api/v1/sales?filter[status]=processed&per_page=200');
+        $stageOnly->assertOk();
+        $this->assertFalse(
+            collect($stageOnly->json('data'))->pluck('id')->contains($processedUnpaid->id),
+        );
+
+        // Amount-based unpaid queue must still surface the processed credit sale.
+        $paymentQueue = $this->getJson('/api/v1/sales?filter[payment_status]=unpaid&per_page=200');
+        $paymentQueue->assertOk();
+        $this->assertTrue(
+            collect($paymentQueue->json('data'))->pluck('id')->contains($processedUnpaid->id),
+            'Payment-status unpaid list must not be restricted by workflow queue permissions.',
+        );
+    }
 }
