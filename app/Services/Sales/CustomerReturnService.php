@@ -634,6 +634,7 @@ class CustomerReturnService
                 'product' => $legacy ? null : $item->product,
                 'quantity_sold' => $originalQty,
                 'already_returned' => $alreadyReturned,
+                'pending_return_qty' => $pendingQty,
                 'max_return_qty' => $maxReturnQty,
                 'return_qty' => $returnQty,
                 'unit_price' => round($unitPrice, 2),
@@ -1065,25 +1066,47 @@ class CustomerReturnService
         }
 
         $lineAmount = round((float) ($saleItem->amount ?? 0), 2);
-        if ($lineAmount <= 0) {
+        $discount = max(0.0, (float) ($saleItem->discount_given ?? 0));
+        $gross = $lineAmount + $discount;
+
+        // Prefer the sold/pack unit price. Never call displayUnitPrice(storedQty) here —
+        // treating an unknown pack count as base divides by factor, inflates pack price,
+        // and makes 3 packs look like 3 base pieces (max return collapses to 1 carton).
+        $packPrice = 0.0;
+        if ($saleItem->display_unit_price !== null && (float) $saleItem->display_unit_price > 0) {
+            $packPrice = (float) $saleItem->display_unit_price;
+        } elseif ($gross > 0.0001 && $storedQty + 0.0001 >= $factor
+            && abs($storedQty - round($storedQty / $factor) * $factor) <= 0.05) {
+            $packs = round($storedQty / $factor, 4);
+            if ($packs > 0) {
+                $packPrice = $gross / $packs;
+            }
+        } elseif ($gross > 0.0001 && $storedQty > 0 && $storedQty + 0.0001 < $factor) {
+            // Stored qty is smaller than one pack — almost certainly a pack/entry count.
+            $packPrice = $gross / $storedQty;
+        }
+
+        if ($packPrice <= 0) {
+            $catalog = (float) ($product->unit_price ?? 0);
+            if ($catalog > 0) {
+                $packPrice = $catalog;
+            }
+        }
+
+        if ($packPrice <= 0) {
+            if ($storedQty + 0.0001 < $factor && abs($storedQty - round($storedQty)) < 0.0001) {
+                return round($storedQty * $factor, 4);
+            }
+
             return $storedQty;
         }
 
-        $displayPrice = $this->lineQuantityDisplay->displayUnitPrice(
-            $storedQty,
-            $lineAmount,
-            $product,
-            false,
-            (float) ($saleItem->discount_given ?? 0),
-            (float) ($saleItem->selling_price ?? 0),
-            $saleItem->display_unit_price !== null ? (float) $saleItem->display_unit_price : null,
-        );
-
-        if ($displayPrice <= 0) {
-            return $storedQty;
+        $impliedPacks = $gross > 0.0001
+            ? round($gross / $packPrice, 4)
+            : 0.0;
+        if ($impliedPacks <= 0 && $storedQty + 0.0001 < $factor) {
+            $impliedPacks = $storedQty;
         }
-
-        $impliedPacks = round(($lineAmount + max(0.0, (float) ($saleItem->discount_given ?? 0))) / $displayPrice, 4);
         if ($impliedPacks <= 0) {
             return $storedQty;
         }
@@ -1104,6 +1127,11 @@ class CustomerReturnService
         // (e.g. qty=18 for an 18×500ml carton line priced as 10 cartons).
         if ($impliedPacks >= 1.999 && abs($storedQty - $factor) <= 0.05) {
             return $impliedBase;
+        }
+
+        // Integer pack count below one factor (e.g. qty=3, factor=18).
+        if ($storedQty + 0.0001 < $factor && abs($storedQty - round($storedQty)) < 0.0001) {
+            return round($storedQty * $factor, 4);
         }
 
         return $storedQty;

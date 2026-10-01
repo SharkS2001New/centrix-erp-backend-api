@@ -423,13 +423,21 @@ class SaleOrderListDateFilterTest extends TestCase
             'completed_at' => now()->subDays(45),
         ]);
 
-        foreach (['168', 's0168', 'S0168'] as $q) {
+        foreach (['168', 's0168', 'S0168', 'S168'] as $q) {
             $response = $this->getJson('/api/v1/sales?q='.urlencode($q).'&per_page=50&date_field=placed');
             $response->assertOk()
                 ->assertJsonPath('list_scope.skipped_for_search', true);
             $ids = collect($response->json('data'))->pluck('id');
             $this->assertTrue($ids->contains($old->id), "Expected order 168 for query {$q}");
         }
+
+        $asS = collect(
+            $this->getJson('/api/v1/sales?q=S168&per_page=50&date_field=placed')->assertOk()->json('data')
+        )->pluck('id')->sort()->values()->all();
+        $asDigits = collect(
+            $this->getJson('/api/v1/sales?q=168&per_page=50&date_field=placed')->assertOk()->json('data')
+        )->pluck('id')->sort()->values()->all();
+        $this->assertSame($asS, $asDigits, 'S168 and 168 must return the same order rows');
     }
 
     public function test_sales_list_exact_order_lookup_includes_archived_sales(): void

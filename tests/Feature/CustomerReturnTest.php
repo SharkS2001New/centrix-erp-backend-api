@@ -374,6 +374,62 @@ class CustomerReturnTest extends TestCase
         }
     }
 
+    public function test_pack_uom_return_expands_pack_count_qty_for_multi_carton_line(): void
+    {
+        $product = Product::query()->whereNotNull('unit_id')->first() ?? Product::firstOrFail();
+        $originalUnitId = $product->unit_id;
+
+        $uom = \App\Models\Uom::query()->create([
+            'organization_id' => $product->organization_id,
+            'conversion_factor' => 18,
+            'full_name' => 'Carton',
+            'measure_name' => 'piece',
+            'small_packaging_label' => 'piece',
+            'uses_small_packaging' => true,
+            'uom_type' => 'carton',
+            'is_base_unit' => false,
+            'is_active' => true,
+            'created_by' => $this->user->id,
+        ]);
+        $product->update(['unit_id' => $uom->id, 'unit_price' => 1000]);
+        $product->unsetRelation('unit');
+        $product->load('unit');
+
+        $sale = Sale::query()->where('status', 'completed')->first() ?? Sale::query()->firstOrFail();
+        $sale->update(['status' => 'completed']);
+
+        // Legacy/POS storage: quantity is pack count (3 cartons), not base pieces.
+        SaleItem::query()->updateOrInsert(
+            ['sale_id' => $sale->id, 'product_code' => $product->product_code],
+            [
+                'line_no' => 1,
+                'quantity' => 3,
+                'selling_price' => 1000,
+                'display_unit_price' => 1000,
+                'amount' => 3000,
+                'product_vat' => 0,
+                'discount_given' => 0,
+                'on_wholesale_retail' => 0,
+                'uom' => 'Carton',
+            ],
+        );
+        $sale->update(['order_total' => 3000, 'amount_paid' => 3000, 'payment_status' => 'paid']);
+
+        try {
+            $lines = $this->getJson('/api/v1/sales/'.$sale->id.'/return-lines')
+                ->assertOk()
+                ->json('lines');
+
+            $line = collect($lines)->firstWhere('product_code', $product->product_code);
+            $this->assertNotNull($line);
+            $this->assertEqualsWithDelta(54.0, (float) $line['quantity_sold'], 0.01);
+            $this->assertEqualsWithDelta(54.0, (float) $line['max_return_qty'], 0.01);
+            $this->assertEqualsWithDelta(1000.0, (float) $line['unit_price'], 0.01);
+        } finally {
+            $product->update(['unit_id' => $originalUnitId]);
+        }
+    }
+
     public function test_pack_uom_return_rejects_over_qty_for_true_single_carton_line(): void
     {
         $product = Product::query()->whereNotNull('unit_id')->first() ?? Product::firstOrFail();

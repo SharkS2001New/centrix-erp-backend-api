@@ -104,10 +104,20 @@ class SqlLikeSearchTest extends TestCase
         SqlLikeSearch::applySalesOrderSearch($query, '42');
 
         $bindings = $query->getBindings();
-        $this->assertContains(42, $bindings);
-        $this->assertContains('42%', $bindings);
-        // Amount match for the same digits (e.g. order total 42.00).
-        $this->assertContains('42.00', $bindings);
+        // Bare digits match the same as S42: order_num or pos_order_num.
+        $this->assertSame([42, 42], $bindings);
+    }
+
+    public function test_apply_sales_order_search_s_prefix_matches_digits_path(): void
+    {
+        $withS = DB::table('sales');
+        SqlLikeSearch::applySalesOrderSearch($withS, 'S1554');
+
+        $withDigits = DB::table('sales');
+        SqlLikeSearch::applySalesOrderSearch($withDigits, '1554');
+
+        $this->assertSame($withS->getBindings(), $withDigits->getBindings());
+        $this->assertSame([1554, 1554], $withS->getBindings());
     }
 
     public function test_apply_sales_order_search_s_prefix_is_exact_order_num(): void
@@ -115,7 +125,7 @@ class SqlLikeSearchTest extends TestCase
         $query = DB::table('sales');
         SqlLikeSearch::applySalesOrderSearch($query, 'S0034');
 
-        $this->assertSame([34], $query->getBindings());
+        $this->assertSame([34, 34], $query->getBindings());
     }
 
     public function test_apply_sales_order_search_client_sale_uuid_targets_fulfillment_meta(): void

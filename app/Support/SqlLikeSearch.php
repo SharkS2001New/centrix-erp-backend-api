@@ -394,10 +394,18 @@ class SqlLikeSearch
             return;
         }
 
-        if (preg_match('/^#?S0*(\d+)$/i', $term, $matches)) {
-            $query->where('sales.order_num', (int) $matches[1]);
+        if (preg_match('/^#?S0*(\d+)$/i', $term, $matches) || ctype_digit($term)) {
+            // S1554 and 1554 must resolve identically (org order_num). Also accept the
+            // same integer as Cash Sales / pos_order_num so either form finds the ticket.
+            $orderNum = ctype_digit($term) ? (int) $term : (int) $matches[1];
+            if ($orderNum > 0) {
+                $query->where(function ($sub) use ($orderNum) {
+                    $sub->where('sales.order_num', $orderNum)
+                        ->orWhere('sales.pos_order_num', $orderNum);
+                });
 
-            return;
+                return;
+            }
         }
 
         // Offline POS sync recovery: find the prior upload by client uuid / pos_sync_id

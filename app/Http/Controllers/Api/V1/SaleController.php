@@ -852,17 +852,22 @@ class SaleController extends BaseResourceController
     {
         $order = trim((string) $request->input('filter_order', ''));
         if ($order !== '') {
+            $orderNum = null;
             if (preg_match('/^#?S0*(\d+)$/i', $order, $matches)) {
-                $query->where('sales.order_num', (int) $matches[1]);
+                $orderNum = (int) $matches[1];
+            } elseif (ctype_digit($order)) {
+                $orderNum = (int) $order;
+            }
+            if ($orderNum !== null && $orderNum > 0) {
+                // Same predicate as q=S1554 / q=1554 — order_num or pos_order_num.
+                $query->where(function ($sub) use ($orderNum) {
+                    $sub->where('sales.order_num', $orderNum)
+                        ->orWhere('sales.pos_order_num', $orderNum);
+                });
             } else {
                 $query->where(function ($sub) use ($order) {
-                    $sub->where('sales.order_num', 'like', "%{$order}%")
-                        ->orWhereRaw('CAST(sales.order_num AS CHAR) LIKE ?', ["%{$order}%"]);
-                    if (ctype_digit($order)) {
-                        $sub->orWhere('sales.pos_order_num', (int) $order);
-                    } else {
-                        $sub->orWhereRaw('CAST(sales.pos_order_num AS CHAR) LIKE ?', ["%{$order}%"]);
-                    }
+                    $sub->whereRaw('CAST(sales.order_num AS CHAR) LIKE ?', ["%{$order}%"])
+                        ->orWhereRaw('CAST(sales.pos_order_num AS CHAR) LIKE ?', ["%{$order}%"]);
                 });
             }
         }
