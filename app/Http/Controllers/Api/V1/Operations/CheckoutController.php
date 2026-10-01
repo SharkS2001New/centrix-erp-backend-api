@@ -51,6 +51,7 @@ use App\Services\Organization\OrganizationReferenceDataService;
 use App\Services\Sales\SameDayCustomerOrderService;
 use App\Services\Sales\SaleRouteResolver;
 use App\Support\CustomerCreditLimit;
+use App\Support\DeadlockSafe;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
@@ -379,7 +380,7 @@ class CheckoutController extends Controller
 
         $salesSettings = $gate->moduleSettings('sales');
 
-        return DB::transaction(function () use ($cart, $user, $gate, $input, $salesSettings, $canHydrateOfflineLines, $offlineLines) {
+        return DeadlockSafe::transaction(function () use ($cart, $user, $gate, $input, $salesSettings, $canHydrateOfflineLines, $offlineLines) {
             $txTiming = [
                 'stock_path' => 'none',
                 'items_ms' => 0,
@@ -1988,7 +1989,7 @@ class CheckoutController extends Controller
         CapabilityGate $gate,
         array $input,
     ): array {
-        return DB::transaction(function () use ($cart, $user, $gate, $input) {
+        return DeadlockSafe::transaction(function () use ($cart, $user, $gate, $input) {
             $lockedCart = TemporaryCart::query()->whereKey($cart->id)->lockForUpdate()->first();
             if (! $lockedCart) {
                 throw new InvalidArgumentException(

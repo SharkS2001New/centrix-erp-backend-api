@@ -15,7 +15,7 @@ use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
 use App\Services\Audit\AuditLogger;
 use App\Services\Notifications\ActionRequestService;
-use Illuminate\Support\Facades\DB;
+use App\Support\DeadlockSafe;
 use InvalidArgumentException;
 
 class SaleCancellationService
@@ -44,7 +44,7 @@ class SaleCancellationService
             throw new InvalidArgumentException('Order cancellation is disabled for this organization.');
         }
 
-        DB::transaction(function () use ($sale, $user, $gate, $from) {
+        DeadlockSafe::transaction(function () use ($sale, $user, $gate, $from) {
             $this->restoreCancelledSaleStock($sale, $user);
 
             $meta = $sale->fulfillment_meta ?? [];

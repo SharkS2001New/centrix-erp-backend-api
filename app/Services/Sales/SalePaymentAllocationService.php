@@ -16,6 +16,7 @@ use App\Services\Erp\OrderWorkflowService;
 use App\Services\Erp\SalePaymentColumnMapper;
 use App\Services\Fulfillment\TripAutoCloseService;
 use App\Services\Notifications\CustomerNotificationService;
+use App\Support\DeadlockSafe;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
@@ -53,7 +54,7 @@ class SalePaymentAllocationService
         $this->assertAmountWithinBalanceDue($sale, $batchTotal);
         $this->assertPartialPaymentAllowed($sale, $batchTotal, $user);
 
-        return DB::transaction(function () use ($sale, $normalized, $batchTotal, $user) {
+        return DeadlockSafe::transaction(function () use ($sale, $normalized, $batchTotal, $user) {
             $sale = Sale::query()->lockForUpdate()->findOrFail($sale->id);
             $this->assertAmountWithinBalanceDue($sale, $batchTotal);
             $this->assertPartialPaymentAllowed($sale, $batchTotal, $user);

@@ -11,6 +11,7 @@ use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
 use App\Services\Erp\SalePaymentColumnMapper;
 use App\Services\Notifications\CustomerNotificationService;
+use App\Support\DeadlockSafe;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -26,7 +27,7 @@ class SalePaymentStatusConversionService
     {
         $notifiedAmount = 0.0;
 
-        $sale = DB::transaction(function () use ($sale, $user, $skipStatusGate, &$notifiedAmount) {
+        $sale = DeadlockSafe::transaction(function () use ($sale, $user, $skipStatusGate, &$notifiedAmount) {
             $sale = Sale::query()->lockForUpdate()->findOrFail($sale->id);
             $gate = $this->erp->gateForUser($user);
             $workflow = OrderWorkflowService::forGate($gate);
@@ -123,7 +124,7 @@ class SalePaymentStatusConversionService
 
     public function convertToUnpaid(Sale $sale, User $user): Sale
     {
-        return DB::transaction(function () use ($sale, $user) {
+        return DeadlockSafe::transaction(function () use ($sale, $user) {
             $sale = Sale::query()->lockForUpdate()->findOrFail($sale->id);
             $gate = $this->erp->gateForUser($user);
             $workflow = OrderWorkflowService::forGate($gate);

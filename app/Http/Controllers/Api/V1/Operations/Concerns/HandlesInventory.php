@@ -955,10 +955,6 @@ trait HandlesInventory
 
     protected function runInventoryDeadlockSafe(callable $callback, int $attempts = 5): mixed
     {
-        if (DB::transactionLevel() > 0) {
-            return $callback();
-        }
-
-        return DB::transaction($callback, $attempts);
+        return \App\Support\DeadlockSafe::transaction($callback, $attempts);
     }
 }
