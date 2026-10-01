@@ -809,10 +809,7 @@ class SaleOrderListDateFilterTest extends TestCase
 
         // Without payment_status filter, booked-only permission hides processed rows.
         $stageOnly = $this->getJson('/api/v1/sales?filter[status]=processed&per_page=200');
-        $stageOnly->assertOk();
-        $this->assertFalse(
-            collect($stageOnly->json('data'))->pluck('id')->contains($processedUnpaid->id),
-        );
+        $stageOnly->assertForbidden();
 
         // Amount-based unpaid queue must still surface the processed credit sale.
         $paymentQueue = $this->getJson('/api/v1/sales?filter[payment_status]=unpaid&per_page=200');
@@ -820,6 +817,52 @@ class SaleOrderListDateFilterTest extends TestCase
         $this->assertTrue(
             collect($paymentQueue->json('data'))->pluck('id')->contains($processedUnpaid->id),
             'Payment-status unpaid list must not be restricted by workflow queue permissions.',
+        );
+    }
+
+    public function test_unpaid_stage_queue_lists_unpaid_status_not_only_processed_unpaid(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $unpaidOnly = Sale::query()->create([
+            'order_num' => 993501,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'status' => 'unpaid',
+            'payment_status' => 'unpaid',
+            'order_total' => 1556,
+            'amount_paid' => 0,
+            'archived' => 0,
+        ]);
+
+        $processedUnpaid = Sale::query()->create([
+            'order_num' => 993502,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'status' => 'processed',
+            'payment_status' => 'unpaid',
+            'is_credit_sale' => true,
+            'order_total' => 1644,
+            'amount_paid' => 0,
+            'archived' => 0,
+        ]);
+
+        $response = $this->getJson('/api/v1/sales?filter[status]=unpaid&per_page=200');
+        $response->assertOk();
+
+        $ids = collect($response->json('data'))->pluck('id');
+        $this->assertTrue(
+            $ids->contains($unpaidOnly->id),
+            'Unpaid stage queue must list orders whose workflow status is unpaid.',
+        );
+        $this->assertFalse(
+            $ids->contains($processedUnpaid->id),
+            'Unpaid stage queue must not pull processed+unpaid rows (those belong on Processed / payment queues).',
         );
     }
 }

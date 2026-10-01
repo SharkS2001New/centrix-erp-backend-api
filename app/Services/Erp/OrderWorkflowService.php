@@ -826,6 +826,8 @@ class OrderWorkflowService
     /** @return list<string> */
     public function statusesForQueueFilter(string $queueStatus, ?string $channel = null): array
     {
+        $queueStatus = strtolower(trim($queueStatus));
+
         if ($queueStatus === '' || $queueStatus === 'all') {
             return [];
         }
@@ -846,8 +848,13 @@ class OrderWorkflowService
             return ['editable'];
         }
 
+        // Include payment-stage statuses in alias expansion so org pipelines that
+        // remap booked/pending ↔ unpaid still list every stored row for that queue.
         $matches = [$queueStatus];
-        foreach (['completed', 'delivered', 'processed', 'booked', 'pending', 'draft', 'held'] as $alias) {
+        foreach ([
+            'completed', 'delivered', 'processed', 'paid', 'pending_payment',
+            'unpaid', 'booked', 'pending', 'draft', 'held',
+        ] as $alias) {
             if ($this->alignStatusToPipeline($alias, $channel) === $queueStatus) {
                 $matches[] = $alias;
             }

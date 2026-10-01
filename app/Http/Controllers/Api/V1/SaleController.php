@@ -121,11 +121,25 @@ class SaleController extends BaseResourceController
         $forPosOrderEdit = $request->boolean('for_pos_order_edit')
             && app(PosOrderEditService::class)->posOrderEditEnabled($gate);
         $statusFilter = data_get($request->input('filter', []), 'status');
-        $isHeldList = strtolower((string) $statusFilter) === 'held';
+        if (is_string($statusFilter)) {
+            $statusFilter = strtolower(trim($statusFilter));
+        } elseif (is_array($statusFilter)) {
+            // FE sometimes sends filter[status][]=unpaid — use the first slug.
+            $statusFilter = strtolower(trim((string) (array_values($statusFilter)[0] ?? '')));
+        } else {
+            $statusFilter = null;
+        }
+        if ($statusFilter === '') {
+            $statusFilter = null;
+        }
+        $isHeldList = $statusFilter === 'held';
         $shopDebtors = $request->boolean('shop_debtors');
         $paymentStatusFilterEarly = data_get($request->input('filter', []), 'payment_status');
         $hasPaymentStatusFilterEarly = is_string($paymentStatusFilterEarly)
             && trim($paymentStatusFilterEarly) !== '';
+        $isStageQueueBrowseRequest = is_string($statusFilter)
+            && $statusFilter !== 'all'
+            && ! $hasPaymentStatusFilterEarly;
 
         // Exact order # lookups (returns / invoice load) must see the sale regardless of
         // which sales queue permissions the user has for list browsing.
@@ -134,13 +148,15 @@ class SaleController extends BaseResourceController
         // Shop Debtors queues use shop_debtors.{unpaid|partial|paid}.view.
         // Payment-status queues (unpaid/partial/paid by amount) must not be narrowed by
         // workflow queue permissions — a processed credit sale is still unpaid by amount.
-        // scope would hide POS credit sales whose workflow status is completed/paid.
+        // Stage queues (Unpaid, Processed, …) authorize that slug alone so unpaid-only
+        // rows are not hidden by an intersection with other queue permissions.
         if (
             ! $isExactOrderLookup
             && ! $forPosOrderEdit
             && ! $isHeldList
             && ! $shopDebtors
             && ! $hasPaymentStatusFilterEarly
+            && ! $isStageQueueBrowseRequest
         ) {
             SalesOrderQueuePermissions::applyIndexScope(
                 $query,
@@ -149,6 +165,18 @@ class SaleController extends BaseResourceController
                 app(UserPermissionService::class),
                 $channel,
             );
+        }
+
+        if ($isStageQueueBrowseRequest && ! $isExactOrderLookup && ! $forPosOrderEdit) {
+            $permissions = app(UserPermissionService::class);
+            if (! SalesOrderQueuePermissions::userCanViewQueueSlug(
+                $request->user(),
+                (string) $statusFilter,
+                $gate,
+                $permissions,
+            )) {
+                abort(403, 'You do not have permission to view this sales queue.');
+            }
         }
 
         if ($forPosOrderEdit) {
@@ -318,9 +346,19 @@ class SaleController extends BaseResourceController
         }
 
         if ($dispatchOrders) {
+            // "Processed only" means "ready for trip assignment" — honor assign_on_status
+            // (default processed) so orgs that assign on unpaid/paid are not stuck.
             $processedOnly = ($distributionSettings ?? [])['dispatch_board_processed_only'] ?? true;
             if ($processedOnly) {
-                $query->where('sales.status', 'processed');
+                $assignStatus = strtolower(trim((string) (($distributionSettings ?? [])['assign_on_status'] ?? 'processed')));
+                if ($assignStatus === '') {
+                    $assignStatus = 'processed';
+                }
+                $assignStatuses = $workflow->statusesForQueueFilter($assignStatus, $channel);
+                if ($assignStatuses === []) {
+                    $assignStatuses = [$assignStatus];
+                }
+                $query->whereIn('sales.status', $assignStatuses);
             } else {
                 $query->whereNotIn('sales.status', ['cancelled', 'completed', 'delivered', 'expired']);
             }

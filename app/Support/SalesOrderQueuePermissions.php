@@ -195,6 +195,28 @@ class SalesOrderQueuePermissions
         return false;
     }
 
+    public static function userCanViewQueueSlug(
+        User $user,
+        string $slug,
+        CapabilityGate $gate,
+        UserPermissionService $permissions,
+    ): bool {
+        $slug = strtolower(trim($slug));
+        if ($slug === '' || $slug === 'all') {
+            return $permissions->hasPermission($user, self::permissionCodeForSlug('all'), $gate);
+        }
+
+        if ($permissions->hasPermission($user, self::permissionCodeForSlug('all'), $gate)) {
+            return true;
+        }
+
+        if (! array_key_exists($slug, self::definitions())) {
+            return false;
+        }
+
+        return $permissions->hasPermission($user, self::permissionCodeForSlug($slug), $gate);
+    }
+
     /** @param  Builder<Sale>  $query */
     public static function applyIndexScope(
         Builder $query,
