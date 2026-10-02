@@ -127,6 +127,62 @@ class OrderWorkflowTransitionTest extends TestCase
             ->assertJsonPath('payment_status', 'unpaid');
     }
 
+    public function test_pending_order_can_advance_straight_to_processed_while_unpaid(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $sale = Sale::query()->create([
+            'order_num' => 992014,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'status' => 'pending',
+            'payment_status' => 'unpaid',
+            'is_credit_sale' => false,
+            'order_total' => 4470,
+            'amount_paid' => 0,
+        ]);
+
+        $this->postJson("/api/v1/sales/orders/{$sale->id}/transition", [
+            'status' => 'processed',
+        ])
+            ->assertOk()
+            ->assertJsonPath('status', 'processed')
+            ->assertJsonPath('payment_status', 'unpaid');
+
+        $sale->refresh();
+        $this->assertSame('processed', $sale->status);
+        $this->assertSame('unpaid', $sale->payment_status);
+    }
+
+    public function test_partially_paid_order_can_advance_to_processed(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $sale = Sale::query()->create([
+            'order_num' => 992015,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'status' => 'pending_payment',
+            'payment_status' => 'partial',
+            'is_credit_sale' => false,
+            'order_total' => 4470,
+            'amount_paid' => 1000,
+        ]);
+
+        $this->postJson("/api/v1/sales/orders/{$sale->id}/transition", [
+            'status' => 'processed',
+        ])
+            ->assertOk()
+            ->assertJsonPath('status', 'processed')
+            ->assertJsonPath('payment_status', 'partial');
+    }
+
     public function test_processed_transition_lists_products_missing_weight_when_required(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();
