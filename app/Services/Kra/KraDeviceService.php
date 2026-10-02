@@ -239,7 +239,6 @@ class KraDeviceService
                         'skipped_count' => $skipped,
                         'product_count' => count($items),
                         'batch' => $index + 1,
-                        'product_code' => (string) ($chunk[0]->product_code ?? ''),
                     ]);
                 }
 
@@ -302,40 +301,30 @@ class KraDeviceService
             ];
         }
 
-        if (! $this->isAlreadyRegisteredPluResult($result)) {
-            return $result;
-        }
-
-        // Batch failed because at least one name already exists — retry one-by-one and skip duplicates.
-        if (count($chunk) === 1) {
-            return [
-                'success' => true,
-                'registered_count' => 0,
-                'skipped_count' => 1,
-                'response' => $result['response'] ?? null,
-            ];
-        }
-
-        $registered = 0;
-        $skipped = 0;
-        $lastResponse = $result['response'] ?? null;
-
-        foreach ($chunk as $product) {
-            $one = $this->uploadPluChunk([$product], $path, $batch);
-            if (! ($one['success'] ?? false)) {
-                return $one;
+        if ($this->isAlreadyRegisteredPluResult($result)) {
+            // Batch failed because at least one name already exists — retry one-by-one and skip duplicates.
+            if (count($chunk) === 1) {
+                return [
+                    'success' => true,
+                    'registered_count' => 0,
+                    'skipped_count' => 1,
+                    'response' => $result['response'] ?? null,
+                ];
             }
-            $registered += (int) ($one['registered_count'] ?? 0);
-            $skipped += (int) ($one['skipped_count'] ?? 0);
-            $lastResponse = $one['response'] ?? $lastResponse;
+
+            return $this->retryPluChunkIndividually($chunk, $path, $batch, 'upload');
         }
 
-        return [
-            'success' => true,
-            'registered_count' => $registered,
-            'skipped_count' => $skipped,
-            'response' => $lastResponse,
-        ];
+        // E034 / invalid PLU data — isolate which product the device rejected.
+        if ($this->isInvalidPluUploadResult($result) && count($chunk) > 1) {
+            return $this->retryPluChunkIndividually($chunk, $path, $batch, 'upload');
+        }
+
+        if (count($chunk) === 1) {
+            return $this->annotatePluFailureWithProduct($result, $chunk[0]);
+        }
+
+        return $result;
     }
 
     /**
@@ -360,25 +349,47 @@ class KraDeviceService
             ];
         }
 
-        if (! $this->isAlreadyRegisteredPluResult($result)) {
-            return $result;
+        if ($this->isAlreadyRegisteredPluResult($result)) {
+            if (count($chunk) === 1) {
+                return [
+                    'success' => true,
+                    'registered_count' => 0,
+                    'skipped_count' => 1,
+                    'response' => $result['response'] ?? null,
+                ];
+            }
+
+            return $this->retryPluChunkIndividually($chunk, $path, $batch, 'register');
+        }
+
+        if ($this->isInvalidPluUploadResult($result) && count($chunk) > 1) {
+            return $this->retryPluChunkIndividually($chunk, $path, $batch, 'register');
         }
 
         if (count($chunk) === 1) {
-            return [
-                'success' => true,
-                'registered_count' => 0,
-                'skipped_count' => 1,
-                'response' => $result['response'] ?? null,
-            ];
+            return $this->annotatePluFailureWithProduct($result, $chunk[0]);
         }
 
+        return $result;
+    }
+
+    /**
+     * Retry each product alone so a batch E034/E353 names the failing SKU.
+     *
+     * @param  list<object>  $chunk
+     * @param  'upload'|'register'  $mode
+     * @return array{success: bool, registered_count?: int, skipped_count?: int, message?: string, response?: mixed}
+     */
+    protected function retryPluChunkIndividually(array $chunk, string $path, int $batch, string $mode): array
+    {
         $registered = 0;
         $skipped = 0;
-        $lastResponse = $result['response'] ?? null;
+        $lastResponse = null;
 
         foreach ($chunk as $product) {
-            $one = $this->registerPluChunk([$product], $path, $batch);
+            $one = $mode === 'upload'
+                ? $this->uploadPluChunk([$product], $path, $batch)
+                : $this->registerPluChunk([$product], $path, $batch);
             if (! ($one['success'] ?? false)) {
                 return $one;
             }
@@ -393,6 +404,54 @@ class KraDeviceService
             'skipped_count' => $skipped,
             'response' => $lastResponse,
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $result
+     * @return array<string, mixed>
+     */
+    protected function annotatePluFailureWithProduct(array $result, object $product): array
+    {
+        $name = trim((string) ($product->product_name ?? ''));
+        $code = trim((string) ($product->product_code ?? ''));
+        $label = $code !== ''
+            ? ($name !== '' ? "{$name} ({$code})" : $code)
+            : ($name !== '' ? $name : 'unknown product');
+
+        $message = trim((string) ($result['message'] ?? 'KRA product registration failed.'));
+        if ($label !== '' && ! str_contains($message, $label)) {
+            $result['message'] = rtrim($message, '.').". Rejected product: {$label}.";
+        }
+        $result['product_code'] = $code;
+        $result['product_name'] = $name;
+
+        return $result;
+    }
+
+    /** @param  array<string, mixed>  $result */
+    public static function isInvalidPluUploadResult(array $result): bool
+    {
+        $code = (string) ($result['error_code'] ?? '');
+        if ($code === '034') {
+            return true;
+        }
+
+        $raw = $result['technical_message']
+            ?? $result['message']
+            ?? $result['response']
+            ?? '';
+        $haystack = trim((string) ($result['message'] ?? ''))
+            .' '
+            .trim(is_string($raw) ? $raw : (json_encode($raw) ?: ''));
+        $upper = strtoupper($haystack);
+
+        if ($code === '34' && KraDeviceErrorTranslator::looksLikePluUploadFailure($haystack)) {
+            return true;
+        }
+
+        return str_contains($upper, 'SETPLUDATAINFOEX')
+            || str_contains($upper, 'ERROR PROCESSING PLU')
+            || str_contains($upper, 'PRODUCT UPLOAD DATA IS INVALID');
     }
 
     /** @param  array<string, mixed>  $result */
@@ -1396,6 +1455,14 @@ class KraDeviceService
                 $message = 'Product not found on the KRA device: '.$label.'. Upload it to the device first, then retry.';
             }
         } elseif (
+            in_array((string) $code, ['034', '34'], true)
+            || preg_match('/SetPluDataInfoEX|Error processing PLU|Product upload data is invalid/i', $message.$technical) === 1
+        ) {
+            $labels = $this->pluLabelsFromPayload($payload);
+            if (count($labels) === 1) {
+                $message = rtrim($message, '.').'. Rejected product: '.$labels[0].'.';
+            }
+        } elseif (
             in_array((string) $code, ['337', '13'], true)
             || preg_match('/NO\s+FIND\s+PLU\s+DATA|not found on the KRA device/i', $message.$technical) === 1
         ) {
@@ -1466,7 +1533,11 @@ class KraDeviceService
      */
     protected function pluLabelsFromPayload(array $payload): array
     {
-        $raw = $payload['plu_data'] ?? $payload['PluData'] ?? [];
+        $raw = $payload['plu_data']
+            ?? $payload['PluData']
+            ?? $payload['plu_items']
+            ?? $payload['PluItems']
+            ?? [];
         if (! is_array($raw)) {
             return [];
         }
@@ -1476,8 +1547,21 @@ class KraDeviceService
             if (! is_array($line)) {
                 continue;
             }
-            $name = trim((string) ($line['item_Name'] ?? $line['ItemName'] ?? $line['product_name'] ?? ''));
-            $code = trim((string) ($line['product_code'] ?? $line['Barcode'] ?? $line['barcode'] ?? $line['itemCd'] ?? ''));
+            $name = trim((string) (
+                $line['item_Name']
+                ?? $line['ItemName']
+                ?? $line['plu_name']
+                ?? $line['product_name']
+                ?? ''
+            ));
+            $code = trim((string) (
+                $line['product_code']
+                ?? $line['Barcode']
+                ?? $line['barcode']
+                ?? $line['plu_no']
+                ?? $line['itemCd']
+                ?? ''
+            ));
             if ($name === '' && $code === '') {
                 continue;
             }

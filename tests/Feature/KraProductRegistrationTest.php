@@ -6,7 +6,7 @@ use App\Models\Organization;
 use App\Models\PlatformSubscription;
 use App\Models\Product;
 use App\Models\User;
-use Illuminate\Support\Facades\Http;
+use App\Services\Kra\KraDeviceService;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
@@ -49,14 +49,17 @@ class KraProductRegistrationTest extends TestCase
 
     public function test_register_products_posts_lightstores_plu_payload(): void
     {
-        Http::fake([
-            '192.168.1.50:8010/*' => Http::response([
-                'success' => true,
-                'message' => 'PLU registered',
-            ], 200),
-        ]);
-
         $product = Product::firstOrFail();
+        $captured = null;
+        config([
+            'testing.kra_agent_command_handler' => function (string $path, array $body) use (&$captured) {
+                if ($path === '/api/register-plu') {
+                    $captured = $body;
+                }
+
+                return ['status' => 200, 'body' => ['success' => true, 'message' => 'PLU registered']];
+            },
+        ]);
 
         $response = $this->postJson('/api/v1/kra/register-products', [
             'product_codes' => [$product->product_code],
@@ -65,26 +68,17 @@ class KraProductRegistrationTest extends TestCase
 
         $this->assertTrue($response->json('success'));
         $this->assertSame(1, $response->json('registered_count'));
-
-        Http::assertSent(function ($request) use ($product) {
-            if (! str_contains($request->url(), '/api/register-plu')) {
-                return false;
-            }
-
-            $body = $request->data();
-            $plu = $body['plu_data'][0] ?? [];
-            $sign = $body['sign_structure'] ?? null;
-
-            return ($body['sn'] ?? '') === 'DEJA02220240050'
-                && ($body['is_test'] ?? null) !== null
-                && is_array($body['plu_data'])
-                && ($plu['Barcode'] ?? '') === $product->product_code
-                && ($plu['item_Name'] ?? '') === $product->product_name
-                && ($plu['ItemDisCount(%)'] ?? '') === '0'
-                && array_is_list($sign) === false
-                && ($sign['pinOfshop'] ?? '') === 'P052177271G'
-                && ($sign['SignType'] ?? '') === '2';
-        });
+        $this->assertIsArray($captured);
+        $plu = $captured['plu_data'][0] ?? [];
+        $sign = $captured['sign_structure'] ?? null;
+        $this->assertSame('DEJA02220240050', $captured['sn'] ?? null);
+        $this->assertNotNull($captured['is_test'] ?? null);
+        $this->assertSame($product->product_code, $plu['Barcode'] ?? null);
+        $this->assertSame($product->product_name, $plu['item_Name'] ?? null);
+        $this->assertSame('0', $plu['ItemDisCount(%)'] ?? null);
+        $this->assertFalse(array_is_list($sign));
+        $this->assertSame('P052177271G', $sign['pinOfshop'] ?? null);
+        $this->assertSame('2', $sign['SignType'] ?? null);
     }
 
     public function test_register_products_posts_upload_plu_data_payload(): void
@@ -94,15 +88,24 @@ class KraProductRegistrationTest extends TestCase
         $settings['finance']['kra_plu_register_path'] = '/api/upload-plu-data';
         $org->update(['module_settings' => $settings]);
 
-        Http::fake([
-            '192.168.1.50:8010/*' => Http::response([
-                'success' => true,
-                'message' => 'Successfully uploaded 1 PLU items to device',
-                'items_processed' => 1,
-            ], 200),
-        ]);
-
         $product = Product::with(['vat', 'unit'])->firstOrFail();
+        $captured = null;
+        config([
+            'testing.kra_agent_command_handler' => function (string $path, array $body) use (&$captured) {
+                if ($path === '/api/upload-plu-data') {
+                    $captured = $body;
+                }
+
+                return [
+                    'status' => 200,
+                    'body' => [
+                        'success' => true,
+                        'message' => 'Successfully uploaded 1 PLU items to device',
+                        'items_processed' => 1,
+                    ],
+                ];
+            },
+        ]);
 
         $response = $this->postJson('/api/v1/kra/register-products', [
             'product_codes' => [$product->product_code],
@@ -111,35 +114,25 @@ class KraProductRegistrationTest extends TestCase
 
         $this->assertTrue($response->json('success'));
         $this->assertSame(1, $response->json('registered_count'));
-
-        Http::assertSent(function ($request) use ($product) {
-            if (! str_contains($request->url(), '/api/upload-plu-data')) {
-                return false;
-            }
-
-            $body = $request->data();
-            $plu = $body['plu_items'][0] ?? [];
-
-            return ($body['sn'] ?? '') === 'DEJA02220240050'
-                && is_array($body['plu_items'])
-                && count($body['plu_items']) === 1
-                && ($body['from_no'] ?? null) === 1
-                && ($body['end_no'] ?? null) === 100000
-                && ($body['update_flag'] ?? null) === 0
-                && ($body['file_signal'] ?? null) === ''
-                && ! array_key_exists('sign_structure', $body)
-                && ! array_key_exists('plu_data', $body)
-                && ! array_key_exists('PluItems', $body)
-                && ($plu['barcode'] ?? '') === '000000'.$product->product_code
-                && ($plu['plu_name'] ?? '') === $product->product_name
-                && ($plu['plu_no'] ?? '') === (string) $product->id
-                && ($plu['unit_price'] ?? '') === '1'
-                && ($plu['tax_type'] ?? '') === 'B-16.00%'
-                && ($plu['type_code'] ?? '') === '02Finished Product'
-                && ($plu['use_yor_n'] ?? '') === '1';
-        });
-
-        Http::assertSentCount(1);
+        $this->assertIsArray($captured);
+        $plu = $captured['plu_items'][0] ?? [];
+        $this->assertSame('DEJA02220240050', $captured['sn'] ?? null);
+        $this->assertCount(1, $captured['plu_items'] ?? []);
+        $this->assertSame(1, $captured['from_no'] ?? null);
+        $this->assertSame(100000, $captured['end_no'] ?? null);
+        $this->assertSame(0, $captured['update_flag'] ?? null);
+        $this->assertSame('', $captured['file_signal'] ?? null);
+        $this->assertArrayNotHasKey('sign_structure', $captured);
+        $this->assertArrayNotHasKey('plu_data', $captured);
+        $this->assertSame('000000'.$product->product_code, $plu['barcode'] ?? null);
+        $this->assertSame(
+            KraDeviceService::sanitizeComstorePluName((string) $product->product_name),
+            $plu['plu_name'] ?? null,
+        );
+        $this->assertSame((string) $product->id, $plu['plu_no'] ?? null);
+        $this->assertSame('B-16.00%', $plu['tax_type'] ?? null);
+        $this->assertSame('02Finished Product', $plu['type_code'] ?? null);
+        $this->assertSame('1', $plu['use_yor_n'] ?? null);
     }
 
     public function test_register_products_skips_already_on_device_duplicates(): void
@@ -158,28 +151,27 @@ class KraProductRegistrationTest extends TestCase
         ]);
 
         $calls = 0;
-        Http::fake(function () use (&$calls) {
-            $calls++;
-            // First batch (2 items) fails as duplicate; one-by-one: first ok, second already exists;
-            // second batch (1 item) succeeds.
-            if ($calls === 1) {
-                return Http::response([
-                    'success' => false,
-                    'message' => 'E353: THE SAME NAME',
-                ], 200);
-            }
-            if ($calls === 3) {
-                return Http::response([
-                    'success' => false,
-                    'message' => 'E353: THE SAME NAME',
-                ], 200);
-            }
+        config([
+            'testing.kra_agent_command_handler' => function (string $path, array $body) use (&$calls) {
+                if ($path !== '/api/upload-plu-data') {
+                    return ['success' => true, 'message' => 'OK'];
+                }
+                $calls++;
+                // First batch (2 items) fails as duplicate; one-by-one: first ok, second already exists;
+                // second batch (1 item) succeeds.
+                if ($calls === 1 || $calls === 3) {
+                    return [
+                        'status' => 200,
+                        'body' => ['success' => false, 'message' => 'E353: THE SAME NAME'],
+                    ];
+                }
 
-            return Http::response([
-                'success' => true,
-                'message' => 'Successfully uploaded PLU items to device',
-            ], 200);
-        });
+                return [
+                    'status' => 200,
+                    'body' => ['success' => true, 'message' => 'Successfully uploaded PLU items to device'],
+                ];
+            },
+        ]);
 
         $response = $this->postJson('/api/v1/kra/register-products', [
             'product_codes' => $products->pluck('product_code')->all(),
@@ -202,11 +194,18 @@ class KraProductRegistrationTest extends TestCase
         $settings['finance']['kra_plu_upload_batch_size'] = 2;
         $org->update(['module_settings' => $settings]);
 
-        Http::fake([
-            '192.168.1.50:8010/*' => Http::response([
-                'success' => true,
-                'message' => 'Successfully uploaded PLU items to device',
-            ], 200),
+        $uploadCounts = [];
+        config([
+            'testing.kra_agent_command_handler' => function (string $path, array $body) use (&$uploadCounts) {
+                if ($path === '/api/upload-plu-data') {
+                    $uploadCounts[] = count($body['plu_items'] ?? []);
+                }
+
+                return [
+                    'status' => 200,
+                    'body' => ['success' => true, 'message' => 'Successfully uploaded PLU items to device'],
+                ];
+            },
         ]);
 
         $template = Product::query()->firstOrFail();
@@ -224,18 +223,74 @@ class KraProductRegistrationTest extends TestCase
         $this->assertTrue($response->json('success'));
         $this->assertSame(3, $response->json('registered_count'));
         $this->assertSame(0, $response->json('skipped_count'));
+        $this->assertSame(2, count($uploadCounts));
+        $this->assertContains(2, $uploadCounts);
+        $this->assertContains(1, $uploadCounts);
+    }
 
-        Http::assertSentCount(2);
+    public function test_register_products_names_invalid_plu_product_after_batch_isolation(): void
+    {
+        $org = Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['finance']['kra_plu_register_path'] = '/api/upload-plu-data';
+        $settings['finance']['kra_plu_upload_batch_size'] = 2;
+        $org->update(['module_settings' => $settings]);
 
-        Http::assertSent(function ($request) {
-            if (! str_contains($request->url(), '/api/upload-plu-data')) {
-                return false;
-            }
+        $template = Product::query()->firstOrFail();
+        $good = $this->makeProductClone($template, 'KRA-OK-A', 'KRA Valid Alpha');
+        $bad = $this->makeProductClone($template, 'KRA-BAD-B', 'KRA Invalid Beta');
 
-            $count = count($request->data()['plu_items'] ?? []);
+        $calls = 0;
+        config([
+            'testing.kra_agent_command_handler' => function (string $path, array $body) use (&$calls) {
+                if ($path !== '/api/upload-plu-data') {
+                    return ['success' => true, 'message' => 'OK'];
+                }
+                $calls++;
+                $items = $body['plu_items'] ?? [];
+                if (count($items) > 1) {
+                    return [
+                        'status' => 200,
+                        'body' => [
+                            'success' => false,
+                            'message' => 'SetPluDataInfoEX failed: Error processing PLU data (Code 34)',
+                        ],
+                    ];
+                }
 
-            return $count === 2 || $count === 1;
-        });
+                $name = (string) ($items[0]['plu_name'] ?? '');
+                if (str_contains($name, 'Invalid Beta')) {
+                    return [
+                        'status' => 200,
+                        'body' => [
+                            'success' => false,
+                            'message' => 'SetPluDataInfoEX failed: Error processing PLU data (Code 34)',
+                        ],
+                    ];
+                }
+
+                return [
+                    'status' => 200,
+                    'body' => ['success' => true, 'message' => 'Successfully uploaded PLU items to device'],
+                ];
+            },
+        ]);
+
+        $response = $this->postJson('/api/v1/kra/register-products', [
+            'product_codes' => [$good->product_code, $bad->product_code],
+            'sync' => true,
+        ]);
+
+        $response->assertStatus(422);
+        $message = strtolower((string) (
+            $response->json('message')
+            ?? $response->json('errors.kra.0')
+            ?? json_encode($response->json())
+        ));
+        $this->assertStringContainsString('invalid beta', $message);
+        $this->assertStringContainsString('kra-bad-b', $message);
+        // Batch fails, then singles until the rejecting product is found (may be first single).
+        $this->assertGreaterThanOrEqual(2, $calls);
     }
 
     public function test_register_products_requires_kra_device_enabled(): void

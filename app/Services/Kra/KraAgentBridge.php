@@ -258,7 +258,8 @@ class KraAgentBridge
             || $this->hasRecentCheckIn($agent)
             || ($allowStale && $this->hasCheckedIn($agent));
 
-        if (! $canProxy) {
+        // Feature tests stub Comstore responses in-process; do not require a live agent check-in.
+        if (! $canProxy && ! app()->runningUnitTests()) {
             throw new RuntimeException(
                 $this->hasCheckedIn($agent)
                     ? self::AGENT_NAME.' has not checked in recently. On the PC where Comstore runs, open http://127.0.0.1:9261 and confirm the CentrixKraAgent Windows service is running.'
@@ -293,6 +294,7 @@ class KraAgentBridge
             || (strtoupper($method) === 'GET' && $path === '/agent/device-probe')
             || (strtoupper($method) === 'POST' && (
                 $path === '/api/complete-workflow'
+                || $path === '/api/upload-plu-data'
                 || str_starts_with($path, '/api/register')
                 || $path === '/api/init'
                 || $path === '/api/restart-device'
@@ -323,17 +325,32 @@ class KraAgentBridge
                     'version' => 'test',
                 ]);
             } else {
-                // complete-workflow / register / init / restart — configurable for checkout tests.
-                $responseBody = json_encode(config('testing.kra_agent_workflow_response') ?? [
-                    'success' => true,
-                    'message' => 'OK',
-                    'invoice_number' => 'CU-TEST',
-                    'Receipt Signature' => 'SIG-TEST',
-                    'signature_link' => 'https://example.test/qr',
-                    'serial_number' => 'TEST-SERIAL',
-                    'timestamp' => '2026-06-11T12:00:00',
-                ]);
-                $resultStatus = (int) (config('testing.kra_agent_workflow_status') ?? 200);
+                // complete-workflow / register / upload-plu / init / restart — configurable for tests.
+                $handler = config('testing.kra_agent_command_handler');
+                if (is_callable($handler)) {
+                    $handled = $handler($path, is_array($requestBody) ? $requestBody : []);
+                    if (is_array($handled)) {
+                        $resultStatus = (int) ($handled['status'] ?? 200);
+                        $payload = $handled['body'] ?? $handled;
+                        $responseBody = is_string($payload) ? $payload : json_encode($payload);
+                    } else {
+                        $responseBody = json_encode(config('testing.kra_agent_workflow_response') ?? [
+                            'success' => true,
+                            'message' => 'OK',
+                        ]);
+                    }
+                } else {
+                    $responseBody = json_encode(config('testing.kra_agent_workflow_response') ?? [
+                        'success' => true,
+                        'message' => 'OK',
+                        'invoice_number' => 'CU-TEST',
+                        'Receipt Signature' => 'SIG-TEST',
+                        'signature_link' => 'https://example.test/qr',
+                        'serial_number' => 'TEST-SERIAL',
+                        'timestamp' => '2026-06-11T12:00:00',
+                    ]);
+                    $resultStatus = (int) (config('testing.kra_agent_workflow_status') ?? 200);
+                }
             }
             $this->submitCommandResult($agent, $commandId, [
                 'success' => $resultStatus >= 200 && $resultStatus < 300,
