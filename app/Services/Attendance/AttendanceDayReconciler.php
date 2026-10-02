@@ -10,6 +10,7 @@ use App\Models\OrganizationHoliday;
 use App\Models\WorkShift;
 use App\Services\Hr\HrPayrollSettingsResolver;
 use App\Services\Payroll\OvertimeRateCalculator;
+use App\Services\Payroll\PayrollEarningsService;
 use App\Support\AppTimezone;
 use Carbon\Carbon;
 
@@ -617,24 +618,29 @@ class AttendanceDayReconciler
         ?int $userId = null,
     ): EmployeeAttendance {
         $late = $attendance->totalLateMinutes();
-        if ($waived && $late <= 0) {
+        $earlyLeave = (int) ($attendance->early_leave_minutes ?? 0);
+        $deductibleEarlyLeave = $earlyLeave > PayrollEarningsService::HOURLY_DEDUCTION_MINUTE_GRACE
+            ? $earlyLeave
+            : 0;
+        if ($waived && $late <= 0 && $deductibleEarlyLeave <= 0) {
             throw new \InvalidArgumentException('No lateness to waive on this attendance record.');
         }
 
         $wasWaived = (bool) $attendance->lateness_waived;
         $expected = (float) ($attendance->expected_hours ?? 0);
         $hours = (float) ($attendance->hours_worked ?? 0);
+        $minutesToRestore = $late + $deductibleEarlyLeave;
 
         if ($waived && ! $wasWaived) {
             $hours = round(min(
-                $expected > 0 ? $expected : ($hours + ($late / 60)),
-                $hours + ($late / 60),
+                $expected > 0 ? $expected : ($hours + ($minutesToRestore / 60)),
+                $hours + ($minutesToRestore / 60),
             ), 2);
             if ($attendance->status === 'late') {
                 $attendance->status = 'present';
             }
         } elseif (! $waived && $wasWaived) {
-            $hours = round(max(0, $hours - ($late / 60)), 2);
+            $hours = round(max(0, $hours - ($minutesToRestore / 60)), 2);
             if ($late > 0 && in_array($attendance->status, ['present', 'late'], true)) {
                 $attendance->status = 'late';
             }

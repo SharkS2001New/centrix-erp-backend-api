@@ -12,6 +12,7 @@ use App\Services\Auth\UserPermissionService;
 use App\Services\Notifications\ActionRequestService;
 use App\Services\Notifications\NotificationActionUrlBuilder;
 use App\Services\Payroll\PayrollCycleSettlementService;
+use App\Services\Payroll\PayrollEarningsService;
 use Illuminate\Validation\ValidationException;
 
 class LatenessWaiverApprovalService
@@ -49,7 +50,11 @@ class LatenessWaiverApprovalService
             'attendance record',
         );
 
-        if ((int) $attendance->totalLateMinutes() <= 0) {
+        $earlyLeave = (int) ($attendance->early_leave_minutes ?? 0);
+        $deductibleEarlyLeave = $earlyLeave > PayrollEarningsService::HOURLY_DEDUCTION_MINUTE_GRACE
+            ? $earlyLeave
+            : 0;
+        if ((int) $attendance->totalLateMinutes() <= 0 && $deductibleEarlyLeave <= 0) {
             throw ValidationException::withMessages([
                 'lateness_waived' => ['This attendance record has no late minutes to waive.'],
             ]);

@@ -4,6 +4,7 @@ namespace App\Services\Payroll;
 
 use App\Models\Employee;
 use App\Models\PayrollRun;
+use App\Models\PayrollRunSettlement;
 use App\Services\Attendance\AttendanceDayPolicy;
 
 class PayrollAutoProcessService
@@ -31,6 +32,11 @@ class PayrollAutoProcessService
         $period = $run->payPeriod;
         if (! $period) {
             return ['lines' => [], 'skipped' => []];
+        }
+
+        // Re-open attendance/leave/OT from a prior process so earnings see current waivers.
+        if (PayrollRunSettlement::query()->where('payroll_run_id', $run->id)->exists()) {
+            app(PayrollCycleSettlementService::class)->restoreForRun($run, deletingRun: false);
         }
 
         $earningsOptions = [

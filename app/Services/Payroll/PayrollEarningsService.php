@@ -373,9 +373,9 @@ class PayrollEarningsService
                     $clockInLateMinutesTotal += $clockInLate;
                     $lunchLateMinutesTotal += $lunchLate;
                     $lateMinutesTotal += $clockInLate + $lunchLate;
-                }
-                if ($earlyLeave > self::HOURLY_DEDUCTION_MINUTE_GRACE) {
-                    $lateMinutesTotal += $earlyLeave;
+                    if ($earlyLeave > self::HOURLY_DEDUCTION_MINUTE_GRACE) {
+                        $lateMinutesTotal += $earlyLeave;
+                    }
                 }
             }
 
