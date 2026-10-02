@@ -204,6 +204,11 @@ class DispatchTripController extends BaseResourceController
         if (! in_array($trip->status, ['draft', 'cancelled'], true)) {
             return response()->json(['message' => 'Only draft or cancelled trips can be deleted. Cancel the trip first.'], 422);
         }
+
+        // Detach orders so they return to the dispatch board (pivot also cascades).
+        $trip->sales()->detach();
+        $trip->routes()->detach();
+        $trip->crewMembers()->detach();
         $trip->delete();
 
         return response()->json(null, 204);

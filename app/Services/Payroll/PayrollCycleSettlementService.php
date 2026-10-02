@@ -107,31 +107,48 @@ class PayrollCycleSettlementService
                 }
             }
 
+            // Cash advances settle whenever they appear on the payslip — not gated by
+            // "include other deductions". Cap to the live open balance and treat tiny
+            // leftovers as repaid so full_next_cycle actually clears the advance.
+            foreach ($lineInputs as $line) {
+                foreach ($line['payroll_meta']['deductions_detail'] ?? [] as $item) {
+                    if (($item['type'] ?? '') !== 'cash_advance' || empty($item['id'])) {
+                        continue;
+                    }
+                    $advance = EmployeeCashAdvance::find($item['id']);
+                    if (! $advance || $advance->status !== 'open') {
+                        continue;
+                    }
+                    $deduct = round((float) ($item['amount'] ?? 0), 2);
+                    if ($deduct <= EmployeeCashAdvance::PAYROLL_BALANCE_EPSILON) {
+                        continue;
+                    }
+                    $openBalance = round((float) $advance->balance, 2);
+                    $deduct = min($deduct, $openBalance);
+                    if ($deduct <= EmployeeCashAdvance::PAYROLL_BALANCE_EPSILON) {
+                        continue;
+                    }
+                    $this->recordSettlement($runId, $orgId, PayrollRunSettlement::TYPE_CASH_ADVANCE, (int) $advance->id, [
+                        'balance' => $openBalance,
+                        'status' => $advance->status,
+                        'amount_deducted' => $deduct,
+                    ]);
+                    $advance->balance = round(max(0, $openBalance - $deduct), 2);
+                    if ($advance->balance <= EmployeeCashAdvance::PAYROLL_BALANCE_EPSILON) {
+                        $advance->balance = 0;
+                        $advance->status = 'repaid';
+                    }
+                    $advance->save();
+                    $counts['cash_advance']++;
+                }
+            }
+
             if ($includeOther) {
                 $touchedOneTimeTypeIds = [];
                 foreach ($lineInputs as $line) {
                     foreach ($line['payroll_meta']['deductions_detail'] ?? [] as $item) {
-                        if (($item['type'] ?? '') === 'cash_advance' && ! empty($item['id'])) {
-                            $advance = EmployeeCashAdvance::find($item['id']);
-                            if (! $advance) {
-                                continue;
-                            }
-                            $deduct = (float) ($item['amount'] ?? 0);
-                            if ($deduct <= 0) {
-                                continue;
-                            }
-                            $this->recordSettlement($runId, $orgId, PayrollRunSettlement::TYPE_CASH_ADVANCE, (int) $advance->id, [
-                                'balance' => (float) $advance->balance,
-                                'status' => $advance->status,
-                                'amount_deducted' => $deduct,
-                            ]);
-                            $advance->balance = round(max(0, (float) $advance->balance - $deduct), 2);
-                            if ($advance->balance <= 0) {
-                                $advance->balance = 0;
-                                $advance->status = 'repaid';
-                            }
-                            $advance->save();
-                            $counts['cash_advance']++;
+                        if (($item['type'] ?? '') === 'cash_advance') {
+                            continue;
                         }
                         if (($item['type'] ?? '') === 'employee_deduction' && ! empty($item['id'])) {
                             $deduction = EmployeeDeduction::find($item['id']);

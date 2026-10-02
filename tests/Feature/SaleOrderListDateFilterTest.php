@@ -828,7 +828,7 @@ class SaleOrderListDateFilterTest extends TestCase
         );
     }
 
-    public function test_unpaid_stage_queue_lists_unpaid_status_not_only_processed_unpaid(): void
+    public function test_unpaid_payment_queue_lists_workflow_unpaid_and_processed_unpaid_not_pending(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();
         Sanctum::actingAs($admin);
@@ -860,19 +860,6 @@ class SaleOrderListDateFilterTest extends TestCase
             'archived' => 0,
         ]);
 
-        $response = $this->getJson('/api/v1/sales?filter[status]=unpaid&per_page=200');
-        $response->assertOk();
-
-        $ids = collect($response->json('data'))->pluck('id');
-        $this->assertTrue(
-            $ids->contains($unpaidOnly->id),
-            'Unpaid stage queue must list orders whose workflow status is unpaid.',
-        );
-        $this->assertFalse(
-            $ids->contains($processedUnpaid->id),
-            'Unpaid stage queue must not pull processed+unpaid rows (those belong on Processed / payment queues).',
-        );
-
         $pendingAmountUnpaid = Sale::query()->create([
             'order_num' => 993503,
             'branch_id' => $admin->branch_id,
@@ -886,11 +873,26 @@ class SaleOrderListDateFilterTest extends TestCase
             'archived' => 0,
         ]);
 
-        $again = $this->getJson('/api/v1/sales?filter[status]=unpaid&per_page=200')->assertOk();
-        $againIds = collect($again->json('data'))->pluck('id');
+        // Unpaid Orders tab: payment_status + exclude early stages (Pending / Booked).
+        $response = $this->getJson(
+            '/api/v1/sales?filter[payment_status]=unpaid&outstanding_balance=1'
+            .'&exclude_statuses=cancelled,expired,draft,held,booked,pending,pending_approval,editable'
+            .'&per_page=200',
+        );
+        $response->assertOk();
+
+        $ids = collect($response->json('data'))->pluck('id');
+        $this->assertTrue(
+            $ids->contains($unpaidOnly->id),
+            'Unpaid Orders must list workflow-unpaid rows.',
+        );
+        $this->assertTrue(
+            $ids->contains($processedUnpaid->id),
+            'Unpaid Orders must list Processed + Unpaid dual-status rows.',
+        );
         $this->assertFalse(
-            $againIds->contains($pendingAmountUnpaid->id),
-            'Unpaid workflow queue must not list Pending orders just because amount_paid is 0.',
+            $ids->contains($pendingAmountUnpaid->id),
+            'Unpaid Orders must not list Pending orders (those stay on Pending).',
         );
     }
 

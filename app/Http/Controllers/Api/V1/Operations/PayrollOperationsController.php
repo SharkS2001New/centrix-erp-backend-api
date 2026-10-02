@@ -20,6 +20,7 @@ use App\Services\Payroll\PayPeriodStatusService;
 use App\Services\Payroll\PayrollCycleSettlementService;
 use App\Services\Payroll\PayrollEarningsService;
 use App\Services\Payroll\PayrollAutoProcessService;
+use App\Services\Payroll\PayrollCashAdvanceNetGuard;
 use App\Services\Payroll\PayrollRunScheduleService;
 use App\Services\Payroll\PayrollReceiptMailService;
 use App\Services\Background\BackgroundTaskService;
@@ -157,7 +158,7 @@ class PayrollOperationsController extends Controller
             }
             $employees = $employeeQuery->get()->keyBy(fn ($e) => (int) $e->id);
 
-            foreach ($payload['lines'] as $lineInput) {
+            foreach ($payload['lines'] as $lineIndex => $lineInput) {
                 $employeeId = (int) ($lineInput['employee_id'] ?? 0);
                 $employee = $employees[$employeeId] ?? null;
                 if (! $employee) {
@@ -209,11 +210,18 @@ class PayrollOperationsController extends Controller
                     );
                 }
 
+                // Take only what net can absorb; leave unpaid advance balance for the next cycle.
+                $guarded = app(PayrollCashAdvanceNetGuard::class)->apply($calc, $lineInput, $periodGross);
+                $calc = $guarded['calc'];
+                $lineInput = $guarded['line'];
+                $payload['lines'][$lineIndex] = $lineInput;
+
                 $calc['basic_salary'] = $basic;
                 $calc['allowances'] = $allowances;
                 $calc['statutory_gross'] = $statutoryGross;
                 $calc['period_gross'] = round($periodGross, 2);
                 $calc['statutory_based_on_contract_gross'] = true;
+                $meta = is_array($lineInput['payroll_meta'] ?? null) ? $lineInput['payroll_meta'] : $meta;
                 if ($meta !== []) {
                     $meta['contract_gross_for_statutory'] = $statutoryGross;
                     $calc['payroll'] = $meta;

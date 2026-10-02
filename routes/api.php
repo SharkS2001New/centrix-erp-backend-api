@@ -1473,6 +1473,8 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:hr.cash_advances.approve');
             Route::post('employee-cash-advances/{id}/reject', [EmployeeCashAdvanceController::class, 'reject'])
                 ->middleware('erp.permission:hr.cash_advances.approve');
+            Route::post('employee-cash-advances/{id}/mark-repaid', [EmployeeCashAdvanceController::class, 'markRepaid'])
+                ->middleware('erp.permission:hr.manage|hr.cash_advances.edit|hr.cash_advances.approve');
             Route::apiResource('employee-cash-advances', EmployeeCashAdvanceController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
@@ -1528,10 +1530,11 @@ Route::prefix('v1')->group(function () {
             Route::post('dispatch-trips/{trip}/settle', [DispatchTripController::class, 'settle'])
                 ->middleware('erp.permission:fulfillment.manage');
             Route::post('dispatch-trips/{trip}/cancel', [DispatchTripController::class, 'cancel'])
-                ->middleware('erp.permission:fulfillment.manage');
+                ->middleware('erp.permission:fulfillment.trips.edit|fulfillment.trips.delete|fulfillment.manage');
             Route::apiResource('dispatch-trips', DispatchTripController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:fulfillment.view'])
-                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:fulfillment.manage']);
+                ->middlewareFor(['index', 'show'], ['erp.permission:fulfillment.view|fulfillment.trips.view'])
+                ->middlewareFor(['store', 'update'], ['erp.permission:fulfillment.trips.create|fulfillment.trips.edit|fulfillment.manage'])
+                ->middlewareFor(['destroy'], ['erp.permission:fulfillment.trips.delete|fulfillment.manage']);
 
             Route::apiResource('pod-records', PodRecordController::class)
                 ->only(['index', 'show'])

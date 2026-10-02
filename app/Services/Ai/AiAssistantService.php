@@ -109,7 +109,7 @@ class AiAssistantService
                 $reply = $this->productParamMerger->statusReply($pendingAction, $productMergeNotes);
 
                 return $this->attachPendingAction(
-                    $user,
+                $user,
                     [
                         'success' => true,
                         'reply' => $reply,
@@ -119,8 +119,8 @@ class AiAssistantService
                         'provider' => $runtime['provider'] ?? null,
                     ],
                     $pendingAction,
-                    $message,
-                    $pathname,
+                $message,
+                $pathname,
                     $scope,
                 );
             }
@@ -508,7 +508,7 @@ class AiAssistantService
                             is_array($inferred['params'] ?? null) ? $inferred['params'] : [],
                         );
                     } else {
-                        $pending = $inferred;
+                    $pending = $inferred;
                     }
                     if ($this->looksLikeFetchingReply($reply)) {
                         $result['reply'] = $this->isConversationalCreateAction($inferred)

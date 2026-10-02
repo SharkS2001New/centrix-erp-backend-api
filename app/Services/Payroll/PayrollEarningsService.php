@@ -16,6 +16,12 @@ use Carbon\Carbon;
 
 class PayrollEarningsService
 {
+    /**
+     * Early-leave / clock noise below this (minutes) is ignored for hourly holds.
+     * Day pay uses full day or half day only — never a fractional "0.05 absent".
+     */
+    public const HOURLY_DEDUCTION_MINUTE_GRACE = 15;
+
     public function __construct(
         protected AttendanceDayPolicy $dayPolicy,
         protected LeaveRequestCalculator $leaveCalculator,
@@ -95,9 +101,14 @@ class PayrollEarningsService
             } else {
                 $ratio = $paidDays / $expectedDays;
             }
-            // Do not also subtract late minutes here — short hours from lateness are already
-            // folded into paid_days / absent_days via hours_worked. A second cut double-deducts.
+            // Lateness / early leave: deduct by the hour after day units are set.
+            // Do not fold hour shortfalls into absent_days (that created phantom 0.05 absents).
+            $lateMinutes = (int) ($attendanceSummary['late_minutes_total'] ?? 0);
             $periodBasic = round($contractBasic * $ratio, 2);
+            if ($lateMinutes > 0 && $expectedHours > 0) {
+                $hourHold = round($contractBasic * (($lateMinutes / 60) / $expectedHours), 2);
+                $periodBasic = max(0, round($periodBasic - $hourHold, 2));
+            }
             $dailyRate = round($contractBasic / $this->monthDayDivisor($monthDaysBasis, $expectedDays), 2);
         } else {
             $periodBasic = $contractBasic;
@@ -133,28 +144,29 @@ class PayrollEarningsService
         $other = 0.0;
         $deductionsDetail = [];
 
-        if ($includeOther) {
-            $built = app(PayrollOtherDeductionsBuilder::class)->build(
-                $employee,
-                $contractGrossForOther,
-                $hr,
-                $period->period_end?->toDateString() ?? (string) $period->period_end,
-            );
-            $other = $built['total'];
-            $deductionsDetail = $built['detail'];
+        // Cash advances must still run when "include other deductions" is off — the builder
+        // already returns early after advances when include_other_deductions_in_payroll is false.
+        $hrForOther = $hr;
+        if (! $includeOther) {
+            $hrForOther = array_merge($hr, ['include_other_deductions_in_payroll' => false]);
         }
+        $built = app(PayrollOtherDeductionsBuilder::class)->build(
+            $employee,
+            $contractGrossForOther,
+            $hrForOther,
+            $period->period_end?->toDateString() ?? (string) $period->period_end,
+        );
+        $other = $built['total'];
+        $deductionsDetail = $built['detail'];
 
         $absentDays = (float) ($attendanceSummary['absent_days'] ?? 0);
         $unpaidLeaveDays = (float) ($attendanceSummary['unpaid_leave_days'] ?? 0);
         $lateMinutesTotal = (int) ($attendanceSummary['late_minutes_total'] ?? 0);
         $absentAmount = round($absentDays * $dailyRate, 2);
         $unpaidLeaveAmount = round($unpaidLeaveDays * $dailyRate, 2);
-        // Lateness hold is informational only when attendance proration already reduced
-        // paid days from hours_worked — adding it again inflated Absentism/Lateness.
-        $latenessAmount = 0.0;
-        if (! $useProration && $lateMinutesTotal > 0 && $expectedHours > 0) {
-            $latenessAmount = round($contractBasic * (($lateMinutesTotal / 60) / $expectedHours), 2);
-        }
+        $latenessAmount = ($lateMinutesTotal > 0 && $expectedHours > 0)
+            ? round($contractBasic * (($lateMinutesTotal / 60) / $expectedHours), 2)
+            : 0.0;
 
         return [
             'employee_id' => $employee->id,
@@ -330,34 +342,40 @@ class PayrollEarningsService
 
             $att = $attendanceByDate->get($date);
             if ($att && $this->attendanceCountsAsPaid($att->status)) {
-                $remainingExpected = max(0.0, round($dayExpectedHours - $leaveHours, 2));
-                $dayPaid = (float) ($att->hours_worked ?? 0);
-                if ($att->expected_hours !== null && (float) $att->expected_hours > 0) {
-                    $dayPaid = min($dayPaid, (float) $att->expected_hours);
-                } else {
-                    $dayPaid = min($dayPaid, $dayExpectedHours);
-                }
-                $dayPaid = min($dayPaid, $remainingExpected);
+                $storedExpected = $att->expected_hours !== null ? (float) $att->expected_hours : 0.0;
+                $dayBasisHours = $storedExpected > 0 ? $storedExpected : $dayExpectedHours;
+                $leaveFraction = $dayBasisHours > 0 ? min(1.0, $leaveHours / $dayBasisHours) : 0.0;
+                $remainingDay = max(0.0, round(1.0 - $leaveFraction, 2));
+
+                // Present / late = full remaining day. Half day = 0.5. Never hours÷expected
+                // fractional days (that produced "present + 0.05 absent").
                 $latenessWaived = (bool) ($att->lateness_waived ?? false);
-                // Waived lateness restores pay for that day — do not leave a fractional
-                // "absent" residue from the same late minutes (or rounding) after waiver.
-                if ($latenessWaived && $remainingExpected > 0) {
-                    $dayPaid = $remainingExpected;
+                if ($att->status === 'half_day' && ! $latenessWaived) {
+                    $attended += min(0.5, $remainingDay);
+                } else {
+                    $attended += $remainingDay;
                 }
-                if ($leaveHours <= 0 && $att->status === 'half_day' && ! $latenessWaived) {
-                    $attended += 0.5;
-                } elseif ($dayExpectedHours > 0) {
-                    $attended += $dayPaid / $dayExpectedHours;
-                } elseif ($dayPaid > 0) {
-                    $attended += 1.0;
+
+                $dayPaidHours = (float) ($att->hours_worked ?? 0);
+                if ($dayBasisHours > 0) {
+                    $dayPaidHours = min($dayPaidHours, $dayBasisHours);
                 }
-                $paidHours += $dayPaid;
+                $dayPaidHours = min($dayPaidHours, max(0.0, round($dayBasisHours - $leaveHours, 2)));
+                if ($latenessWaived && $dayBasisHours > 0) {
+                    $dayPaidHours = max($dayPaidHours, max(0.0, round($dayBasisHours - $leaveHours, 2)));
+                }
+                $paidHours += $dayPaidHours;
+
                 $clockInLate = (int) ($att->late_minutes ?? 0);
                 $lunchLate = (int) ($att->lunch_late_minutes ?? 0);
+                $earlyLeave = (int) ($att->early_leave_minutes ?? 0);
                 if (! $latenessWaived) {
                     $clockInLateMinutesTotal += $clockInLate;
                     $lunchLateMinutesTotal += $lunchLate;
                     $lateMinutesTotal += $clockInLate + $lunchLate;
+                }
+                if ($earlyLeave > self::HOURLY_DEDUCTION_MINUTE_GRACE) {
+                    $lateMinutesTotal += $earlyLeave;
                 }
             }
 

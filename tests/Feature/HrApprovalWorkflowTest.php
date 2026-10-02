@@ -181,6 +181,63 @@ class HrApprovalWorkflowTest extends TestCase
         );
     }
 
+    public function test_open_cash_advance_can_be_marked_repaid_manually(): void
+    {
+        $hrClerk = $this->userWithPermissions(['hr.manage']);
+        $employee = Employee::query()->firstOrFail();
+
+        $advance = EmployeeCashAdvance::query()->create([
+            'employee_id' => $employee->id,
+            'organization_id' => $hrClerk->organization_id,
+            'branch_id' => $employee->branch_id,
+            'advance_date' => now()->toDateString(),
+            'amount' => 2176,
+            'balance' => 824,
+            'status' => 'open',
+            'repayment_mode' => 'full_next_cycle',
+            'notes' => 'PERSONAL',
+        ]);
+
+        Sanctum::actingAs($hrClerk);
+
+        $response = $this->postJson("/api/v1/employee-cash-advances/{$advance->id}/mark-repaid")
+            ->assertOk()
+            ->assertJsonPath('status', 'repaid')
+            ->assertJsonPath('next_deduction_amount', 0)
+            ->json();
+        $this->assertEquals(0, (float) ($response['balance'] ?? -1));
+
+        $fresh = $advance->fresh();
+        $this->assertSame('repaid', $fresh->status);
+        $this->assertSame(0.0, (float) $fresh->balance);
+
+        $this->postJson("/api/v1/employee-cash-advances/{$advance->id}/mark-repaid")
+            ->assertOk()
+            ->assertJsonPath('status', 'repaid');
+    }
+
+    public function test_pending_cash_advance_cannot_be_marked_repaid(): void
+    {
+        $hrClerk = $this->userWithPermissions(['hr.manage']);
+        $employee = Employee::query()->firstOrFail();
+
+        $advance = EmployeeCashAdvance::query()->create([
+            'employee_id' => $employee->id,
+            'organization_id' => $hrClerk->organization_id,
+            'branch_id' => $employee->branch_id,
+            'advance_date' => now()->toDateString(),
+            'amount' => 500,
+            'balance' => 500,
+            'status' => 'pending',
+            'repayment_mode' => 'full_next_cycle',
+        ]);
+
+        Sanctum::actingAs($hrClerk);
+
+        $this->postJson("/api/v1/employee-cash-advances/{$advance->id}/mark-repaid")
+            ->assertStatus(422);
+    }
+
     public function test_cash_advance_assigns_line_manager_when_manager_has_approve_right(): void
     {
         $hrClerk = $this->userWithPermissions(['hr.manage']);

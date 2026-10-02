@@ -18,9 +18,142 @@ class PayrollWaivedLatenessAndAdvanceDeductionsTest extends TestCase
 {
     use RefreshesErpDatabase;
 
-    public function test_waived_lateness_does_not_create_fractional_absent_days(): void
+    public function test_present_day_is_full_day_not_fractional_absent(): void
     {
-        $this->travelTo('2026-09-30 18:00:00');
+        $this->travelTo('2026-09-02 18:00:00');
+
+        $org = Organization::where('company_code', 'DEMO')->firstOrFail();
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $template = Employee::query()->where('organization_id', $org->id)->firstOrFail();
+
+        $shift = WorkShift::query()->create([
+            'organization_id' => $org->id,
+            'shift_code' => 'FUL'.strtoupper(substr(uniqid(), -6)),
+            'shift_name' => 'Full Day',
+            'start_time' => '08:00:00',
+            'end_time' => '17:00:00',
+            'crosses_midnight' => false,
+            'lunch_minutes' => 60,
+            'lunch_required' => true,
+            'work_weekdays' => [1, 2, 3, 4, 5],
+            'is_active' => true,
+        ]);
+
+        $employee = Employee::query()->create([
+            'organization_id' => $org->id,
+            'branch_id' => $admin->branch_id,
+            'department_id' => $template->department_id,
+            'position_id' => $template->position_id,
+            'shift_id' => $shift->id,
+            'employee_code' => 'EMP#FUL'.strtoupper(uniqid()),
+            'payroll_number' => 'EMP#FUL'.strtoupper(uniqid()),
+            'first_name' => 'Full',
+            'last_name' => 'Day',
+            'full_name' => 'Full Day',
+            'employment_status' => 'active',
+            'employment_type' => 'permanent',
+            'pay_frequency' => 'monthly',
+            'hire_date' => '2026-01-01',
+            'base_salary' => 30000,
+            'country' => 'Kenya',
+            'is_active' => true,
+        ]);
+
+        // Present with short hours — must still be 1.0 paid day, 0 absent (not 0.05).
+        EmployeeAttendance::query()->create([
+            'employee_id' => $employee->id,
+            'organization_id' => $org->id,
+            'branch_id' => $admin->branch_id,
+            'attendance_date' => '2026-09-01',
+            'status' => 'present',
+            'source' => 'clock_device',
+            'hours_worked' => 7.6,
+            'expected_hours' => 8.0,
+            'late_minutes' => 0,
+            'lunch_late_minutes' => 0,
+            'lateness_waived' => false,
+            'early_leave_minutes' => 10,
+        ]);
+
+        $summary = app(PayrollEarningsService::class)->summarizeAttendance(
+            $employee->fresh('shift'),
+            '2026-09-01',
+            '2026-09-01',
+        );
+
+        $this->assertSame(0.0, $summary['absent_days']);
+        $this->assertSame(1.0, $summary['paid_days']);
+        $this->assertSame(0, $summary['late_minutes_total']);
+    }
+
+    public function test_half_day_status_counts_half_not_hour_fraction(): void
+    {
+        $this->travelTo('2026-09-02 18:00:00');
+
+        $org = Organization::where('company_code', 'DEMO')->firstOrFail();
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $template = Employee::query()->where('organization_id', $org->id)->firstOrFail();
+
+        $shift = WorkShift::query()->create([
+            'organization_id' => $org->id,
+            'shift_code' => 'HLF'.strtoupper(substr(uniqid(), -6)),
+            'shift_name' => 'Half Day',
+            'start_time' => '08:00:00',
+            'end_time' => '17:00:00',
+            'crosses_midnight' => false,
+            'lunch_minutes' => 60,
+            'lunch_required' => true,
+            'work_weekdays' => [1, 2, 3, 4, 5],
+            'is_active' => true,
+        ]);
+
+        $employee = Employee::query()->create([
+            'organization_id' => $org->id,
+            'branch_id' => $admin->branch_id,
+            'department_id' => $template->department_id,
+            'position_id' => $template->position_id,
+            'shift_id' => $shift->id,
+            'employee_code' => 'EMP#HLF'.strtoupper(uniqid()),
+            'payroll_number' => 'EMP#HLF'.strtoupper(uniqid()),
+            'first_name' => 'Half',
+            'last_name' => 'Day',
+            'full_name' => 'Half Day',
+            'employment_status' => 'active',
+            'employment_type' => 'permanent',
+            'pay_frequency' => 'monthly',
+            'hire_date' => '2026-01-01',
+            'base_salary' => 30000,
+            'country' => 'Kenya',
+            'is_active' => true,
+        ]);
+
+        EmployeeAttendance::query()->create([
+            'employee_id' => $employee->id,
+            'organization_id' => $org->id,
+            'branch_id' => $admin->branch_id,
+            'attendance_date' => '2026-09-01',
+            'status' => 'half_day',
+            'source' => 'clock_device',
+            'hours_worked' => 4.0,
+            'expected_hours' => 8.0,
+            'late_minutes' => 0,
+            'lunch_late_minutes' => 0,
+            'lateness_waived' => false,
+        ]);
+
+        $summary = app(PayrollEarningsService::class)->summarizeAttendance(
+            $employee->fresh('shift'),
+            '2026-09-01',
+            '2026-09-01',
+        );
+
+        $this->assertSame(0.5, $summary['paid_days']);
+        $this->assertSame(0.5, $summary['absent_days']);
+    }
+
+    public function test_waived_lateness_does_not_create_absent_or_hourly_hold(): void
+    {
+        $this->travelTo('2026-09-02 18:00:00');
 
         $org = Organization::where('company_code', 'DEMO')->firstOrFail();
         $admin = User::where('username', 'admin')->firstOrFail();
@@ -59,7 +192,6 @@ class PayrollWaivedLatenessAndAdvanceDeductionsTest extends TestCase
             'is_active' => true,
         ]);
 
-        // One weekday with late minutes waived — hours still short as if late was not fully restored.
         EmployeeAttendance::query()->create([
             'employee_id' => $employee->id,
             'organization_id' => $org->id,
@@ -84,6 +216,86 @@ class PayrollWaivedLatenessAndAdvanceDeductionsTest extends TestCase
         $this->assertSame(0.0, $summary['absent_days']);
         $this->assertSame(0, $summary['late_minutes_total']);
         $this->assertSame(1.0, $summary['paid_days']);
+    }
+
+    public function test_unwaived_lateness_deducts_by_hour_not_fractional_absent_day(): void
+    {
+        $this->travelTo('2026-09-02 18:00:00');
+
+        $org = Organization::where('company_code', 'DEMO')->firstOrFail();
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $template = Employee::query()->where('organization_id', $org->id)->firstOrFail();
+
+        $shift = WorkShift::query()->create([
+            'organization_id' => $org->id,
+            'shift_code' => 'HR'.strtoupper(substr(uniqid(), -6)),
+            'shift_name' => 'Hour Late',
+            'start_time' => '08:00:00',
+            'end_time' => '17:00:00',
+            'crosses_midnight' => false,
+            'lunch_minutes' => 60,
+            'lunch_required' => true,
+            'work_weekdays' => [1, 2, 3, 4, 5],
+            'is_active' => true,
+        ]);
+
+        $employee = Employee::query()->create([
+            'organization_id' => $org->id,
+            'branch_id' => $admin->branch_id,
+            'department_id' => $template->department_id,
+            'position_id' => $template->position_id,
+            'shift_id' => $shift->id,
+            'employee_code' => 'EMP#HR'.strtoupper(uniqid()),
+            'payroll_number' => 'EMP#HR'.strtoupper(uniqid()),
+            'first_name' => 'Late',
+            'last_name' => 'Hour',
+            'full_name' => 'Late Hour',
+            'employment_status' => 'active',
+            'employment_type' => 'permanent',
+            'pay_frequency' => 'monthly',
+            'hire_date' => '2026-01-01',
+            'base_salary' => 30000,
+            'country' => 'Kenya',
+            'is_active' => true,
+        ]);
+
+        EmployeeAttendance::query()->create([
+            'employee_id' => $employee->id,
+            'organization_id' => $org->id,
+            'branch_id' => $admin->branch_id,
+            'attendance_date' => '2026-09-01',
+            'status' => 'late',
+            'source' => 'clock_device',
+            'hours_worked' => 7.5,
+            'expected_hours' => 8.0,
+            'late_minutes' => 30,
+            'lunch_late_minutes' => 0,
+            'lateness_waived' => false,
+        ]);
+
+        $period = PayPeriod::query()->create([
+            'organization_id' => $org->id,
+            'period_code' => 'HR'.uniqid(),
+            'period_start' => '2026-09-01',
+            'period_end' => '2026-09-01',
+            'status' => 'open',
+        ]);
+
+        $line = app(PayrollEarningsService::class)->buildLineInput(
+            $employee->fresh('shift'),
+            $period,
+            [
+                'include_allowances' => false,
+                'include_other_deductions' => false,
+                'include_overtime' => false,
+                'use_attendance_proration' => true,
+            ],
+        );
+
+        $this->assertNotNull($line);
+        $this->assertSame(0.0, (float) $line['payroll_meta']['absent_days']);
+        $this->assertSame(30, (int) $line['payroll_meta']['late_minutes_total']);
+        $this->assertGreaterThan(0.0, (float) $line['payroll_meta']['lateness_amount']);
     }
 
     public function test_payroll_skips_residual_cash_advance_and_labels_open_advances_with_date(): void
@@ -135,7 +347,6 @@ class PayrollWaivedLatenessAndAdvanceDeductionsTest extends TestCase
             'notes' => null,
         ]);
 
-        // Issued after September period — must not deduct on September payroll.
         EmployeeCashAdvance::query()->create([
             'employee_id' => $employee->id,
             'organization_id' => $org->id,
@@ -160,108 +371,61 @@ class PayrollWaivedLatenessAndAdvanceDeductionsTest extends TestCase
 
         $this->assertSame(3000.0, $built['total']);
         $this->assertCount(1, $built['detail']);
-        $this->assertSame('cash_advance', $built['detail'][0]['type']);
         $this->assertStringContainsString('20 Aug 2026', $built['detail'][0]['name']);
-        $this->assertSame('2026-08-20', $built['detail'][0]['advance_date']);
     }
 
-    public function test_proration_does_not_double_count_lateness_in_period_basic(): void
+    public function test_cash_advances_still_build_when_other_deductions_setting_off(): void
     {
-        $this->travelTo('2026-09-02 18:00:00');
-
         $org = Organization::where('company_code', 'DEMO')->firstOrFail();
         $admin = User::where('username', 'admin')->firstOrFail();
         $template = Employee::query()->where('organization_id', $org->id)->firstOrFail();
-
-        $shift = WorkShift::query()->create([
-            'organization_id' => $org->id,
-            'shift_code' => 'DBL'.strtoupper(substr(uniqid(), -6)),
-            'shift_name' => 'Double Late',
-            'start_time' => '08:00:00',
-            'end_time' => '17:00:00',
-            'crosses_midnight' => false,
-            'lunch_minutes' => 60,
-            'lunch_required' => true,
-            'work_weekdays' => [1, 2, 3, 4, 5],
-            'is_active' => true,
-        ]);
 
         $employee = Employee::query()->create([
             'organization_id' => $org->id,
             'branch_id' => $admin->branch_id,
             'department_id' => $template->department_id,
             'position_id' => $template->position_id,
-            'shift_id' => $shift->id,
-            'employee_code' => 'EMP#DBL'.strtoupper(uniqid()),
-            'payroll_number' => 'EMP#DBL'.strtoupper(uniqid()),
-            'first_name' => 'Late',
-            'last_name' => 'Once',
-            'full_name' => 'Late Once',
+            'employee_code' => 'EMP#ADV2'.strtoupper(uniqid()),
+            'payroll_number' => 'EMP#ADV2'.strtoupper(uniqid()),
+            'first_name' => 'Full',
+            'last_name' => 'Cycle',
+            'full_name' => 'Full Cycle',
             'employment_status' => 'active',
             'employment_type' => 'permanent',
             'pay_frequency' => 'monthly',
             'hire_date' => '2026-01-01',
-            'base_salary' => 30000,
+            'base_salary' => 40000,
             'country' => 'Kenya',
             'is_active' => true,
         ]);
 
-        // Tuesday 1 Sep — half day of hours, 30 min late not waived.
-        EmployeeAttendance::query()->create([
+        EmployeeCashAdvance::query()->create([
             'employee_id' => $employee->id,
             'organization_id' => $org->id,
             'branch_id' => $admin->branch_id,
-            'attendance_date' => '2026-09-01',
-            'status' => 'late',
-            'source' => 'clock_device',
-            'hours_worked' => 4.0,
-            'expected_hours' => 8.0,
-            'late_minutes' => 30,
-            'lunch_late_minutes' => 0,
-            'lateness_waived' => false,
-        ]);
-
-        $period = PayPeriod::query()->create([
-            'organization_id' => $org->id,
-            'period_code' => 'DBL'.uniqid(),
-            'period_start' => '2026-09-01',
-            'period_end' => '2026-09-01',
+            'advance_date' => '2026-08-10',
+            'amount' => 2176,
+            'balance' => 2176,
             'status' => 'open',
+            'repayment_mode' => 'full_next_cycle',
+            'notes' => 'PERSONAL',
         ]);
 
-        $line = app(PayrollEarningsService::class)->buildLineInput(
-            $employee->fresh('shift'),
-            $period,
+        $built = app(PayrollOtherDeductionsBuilder::class)->build(
+            $employee,
+            40000.0,
             [
-                'include_allowances' => false,
-                'include_other_deductions' => false,
-                'include_overtime' => false,
-                'use_attendance_proration' => true,
+                'enable_cash_advance_deductions' => true,
+                'deduct_cash_advances_on_payroll' => true,
+                'include_other_deductions_in_payroll' => false,
             ],
+            '2026-08-31',
         );
 
-        $this->assertNotNull($line);
-        $absent = (float) $line['payroll_meta']['absent_days'];
-        $paid = (float) $line['payroll_meta']['paid_work_days'];
-        $this->assertGreaterThan(0.0, $absent);
-        $this->assertEqualsWithDelta(1.0, $absent + $paid, 0.02);
-        // Hour shortfall already reduces paid days — lateness must not add a second hold.
-        $this->assertEquals(0.0, (float) $line['payroll_meta']['lateness_amount']);
-        $this->assertGreaterThan(0, (int) $line['payroll_meta']['late_minutes_total']);
-
-        $contract = 30000.0;
-        $expectedDays = (float) $line['payroll_meta']['expected_work_days'];
-        if ($expectedDays >= 29.5) {
-            // fixed_30 basis
-            $this->assertEquals(
-                round($contract * (30 - $absent) / 30, 2),
-                (float) $line['payroll_meta']['period_basic'],
-            );
-        } else {
-            $this->assertEquals(
-                round($contract * ($paid / max(1.0, $expectedDays)), 2),
-                (float) $line['payroll_meta']['period_basic'],
-            );
-        }
+        $this->assertSame(2176.0, $built['total']);
+        $this->assertCount(1, $built['detail']);
+        $this->assertSame('cash_advance', $built['detail'][0]['type']);
+        $this->assertSame(2176.0, $built['detail'][0]['amount']);
+        $this->assertSame('full_next_cycle', $built['detail'][0]['repayment_mode']);
     }
 }

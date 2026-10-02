@@ -128,6 +128,7 @@ return [
                 'fulfillment.trips.view',
                 'fulfillment.trips.create',
                 'fulfillment.trips.edit',
+                'fulfillment.trips.delete',
                 'fulfillment.picking.view',
                 'fulfillment.picking.edit',
                 'fulfillment.loading_lists.view',

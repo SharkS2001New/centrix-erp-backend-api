@@ -209,6 +209,36 @@ class EmployeeCashAdvanceController extends HrOrgResourceController
         return response()->json($this->advanceWithMeta($row->fresh('employee'), request()->user()));
     }
 
+    /**
+     * POST /employee-cash-advances/{id}/mark-repaid
+     * Manually clear an open advance (e.g. repaid in cash / outside payroll) so it
+     * is not deducted again on the next payroll run.
+     */
+    public function markRepaid(string $id)
+    {
+        $row = $this->findScoped($id);
+
+        if ($row->status === 'repaid') {
+            $row->balance = 0;
+            $row->save();
+
+            return response()->json($this->advanceWithMeta($row->fresh('employee'), request()->user()));
+        }
+
+        if ($row->status !== 'open') {
+            return response()->json([
+                'message' => 'Only open cash advances can be marked as repaid. Approve pending ones first, or leave cancelled advances as-is.',
+            ], 422);
+        }
+
+        $row->update([
+            'balance' => 0,
+            'status' => 'repaid',
+        ]);
+
+        return response()->json($this->advanceWithMeta($row->fresh('employee'), request()->user()));
+    }
+
     public function update(Request $request, string $id)
     {
         $row = $this->findScoped($id);
