@@ -253,6 +253,26 @@ class AiToolResultReplyBuilderTest extends TestCase
                     'correction_guidance' => [
                         'Right customer, wrong amount — reverse then re-apply.',
                     ],
+                    'returns' => [
+                        'has_pending_returns' => true,
+                        'pending_returns' => [
+                            [
+                                'return_no' => 'RET-0765',
+                                'total_amount' => 2000,
+                                'path' => '/sales/returns?q=RET-0765',
+                                'lines' => ['SMILE SERVIETTES × 36'],
+                            ],
+                        ],
+                        'returnable_lines' => [
+                            [
+                                'product_name' => 'SMILE SERVIETTES',
+                                'qty_sold_label' => '3 CARTON',
+                                'already_returned_label' => '0 CARTON',
+                                'pending_return_label' => '2 CARTON',
+                                'max_return_label' => '1 CARTON',
+                            ],
+                        ],
+                    ],
                     'tip' => 'Never say you cannot look up an invoice/order by number.',
                 ],
             ],
@@ -264,6 +284,9 @@ class AiToolResultReplyBuilderTest extends TestCase
         $this->assertStringContainsString('M-Pesa', $reply);
         $this->assertStringContainsString('/sales/orders/99', $reply);
         $this->assertStringContainsString('wrong', strtolower($reply));
+        $this->assertStringContainsString('RET-0765', $reply);
+        $this->assertStringContainsString('Still returnable', $reply);
+        $this->assertStringContainsString('1 CARTON', $reply);
         $this->assertStringNotContainsString('Never say you cannot', $reply);
         $this->assertFalse($builder->isGenericFailureReply($reply));
     }

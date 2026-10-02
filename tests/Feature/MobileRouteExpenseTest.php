@@ -168,6 +168,56 @@ class MobileRouteExpenseTest extends TestCase
         $this->assertEqualsWithDelta(1300.0, (float) $after['revenue'], 0.001);
     }
 
+    public function test_web_mobile_orders_summary_honors_filter_cashier_id_for_expense_deduction(): void
+    {
+        $repA = $this->makeMobileUser(['full_name' => 'Jacob A']);
+        $repB = $this->makeMobileUser(['full_name' => 'Jacob B']);
+        $day = now()->subDay()->startOfDay();
+        $this->seedMobileSale($repA, 1000, $day);
+        $this->seedMobileSale($repB, 500, $day);
+
+        $expenses = app(MobileRouteExpenseService::class);
+        $expenseA = $expenses->createForRep($repA, [
+            'description' => 'Fuel A',
+            'expense_amount' => 200,
+            'expense_date' => $day->toDateString(),
+        ]);
+        $expenseB = $expenses->createForRep($repB, [
+            'description' => 'Fuel B',
+            'expense_amount' => 200,
+            'expense_date' => $day->toDateString(),
+        ]);
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $this->withoutToken();
+        Sanctum::actingAs($admin);
+
+        $this->postJson('/api/v1/sales/mobile-orders/approve-expenses', [
+            'expense_ids' => [(int) $expenseA['id'], (int) $expenseB['id']],
+        ])->assertOk()->assertJsonPath('approved_count', 2);
+
+        // Reproduce the ERP Mobile Orders page: User filter is sent as filter[cashier_id].
+        $query = http_build_query([
+            'order_source' => 'mobile',
+            'filter' => ['cashier_id' => $repA->id],
+            'from_date' => $day->toDateString(),
+            'to_date' => $day->toDateString(),
+            'date_field' => 'placed',
+            'exclude_statuses' => 'cancelled,expired',
+            'per_page' => 25,
+        ]);
+        $summary = $this->getJson('/api/v1/sales?'.$query)
+            ->assertOk()
+            ->json('summary');
+
+        $this->assertEqualsWithDelta(1000.0, (float) ($summary['gross_revenue'] ?? $summary['revenue'] ?? 0), 0.001);
+        $this->assertEqualsWithDelta(200.0, (float) ($summary['expense_total'] ?? 0), 0.001,
+            'Must deduct only Jacob A\'s 200 expense, not both reps (400).');
+        $this->assertEqualsWithDelta(800.0, (float) $summary['revenue'], 0.001);
+
+        $this->app['auth']->forgetGuards();
+    }
+
     public function test_approved_expense_updates_past_day_order_list_totals(): void
     {
         $rep = $this->makeMobileUser();
@@ -205,6 +255,43 @@ class MobileRouteExpenseTest extends TestCase
         $this->assertEqualsWithDelta(1000.0, (float) $after->json('meta.summary.gross_total'), 0.001);
         $this->assertEqualsWithDelta(150.0, (float) $after->json('meta.summary.expense_total'), 0.001);
         $this->assertEqualsWithDelta(850.0, (float) $after->json('meta.summary.order_total'), 0.001);
+    }
+
+    public function test_past_day_warmed_cache_without_summary_still_deducts_approved_expenses(): void
+    {
+        $rep = $this->makeMobileUser(['full_name' => 'Cache Exp Rep']);
+        $yesterday = now()->subDay()->startOfDay();
+        $date = $yesterday->toDateString();
+        $this->seedMobileSale($rep, 1000, $yesterday);
+
+        $expenses = app(MobileRouteExpenseService::class);
+        $created = $expenses->createForRep($rep, [
+            'description' => 'Fuel',
+            'expense_amount' => 200,
+            'expense_date' => $date,
+        ]);
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+        $this->postJson('/api/v1/sales/mobile-orders/approve-expenses', [
+            'expense_ids' => [(int) $created['id']],
+        ])->assertOk()->assertJsonPath('approved_count', 1);
+
+        // Simulate a warmed past-day list that only stored order rows (no KPI summary).
+        $org = \App\Models\Organization::query()->findOrFail($rep->organization_id);
+        app(\App\Services\Cache\CompletedSalesCacheService::class)
+            ->warmOrganizationDate($org, $yesterday);
+
+        $this->app['auth']->forgetGuards();
+        $token = $this->loginMobile($rep);
+        $summary = $this->withToken($token)
+            ->getJson('/api/v1/mobile/orders?from_date='.$date.'&to_date='.$date)
+            ->assertOk()
+            ->json('meta.summary');
+
+        $this->assertEqualsWithDelta(1000.0, (float) ($summary['gross_total'] ?? 0), 0.001);
+        $this->assertEqualsWithDelta(200.0, (float) ($summary['expense_total'] ?? 0), 0.001);
+        $this->assertEqualsWithDelta(800.0, (float) ($summary['order_total'] ?? 0), 0.001);
     }
 
     public function test_expenses_are_blocked_when_platform_flag_is_off(): void
@@ -424,7 +511,7 @@ class MobileRouteExpenseTest extends TestCase
         $template = Sale::query()->where('channel', 'mobile')->firstOrFail();
         $at = $at ? \Carbon\Carbon::parse($at) : now();
 
-        return Sale::create([
+        $sale = Sale::create([
             'order_num' => 97001 + random_int(1, 8000),
             'branch_id' => $rep->branch_id ?? $template->branch_id,
             'organization_id' => $template->organization_id,
@@ -438,9 +525,12 @@ class MobileRouteExpenseTest extends TestCase
             'order_total' => $total,
             'payment_status' => 'paid',
             'amount_paid' => $total,
-            'created_at' => $at,
-            'updated_at' => $at,
         ]);
+
+        // created_at is not fillable — force it so date-scoped summaries match the seed day.
+        $sale->forceFill(['created_at' => $at])->saveQuietly();
+
+        return $sale->fresh();
     }
 
     protected function makeMobileUser(array $overrides = []): User

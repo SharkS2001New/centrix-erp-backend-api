@@ -963,9 +963,12 @@ class AiToolResultReplyBuilder
 
         $from = (string) ($period['from_date'] ?? '');
         $to = (string) ($period['to_date'] ?? '');
-        $periodLabel = ($from !== '' && $to !== '')
-            ? ($from === $to ? $from : "{$from} – {$to}")
-            : '';
+        $invoice = trim((string) ($result['filtered_invoice'] ?? $period['order_num_display'] ?? ''));
+        $periodLabel = $invoice !== ''
+            ? "invoice {$invoice}"
+            : (($from !== '' && $to !== '')
+                ? ($from === $to ? $from : "{$from} – {$to}")
+                : '');
         $user = trim((string) ($result['filtered_user'] ?? ''));
 
         $lines = [
@@ -981,19 +984,23 @@ class AiToolResultReplyBuilder
 
         if ($returns !== []) {
             $lines[] = '';
-            $lines[] = '| Date | Return # | Status | Amount (KES) | Returned by |';
-            $lines[] = '| --- | --- | --- | ---: | --- |';
+            $lines[] = '| Date | Return # | Status | Amount (KES) | Returned by | Lines |';
+            $lines[] = '| --- | --- | --- | ---: | --- | --- |';
             foreach (array_slice($returns, 0, 40) as $row) {
                 if (! is_array($row)) {
                     continue;
                 }
+                $lineBits = is_array($row['lines'] ?? null)
+                    ? implode('; ', array_map('strval', $row['lines']))
+                    : '';
                 $lines[] = sprintf(
-                    '| %s | %s | %s | %s | %s |',
+                    '| %s | %s | %s | %s | %s | %s |',
                     $this->cell((string) ($row['return_date'] ?? '—')),
                     $this->cell((string) ($row['return_no'] ?? '—')),
                     $this->cell((string) ($row['status'] ?? '—')),
                     $this->money((float) ($row['total_amount'] ?? 0)),
                     $this->cell((string) ($row['returned_by_name'] ?? '—')),
+                    $this->cell($lineBits !== '' ? $lineBits : '—'),
                 );
             }
         } else {
@@ -1002,7 +1009,11 @@ class AiToolResultReplyBuilder
         }
 
         $lines[] = '';
-        $lines[] = 'Open [/sales/returns](/sales/returns).';
+        if ($invoice !== '') {
+            $lines[] = 'If a return is **pending**, that quantity is already reserved on the invoice — approve or edit it at [/sales/returns](/sales/returns) instead of creating another return for the same goods.';
+        } else {
+            $lines[] = 'Open [/sales/returns](/sales/returns).';
+        }
 
         return implode("\n", $lines);
     }
@@ -1805,6 +1816,53 @@ class AiToolResultReplyBuilder
         if ($path !== '') {
             $lines[] = '';
             $lines[] = "Open [{$display}]({$path}) to reverse or re-apply from payment history.";
+        }
+
+        $returns = is_array($result['returns'] ?? null) ? $result['returns'] : [];
+        $pendingReturns = is_array($returns['pending_returns'] ?? null) ? $returns['pending_returns'] : [];
+        $returnable = is_array($returns['returnable_lines'] ?? null) ? $returns['returnable_lines'] : [];
+
+        if ($pendingReturns !== [] || $returnable !== []) {
+            $lines[] = '';
+            $lines[] = '### Returns on this invoice';
+            if ($pendingReturns !== []) {
+                $lines[] = '';
+                $lines[] = '**Pending returns** (these already hold qty — approve/edit them instead of creating another return):';
+                foreach (array_slice($pendingReturns, 0, 8) as $ret) {
+                    if (! is_array($ret)) {
+                        continue;
+                    }
+                    $no = (string) ($ret['return_no'] ?? '—');
+                    $amt = number_format((float) ($ret['total_amount'] ?? 0), 2);
+                    $retPath = (string) ($ret['path'] ?? '/sales/returns');
+                    $detail = is_array($ret['lines'] ?? null) ? implode('; ', array_map('strval', $ret['lines'])) : '';
+                    $bit = "- [{$no}]({$retPath}) — KES {$amt}";
+                    if ($detail !== '') {
+                        $bit .= " ({$detail})";
+                    }
+                    $lines[] = $bit;
+                }
+            }
+            if ($returnable !== []) {
+                $lines[] = '';
+                $lines[] = '| Product | Sold | Already returned | Pending | Still returnable |';
+                $lines[] = '| --- | --- | --- | --- | --- |';
+                foreach (array_slice($returnable, 0, 25) as $row) {
+                    if (! is_array($row)) {
+                        continue;
+                    }
+                    $lines[] = sprintf(
+                        '| %s | %s | %s | %s | %s |',
+                        $this->cell((string) ($row['product_name'] ?? $row['product_code'] ?? '—')),
+                        $this->cell((string) ($row['qty_sold_label'] ?? '—')),
+                        $this->cell((string) ($row['already_returned_label'] ?? '—')),
+                        $this->cell((string) ($row['pending_return_label'] ?? '—')),
+                        $this->cell((string) ($row['max_return_label'] ?? '—')),
+                    );
+                }
+            }
+            $lines[] = '';
+            $lines[] = 'Open [/sales/returns](/sales/returns) to approve, edit, or reject a pending return.';
         }
 
         return implode("\n", $lines);

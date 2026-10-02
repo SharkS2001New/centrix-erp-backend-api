@@ -341,8 +341,9 @@ class SaleController extends BaseResourceController
             $query->where('sales.float_session_id', (int) $request->input('float_session_id'));
         }
 
-        if ($request->filled('cashier_id') && ! $forPosOrderEdit) {
-            $query->where('sales.cashier_id', (int) $request->input('cashier_id'));
+        $cashierId = $this->resolveListFilterInt($request, 'cashier_id');
+        if ($cashierId !== null && ! $forPosOrderEdit) {
+            $query->where('sales.cashier_id', $cashierId);
         }
 
         if ($dispatchOrders) {
@@ -695,8 +696,8 @@ class SaleController extends BaseResourceController
             $from,
             $to,
             [
-                'cashier_id' => $request->filled('cashier_id') ? (int) $request->input('cashier_id') : null,
-                'route_id' => $request->filled('route_id') ? (int) $request->input('route_id') : null,
+                'cashier_id' => $this->resolveListFilterInt($request, 'cashier_id'),
+                'route_id' => $this->resolveListFilterInt($request, 'route_id'),
             ],
         );
 
@@ -713,6 +714,28 @@ class SaleController extends BaseResourceController
         $summary['revenue'] = round($gross - $expenseTotal, 2);
 
         return $summary;
+    }
+
+    /**
+     * Read list filters from top-level query params or filter[cashier_id] style
+     * (Mobile Orders sends the latter via buildPageParams).
+     */
+    protected function resolveListFilterInt(Request $request, string $key): ?int
+    {
+        if ($request->filled($key)) {
+            $value = (int) $request->input($key);
+
+            return $value > 0 ? $value : null;
+        }
+
+        $fromFilter = data_get($request->input('filter', []), $key);
+        if ($fromFilter === null || $fromFilter === '') {
+            return null;
+        }
+
+        $value = (int) $fromFilter;
+
+        return $value > 0 ? $value : null;
     }
 
     public function show(Request $request, string $id)

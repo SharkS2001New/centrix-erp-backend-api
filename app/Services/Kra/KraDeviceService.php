@@ -419,7 +419,9 @@ class KraDeviceService
             : ($name !== '' ? $name : 'unknown product');
 
         $message = trim((string) ($result['message'] ?? 'KRA product registration failed.'));
-        if ($label !== '' && ! str_contains($message, $label)) {
+        // Drop any prior "Rejected product: …" so barcode vs product_code never doubles up.
+        $message = trim(preg_replace('/\.?\s*Rejected product:\s*.+$/i', '', $message) ?? $message);
+        if ($label !== '') {
             $result['message'] = rtrim($message, '.').". Rejected product: {$label}.";
         }
         $result['product_code'] = $code;
@@ -1453,14 +1455,6 @@ class KraDeviceService
             if ($item !== '') {
                 $label = $this->resolvePluLabelForDeviceToken($payload, $item) ?? $item;
                 $message = 'Product not found on the KRA device: '.$label.'. Upload it to the device first, then retry.';
-            }
-        } elseif (
-            in_array((string) $code, ['034', '34'], true)
-            || preg_match('/SetPluDataInfoEX|Error processing PLU|Product upload data is invalid/i', $message.$technical) === 1
-        ) {
-            $labels = $this->pluLabelsFromPayload($payload);
-            if (count($labels) === 1) {
-                $message = rtrim($message, '.').'. Rejected product: '.$labels[0].'.';
             }
         } elseif (
             in_array((string) $code, ['337', '13'], true)

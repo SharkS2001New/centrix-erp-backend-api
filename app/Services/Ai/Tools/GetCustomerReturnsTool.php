@@ -3,6 +3,7 @@
 namespace App\Services\Ai\Tools;
 
 use App\Models\CustomerReturn;
+use App\Models\Sale;
 use App\Models\User;
 use App\Services\Ai\AiSalesDateResolver;
 use App\Services\Ai\Tools\Concerns\HasAiPeriodParameters;
@@ -10,6 +11,7 @@ use App\Services\Ai\Tools\Concerns\ResolvesAiToolOrganization;
 use App\Services\Ai\Tools\Concerns\ResolvesAiUsers;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\ErpContext;
+use App\Support\SalesOrderReference;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
@@ -35,9 +37,11 @@ class GetCustomerReturnsTool implements AiToolInterface
     public function description(): string
     {
         return 'Get Centrix customer/product returns (customer_returns) for a period: return numbers, amounts, '
-            .'status, and who returned them (returned_by). Centrix DOES attribute returns to users — '
-            .'NEVER say returns cannot be shown per salesperson. '
+            .'status, who returned them (returned_by), and optional filter by invoice/order number (S1446). '
+            .'Centrix DOES attribute returns to users — NEVER say returns cannot be shown per salesperson. '
             .'For "returns done by CHEGE/Jane": ALWAYS pass user_name or username with relative_date. '
+            .'For "returns on invoice S1446" / pending return blocking a new return: pass order_num (or invoice_number). '
+            .'Prefer get_order_details for "why can\'t I return on this invoice" (shows sold vs pending vs max returnable). '
             .'Never invent return totals — always call this tool.';
     }
 
@@ -55,6 +59,14 @@ class GetCustomerReturnsTool implements AiToolInterface
         $schema['properties']['status'] = [
             'type' => 'string',
             'description' => 'Optional status filter (pending, approved, rejected).',
+        ];
+        $schema['properties']['order_num'] = [
+            'type' => 'string',
+            'description' => 'Filter returns for one sales invoice/order (S1446, 1446, #S1446).',
+        ];
+        $schema['properties']['invoice_number'] = [
+            'type' => 'string',
+            'description' => 'Alias of order_num — printed invoice / order number.',
         ];
         $schema['properties']['limit'] = [
             'type' => 'integer',
@@ -101,7 +113,41 @@ class GetCustomerReturnsTool implements AiToolInterface
         }
 
         $orgId = (int) $organization->id;
-        [$from, $to] = AiSalesDateResolver::resolve($arguments, $organization);
+        $orderRef = trim((string) ($arguments['order_num'] ?? $arguments['invoice_number'] ?? ''));
+        $saleIdFilter = null;
+        $orderDisplay = null;
+        if ($orderRef !== '') {
+            $parsed = SalesOrderReference::parseOrderNum($orderRef);
+            if ($parsed !== null) {
+                $saleQ = Sale::query()
+                    ->where('organization_id', $orgId)
+                    ->where('order_num', $parsed);
+                if (Schema::hasColumn('sales', 'deleted_at')) {
+                    $saleQ->whereNull('deleted_at');
+                }
+                $sale = $saleQ->orderByDesc('id')->first();
+                if ($sale) {
+                    $saleIdFilter = (int) $sale->id;
+                    $orderDisplay = SalesOrderReference::display($parsed) ?? ('S'.$parsed);
+                } else {
+                    return [
+                        'error' => true,
+                        'message' => 'No sales order matched **'
+                            .(SalesOrderReference::display($parsed) ?? $orderRef)
+                            .'**. Confirm the invoice number, or call get_order_details.',
+                        'screens' => $this->screens(),
+                    ];
+                }
+            }
+        }
+
+        // Invoice lookup does not need a date window — return every return on that sale.
+        if ($saleIdFilter === null) {
+            [$from, $to] = AiSalesDateResolver::resolve($arguments, $organization);
+        } else {
+            $from = null;
+            $to = null;
+        }
 
         $returnedById = null;
         $returnedByLabel = null;
@@ -122,11 +168,16 @@ class GetCustomerReturnsTool implements AiToolInterface
 
         $query = CustomerReturn::query()
             ->where('organization_id', $orgId)
-            ->with(['returnedByUser:id,username,full_name'])
-            ->whereDate('return_date', '>=', $from)
-            ->whereDate('return_date', '<=', $to)
+            ->with(['returnedByUser:id,username,full_name', 'lines'])
             ->orderByDesc('return_date')
             ->orderByDesc('id');
+
+        if ($saleIdFilter !== null) {
+            $query->where('sale_id', $saleIdFilter);
+        } else {
+            $query->whereDate('return_date', '>=', $from)
+                ->whereDate('return_date', '<=', $to);
+        }
 
         if ($returnedById !== null) {
             $query->where('returned_by', $returnedById);
@@ -149,6 +200,11 @@ class GetCustomerReturnsTool implements AiToolInterface
             $whoName = $who
                 ? trim((string) ($who->full_name ?: $who->username))
                 : null;
+            $lineBits = [];
+            foreach ($row->lines as $crl) {
+                $lineBits[] = trim((string) ($crl->product_name ?? $crl->product_code))
+                    .' × '.(string) ($crl->return_qty ?? 0);
+            }
 
             $returns[] = [
                 'return_no' => $row->return_no,
@@ -157,18 +213,27 @@ class GetCustomerReturnsTool implements AiToolInterface
                 'total_amount' => $amount,
                 'reason' => $row->reason,
                 'customer_num' => $row->customer_num,
+                'sale_id' => $row->sale_id ? (int) $row->sale_id : null,
                 'returned_by_name' => $whoName !== '' ? $whoName : null,
                 'return_kind' => $row->return_kind,
+                'lines' => $lineBits,
             ];
         }
 
         return [
             'currency' => 'KES',
-            'period' => [
-                'from_date' => $from,
-                'to_date' => $to,
-            ],
+            'period' => $saleIdFilter !== null
+                ? [
+                    'scope' => 'invoice',
+                    'order_num_display' => $orderDisplay,
+                    'sale_id' => $saleIdFilter,
+                ]
+                : [
+                    'from_date' => $from,
+                    'to_date' => $to,
+                ],
             'filtered_user' => $returnedByLabel,
+            'filtered_invoice' => $orderDisplay,
             'summary' => [
                 'returns_count' => count($returns),
                 'total_amount' => round($totalAmount, 2),
@@ -176,11 +241,16 @@ class GetCustomerReturnsTool implements AiToolInterface
             ],
             'returns' => $returns,
             'screens' => $this->screens(),
-            'tip' => ($returnedByLabel
+            'tip' => ($orderDisplay
+                ? "These are customer returns for invoice {$orderDisplay}. "
+                    .'If status=pending, that qty is already reserved — approve/edit that return; '
+                    .'a new return can only use remaining max_return from get_order_details. '
+                : ($returnedByLabel
                 ? "These are returns submitted by {$returnedByLabel} (customer_returns.returned_by). "
                     .'Never say Centrix cannot attribute returns to a user. '
-                : 'If the user named a person, call again with user_name — returns are attributed via returned_by. ')
-                .'Show a markdown table (date, return no, status, amount, returned by). '
+                : 'If the user named a person, call again with user_name — returns are attributed via returned_by. '
+                    .'If they named an invoice (S####), call with order_num or prefer get_order_details. '))
+                .'Show a markdown table (date, return no, status, amount, returned by, lines). '
                 .'Use display names only — never numeric user ids.',
         ];
     }

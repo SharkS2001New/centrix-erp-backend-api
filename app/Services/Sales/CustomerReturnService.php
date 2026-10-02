@@ -1384,15 +1384,34 @@ class CustomerReturnService
             if ($returnQty > $maxReturnQty + 0.0001) {
                 $saleItem->loadMissing('product.unit');
                 $product = $saleItem->product ?? new Product(['product_code' => $saleItem->product_code]);
+                $isRetail = (bool) ($saleItem->on_wholesale_retail ?? false);
+                $soldUom = trim((string) ($saleItem->uom ?? '')) ?: null;
                 $remainingLabel = $this->lineQuantityDisplay->formatLineQtyDisplay(
                     $maxReturnQty,
                     $product,
-                    (bool) ($saleItem->on_wholesale_retail ?? false),
-                    trim((string) ($saleItem->uom ?? '')) ?: null,
+                    $isRetail,
+                    $soldUom,
                 );
 
+                $pending = $this->pendingReturnQuantities($saleId, $excludeReturnId);
+                $pendingQty = $this->returnedQtyForLine(
+                    $pending,
+                    (int) $saleItem->id,
+                    (string) $saleItem->product_code,
+                );
+                $message = "Return quantity for {$line['product_code']} exceeds remaining returnable quantity ({$remainingLabel}).";
+                if ($pendingQty > 0.0001) {
+                    $pendingLabel = $this->lineQuantityDisplay->formatLineQtyDisplay(
+                        $pendingQty,
+                        $product,
+                        $isRetail,
+                        $soldUom,
+                    );
+                    $message .= " {$pendingLabel} is already on a pending return for this invoice — approve or edit that return instead of creating another.";
+                }
+
                 throw ValidationException::withMessages([
-                    'lines' => "Return quantity for {$line['product_code']} exceeds remaining returnable quantity ({$remainingLabel}).",
+                    'lines' => $message,
                 ]);
             }
 

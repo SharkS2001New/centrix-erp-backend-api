@@ -80,6 +80,11 @@ Type naturally. You are in **{$scope}**. Tip: type **Help** anytime to see this 
 - Expenses and returns by salesperson
 - Who operates route X? / Which routes does @User run?
 
+#### Sales invoices / returns
+- Check invoice S1537 (status, payments, balance)
+- Why can't I return on invoice S1446? / Max return less than qty sold
+- Pending returns on an invoice (approve/edit at /sales/returns)
+
 #### HR & payroll
 - Attendance this month for @Employee
 - Basic salary / payroll preview for @Employee
@@ -90,6 +95,7 @@ Type naturally. You are in **{$scope}**. Tip: type **Help** anytime to see this 
 - How do I cancel an order? / What can I do to cancel an order?
 - How do I return goods / create a credit note?
 - Difference between cancel, void, return, and held order
+- Why does max return show less than quantity sold on an invoice?
 
 #### Accounting & bank reconciliation
 - How do I do bank reconciliation?

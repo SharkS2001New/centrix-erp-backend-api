@@ -3,11 +3,14 @@
 namespace App\Services\Ai\Tools;
 
 use App\Models\CustomerInvoice;
+use App\Models\CustomerReturn;
 use App\Models\Sale;
 use App\Models\User;
 use App\Services\Ai\Tools\Concerns\ResolvesAiToolOrganization;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\ErpContext;
+use App\Services\Sales\CustomerReturnService;
+use App\Services\Sales\SaleLineQuantityDisplayService;
 use App\Support\SalePaymentStatus;
 use App\Support\SalesOrderReference;
 use Illuminate\Support\Facades\Schema;
@@ -24,6 +27,8 @@ class GetOrderDetailsTool implements AiToolInterface
     public function __construct(
         protected ErpContext $erp,
         protected UserPermissionService $permissions,
+        protected CustomerReturnService $returns,
+        protected SaleLineQuantityDisplayService $qtyDisplay,
     ) {}
 
     public function name(): string
@@ -34,11 +39,15 @@ class GetOrderDetailsTool implements AiToolInterface
     public function description(): string
     {
         return 'Look up one Centrix sales order / shop invoice by number and return status, customer, '
-            .'totals, balance due, payment lines (tender, amount, reference, date), linked AR invoice, '
-            .'and screens to open. In Centrix, "invoice 1537" / "S1537" means sales.order_num (display S1537). '
-            .'Use for "check invoice S1537", "order 1537", "I wrongly paid invoice 1537", payment history on an order, '
+            .'totals, balance due, payment lines, line items, customer-return eligibility '
+            .'(qty sold, already returned, pending return qty, max still returnable), pending returns on that invoice, '
+            .'linked AR invoice, and screens to open. In Centrix, "invoice 1537" / "S1537" means sales.order_num (display S1537). '
+            .'Use for "check invoice S1537", "order 1537", "why can\'t I return on invoice S1446", '
+            .'"max return 1 carton but sold 3", "I wrongly paid invoice 1537", payment history on an order, '
             .'or opening a specific sale. Pass order_num or query (e.g. S1537, 1537, AR-1537). '
-            .'Do NOT say Centrix cannot look up invoices by number — always call this tool first.';
+            .'Do NOT say Centrix cannot look up invoices by number — always call this tool first. '
+            .'When max returnable is less than qty sold, ALWAYS explain pending and approved returns from this result — '
+            .'do not invent a UOM bug.';
     }
 
     public function parametersSchema(): array
@@ -78,6 +87,7 @@ class GetOrderDetailsTool implements AiToolInterface
         $gate = $this->erp->gateForUser($user);
         $canView = $this->permissions->hasPermission($user, 'ai.assist', $gate)
             || $this->permissions->hasPermission($user, 'sales.orders.view', $gate)
+            || $this->permissions->hasPermission($user, 'sales.returns.view', $gate)
             || $this->permissions->hasPermission($user, 'customers.view', $gate)
             || $this->permissions->hasPermission($user, 'accounting.ar.view', $gate);
         if (! $canView) {
@@ -251,6 +261,8 @@ class GetOrderDetailsTool implements AiToolInterface
                 ->value('invoice_number');
         }
 
+        $returnability = $this->buildReturnability($sale);
+
         $path = '/sales/orders/'.$sale->id;
         $overpaid = $amountPaid > $orderTotal + SalePaymentStatus::EPSILON;
 
@@ -275,6 +287,12 @@ class GetOrderDetailsTool implements AiToolInterface
             $screens[] = ['label' => 'Debtors queue', 'path' => $debtorQueue];
         }
         $screens[] = ['label' => 'Credit notes / returns', 'path' => '/sales/returns'];
+        if (! empty($returnability['pending_returns'][0]['return_no'])) {
+            $screens[] = [
+                'label' => 'Pending return '.$returnability['pending_returns'][0]['return_no'],
+                'path' => '/sales/returns?q='.rawurlencode((string) $returnability['pending_returns'][0]['return_no']),
+            ];
+        }
         $screens[] = ['label' => 'Bank reconciliation', 'path' => '/accounting/bank-reconciliation'];
 
         $directBits = [
@@ -287,6 +305,9 @@ class GetOrderDetailsTool implements AiToolInterface
             $directBits[] = 'balance due KES '.number_format($balanceDue, 2);
         } elseif ($overpaid) {
             $directBits[] = 'overpaid (paid exceeds total)';
+        }
+        if (! empty($returnability['direct_answer_suffix'])) {
+            $directBits[] = $returnability['direct_answer_suffix'];
         }
 
         return [
@@ -314,6 +335,7 @@ class GetOrderDetailsTool implements AiToolInterface
             'payment_count' => count($payments),
             'line_items' => $lines,
             'line_count' => $sale->items->count(),
+            'returns' => $returnability,
             'correction_guidance' => $correctionGuidance,
             'path' => $path,
             'screens' => $screens,
@@ -322,9 +344,144 @@ class GetOrderDetailsTool implements AiToolInterface
                 .'Never say you cannot look up an invoice/order by number — this tool result is that lookup. '
                 .'Lead with order_num_display, customer_name, payment_status, order_total, amount_paid, balance_due. '
                 .'List payments (method, amount, reference, date) when present. '
+                .'For return / credit-note / "max return" / "can\'t return all" questions: use returns.returnable_lines '
+                .'(qty_sold_label, already_returned_label, pending_return_label, max_return_label) and returns.pending_returns. '
+                .'If pending_return_qty > 0, explain that pending returns already hold that qty — approve/edit that return '
+                .'(open /sales/returns) instead of creating another; remaining max_return_label is what is still open. '
+                .'Do not invent a packaging/UOM bug when pending or approved returns explain the cap. '
                 .'For wrongly paid / wrong payment / reverse payment: use correction_guidance — Centrix does not reverse payments via chat; '
                 .'guide the user to the order payment history at path, then /sales/returns or /accounting/bank-reconciliation as needed. '
                 .'Offer get_customer_statement with customer_name if they want the full customer balance next.',
+        ];
+    }
+
+    /**
+     * Sold vs already-returned vs pending vs still returnable for AI return questions.
+     *
+     * @return array{
+     *   pending_returns: list<array<string, mixed>>,
+     *   returnable_lines: list<array<string, mixed>>,
+     *   has_pending_returns: bool,
+     *   has_blocked_lines: bool,
+     *   direct_answer_suffix: string|null
+     * }
+     */
+    protected function buildReturnability(Sale $sale): array
+    {
+        $pendingReturns = [];
+        $returnableLines = [];
+        $suffix = null;
+
+        if (! Schema::hasTable('customer_returns')) {
+            return [
+                'pending_returns' => [],
+                'returnable_lines' => [],
+                'has_pending_returns' => false,
+                'has_blocked_lines' => false,
+                'direct_answer_suffix' => null,
+            ];
+        }
+
+        try {
+            $sale->loadMissing(['items.product.unit']);
+            $mapped = $this->returns->linesFromSale($sale);
+        } catch (\Throwable) {
+            $mapped = [];
+        }
+
+        foreach ($mapped as $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+            $product = is_array($line['product'] ?? null) ? null : ($line['product'] ?? null);
+            if (! $product instanceof \App\Models\Product) {
+                $product = new \App\Models\Product([
+                    'product_code' => (string) ($line['product_code'] ?? ''),
+                    'product_name' => (string) ($line['product_name'] ?? ''),
+                ]);
+            }
+            $isRetail = (bool) ((int) ($line['on_wholesale_retail'] ?? 0) === 1);
+            $soldUom = trim((string) ($line['sold_uom'] ?? $line['uom'] ?? '')) ?: null;
+            $qtySold = (float) ($line['quantity_sold'] ?? 0);
+            $already = (float) ($line['already_returned'] ?? 0);
+            $pending = (float) ($line['pending_return_qty'] ?? 0);
+            $maxReturn = (float) ($line['max_return_qty'] ?? 0);
+
+            $returnableLines[] = [
+                'product_code' => (string) ($line['product_code'] ?? ''),
+                'product_name' => (string) ($line['product_name'] ?? ''),
+                'qty_sold' => $qtySold,
+                'qty_sold_label' => $this->qtyDisplay->formatLineQtyDisplay($qtySold, $product, $isRetail, $soldUom),
+                'already_returned' => $already,
+                'already_returned_label' => $this->qtyDisplay->formatLineQtyDisplay($already, $product, $isRetail, $soldUom),
+                'pending_return_qty' => $pending,
+                'pending_return_label' => $this->qtyDisplay->formatLineQtyDisplay($pending, $product, $isRetail, $soldUom),
+                'max_return_qty' => $maxReturn,
+                'max_return_label' => $this->qtyDisplay->formatLineQtyDisplay($maxReturn, $product, $isRetail, $soldUom),
+                'line_total' => round((float) ($line['line_total'] ?? 0), 2),
+            ];
+        }
+
+        $pendingRows = CustomerReturn::query()
+            ->where('sale_id', $sale->id)
+            ->where('status', 'pending')
+            ->where(function ($q) {
+                $q->whereNull('return_kind')
+                    ->orWhereNotIn('return_kind', ['pos_edit', 'credit_note']);
+            })
+            ->with(['lines', 'returnedByUser:id,username,full_name'])
+            ->orderByDesc('id')
+            ->limit(10)
+            ->get();
+
+        foreach ($pendingRows as $row) {
+            $who = $row->returnedByUser;
+            $whoName = $who ? trim((string) ($who->full_name ?: $who->username)) : null;
+            $lineSummaries = [];
+            foreach ($row->lines as $crl) {
+                $lineSummaries[] = trim(
+                    (string) ($crl->product_name ?? $crl->product_code)
+                    .' × '.(string) ($crl->return_qty ?? 0)
+                );
+            }
+            $pendingReturns[] = [
+                'return_no' => $row->return_no,
+                'status' => $row->status,
+                'return_date' => $row->return_date?->toDateString(),
+                'total_amount' => round((float) ($row->total_amount ?? 0), 2),
+                'reason' => $row->reason,
+                'returned_by_name' => $whoName !== '' ? $whoName : null,
+                'lines' => $lineSummaries,
+                'path' => '/sales/returns?q='.rawurlencode((string) $row->return_no),
+            ];
+        }
+
+        $blocked = collect($returnableLines)->filter(
+            fn (array $l) => (float) ($l['pending_return_qty'] ?? 0) > 0.0001
+                && (float) ($l['max_return_qty'] ?? 0) + 0.0001 < (float) ($l['qty_sold'] ?? 0),
+        );
+
+        if ($pendingReturns !== [] && $blocked->isNotEmpty()) {
+            $firstPending = $pendingReturns[0]['return_no'] ?? 'a pending return';
+            $bits = $blocked->take(3)->map(function (array $l) {
+                return ($l['product_name'] ?: $l['product_code'])
+                    .' sold '.$l['qty_sold_label']
+                    .', pending '.$l['pending_return_label']
+                    .', still returnable '.$l['max_return_label'];
+            })->all();
+            $suffix = 'returns: '.implode('; ', $bits)
+                ." — open {$firstPending} at /sales/returns (do not create another return for the same qty)";
+        } elseif ($pendingReturns !== []) {
+            $nos = implode(', ', array_column($pendingReturns, 'return_no'));
+            $suffix = "has pending return(s) {$nos} — open /sales/returns";
+        }
+
+        return [
+            'pending_returns' => $pendingReturns,
+            'returnable_lines' => $returnableLines,
+            'has_pending_returns' => $pendingReturns !== [],
+            'has_blocked_lines' => $blocked->isNotEmpty(),
+            'direct_answer_suffix' => $suffix,
         ];
     }
 }
