@@ -190,11 +190,17 @@ class PayrollReceiptMailService
         if ($lateMinutes > 0) {
             $clockIn = (int) ($payroll['attendance']['clock_in_late_minutes_total'] ?? 0);
             $lunch = (int) ($payroll['attendance']['lunch_late_minutes_total'] ?? 0);
+            $earlyLeave = (int) ($payroll['attendance']['early_leave_minutes_total'] ?? 0);
             $note = 'Lateness ('.$lateMinutes.' min)';
-            if ($clockIn > 0 && $lunch > 0) {
-                $note = 'Lateness ('.$lateMinutes.' min: '.$clockIn.' clock-in + '.$lunch.' lunch)';
+            if ($clockIn <= 0 && $lunch <= 0 && $earlyLeave > 0) {
+                $note = 'Early leave ('.$earlyLeave.' min)';
+            } elseif ($clockIn > 0 && $lunch > 0) {
+                $note = 'Lateness ('.$lateMinutes.' min: '.$clockIn.' clock-in + '.$lunch.' lunch'
+                    .($earlyLeave > 0 ? ' + '.$earlyLeave.' early leave' : '').')';
             } elseif ($lunch > 0 && $clockIn <= 0) {
                 $note = 'Lateness from lunch ('.$lateMinutes.' min)';
+            } elseif ($earlyLeave > 0 && $clockIn > 0) {
+                $note = 'Lateness ('.$lateMinutes.' min: '.$clockIn.' clock-in + '.$earlyLeave.' early leave)';
             }
             $rows[] = [$note, null, 'note'];
         }

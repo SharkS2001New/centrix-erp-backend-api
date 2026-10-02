@@ -210,13 +210,18 @@ class HrReportController extends Controller
                 'a.lateness_waived_at',
                 'a.hours_worked',
                 'a.expected_hours',
+                'a.early_leave_minutes',
                 'a.source',
                 'a.notes',
             ])
             ->where(function ($inner) {
+                $grace = \App\Services\Payroll\PayrollEarningsService::HOURLY_DEDUCTION_MINUTE_GRACE;
                 $inner->where('a.late_minutes', '>', 0);
                 if (Schema::hasColumn('employee_attendance', 'lunch_late_minutes')) {
                     $inner->orWhere('a.lunch_late_minutes', '>', 0);
+                }
+                if (Schema::hasColumn('employee_attendance', 'early_leave_minutes')) {
+                    $inner->orWhere('a.early_leave_minutes', '>', $grace);
                 }
             })
             ->when($filters['organization_id'] ?? null, fn ($q, $id) => $q->where('a.organization_id', $id))

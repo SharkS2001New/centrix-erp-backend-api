@@ -562,12 +562,17 @@ class AttendanceDayReconciler
         $waivedBy = $existing?->lateness_waived_by;
         $waivedAt = $existing?->lateness_waived_at;
 
-        // Waived lateness (clock-in + lunch) is restored into paid hours so payroll is not reduced.
+        // Waived lateness (clock-in + lunch) and deductible early leave are restored into
+        // paid hours so payroll hour metrics match the waiver.
         $totalLateMinutes = $lateMinutes + $lunchLateMinutes;
-        if ($latenessWaived && $totalLateMinutes > 0) {
+        $deductibleEarlyLeave = $earlyLeaveMinutes > PayrollEarningsService::HOURLY_DEDUCTION_MINUTE_GRACE
+            ? $earlyLeaveMinutes
+            : 0;
+        $minutesToRestore = $totalLateMinutes + $deductibleEarlyLeave;
+        if ($latenessWaived && $minutesToRestore > 0) {
             $paidHours = round(min(
-                $expectedHours > 0 ? $expectedHours : ($paidHours + ($totalLateMinutes / 60)),
-                $paidHours + ($totalLateMinutes / 60),
+                $expectedHours > 0 ? $expectedHours : ($paidHours + ($minutesToRestore / 60)),
+                $paidHours + ($minutesToRestore / 60),
             ), 2);
             if ($status === 'late') {
                 $status = 'present';

@@ -13,6 +13,7 @@ use App\Services\Ai\Tools\Concerns\ResolvesAiToolOrganization;
 use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\ErpContext;
+use App\Services\Payroll\PayrollEarningsService;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Validation\ValidationException;
@@ -260,9 +261,11 @@ class GetEmployeeAttendanceTool implements AiToolInterface
     protected function applyLatenessFilters(Builder $query, bool $lateOnly, bool $unwaivedOnly): void
     {
         if ($lateOnly) {
-            $query->where(function (Builder $inner) {
+            $grace = PayrollEarningsService::HOURLY_DEDUCTION_MINUTE_GRACE;
+            $query->where(function (Builder $inner) use ($grace) {
                 $inner->where('late_minutes', '>', 0)
                     ->orWhere('lunch_late_minutes', '>', 0)
+                    ->orWhere('early_leave_minutes', '>', $grace)
                     ->orWhere('status', 'late');
             });
         }

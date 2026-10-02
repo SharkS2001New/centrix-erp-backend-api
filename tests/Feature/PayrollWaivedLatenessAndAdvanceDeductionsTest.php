@@ -488,6 +488,106 @@ class PayrollWaivedLatenessAndAdvanceDeductionsTest extends TestCase
         $this->assertGreaterThan(0.0, (float) $line['payroll_meta']['lateness_amount']);
     }
 
+    public function test_early_leave_only_counts_as_hourly_hold_not_clock_in_lateness(): void
+    {
+        $this->travelTo('2026-10-02 18:00:00');
+
+        $org = Organization::where('company_code', 'DEMO')->firstOrFail();
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $template = Employee::query()->where('organization_id', $org->id)->firstOrFail();
+
+        $shift = WorkShift::query()->create([
+            'organization_id' => $org->id,
+            'shift_code' => 'ELV'.strtoupper(substr(uniqid(), -6)),
+            'shift_name' => 'Early Leave',
+            'start_time' => '08:00:00',
+            'end_time' => '17:00:00',
+            'crosses_midnight' => false,
+            'lunch_minutes' => 60,
+            'lunch_required' => true,
+            'work_weekdays' => [1, 2, 3, 4, 5],
+            'is_active' => true,
+        ]);
+
+        $employee = Employee::query()->create([
+            'organization_id' => $org->id,
+            'branch_id' => $admin->branch_id,
+            'department_id' => $template->department_id,
+            'position_id' => $template->position_id,
+            'shift_id' => $shift->id,
+            'employee_code' => 'EMP#ELV'.strtoupper(uniqid()),
+            'payroll_number' => 'EMP#ELV'.strtoupper(uniqid()),
+            'first_name' => 'Early',
+            'last_name' => 'Leave',
+            'full_name' => 'Early Leave',
+            'employment_status' => 'active',
+            'employment_type' => 'permanent',
+            'pay_frequency' => 'monthly',
+            'hire_date' => '2026-01-01',
+            'base_salary' => 15000,
+            'country' => 'Kenya',
+            'is_active' => true,
+        ]);
+
+        // On time all day except left 60 minutes early — no clock-in/lunch lateness.
+        EmployeeAttendance::query()->create([
+            'employee_id' => $employee->id,
+            'organization_id' => $org->id,
+            'branch_id' => $admin->branch_id,
+            'attendance_date' => '2026-09-01',
+            'status' => 'present',
+            'source' => 'clock_device',
+            'hours_worked' => 7.0,
+            'expected_hours' => 8.0,
+            'late_minutes' => 0,
+            'lunch_late_minutes' => 0,
+            'lateness_waived' => false,
+            'early_leave_minutes' => 60,
+        ]);
+
+        // Waived clock-in lateness on another day must not contribute.
+        EmployeeAttendance::query()->create([
+            'employee_id' => $employee->id,
+            'organization_id' => $org->id,
+            'branch_id' => $admin->branch_id,
+            'attendance_date' => '2026-09-02',
+            'status' => 'present',
+            'source' => 'clock_device',
+            'hours_worked' => 8.0,
+            'expected_hours' => 8.0,
+            'late_minutes' => 45,
+            'lunch_late_minutes' => 0,
+            'lateness_waived' => true,
+            'early_leave_minutes' => 0,
+        ]);
+
+        $summary = app(PayrollEarningsService::class)->summarizeAttendance(
+            $employee->fresh('shift'),
+            '2026-09-01',
+            '2026-09-30',
+        );
+
+        $this->assertSame(0, $summary['clock_in_late_minutes_total']);
+        $this->assertSame(0, $summary['lunch_late_minutes_total']);
+        $this->assertSame(60, $summary['early_leave_minutes_total']);
+        $this->assertSame(60, $summary['late_minutes_total']);
+
+        $this->actingAs($admin);
+        $response = $this->getJson('/api/v1/employee-attendance?'.http_build_query([
+            'lateness' => 1,
+            'from_date' => '2026-09-01',
+            'to_date' => '2026-09-30',
+            'q' => 'Early Leave',
+        ]));
+        $response->assertOk();
+        $ids = collect($response->json('data') ?? [])->pluck('id')->all();
+        $earlyOnly = EmployeeAttendance::query()
+            ->where('employee_id', $employee->id)
+            ->whereDate('attendance_date', '2026-09-01')
+            ->value('id');
+        $this->assertContains($earlyOnly, $ids);
+    }
+
     public function test_payroll_skips_residual_cash_advance_and_labels_open_advances_with_date(): void
     {
         $org = Organization::where('company_code', 'DEMO')->firstOrFail();

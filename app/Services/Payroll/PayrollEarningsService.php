@@ -202,6 +202,7 @@ class PayrollEarningsService
                 'unpaid_leave_hours' => (float) ($attendanceSummary['unpaid_leave_hours'] ?? 0),
                 'paid_leave_hours' => (float) ($attendanceSummary['paid_leave_hours'] ?? 0),
                 'late_minutes_total' => $lateMinutesTotal,
+                'early_leave_minutes_total' => (int) ($attendanceSummary['early_leave_minutes_total'] ?? 0),
                 // Explicit holds for payroll sheet display (full contract basic − these = period basic effect).
                 'absent_amount' => $absentAmount,
                 'unpaid_leave_amount' => $unpaidLeaveAmount,
@@ -234,7 +235,8 @@ class PayrollEarningsService
      *   paid_leave_hours: float,
      *   late_minutes_total: int,
      *   clock_in_late_minutes_total: int,
-     *   lunch_late_minutes_total: int
+     *   lunch_late_minutes_total: int,
+     *   early_leave_minutes_total: int
      * }
      */
     public function summarizeAttendance(Employee $employee, string $start, string $end): array
@@ -282,6 +284,7 @@ class PayrollEarningsService
         $lateMinutesTotal = 0;
         $clockInLateMinutesTotal = 0;
         $lunchLateMinutesTotal = 0;
+        $earlyLeaveMinutesTotal = 0;
 
         $cursor = Carbon::parse($start)->startOfDay();
         $endDay = Carbon::parse($end)->startOfDay();
@@ -369,11 +372,14 @@ class PayrollEarningsService
                 $clockInLate = (int) ($att->late_minutes ?? 0);
                 $lunchLate = (int) ($att->lunch_late_minutes ?? 0);
                 $earlyLeave = (int) ($att->early_leave_minutes ?? 0);
+                // Early leave is an hourly hold (same bucket as lateness), but it is not
+                // clock-in/lunch late — HR "lateness" screens must surface it separately.
                 if (! $latenessWaived) {
                     $clockInLateMinutesTotal += $clockInLate;
                     $lunchLateMinutesTotal += $lunchLate;
                     $lateMinutesTotal += $clockInLate + $lunchLate;
                     if ($earlyLeave > self::HOURLY_DEDUCTION_MINUTE_GRACE) {
+                        $earlyLeaveMinutesTotal += $earlyLeave;
                         $lateMinutesTotal += $earlyLeave;
                     }
                 }
@@ -414,6 +420,7 @@ class PayrollEarningsService
             'late_minutes_total' => $lateMinutesTotal,
             'clock_in_late_minutes_total' => $clockInLateMinutesTotal,
             'lunch_late_minutes_total' => $lunchLateMinutesTotal,
+            'early_leave_minutes_total' => $earlyLeaveMinutesTotal,
         ];
     }
 

@@ -108,9 +108,11 @@ class EmployeeAttendanceController extends HrOrgResourceController
         }
 
         if ($request->boolean('lateness')) {
-            $query->where(function ($inner) {
+            $grace = \App\Services\Payroll\PayrollEarningsService::HOURLY_DEDUCTION_MINUTE_GRACE;
+            $query->where(function ($inner) use ($grace) {
                 $inner->where('late_minutes', '>', 0)
                     ->orWhere('lunch_late_minutes', '>', 0)
+                    ->orWhere('early_leave_minutes', '>', $grace)
                     ->orWhere('status', 'late');
             });
         }

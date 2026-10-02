@@ -56,7 +56,7 @@ class LatenessWaiverApprovalService
             : 0;
         if ((int) $attendance->totalLateMinutes() <= 0 && $deductibleEarlyLeave <= 0) {
             throw ValidationException::withMessages([
-                'lateness_waived' => ['This attendance record has no late minutes to waive.'],
+                'lateness_waived' => ['This attendance record has no late or early-leave minutes to waive.'],
             ]);
         }
 
@@ -94,6 +94,8 @@ class LatenessWaiverApprovalService
             ? $attendance->attendance_date->toDateString()
             : (string) $attendance->attendance_date;
 
+        $holdMinutes = (int) $attendance->totalLateMinutes() + $deductibleEarlyLeave;
+
         // Requester already has approve rights → apply immediately, skip approval inbox.
         if ($this->canApproveByPermission($requester)) {
             $this->reconciler->setLatenessWaiver(
@@ -109,7 +111,7 @@ class LatenessWaiverApprovalService
                 'employee_attendance_id' => $attendance->id,
                 'employee_id' => $attendance->employee_id,
                 'attendance_date' => $date,
-                'late_minutes' => $attendance->totalLateMinutes(),
+                'late_minutes' => $holdMinutes,
                 'reason' => $reason,
                 'status' => 'approved',
                 'waive' => $waive,
@@ -132,7 +134,7 @@ class LatenessWaiverApprovalService
             'employee_attendance_id' => $attendance->id,
             'employee_id' => $attendance->employee_id,
             'attendance_date' => $date,
-            'late_minutes' => $attendance->totalLateMinutes(),
+            'late_minutes' => $holdMinutes,
             'reason' => $reason,
             'status' => 'pending',
             'waive' => $waive,
