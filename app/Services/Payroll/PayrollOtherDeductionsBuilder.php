@@ -17,35 +17,50 @@ class PayrollOtherDeductionsBuilder
      *
      * @return array{total: float, detail: array<int, array<string, mixed>>}
      */
-    public function build(Employee $employee, float $contractGrossForPercent, ?array $hrSettings = null): array
-    {
+    public function build(
+        Employee $employee,
+        float $contractGrossForPercent,
+        ?array $hrSettings = null,
+        ?string $periodEndDate = null,
+    ): array {
         $hr = $hrSettings ?? HrPayrollSettingsResolver::forOrganizationId((int) $employee->organization_id);
         $other = 0.0;
         $detail = [];
 
         if ($hr['enable_cash_advance_deductions'] && $hr['deduct_cash_advances_on_payroll']) {
-            $advances = EmployeeCashAdvance::query()
+            $advancesQuery = EmployeeCashAdvance::query()
                 ->where('employee_id', $employee->id)
                 ->where('status', 'open')
-                ->where('balance', '>', 0)
-                ->orderBy('advance_date')
-                ->get();
+                // Ignore floating residuals (e.g. 0.01) left after prior repayments.
+                ->where('balance', '>', EmployeeCashAdvance::PAYROLL_BALANCE_EPSILON)
+                ->orderBy('advance_date');
+
+            // Never pull advances issued after this pay period ends.
+            if ($periodEndDate) {
+                $advancesQuery->whereDate('advance_date', '<=', $periodEndDate);
+            }
+
+            $advances = $advancesQuery->get();
 
             foreach ($advances as $advance) {
                 $advAmt = $advance->payrollDeductionAmount();
-                if ($advAmt <= 0) {
+                if ($advAmt <= EmployeeCashAdvance::PAYROLL_BALANCE_EPSILON) {
                     continue;
                 }
                 $other += $advAmt;
                 $label = 'Cash advance';
+                if ($advance->advance_date) {
+                    $label .= ' ('.$advance->advance_date->format('d M Y').')';
+                }
                 if ($advance->notes) {
-                    $label .= ' — ' . $advance->notes;
+                    $label .= ' — '.$advance->notes;
                 }
                 $detail[] = [
                     'type' => 'cash_advance',
                     'scope' => 'employee',
                     'id' => $advance->id,
                     'name' => $label,
+                    'advance_date' => $advance->advance_date?->toDateString(),
                     'repayment_mode' => $advance->repayment_mode ?? 'full_next_cycle',
                     'balance_before' => (float) $advance->balance,
                     'amount' => round($advAmt, 2),

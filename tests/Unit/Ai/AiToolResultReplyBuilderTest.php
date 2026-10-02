@@ -267,4 +267,100 @@ class AiToolResultReplyBuilderTest extends TestCase
         $this->assertStringNotContainsString('Never say you cannot', $reply);
         $this->assertFalse($builder->isGenericFailureReply($reply));
     }
+
+    public function test_formats_employee_attendance_org_late_sample(): void
+    {
+        $builder = new AiToolResultReplyBuilder;
+        $reply = $builder->build([
+            [
+                'name' => 'get_employee_attendance',
+                'result' => [
+                    'from_date' => '2026-09-01',
+                    'to_date' => '2026-09-30',
+                    'late_only' => true,
+                    'unwaived_only' => true,
+                    'summary' => [
+                        'records' => 2,
+                        'late_or_lateness_records' => 2,
+                        'unwaived_late_records' => 2,
+                    ],
+                    'sample' => [
+                        [
+                            'name' => 'Jane Doe',
+                            'username' => 'jane',
+                            'date' => '2026-09-12',
+                            'check_in' => '08:42',
+                            'late_minutes' => 42,
+                            'lunch_late_minutes' => 0,
+                            'total_late_minutes' => 42,
+                            'lateness_waived' => false,
+                            'status' => 'late',
+                        ],
+                        [
+                            'name' => 'John Smith',
+                            'username' => 'john',
+                            'date' => '2026-09-03',
+                            'check_in' => '09:10',
+                            'late_minutes' => 70,
+                            'lunch_late_minutes' => 15,
+                            'total_late_minutes' => 85,
+                            'lateness_waived' => false,
+                            'status' => 'present',
+                        ],
+                    ],
+                    'screens' => [
+                        ['label' => 'Lateness', 'path' => '/hr/lateness'],
+                    ],
+                    'tip' => 'These rows are late attendance only. Never invent people.',
+                ],
+            ],
+        ], ['get_employee_attendance']);
+
+        $this->assertStringContainsString('Jane Doe', $reply);
+        $this->assertStringContainsString('John Smith', $reply);
+        $this->assertStringContainsString('42', $reply);
+        $this->assertStringContainsString('85', $reply);
+        $this->assertStringContainsString('/hr/lateness', $reply);
+        $this->assertStringNotContainsString('could not format a full answer', $reply);
+        $this->assertStringNotContainsString('Never invent', $reply);
+        $this->assertFalse($builder->isGenericFailureReply($reply));
+    }
+
+    public function test_formats_named_employee_attendance_without_generic_failure(): void
+    {
+        $builder = new AiToolResultReplyBuilder;
+        $reply = $builder->build([
+            [
+                'name' => 'get_employee_attendance',
+                'result' => [
+                    'from_date' => '2026-09-01',
+                    'to_date' => '2026-09-30',
+                    'employee' => ['name' => 'Ada Attendance', 'username' => 'ada'],
+                    'days' => [
+                        [
+                            'date' => '2026-09-10',
+                            'check_in' => '08:05',
+                            'late_minutes' => 5,
+                            'lunch_late_minutes' => 0,
+                            'total_late_minutes' => 5,
+                            'status' => 'present',
+                        ],
+                    ],
+                    'summary' => [
+                        'records' => 1,
+                        'late_or_lateness_records' => 1,
+                    ],
+                    'screens' => [
+                        ['label' => "Today's attendance", 'path' => '/hr/attendance'],
+                    ],
+                    'tip' => 'Describe clock-in using the employee name — never an id.',
+                ],
+            ],
+        ], ['get_employee_attendance']);
+
+        $this->assertStringContainsString('Ada Attendance', $reply);
+        $this->assertStringContainsString('2026-09-10', $reply);
+        $this->assertStringNotContainsString('could not format a full answer', $reply);
+        $this->assertFalse($builder->isGenericFailureReply($reply));
+    }
 }

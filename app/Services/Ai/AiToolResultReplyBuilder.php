@@ -49,6 +49,7 @@ class AiToolResultReplyBuilder
             $formatted = match ($name) {
                 'get_employee_payroll_preview' => $this->formatPayrollPreview($result),
                 'get_employee_details' => $this->formatEmployeeDetails($result),
+                'get_employee_attendance' => $this->formatEmployeeAttendance($result),
                 'get_customer_statement' => $this->formatCustomerStatement($result),
                 'get_supplier_statement' => $this->formatSupplierStatement($result),
                 'get_sales_by_product' => $this->formatSalesByProduct($result),
@@ -296,6 +297,173 @@ class AiToolResultReplyBuilder
         }
 
         return null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $result
+     */
+    protected function formatEmployeeAttendance(array $result): ?string
+    {
+        $from = (string) ($result['from_date'] ?? '');
+        $to = (string) ($result['to_date'] ?? '');
+        $period = 'this period';
+        if ($from !== '' && $to !== '') {
+            $period = $from === $to ? $from : "{$from} – {$to}";
+        }
+
+        $employee = is_array($result['employee'] ?? null) ? $result['employee'] : [];
+        $summary = is_array($result['summary'] ?? null) ? $result['summary'] : [];
+        $days = is_array($result['days'] ?? null) ? $result['days'] : [];
+        $sample = is_array($result['sample'] ?? null) ? $result['sample'] : [];
+        $rows = $days !== [] ? $days : $sample;
+        $lateOnly = ! empty($result['late_only']) || ! empty($result['unwaived_only']);
+
+        $lateRows = [];
+        foreach ($rows as $day) {
+            if (! is_array($day)) {
+                continue;
+            }
+            if ($this->attendanceDayIsLate($day)) {
+                $lateRows[] = $day;
+            }
+        }
+
+        $name = trim((string) ($employee['name'] ?? $employee['full_name'] ?? ''));
+        $username = trim((string) ($employee['username'] ?? ''));
+
+        if ($name !== '') {
+            $title = "### Attendance for **{$name}**".($username !== '' ? " ({$username})" : '');
+            $lines = [$title, "Period: {$period}"];
+            $lateCount = (int) ($summary['late_or_lateness_records'] ?? count($lateRows));
+            $lines[] = 'Days returned: **'.count($rows)."**. Late days: **{$lateCount}**.";
+
+            $tableRows = $lateOnly || $lateRows !== [] ? $lateRows : $rows;
+            if ($tableRows === []) {
+                $lines[] = '';
+                $lines[] = $lateOnly
+                    ? 'No late (or unwaived late) attendance in this range.'
+                    : 'No attendance rows in this date range.';
+
+                return implode("\n", $lines);
+            }
+
+            $lines[] = '';
+            $lines[] = '| Date | Check-in | Late (min) | Status |';
+            $lines[] = '| --- | --- | ---: | --- |';
+            foreach (array_slice($tableRows, 0, 25) as $day) {
+                $lines[] = sprintf(
+                    '| %s | %s | %s | %s |',
+                    $this->cell((string) ($day['date'] ?? '—')),
+                    $this->cell((string) ($day['check_in'] ?? '—')),
+                    $this->cell($this->attendanceLateMinutesLabel($day)),
+                    $this->cell($this->attendanceStatusLabel($day)),
+                );
+            }
+
+            return implode("\n", $lines);
+        }
+
+        // Org-wide snapshot (who was late / attendance overview).
+        $lines = ["### Attendance ({$period})"];
+        $records = (int) ($summary['records'] ?? count($rows));
+        $lateCount = (int) ($summary['late_or_lateness_records'] ?? count($lateRows));
+        $lines[] = "Records in this result: **{$records}**. Late records: **{$lateCount}**.";
+
+        $tableRows = $lateOnly || $lateRows !== [] ? $lateRows : $rows;
+        if ($tableRows === []) {
+            $lines[] = '';
+            $lines[] = $lateOnly
+                ? 'No late (or unwaived late) attendance in this range.'
+                : 'No attendance rows in this date range.';
+
+            return implode("\n", $lines);
+        }
+
+        $focusLate = $lateOnly || $lateRows !== [];
+        $lines[] = '';
+        if ($focusLate) {
+            $lines[] = 'Late employees in this sample:';
+        }
+        $lines[] = '| Employee | Date | Check-in | Late (min) | Status |';
+        $lines[] = '| --- | --- | --- | ---: | --- |';
+        foreach (array_slice($tableRows, 0, 30) as $day) {
+            if (! is_array($day)) {
+                continue;
+            }
+            $person = trim((string) ($day['name'] ?? ''));
+            $user = trim((string) ($day['username'] ?? ''));
+            $label = $person !== '' ? $person : 'Employee';
+            if ($user !== '') {
+                $label .= " ({$user})";
+            }
+            $lines[] = sprintf(
+                '| %s | %s | %s | %s | %s |',
+                $this->cell($label),
+                $this->cell((string) ($day['date'] ?? '—')),
+                $this->cell((string) ($day['check_in'] ?? '—')),
+                $this->cell($this->attendanceLateMinutesLabel($day)),
+                $this->cell($this->attendanceStatusLabel($day)),
+            );
+        }
+
+        if (! $lateOnly && $lateRows === [] && $rows !== []) {
+            $lines[] = '';
+            $lines[] = 'No late clock-ins in this sample. Open [/hr/lateness](/hr/lateness) for the full lateness queue.';
+        }
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * @param  array<string, mixed>  $day
+     */
+    protected function attendanceDayIsLate(array $day): bool
+    {
+        if ((string) ($day['status'] ?? '') === 'late') {
+            return true;
+        }
+        $total = (int) ($day['total_late_minutes'] ?? 0);
+        if ($total <= 0) {
+            $total = (int) ($day['late_minutes'] ?? 0) + (int) ($day['lunch_late_minutes'] ?? 0);
+        }
+
+        return $total > 0;
+    }
+
+    /**
+     * @param  array<string, mixed>  $day
+     */
+    protected function attendanceLateMinutesLabel(array $day): string
+    {
+        $total = (int) ($day['total_late_minutes'] ?? 0);
+        if ($total <= 0) {
+            $total = (int) ($day['late_minutes'] ?? 0) + (int) ($day['lunch_late_minutes'] ?? 0);
+        }
+        if ($total <= 0) {
+            return '0';
+        }
+        $parts = [(string) $total];
+        if (! empty($day['lateness_waived'])) {
+            $parts[] = 'waived';
+        }
+
+        return implode(' · ', $parts);
+    }
+
+    /**
+     * @param  array<string, mixed>  $day
+     */
+    protected function attendanceStatusLabel(array $day): string
+    {
+        $status = trim((string) ($day['status'] ?? ''));
+        if ($status === '') {
+            $status = '—';
+        }
+        if (! empty($day['lateness_waived'])) {
+            return $status.' (waived)';
+        }
+
+        return $status;
     }
 
     /**

@@ -9,6 +9,9 @@ class EmployeeCashAdvance extends Model
 {
     use HasFactory;
 
+    /** Balances at or below this are treated as fully repaid for payroll (rounding leftovers). */
+    public const PAYROLL_BALANCE_EPSILON = 0.05;
+
     protected $table = 'employee_cash_advances';
     public $timestamps = false;
 
@@ -59,7 +62,7 @@ class EmployeeCashAdvance extends Model
         if ($amount > 0) {
             $balance = min($balance, $amount);
         }
-        if ($balance <= 0) {
+        if ($balance <= self::PAYROLL_BALANCE_EPSILON) {
             return 0.0;
         }
 

@@ -14,6 +14,7 @@ use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\ErpContext;
 use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -41,6 +42,7 @@ class GetEmployeeAttendanceTool implements AiToolInterface
             .'Use when the user asks whether someone is in, who was late/absent, or an employee\'s attendance. '
             .'Pass employee_name (full name, employee code, or login username). '
             .'Use relative_date=today/yesterday/last_7_days/this_month/last_month, or year_month=YYYY-MM, or from_date/to_date. '
+            .'For "who was late" / unwaived lateness questions, set late_only=true (and unwaived_only=true when they ask for unwaived). '
             .'Never invent attendance — always call this tool. '
             .'Each day includes scheduled shift hours for that weekday — Saturday/Sunday may use alternate shorter hours; '
             .'those are full roster days, not "half-days". '
@@ -77,6 +79,14 @@ class GetEmployeeAttendanceTool implements AiToolInterface
                     'type' => 'string',
                     'description' => 'Range end YYYY-MM-DD (inclusive).',
                 ],
+                'late_only' => [
+                    'type' => 'boolean',
+                    'description' => 'When true, return only late attendance (clock-in or lunch late, or status=late). Use for "who was late".',
+                ],
+                'unwaived_only' => [
+                    'type' => 'boolean',
+                    'description' => 'When true, exclude waived lateness. Use for "unwaived lateness". Implies late_only.',
+                ],
             ],
         ];
     }
@@ -104,12 +114,15 @@ class GetEmployeeAttendanceTool implements AiToolInterface
             return [
                 'error' => true,
                 'message' => 'You do not have permission to view attendance.',
-                'screens' => $this->screens(),
+                'screens' => $this->screens(true),
             ];
         }
 
         [$from, $to] = AiSalesDateResolver::resolve($arguments, $organization);
         $needle = trim((string) ($arguments['employee_name'] ?? ''));
+        $unwaivedOnly = $this->truthy($arguments['unwaived_only'] ?? false);
+        $lateOnly = $unwaivedOnly || $this->truthy($arguments['late_only'] ?? false);
+        $latenessFocus = $lateOnly || $unwaivedOnly;
 
         if ($needle !== '') {
             $resolved = $this->resolveEmployeeByName((int) $organization->id, $needle);
@@ -117,7 +130,9 @@ class GetEmployeeAttendanceTool implements AiToolInterface
                 return array_merge($resolved, [
                     'from_date' => $from,
                     'to_date' => $to,
-                    'screens' => $this->screens(),
+                    'late_only' => $lateOnly,
+                    'unwaived_only' => $unwaivedOnly,
+                    'screens' => $this->screens($latenessFocus),
                 ]);
             }
 
@@ -125,32 +140,52 @@ class GetEmployeeAttendanceTool implements AiToolInterface
             $employee->loadMissing([
                 'shift:id,shift_name,shift_code,start_time,end_time,lunch_minutes,lunch_required,crosses_midnight,work_weekdays,works_saturday,works_sunday,works_public_holidays,use_alternate_hours,alternate_start_time,alternate_end_time,alternate_lunch_minutes,alternate_lunch_required,alternate_crosses_midnight',
             ]);
-            $days = $this->daysForEmployee($user, $organization, (int) $employee->id, $from, $to, $employee->shift);
+            $days = $this->daysForEmployee(
+                $user,
+                $organization,
+                (int) $employee->id,
+                $from,
+                $to,
+                $employee->shift,
+                $lateOnly,
+                $unwaivedOnly,
+            );
 
             return [
                 'from_date' => $from,
                 'to_date' => $to,
+                'late_only' => $lateOnly,
+                'unwaived_only' => $unwaivedOnly,
                 'employee' => $this->presentEmployee($employee),
                 'shift' => $employee->shift ? $employee->shift->presentForAi() : null,
                 'days' => $days,
                 'summary' => $this->summarizeDays($days),
-                'screens' => $this->screens(),
+                'screens' => $this->screens($latenessFocus),
                 'tip' => $days === []
-                    ? 'No attendance rows in this date range. Point the user to /hr/attendance or /hr/attendance/history.'
+                    ? ($lateOnly
+                        ? 'No late rows in this date range. Point the user to /hr/lateness or /hr/attendance/history.'
+                        : 'No attendance rows in this date range. Point the user to /hr/attendance or /hr/attendance/history.')
                     : 'Describe clock-in, clock-out, status, and lateness using the employee name and username — never an id. '
-                        .'Use shift.schedule_by_day. If Saturday/Sunday used alternate hours, say "scheduled Saturday shift" — never "half-day".',
+                        .'Use shift.schedule_by_day. If Saturday/Sunday used alternate hours, say "scheduled Saturday shift" — never "half-day". '
+                        .'Mention waived vs unwaived when lateness_waived is set.',
             ];
         }
 
-        $days = $this->daysForOrganization($user, $organization, $from, $to);
+        $days = $this->daysForOrganization($user, $organization, $from, $to, $lateOnly, $unwaivedOnly);
+        $sampleLimit = $lateOnly ? 40 : 15;
 
         return [
             'from_date' => $from,
             'to_date' => $to,
+            'late_only' => $lateOnly,
+            'unwaived_only' => $unwaivedOnly,
             'summary' => $this->summarizeDays($days),
-            'sample' => array_slice($days, 0, 15),
-            'screens' => $this->screens(),
-            'tip' => 'This is an org snapshot. If the user named a person, call this tool again with employee_name.',
+            'sample' => array_slice($days, 0, $sampleLimit),
+            'screens' => $this->screens($latenessFocus),
+            'tip' => $lateOnly
+                ? 'These rows are late attendance only. List name + username + late minutes. Prefer /hr/lateness for the full queue. Never invent people.'
+                : 'This is an org snapshot. If the user named a person, call this tool again with employee_name. '
+                    .'For "who was late", call again with late_only=true (and unwaived_only=true when asked).',
         ];
     }
 
@@ -164,6 +199,8 @@ class GetEmployeeAttendanceTool implements AiToolInterface
         string $from,
         string $to,
         ?WorkShift $shift = null,
+        bool $lateOnly = false,
+        bool $unwaivedOnly = false,
     ): array {
         $query = EmployeeAttendance::query()
             ->with(['employee.user:id,username,full_name'])
@@ -172,6 +209,7 @@ class GetEmployeeAttendanceTool implements AiToolInterface
             ->whereDate('attendance_date', '>=', $from)
             ->whereDate('attendance_date', '<=', $to);
         $this->access->applyBranchListFilter($query, $user);
+        $this->applyLatenessFilters($query, $lateOnly, $unwaivedOnly);
 
         return $query->orderByDesc('attendance_date')
             ->limit(62)
@@ -183,21 +221,57 @@ class GetEmployeeAttendanceTool implements AiToolInterface
     /**
      * @return list<array<string, mixed>>
      */
-    protected function daysForOrganization(User $user, Organization $organization, string $from, string $to): array
-    {
+    protected function daysForOrganization(
+        User $user,
+        Organization $organization,
+        string $from,
+        string $to,
+        bool $lateOnly = false,
+        bool $unwaivedOnly = false,
+    ): array {
         $query = EmployeeAttendance::query()
             ->with(['employee.user:id,username,full_name', 'employee.shift'])
             ->where('organization_id', $organization->id)
             ->whereDate('attendance_date', '>=', $from)
             ->whereDate('attendance_date', '<=', $to);
         $this->access->applyBranchListFilter($query, $user);
+        $this->applyLatenessFilters($query, $lateOnly, $unwaivedOnly);
 
-        return $query->orderByDesc('attendance_date')
-            ->orderBy('id')
-            ->limit(40)
+        $limit = $lateOnly ? 100 : 40;
+        if ($lateOnly) {
+            $query
+                ->orderByRaw('(COALESCE(late_minutes, 0) + COALESCE(lunch_late_minutes, 0)) DESC')
+                ->orderByDesc('attendance_date')
+                ->orderBy('id');
+        } else {
+            $query->orderByDesc('attendance_date')->orderBy('id');
+        }
+
+        return $query
+            ->limit($limit)
             ->get()
             ->map(fn (EmployeeAttendance $row) => $this->presentDay($row, $row->employee?->shift))
             ->all();
+    }
+
+    /**
+     * @param  Builder<EmployeeAttendance>  $query
+     */
+    protected function applyLatenessFilters(Builder $query, bool $lateOnly, bool $unwaivedOnly): void
+    {
+        if ($lateOnly) {
+            $query->where(function (Builder $inner) {
+                $inner->where('late_minutes', '>', 0)
+                    ->orWhere('lunch_late_minutes', '>', 0)
+                    ->orWhere('status', 'late');
+            });
+        }
+        if ($unwaivedOnly) {
+            $query->where(function (Builder $inner) {
+                $inner->whereNull('lateness_waived')
+                    ->orWhere('lateness_waived', false);
+            });
+        }
     }
 
     /**
@@ -231,6 +305,9 @@ class GetEmployeeAttendanceTool implements AiToolInterface
             && $shift->alternate_end_time
             && $isWeekend;
 
+        $clockInLate = (int) ($row->late_minutes ?? 0);
+        $lunchLate = (int) ($row->lunch_late_minutes ?? 0);
+
         return array_merge($person, [
             'date' => $date,
             'weekday' => $day->format('l'),
@@ -238,7 +315,10 @@ class GetEmployeeAttendanceTool implements AiToolInterface
             'check_in' => $this->formatClock($row->check_in),
             'check_out' => $this->formatClock($row->check_out),
             'hours_worked' => $row->hours_worked !== null ? round((float) $row->hours_worked, 2) : null,
-            'late_minutes' => (int) ($row->late_minutes ?? 0),
+            'late_minutes' => $clockInLate,
+            'lunch_late_minutes' => $lunchLate,
+            'total_late_minutes' => $clockInLate + $lunchLate,
+            'lateness_waived' => (bool) ($row->lateness_waived ?? false),
             'source' => $row->source_label ?: (string) ($row->source ?? ''),
             'scheduled_start' => $scheduled ? $this->formatClock($scheduled['start_time'] ?? null) : null,
             'scheduled_end' => $scheduled ? $this->formatClock($scheduled['end_time'] ?? null) : null,
@@ -258,12 +338,21 @@ class GetEmployeeAttendanceTool implements AiToolInterface
     {
         $counts = [];
         $late = 0;
+        $unwaivedLate = 0;
         $weekendScheduled = 0;
         foreach ($days as $day) {
             $status = (string) ($day['status'] ?? 'unknown');
             $counts[$status] = ($counts[$status] ?? 0) + 1;
-            if ((int) ($day['late_minutes'] ?? 0) > 0 || $status === 'late') {
+            $totalLate = (int) ($day['total_late_minutes'] ?? 0);
+            if ($totalLate <= 0) {
+                $totalLate = (int) ($day['late_minutes'] ?? 0) + (int) ($day['lunch_late_minutes'] ?? 0);
+            }
+            $isLate = $totalLate > 0 || $status === 'late';
+            if ($isLate) {
                 $late++;
+                if (empty($day['lateness_waived'])) {
+                    $unwaivedLate++;
+                }
             }
             if (! empty($day['uses_alternate_shift_hours'])) {
                 $weekendScheduled++;
@@ -274,6 +363,7 @@ class GetEmployeeAttendanceTool implements AiToolInterface
             'records' => count($days),
             'by_status' => $counts,
             'late_or_lateness_records' => $late,
+            'unwaived_late_records' => $unwaivedLate,
             'weekend_or_alternate_shift_days' => $weekendScheduled,
             'note' => $weekendScheduled > 0
                 ? 'Some days used Saturday/Sunday alternate shift hours. Those are full scheduled roster days — do not describe them as half-days.'
@@ -294,15 +384,38 @@ class GetEmployeeAttendanceTool implements AiToolInterface
         return $raw;
     }
 
+    protected function truthy(mixed $value): bool
+    {
+        if (is_bool($value)) {
+            return $value;
+        }
+        if (is_int($value) || is_float($value)) {
+            return (int) $value === 1;
+        }
+        $normalized = strtolower(trim((string) $value));
+
+        return in_array($normalized, ['1', 'true', 'yes', 'on'], true);
+    }
+
     /**
      * @return list<array{label: string, path: string}>
      */
-    protected function screens(): array
+    protected function screens(bool $latenessFocus = false): array
     {
-        return [
+        $screens = [
             ['label' => "Today's attendance", 'path' => '/hr/attendance'],
             ['label' => 'Previous attendance', 'path' => '/hr/attendance/history'],
+            ['label' => 'Lateness', 'path' => '/hr/lateness'],
             ['label' => 'Field attendance', 'path' => '/sales/field-attendance'],
         ];
+        if ($latenessFocus) {
+            return [
+                ['label' => 'Lateness', 'path' => '/hr/lateness'],
+                ['label' => 'Previous attendance', 'path' => '/hr/attendance/history'],
+                ['label' => "Today's attendance", 'path' => '/hr/attendance'],
+            ];
+        }
+
+        return $screens;
     }
 }
