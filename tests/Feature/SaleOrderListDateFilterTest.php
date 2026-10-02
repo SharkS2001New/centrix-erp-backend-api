@@ -872,6 +872,26 @@ class SaleOrderListDateFilterTest extends TestCase
             $ids->contains($processedUnpaid->id),
             'Unpaid stage queue must not pull processed+unpaid rows (those belong on Processed / payment queues).',
         );
+
+        $pendingAmountUnpaid = Sale::query()->create([
+            'order_num' => 993503,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'status' => 'pending',
+            'payment_status' => 'unpaid',
+            'order_total' => 2805,
+            'amount_paid' => 0,
+            'archived' => 0,
+        ]);
+
+        $again = $this->getJson('/api/v1/sales?filter[status]=unpaid&per_page=200')->assertOk();
+        $againIds = collect($again->json('data'))->pluck('id');
+        $this->assertFalse(
+            $againIds->contains($pendingAmountUnpaid->id),
+            'Unpaid workflow queue must not list Pending orders just because amount_paid is 0.',
+        );
     }
 
     public function test_payment_unpaid_queue_includes_workflow_unpaid_with_phantom_amount_paid(): void
