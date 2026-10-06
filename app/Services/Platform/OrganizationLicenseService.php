@@ -64,8 +64,13 @@ class OrganizationLicenseService
         }
 
         $expiresAt = $sub->trial_ends_at ?? $sub->current_period_end;
-        $end = $expiresAt ? Carbon::parse($expiresAt)->endOfDay() : null;
-        $daysRemaining = $end ? (int) Carbon::today()->diffInDays($end, false) : null;
+        // Compare calendar dates (start of day). Using endOfDay() made
+        // Carbon::today()->diffInDays() a tiny negative on the day after expiry,
+        // which (int)-casts to 0 — so expired orgs stayed "active" and could log in.
+        $endDate = $expiresAt ? Carbon::parse($expiresAt)->startOfDay() : null;
+        $daysRemaining = $endDate
+            ? (int) Carbon::today()->startOfDay()->diffInDays($endDate, false)
+            : null;
 
         $status = strtolower((string) $sub->status);
         if (in_array($status, self::ACTIVE_STATUSES, true) && $daysRemaining !== null && $daysRemaining < 0) {
