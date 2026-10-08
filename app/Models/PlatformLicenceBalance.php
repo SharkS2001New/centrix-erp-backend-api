@@ -10,10 +10,12 @@ class PlatformLicenceBalance extends Model
     protected $fillable = [
         'organization_id',
         'balance',
+        'token_balance',
     ];
 
     protected $casts = [
         'balance' => 'decimal:2',
+        'token_balance' => 'integer',
     ];
 
     public function organization(): BelongsTo

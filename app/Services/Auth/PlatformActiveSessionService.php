@@ -98,6 +98,7 @@ class PlatformActiveSessionService
                     'licence_label' => match ($access) {
                         'free' => 'Free plan',
                         'expired' => 'Expired',
+                        'token' => 'Tokens',
                         default => 'Paid',
                     },
                 ]),

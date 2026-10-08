@@ -187,17 +187,21 @@ class PlatformPaybillLicenceService
             'features' => array_merge(['1 year of full Centrix from the day the payment is confirmed'], $unlocked),
         ]];
 
-        $tokenDays = (int) ($paybill['token_pack_days'] ?? 0);
+        $example = $paybill['token_pack_price'] ?? null;
         $offers[] = [
             'id' => 'token',
             'title' => 'Token subscription',
-            'price' => $paybill['token_pack_price'] ?? null,
+            'price' => $example,
             'currency' => $currency,
-            'period' => $tokenDays > 0 ? $tokenDays.' days' : 'A prepaid block of days',
-            'summary' => 'A token is prepaid licence time, not an AI credit. Pay the token amount and Centrix stays open for that many days.',
+            'period' => '1 KES = 1 token',
+            'summary' => 'The shillings you pay become tokens. Paying 500 KES gives the organisation 500 tokens. Any other amount works the same way.',
             'features' => array_merge(
-                [$tokenDays > 0 ? $tokenDays.' days of full Centrix' : 'A short block of full Centrix'],
-                ['Use it when you do not want a monthly or yearly plan'],
+                [
+                    'Each create, update, or delete uses 1 token',
+                    'Reading pages and reports uses 0 tokens',
+                    'Every user spends from the same organisation balance, so more people saving records uses more tokens',
+                    'When the balance reaches 0, only products, customers, suppliers, and sales reports stay open',
+                ],
                 $unlocked,
             ),
         ];
@@ -337,18 +341,10 @@ class PlatformPaybillLicenceService
             ->lockForUpdate()
             ->first();
 
-        $catalogue = $subscription?->plan ? $this->priceCatalogue($subscription->plan) : [];
-        if (! $subscription || ! $subscription->plan || $catalogue === []) {
-            $balanceRow->balance = $balance;
-            $balanceRow->save();
-            $payment->fill([
-                'status' => 'unmatched',
-                'balance_after' => $balance,
-                'note' => $subscription ? 'no_price' : 'no_plan',
-            ])->save();
-
-            return $payment->fresh();
-        }
+        $catalogue = array_values(array_filter(
+            $subscription?->plan ? $this->priceCatalogue($subscription->plan) : [],
+            fn (array $row) => in_array($row['product'], ['monthly', 'yearly'], true),
+        ));
 
         $periodBefore = ($subscription->current_period_end ?? $subscription->trial_ends_at)?->toDateString();
         $appliedAmount = 0.0;
@@ -389,7 +385,30 @@ class PlatformPaybillLicenceService
             'period_end_after' => $products !== []
                 ? $subscription->current_period_end?->toDateString()
                 : null,
-            'note' => $products === [] ? 'awaiting_price' : (count($products) > 1 ? 'stacked' : null),
+            'note' => $products === [] ? null : (count($products) > 1 ? 'stacked' : null),
+        ])->save();
+
+        if ($products === []) {
+            return $this->creditTokensFromBalance($payment, $balanceRow, $balance);
+        }
+
+        return $payment->fresh();
+    }
+
+    protected function creditTokensFromBalance(PlatformLicencePayment $payment, PlatformLicenceBalance $balanceRow, float $moneyBalance): PlatformLicencePayment
+    {
+        $tokens = max(0, (int) round($moneyBalance));
+        $balanceRow->token_balance = (int) $balanceRow->token_balance + $tokens;
+        $balanceRow->balance = 0;
+        $balanceRow->save();
+
+        $payment->fill([
+            'status' => 'applied',
+            'product' => 'token',
+            'days_added' => null,
+            'amount_applied' => $tokens,
+            'balance_after' => 0,
+            'note' => 'tokens',
         ])->save();
 
         return $payment->fresh();

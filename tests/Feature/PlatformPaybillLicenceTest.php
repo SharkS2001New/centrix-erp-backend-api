@@ -55,23 +55,24 @@ class PlatformPaybillLicenceTest extends TestCase
         $this->assertSame($plan->id, $sub->plan_id);
     }
 
-    public function test_admin_phone_partials_stack_into_a_month(): void
+    public function test_amount_that_is_not_a_time_plan_becomes_tokens(): void
     {
         [$org] = $this->seedLicensedOrg('OMEGA', '0712333444', '2026-12-01');
         $this->configurePaybill();
         $service = app(PlatformPaybillLicenceService::class);
 
         $partial = $service->acceptC2b($this->payload('TXP1', 400, '254712333444'));
-        $this->assertSame('unmatched', $partial->status);
-        $this->assertSame('awaiting_price', $partial->note);
+        $this->assertSame('applied', $partial->status);
+        $this->assertSame('token', $partial->product);
         $this->assertSame('admin_phone', $partial->match_method);
+        $this->assertSame(400, (int) $partial->amount_applied);
 
         $rest = $service->acceptC2b($this->payload('TXP2', 1100, '0712333444'));
         $this->assertSame('applied', $rest->status);
-        $this->assertSame('monthly', $rest->product);
+        $this->assertSame('token', $rest->product);
         $sub = PlatformSubscription::query()->where('organization_id', $org->id)->first();
-        $this->assertSame('2026-12-31', $sub->current_period_end->toDateString());
-        $this->assertEquals(0, (float) $rest->balance_after);
+        $this->assertSame('2026-12-01', $sub->current_period_end->toDateString());
+        $this->assertSame(1500, app(\App\Services\Platform\OrganizationLicenseService::class)->tokenBalanceFor($org));
     }
 
     public function test_yearly_amount_and_account_prefix(): void
@@ -98,8 +99,15 @@ class PlatformPaybillLicenceTest extends TestCase
         $token = $service->acceptC2b($this->payload('TXT', 500, 'moon'));
         $this->assertSame('applied', $token->status);
         $this->assertSame('token', $token->product);
+        $this->assertSame(500, (int) $token->amount_applied);
         $sub = PlatformSubscription::query()->where('organization_id', $org->id)->first();
-        $this->assertSame('2026-11-09', $sub->current_period_end->toDateString());
+        $this->assertSame('2026-10-20', $sub->current_period_end->toDateString());
+        $licenses = app(\App\Services\Platform\OrganizationLicenseService::class);
+        $this->assertSame(500, $licenses->tokenBalanceFor($org));
+        $this->assertTrue($licenses->reserveToken($org->id));
+        $this->assertSame(499, $licenses->tokenBalanceFor($org));
+        $licenses->refundToken($org->id);
+        $this->assertSame(500, $licenses->tokenBalanceFor($org));
 
         $unknown = $service->acceptC2b($this->payload('TXU', 1500, 'NOBODY'));
         $this->assertSame('unmatched', $unknown->status);

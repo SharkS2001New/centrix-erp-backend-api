@@ -3,6 +3,7 @@
 namespace App\Services\Platform;
 
 use App\Models\Organization;
+use App\Models\PlatformLicenceBalance;
 use App\Models\PlatformSubscription;
 use App\Models\User;
 use Carbon\Carbon;
@@ -52,7 +53,7 @@ class OrganizationLicenseService
             ->first();
 
         if (! $sub) {
-            return [
+            $missing = [
                 'status' => 'missing',
                 'expires_at' => null,
                 'is_trial' => false,
@@ -60,10 +61,13 @@ class OrganizationLicenseService
                 'warning_days' => self::WARNING_DAYS,
                 'plan_name' => null,
                 'subscription_id' => null,
-                'access' => 'free',
+                'token_balance' => $this->tokenBalanceFor($org),
                 'paybill' => app(PlatformPaybillLicenceService::class)->instructionsFor($org, null),
                 'offers' => app(PlatformPaybillLicenceService::class)->paymentOffers($org, null),
             ];
+            $missing['access'] = $this->accessMode($missing);
+
+            return $missing;
         }
 
         $expiresAt = $sub->trial_ends_at ?? $sub->current_period_end;
@@ -91,6 +95,7 @@ class OrganizationLicenseService
             'warning_days' => self::WARNING_DAYS,
             'plan_name' => $sub->plan?->name,
             'subscription_id' => $sub->id,
+            'token_balance' => $this->tokenBalanceFor($org),
         ];
         $license['access'] = $this->accessMode($license);
         $license['paybill'] = app(PlatformPaybillLicenceService::class)->instructionsFor($org, $sub);
@@ -123,7 +128,7 @@ class OrganizationLicenseService
     }
 
     /**
-     * full = paid licence, free = trial or never paid, expired = period ended.
+     * full = monthly or yearly licence, token = shilling balance, free = trial or unpaid, expired = period ended.
      * Free and expired users stay signed in with a limited set of pages.
      */
     public function accessMode(?array $license): string
@@ -133,7 +138,20 @@ class OrganizationLicenseService
         }
 
         $status = strtolower((string) ($license['status'] ?? ''));
-        if ($status === 'missing') {
+        $calendarPaid = $status !== 'missing'
+            && $status !== 'trialing'
+            && empty($license['is_trial'])
+            && ! $this->isExpired($license);
+
+        if ($calendarPaid) {
+            return 'full';
+        }
+
+        if ((int) ($license['token_balance'] ?? 0) > 0) {
+            return 'token';
+        }
+
+        if ($status === 'missing' || $status === 'trialing' || ! empty($license['is_trial'])) {
             return 'free';
         }
 
@@ -141,11 +159,45 @@ class OrganizationLicenseService
             return 'expired';
         }
 
-        if ($status === 'trialing' || ! empty($license['is_trial'])) {
-            return 'free';
+        return 'full';
+    }
+
+    public function tokenBalanceFor(?Organization $org): int
+    {
+        if (! $org || ! \Illuminate\Support\Facades\Schema::hasTable('platform_licence_balances')) {
+            return 0;
+        }
+        if (! \Illuminate\Support\Facades\Schema::hasColumn('platform_licence_balances', 'token_balance')) {
+            return 0;
         }
 
-        return 'full';
+        return (int) (PlatformLicenceBalance::query()
+            ->where('organization_id', $org->id)
+            ->value('token_balance') ?? 0);
+    }
+
+    /** Spend one token for a create, update, or delete. Returns false when the balance is empty. */
+    public function reserveToken(int $organizationId): bool
+    {
+        if ($organizationId <= 0) {
+            return false;
+        }
+
+        return PlatformLicenceBalance::query()
+            ->where('organization_id', $organizationId)
+            ->where('token_balance', '>=', 1)
+            ->decrement('token_balance') > 0;
+    }
+
+    public function refundToken(int $organizationId): void
+    {
+        if ($organizationId <= 0) {
+            return;
+        }
+
+        PlatformLicenceBalance::query()
+            ->where('organization_id', $organizationId)
+            ->increment('token_balance');
     }
 
     public function needsPayment(?array $license): bool

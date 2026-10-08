@@ -28,6 +28,11 @@ class OrganizationLicenseAccessTest extends TestCase
             'status' => 'active',
             'days_remaining' => -1,
         ]));
+        $this->assertSame('token', $licenses->accessMode([
+            'status' => 'expired',
+            'days_remaining' => -3,
+            'token_balance' => 500,
+        ]));
     }
 
     public function test_limited_routes_allow_catalogue_and_sales_reports_only(): void
