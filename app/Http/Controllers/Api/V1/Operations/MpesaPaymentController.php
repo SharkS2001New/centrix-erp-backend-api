@@ -17,6 +17,7 @@ use App\Models\Till;
 use App\Services\Erp\ErpContext;
 use App\Services\Payments\CentrixPaymentsAvailabilityService;
 use App\Services\Mpesa\MpesaPaybillAccountService;
+use App\Services\Platform\PlatformPaybillLicenceService;
 use App\Services\Mpesa\MpesaPaymentReferenceParser;
 use App\Services\Mpesa\MpesaSettingsResolver;
 use App\Services\MpesaService;
@@ -414,6 +415,15 @@ class MpesaPaymentController extends Controller
     {
         $payload = $this->parseMpesaCallbackPayload($request);
         Log::info('M-Pesa C2B confirmation received', $payload);
+
+        if (app(PlatformPaybillLicenceService::class)->handlesPayload($payload)) {
+            app(PlatformPaybillLicenceService::class)->acceptC2b($payload);
+
+            return response()->json([
+                'ResultCode' => 0,
+                'ResultDesc' => 'Success',
+            ]);
+        }
 
         $transactionId = (string) ($payload['TransID'] ?? $payload['trans_id'] ?? '');
         $amount = (int) round((float) ($payload['TransAmount'] ?? $payload['trans_amount'] ?? 0));

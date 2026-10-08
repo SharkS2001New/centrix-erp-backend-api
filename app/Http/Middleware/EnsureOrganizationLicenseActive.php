@@ -4,6 +4,7 @@ namespace App\Http\Middleware;
 
 use App\Services\Platform\OrganizationLicenseService;
 use Closure;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -34,8 +35,22 @@ class EnsureOrganizationLicenseActive
             $org = $user->organization;
         }
 
-        $this->licenses->assertUsable($org, $user);
+        $license = $this->licenses->resolveForOrganization($org);
+        if (! $this->licenses->needsPayment($license)) {
+            return $next($request);
+        }
 
-        return $next($request);
+        if ($this->licenses->allowsLimitedRoute($path)) {
+            return $next($request);
+        }
+
+        $mode = $this->licenses->accessMode($license);
+        throw new HttpResponseException(response()->json([
+            'message' => $mode === 'expired'
+                ? 'This Centrix licence has expired. Pay on the Centrix Paybill to restore the rest of the system. Products, customers, suppliers, and sales reports stay available.'
+                : 'This organisation is on the free Centrix plan. Pay on the Centrix Paybill to open the rest of the system. Products, customers, suppliers, and sales reports stay available.',
+            'code' => 'organization_license_upgrade_required',
+            'license' => $license,
+        ], 403));
     }
 }

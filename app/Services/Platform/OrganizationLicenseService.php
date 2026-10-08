@@ -60,6 +60,9 @@ class OrganizationLicenseService
                 'warning_days' => self::WARNING_DAYS,
                 'plan_name' => null,
                 'subscription_id' => null,
+                'access' => 'free',
+                'paybill' => app(PlatformPaybillLicenceService::class)->instructionsFor($org, null),
+                'offers' => app(PlatformPaybillLicenceService::class)->paymentOffers($org, null),
             ];
         }
 
@@ -80,7 +83,7 @@ class OrganizationLicenseService
             $status = 'expired';
         }
 
-        return [
+        $license = [
             'status' => $status ?: 'active',
             'expires_at' => $expiresAt?->toDateString(),
             'is_trial' => (bool) ($sub->is_trial || $status === 'trialing'),
@@ -89,6 +92,11 @@ class OrganizationLicenseService
             'plan_name' => $sub->plan?->name,
             'subscription_id' => $sub->id,
         ];
+        $license['access'] = $this->accessMode($license);
+        $license['paybill'] = app(PlatformPaybillLicenceService::class)->instructionsFor($org, $sub);
+        $license['offers'] = app(PlatformPaybillLicenceService::class)->paymentOffers($org, $sub);
+
+        return $license;
     }
 
     /** True when the org must be locked out (no usable active subscription). */
@@ -113,6 +121,100 @@ class OrganizationLicenseService
 
         return false;
     }
+
+    /**
+     * full = paid licence, free = trial or never paid, expired = period ended.
+     * Free and expired users stay signed in with a limited set of pages.
+     */
+    public function accessMode(?array $license): string
+    {
+        if ($license === null) {
+            return 'full';
+        }
+
+        $status = strtolower((string) ($license['status'] ?? ''));
+        if ($status === 'missing') {
+            return 'free';
+        }
+
+        if ($this->isExpired($license)) {
+            return 'expired';
+        }
+
+        if ($status === 'trialing' || ! empty($license['is_trial'])) {
+            return 'free';
+        }
+
+        return 'full';
+    }
+
+    public function needsPayment(?array $license): bool
+    {
+        return in_array($this->accessMode($license), ['free', 'expired'], true);
+    }
+
+    /** Routes a free or expired organisation may still call. Shop M-Pesa stays separate. */
+    public function allowsLimitedRoute(string $path): bool
+    {
+        $path = ltrim($path, '/');
+        if (str_starts_with($path, 'api/v1/')) {
+            $path = substr($path, strlen('api/v1/'));
+        }
+        $path = trim($path, '/');
+
+        if ($path === '' || str_starts_with($path, 'auth/')) {
+            return true;
+        }
+
+        foreach ([
+            'erp/capabilities',
+            'erp/organization/profile',
+            'erp/organization/logo',
+            'erp/organization/subscription',
+            'products',
+            'categories',
+            'sub-categories',
+            'uoms',
+            'customers',
+            'suppliers',
+            'branches',
+            'notifications',
+        ] as $prefix) {
+            if ($path === $prefix || str_starts_with($path, $prefix.'/')) {
+                return true;
+            }
+        }
+
+        if ($path === 'reports') {
+            return true;
+        }
+
+        if (preg_match('#^reports/([a-z0-9\-]+)$#', $path, $matches) === 1) {
+            return in_array($matches[1], self::LIMITED_SALES_REPORTS, true);
+        }
+
+        return false;
+    }
+
+    /** @var list<string> */
+    public const LIMITED_SALES_REPORTS = [
+        'daily-sales',
+        'sales-by-product',
+        'sales-by-supplier',
+        'sales-by-user',
+        'sales-by-customer',
+        'sales-by-channel',
+        'sales-pipeline',
+        'vat-collected',
+        'category-sales',
+        'discount-summary',
+        'payment-collection',
+        'credit-outstanding',
+        'till-sessions',
+        'eod-cashier',
+        'eod-report',
+        'returns',
+    ];
 
     public function assertUsable(?Organization $org, ?User $user = null): void
     {

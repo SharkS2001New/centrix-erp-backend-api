@@ -89,6 +89,7 @@ use App\Http\Controllers\Api\V1\PlatformContractController;
 use App\Http\Controllers\Api\V1\PlatformMarketingPortfolioController;
 use App\Http\Controllers\Api\V1\PlatformMailController;
 use App\Http\Controllers\Api\V1\PlatformPlanController;
+use App\Http\Controllers\Api\V1\PlatformPaybillController;
 use App\Http\Controllers\Api\V1\PlatformSubscriptionController;
 use App\Http\Controllers\Api\V1\LegacyImportConverterController;
 use App\Http\Controllers\Api\V1\PlatformDatabaseBackupController;
@@ -519,6 +520,13 @@ Route::prefix('v1')->group(function () {
         Route::delete('admin/platform-invoices/{invoice}', [PlatformInvoiceController::class, 'destroy'])
             ->middleware(['erp.super_admin'])
             ->whereNumber('invoice');
+
+        Route::get('admin/platform-paybill', [PlatformPaybillController::class, 'show'])
+            ->middleware(['erp.super_admin']);
+        Route::put('admin/platform-paybill', [PlatformPaybillController::class, 'update'])
+            ->middleware(['erp.super_admin']);
+        Route::get('admin/platform-licence-payments', [PlatformPaybillController::class, 'payments'])
+            ->middleware(['erp.super_admin']);
 
         Route::prefix('admin/platform-plans')
             ->middleware(['erp.super_admin'])

@@ -7,6 +7,7 @@ use App\Models\PersonalAccessToken;
 use App\Models\User;
 use App\Services\Erp\IndustryRegistry;
 use App\Services\Erp\WorkspaceSessionLabel;
+use App\Services\Platform\OrganizationLicenseService;
 use App\Support\CentrixAgentServiceUser;
 use App\Support\LocalAgentTokens;
 use Illuminate\Support\Carbon;
@@ -86,10 +87,20 @@ class PlatformActiveSessionService
             ->get()
             ->keyBy('id');
 
+        $licenses = app(OrganizationLicenseService::class);
         $byOrg = [];
         foreach ($organizations as $org) {
+            $license = $licenses->resolveForOrganization($org);
+            $access = $licenses->accessMode($license);
             $byOrg[$org->id] = [
-                'organization' => $org->only(['id', 'company_code', 'org_name']),
+                'organization' => array_merge($org->only(['id', 'company_code', 'org_name']), [
+                    'licence_access' => $access,
+                    'licence_label' => match ($access) {
+                        'free' => 'Free plan',
+                        'expired' => 'Expired',
+                        default => 'Paid',
+                    },
+                ]),
                 'sessions' => [],
             ];
         }
@@ -132,6 +143,8 @@ class PlatformActiveSessionService
                 'last_active_at' => ($token->last_used_at ?? $token->updated_at)?->toIso8601String(),
                 'session_started_at' => $token->created_at?->toIso8601String(),
                 'is_user_active' => (bool) $user->is_active,
+                'licence_access' => $byOrg[$orgId]['organization']['licence_access'],
+                'licence_label' => $byOrg[$orgId]['organization']['licence_label'],
             ];
         }
 

@@ -9,7 +9,9 @@ class PlatformPlan extends Model
 {
     protected $fillable = [
         'name', 'code', 'description', 'interval', 'license_basis',
-        'price', 'first_payment_price', 'renewal_price', 'currency',
+        'price', 'first_payment_price', 'renewal_price',
+        'monthly_price', 'yearly_price', 'token_pack_price', 'token_pack_days',
+        'currency',
         'seat_limit', 'workspace_keys', 'module_keys', 'is_active',
         'auto_invoice_template_id',
     ];
@@ -18,6 +20,10 @@ class PlatformPlan extends Model
         'price' => 'decimal:2',
         'first_payment_price' => 'decimal:2',
         'renewal_price' => 'decimal:2',
+        'monthly_price' => 'decimal:2',
+        'yearly_price' => 'decimal:2',
+        'token_pack_price' => 'decimal:2',
+        'token_pack_days' => 'integer',
         'workspace_keys' => 'array',
         'module_keys' => 'array',
         'is_active' => 'boolean',
