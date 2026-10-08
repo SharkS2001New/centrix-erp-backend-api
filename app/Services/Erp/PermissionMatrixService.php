@@ -344,7 +344,7 @@ class PermissionMatrixService
             return array_map('intval', array_keys($enabled));
         }
 
-        return Permission::query()
+        $ids = Permission::query()
             ->get()
             ->filter(function (Permission $permission) use ($enabled, $industryModules) {
                 if (! isset($enabled[(int) $permission->id])) {
@@ -359,6 +359,61 @@ class PermissionMatrixService
             ->map(fn ($id) => (int) $id)
             ->values()
             ->all();
+
+        return self::withoutDisabledBackofficeSectionPermissions($ids, $gate, $industry);
+    }
+
+    /**
+     * Drop permission ids that belong only to a Backoffice sidebar section the org turned off.
+     * The same permission stays allowed when another application (for example Distribution) still exposes it.
+     *
+     * @param  list<int>  $ids
+     * @return list<int>
+     */
+    public static function withoutDisabledBackofficeSectionPermissions(
+        array $ids,
+        CapabilityGate $gate,
+        string $industry,
+    ): array {
+        $organization = $gate->organization();
+        if (! $organization || $ids === []) {
+            return $ids;
+        }
+
+        $sections = BackofficeSections::forOrganization($organization);
+        if (! in_array(false, $sections, true)) {
+            return $ids;
+        }
+
+        $outside = [];
+        foreach (self::applicationsGroupedForUi($gate, false, $industry) as $application) {
+            if (($application['id'] ?? '') === 'backoffice') {
+                continue;
+            }
+            foreach ($application['modules'] ?? [] as $module) {
+                foreach ($module['features'] ?? [] as $feature) {
+                    foreach ($feature['permissions'] ?? [] as $permission) {
+                        $outside[(int) ($permission['id'] ?? 0)] = true;
+                    }
+                }
+            }
+        }
+
+        $byId = Permission::query()->whereIn('id', $ids)->get()->keyBy('id');
+        $kept = [];
+        foreach ($ids as $id) {
+            $permission = $byId->get($id);
+            if (! $permission) {
+                continue;
+            }
+            $section = BackofficeSections::sectionForPermissionCode((string) $permission->permission_code);
+            if ($section !== null && ($sections[$section] ?? true) === false && ! isset($outside[$id])) {
+                continue;
+            }
+            $kept[] = (int) $id;
+        }
+
+        return $kept;
     }
 
     /**
@@ -520,6 +575,16 @@ class PermissionMatrixService
 
             if ($modules === []) {
                 continue;
+            }
+
+            if ($appId === 'backoffice' && $gate?->organization()) {
+                $modules = BackofficeSections::filterApplicationModules(
+                    $modules,
+                    BackofficeSections::forOrganization($gate->organization()),
+                );
+                if ($modules === []) {
+                    continue;
+                }
             }
 
             $applications[] = [

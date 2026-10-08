@@ -19,10 +19,15 @@ class OrganizationLicenseAccessTest extends TestCase
         $this->assertSame('free', $licenses->accessMode([
             'status' => 'missing',
         ]));
-        $this->assertSame('free', $licenses->accessMode([
+        $this->assertSame('trial', $licenses->accessMode([
             'status' => 'trialing',
             'is_trial' => true,
             'days_remaining' => 5,
+        ]));
+        $this->assertSame('expired', $licenses->accessMode([
+            'status' => 'expired',
+            'is_trial' => true,
+            'days_remaining' => -1,
         ]));
         $this->assertSame('expired', $licenses->accessMode([
             'status' => 'active',
@@ -32,6 +37,16 @@ class OrganizationLicenseAccessTest extends TestCase
             'status' => 'expired',
             'days_remaining' => -3,
             'token_balance' => 500,
+        ]));
+        $this->assertFalse($licenses->needsPayment([
+            'status' => 'trialing',
+            'is_trial' => true,
+            'days_remaining' => 5,
+        ]));
+        $this->assertTrue($licenses->needsPayment([
+            'status' => 'expired',
+            'is_trial' => true,
+            'days_remaining' => -1,
         ]));
     }
 

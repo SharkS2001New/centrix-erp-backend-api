@@ -204,6 +204,12 @@ class OrganizationPlatformConfigService
             $nextSales['enable_backoffice_order_edit'] = (bool) $salesPlatform['enable_backoffice_order_edit'];
         }
 
+        if (array_key_exists('backoffice_sections', $salesPlatform) && is_array($salesPlatform['backoffice_sections'])) {
+            $nextSales['backoffice_sections'] = \App\Services\Erp\BackofficeSections::normalize(
+                $salesPlatform['backoffice_sections'],
+            );
+        }
+
         if (array_key_exists('edit_order_statuses', $salesPlatform)) {
             $nextSales['edit_order_statuses'] = $this->normalizeRequiredActionStatuses(
                 $salesPlatform['edit_order_statuses'],
@@ -619,6 +625,7 @@ class OrganizationPlatformConfigService
             'append_same_day_customer_orders' => false,
             'enable_backoffice_order_edit' => true,
             'backoffice_order_edit_layout' => 'modern',
+            'backoffice_sections' => \App\Services\Erp\BackofficeSections::DEFAULTS,
             'reserve_stock_on_cart' => true,
             'cart_reservation_ttl_minutes' => 15,
             'mobile_cart_reservation_ttl_minutes' => 30,
@@ -732,6 +739,7 @@ class OrganizationPlatformConfigService
             'pos_combine_identical_lines' => ($sales['pos_combine_identical_lines'] ?? true) !== false,
             'append_same_day_customer_orders' => (bool) ($sales['append_same_day_customer_orders'] ?? false),
             'enable_backoffice_order_edit' => (bool) ($sales['enable_backoffice_order_edit'] ?? true),
+            'backoffice_sections' => \App\Services\Erp\BackofficeSections::forOrganization($org),
             'edit_order_statuses' => $this->normalizeRequiredActionStatuses(
                 $sales['edit_order_statuses'] ?? null,
                 config('erp.module_settings_defaults.sales.edit_order_statuses', ['booked', 'pending', 'editable']),

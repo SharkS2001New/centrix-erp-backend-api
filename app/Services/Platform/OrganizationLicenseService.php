@@ -62,6 +62,7 @@ class OrganizationLicenseService
                 'plan_name' => null,
                 'subscription_id' => null,
                 'token_balance' => $this->tokenBalanceFor($org),
+                'modules' => [],
                 'paybill' => app(PlatformPaybillLicenceService::class)->instructionsFor($org, null),
                 'offers' => app(PlatformPaybillLicenceService::class)->paymentOffers($org, null),
             ];
@@ -96,6 +97,7 @@ class OrganizationLicenseService
             'plan_name' => $sub->plan?->name,
             'subscription_id' => $sub->id,
             'token_balance' => $this->tokenBalanceFor($org),
+            'modules' => $this->licensedModules($sub),
         ];
         $license['access'] = $this->accessMode($license);
         $license['paybill'] = app(PlatformPaybillLicenceService::class)->instructionsFor($org, $sub);
@@ -128,7 +130,9 @@ class OrganizationLicenseService
     }
 
     /**
-     * full = monthly or yearly licence, token = shilling balance, free = trial or unpaid, expired = period ended.
+     * trial = free trial still inside its dates, full system.
+     * full = paid monthly or yearly. token = shilling balance.
+     * free = no subscription. expired = trial or paid period ended.
      * Free and expired users stay signed in with a limited set of pages.
      */
     public function accessMode(?array $license): string
@@ -138,9 +142,14 @@ class OrganizationLicenseService
         }
 
         $status = strtolower((string) ($license['status'] ?? ''));
+        $onTrial = $status === 'trialing' || ! empty($license['is_trial']);
+
+        if ($onTrial && ! $this->isExpired($license)) {
+            return 'trial';
+        }
+
         $calendarPaid = $status !== 'missing'
-            && $status !== 'trialing'
-            && empty($license['is_trial'])
+            && ! $onTrial
             && ! $this->isExpired($license);
 
         if ($calendarPaid) {
@@ -151,7 +160,7 @@ class OrganizationLicenseService
             return 'token';
         }
 
-        if ($status === 'missing' || $status === 'trialing' || ! empty($license['is_trial'])) {
+        if ($status === 'missing') {
             return 'free';
         }
 
@@ -160,6 +169,25 @@ class OrganizationLicenseService
         }
 
         return 'full';
+    }
+
+    /** Applications on the plan the organisation is paying to keep. */
+    public function licensedModules(?PlatformSubscription $subscription): array
+    {
+        $keys = $subscription?->workspace_keys ?? $subscription?->plan?->workspace_keys ?? [];
+        if (! is_array($keys)) {
+            return [];
+        }
+
+        $modules = [];
+        foreach ($keys as $key) {
+            $id = strtolower(trim((string) $key));
+            if ($id !== '') {
+                $modules[] = $id;
+            }
+        }
+
+        return array_values(array_unique($modules));
     }
 
     public function tokenBalanceFor(?Organization $org): int

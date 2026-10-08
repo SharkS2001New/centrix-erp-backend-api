@@ -96,6 +96,7 @@ class PlatformActiveSessionService
                 'organization' => array_merge($org->only(['id', 'company_code', 'org_name']), [
                     'licence_access' => $access,
                     'licence_label' => match ($access) {
+                        'trial' => 'Free trial',
                         'free' => 'Free plan',
                         'expired' => 'Expired',
                         'token' => 'Tokens',

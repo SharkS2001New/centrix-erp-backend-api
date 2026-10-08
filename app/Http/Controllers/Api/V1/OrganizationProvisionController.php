@@ -781,6 +781,8 @@ class OrganizationProvisionController extends Controller
             'sales_platform.pos_combine_identical_lines' => 'sometimes|boolean',
             'sales_platform.append_same_day_customer_orders' => 'sometimes|boolean',
             'sales_platform.enable_backoffice_order_edit' => 'sometimes|boolean',
+            'sales_platform.backoffice_sections' => 'sometimes|array',
+            'sales_platform.backoffice_sections.*' => 'sometimes|boolean',
             'sales_platform.enable_mpesa_stk' => 'sometimes|boolean',
             'sales_platform.enable_equity_bank' => 'sometimes|boolean',
             'sales_platform.enable_kra_integration' => 'sometimes|boolean',
