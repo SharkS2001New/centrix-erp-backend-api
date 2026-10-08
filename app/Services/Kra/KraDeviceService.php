@@ -1579,7 +1579,7 @@ class KraDeviceService
             }
         }
 
-        $signatureLink = $this->firstNonEmptyString(
+        $signatureLink = $this->sanitizeEtimsQrPayload($this->firstNonEmptyString(
             $responseData['signature_link'] ?? null,
             $responseData['Signature Link'] ?? null,
             $responseData['signatureLink'] ?? null,
@@ -1593,7 +1593,24 @@ class KraDeviceService
             $responseData['verificationUrl'] ?? null,
             $responseData['InvoiceUrl'] ?? null,
             $responseData['invoice_url'] ?? null,
-        );
+        ));
+
+        $receiptSignature = $responseData['Receipt Signature']
+            ?? $responseData['receipt_signature']
+            ?? $responseData['signature']
+            ?? null;
+
+        // Device often returns the scannable eTIMS string as Receipt Signature
+        // (sometimes with a junk "úb" year prefix) and leaves signature_link empty.
+        if (! $this->looksLikeEtimsQrPayload($signatureLink)) {
+            $fromReceipt = $this->sanitizeEtimsQrPayload($receiptSignature);
+            if ($this->looksLikeEtimsQrPayload($fromReceipt)) {
+                $signatureLink = $fromReceipt;
+                $receiptSignature = null;
+            }
+        } elseif ($this->looksLikeEtimsQrPayload($receiptSignature)) {
+            $receiptSignature = null;
+        }
 
         return [
             'success' => $responseData['success'] ?? false,
@@ -1606,13 +1623,45 @@ class KraDeviceService
             'scu_id' => $responseData['scu_id'] ?? null,
             'cu_inv_no' => $responseData['cu-inv-no'] ?? null,
             'internal_data' => $responseData['internal-data'] ?? null,
-            'receipt_signature' => $responseData['Receipt Signature']
-                ?? $responseData['receipt_signature']
-                ?? $responseData['signature']
-                ?? null,
+            'receipt_signature' => $receiptSignature,
             'signature_link' => $signatureLink,
             'version' => $responseData['version'] ?? null,
         ];
+    }
+
+    /**
+     * Comstore sometimes replaces the "20" year prefix with junk bytes (prints as "úb26-10-08").
+     * Recover the scannable payload so receipts can draw a QR instead of the raw string.
+     */
+    public function sanitizeEtimsQrPayload(mixed $raw): ?string
+    {
+        $text = trim((string) preg_replace('/\s+/u', ' ', (string) ($raw ?? '')));
+        $text = preg_replace('/[\x00-\x1F\x7F]/', '', $text) ?? $text;
+        $text = trim($text);
+        if ($text === '') {
+            return null;
+        }
+
+        if (preg_match('/(20\d{2}-\d{2}-\d{2}\s+\d{1,2}:\d{2}\s+\S+\s+\S+\s+https:\/\/\S+)/i', $text, $full)) {
+            return rtrim($full[1], '),.;');
+        }
+
+        if (preg_match('/(\d{2}-\d{2}-\d{2}\s+\d{1,2}:\d{2}\s+\S+\s+\S+\s+https:\/\/\S+)/i', $text, $short)) {
+            return '20'.rtrim($short[1], '),.;');
+        }
+
+        if (preg_match('/https:\/\/\S+/i', $text, $url)) {
+            return rtrim($url[0], '),.;');
+        }
+
+        return $text;
+    }
+
+    public function looksLikeEtimsQrPayload(mixed $raw): bool
+    {
+        $text = $this->sanitizeEtimsQrPayload($raw);
+
+        return is_string($text) && $text !== '' && (bool) preg_match('/https:\/\/\S+/i', $text);
     }
 
     protected function firstNonEmptyString(mixed ...$values): ?string
