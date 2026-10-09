@@ -7,7 +7,6 @@ use App\Models\Branch;
 use App\Models\User;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\CapabilityGate;
-use App\Services\Legacy\OrganizationLegacyArchiveService;
 use Illuminate\Http\Request;
 
 class ManagerReportCatalogService
@@ -139,7 +138,6 @@ class ManagerReportCatalogService
         'driver-trip-loads' => 'reports.dispatch_trips.view',
         'driver-deliveries' => 'reports.driver_deliveries.view',
         'payroll-summary' => 'reports.payroll_summary.view',
-        'legacy-archive' => 'reports.legacy_archive.view',
     ];
 
     /** @var list<array{id: string, title: string, description: string, keys: list<string>}> */
@@ -258,14 +256,13 @@ class ManagerReportCatalogService
         }
 
         $multiBranch = $this->organizationHasMultipleBranches($user);
-        $legacyEnabled = $this->legacyArchiveEnabled($user, $gate);
 
         $visibleKeys = [];
         foreach ($byKey as $key => $item) {
             if (in_array($key, self::MOBILE_EXCLUDED_REPORT_KEYS, true)) {
                 continue;
             }
-            if (! $this->reportVisibleForOrg($key, $gate, $multiBranch, $legacyEnabled)) {
+            if (! $this->reportVisibleForOrg($key, $gate, $multiBranch)) {
                 continue;
             }
             if (! $this->userCanViewReport($user, $key, $gate)) {
@@ -350,13 +347,7 @@ class ManagerReportCatalogService
         string $key,
         CapabilityGate $gate,
         bool $multiBranch,
-        bool $legacyEnabled,
     ): bool {
-        // Show only report families for modules enabled on this organization.
-        if ($key === 'legacy-archive' && ! $legacyEnabled) {
-            return false;
-        }
-
         if (in_array($key, self::MULTI_BRANCH_REPORT_KEYS, true) && ! $multiBranch) {
             return false;
         }
@@ -467,15 +458,5 @@ class ManagerReportCatalogService
         return Branch::query()
             ->where('organization_id', $user->organization_id)
             ->count() > 1;
-    }
-
-    protected function legacyArchiveEnabled(User $user, CapabilityGate $gate): bool
-    {
-        $org = $gate->organization() ?? $user->organization;
-        if (! $org) {
-            return false;
-        }
-
-        return app(OrganizationLegacyArchiveService::class)->forOrganization($org)['enabled'] ?? false;
     }
 }

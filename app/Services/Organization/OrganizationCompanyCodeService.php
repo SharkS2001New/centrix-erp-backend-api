@@ -38,18 +38,6 @@ class OrganizationCompanyCodeService
 
             $org->company_code = $newCode;
             $org->company_code_aliases = array_values(array_unique($aliases));
-
-            $moduleSettings = $org->module_settings ?? [];
-            $legacyArchive = is_array($moduleSettings['legacy_archive'] ?? null)
-                ? $moduleSettings['legacy_archive']
-                : [];
-
-            if (($legacyArchive['enabled'] ?? false) && blank($legacyArchive['legacy_company_code'] ?? null)) {
-                $legacyArchive['legacy_company_code'] = $oldCode;
-                $moduleSettings['legacy_archive'] = $legacyArchive;
-                $org->module_settings = $moduleSettings;
-            }
-
             $org->save();
 
             return $org->fresh();

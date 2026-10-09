@@ -15,8 +15,6 @@ use App\Services\Inventory\StockCostCalculation;
 use App\Services\Inventory\StockUomDisplayService;
 use App\Services\Inventory\StockValuationService;
 use App\Models\Uom;
-use App\Services\Legacy\LegacyArchiveReader;
-use App\Services\Legacy\OrganizationLegacyArchiveService;
 use App\Services\LpoModuleService;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
@@ -134,7 +132,6 @@ class ReportController extends Controller
                 ['key' => 'sales-by-customer', 'path' => '/reports/sales-by-customer', 'label' => 'Sales by customer'],
                 ['key' => 'sales-by-channel', 'path' => '/reports/sales-by-channel', 'label' => 'Sales by channel & payment status'],
                 ['key' => 'daily-sales', 'path' => '/reports/daily-sales', 'label' => 'Daily sales summary'],
-                ['key' => 'legacy-archive', 'path' => '/reports/legacy-archive', 'label' => 'Legacy sales archive (read-only)'],
                 ['key' => 'mobile-route-sales', 'path' => '/reports/mobile-route-sales', 'label' => 'Route order sales'],
                 ['key' => 'sales-pipeline', 'path' => '/reports/sales-pipeline', 'label' => 'Open orders pipeline'],
                 ['key' => 'vat-collected', 'path' => '/reports/vat-collected', 'label' => 'VAT collected'],
@@ -3422,83 +3419,6 @@ class ReportController extends Controller
                 ->where('p.subcategory_id', $subcategoryId)
                 ->whereNull('p.deleted_at');
         });
-    }
-
-    /**
-     * @param  callable(\App\Models\Organization, ?\Carbon\Carbon, ?\Carbon\Carbon, int, int): array{data: list<array<string, mixed>>, meta: array<string, mixed>}  $legacyRowsProvider
-     */
-    protected function withLegacyArchiveRows(Request $request, $paginator, callable $legacyRowsProvider)
-    {
-        $org = $this->erp->resolveOrganization($request);
-        $archive = app(LegacyArchiveReader::class);
-
-        if (! $archive->isAvailable($org)) {
-            return response()->json(array_merge($paginator->toArray(), [
-                'legacy_archive' => [
-                    'available' => false,
-                    'message' => 'Legacy archive is not enabled or not reachable for this organization.',
-                ],
-            ]));
-        }
-
-        $from = $request->filled('from_date')
-            ? AppTimezone::parseDateStart((string) $request->input('from_date'))
-            : null;
-        $to = $request->filled('to_date')
-            ? AppTimezone::parseDateEnd((string) $request->input('to_date'))
-            : null;
-
-        $legacyPage = max((int) $request->input('legacy_page', $request->input('page', 1)), 1);
-        $legacyPerPage = min(max((int) $request->input('per_page', 20), 1), 200);
-
-        $payload = $paginator->toArray();
-        $label = app(OrganizationLegacyArchiveService::class)->forOrganization($org)['label'] ?? 'LightStores archive';
-
-        if (! $from || ! $to) {
-            $payload['legacy_archive'] = [
-                'available' => true,
-                'label' => $label,
-                'requires_date_range' => true,
-                'message' => 'Provide from_date and to_date to load legacy archive rows.',
-                'data' => [],
-                'meta' => [
-                    'current_page' => 1,
-                    'per_page' => $legacyPerPage,
-                    'total' => 0,
-                    'last_page' => 1,
-                ],
-            ];
-
-            return response()->json($payload);
-        }
-
-        if (! $archive->shouldMergeForRange($org, $from, $to)) {
-            $payload['legacy_archive'] = [
-                'available' => true,
-                'label' => $label,
-                'cutover_date' => $archive->cutoverDate($org)?->toDateString(),
-                'data' => [],
-                'meta' => [
-                    'current_page' => 1,
-                    'per_page' => $legacyPerPage,
-                    'total' => 0,
-                    'last_page' => 1,
-                ],
-            ];
-
-            return response()->json($payload);
-        }
-
-        $legacyResult = $legacyRowsProvider($org, $from, $to, $legacyPage, $legacyPerPage);
-        $payload['legacy_archive'] = [
-            'available' => true,
-            'label' => $label,
-            'cutover_date' => $archive->cutoverDate($org)?->toDateString(),
-            'data' => $legacyResult['data'],
-            'meta' => $legacyResult['meta'],
-        ];
-
-        return response()->json($payload);
     }
 
     /** @param list<string> $allowedCols */

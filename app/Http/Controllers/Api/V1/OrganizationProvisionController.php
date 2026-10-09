@@ -20,6 +20,7 @@ use App\Services\Auth\UsernameValidator;
 use App\Services\Erp\ModuleRegistry;
 use App\Services\Erp\ApplicationProvisioner;
 use App\Services\Erp\IndustryRegistry;
+use App\Services\Erp\SetupProfileMenuService;
 use App\Services\Ai\AiSettingsResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -71,6 +72,7 @@ class OrganizationProvisionController extends Controller
     /** GET /api/v1/admin/organizations/provision-options — module presets for provisioning */
     public function options()
     {
+        $setupMenus = app(SetupProfileMenuService::class);
         $tenantProfiles = collect(config('erp.profiles', []))
             ->except('platform')
             ->map(fn (array $profile, string $key) => [
@@ -79,6 +81,7 @@ class OrganizationProvisionController extends Controller
                 'industry' => $profile['industry'] ?? IndustryRegistry::industryForProfile($key),
                 'modules' => $profile['modules'] ?? [],
                 'applications' => $this->applications->applicationsFromProfileModules($profile['modules'] ?? []),
+                'menu_groups' => $setupMenus->forProfile($key),
                 'application_ids' => array_key_exists('application_ids', $profile)
                     ? $profile['application_ids']
                     : (
@@ -783,6 +786,10 @@ class OrganizationProvisionController extends Controller
             'sales_platform.enable_backoffice_order_edit' => 'sometimes|boolean',
             'sales_platform.backoffice_sections' => 'sometimes|array',
             'sales_platform.backoffice_sections.*' => 'sometimes|boolean',
+            'sales_platform.hr_sections' => 'sometimes|array',
+            'sales_platform.hr_sections.*' => 'sometimes|boolean',
+            'sales_platform.accounting_sections' => 'sometimes|array',
+            'sales_platform.accounting_sections.*' => 'sometimes|boolean',
             'sales_platform.enable_mpesa_stk' => 'sometimes|boolean',
             'sales_platform.enable_equity_bank' => 'sometimes|boolean',
             'sales_platform.enable_kra_integration' => 'sometimes|boolean',

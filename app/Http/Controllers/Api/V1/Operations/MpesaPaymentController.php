@@ -344,6 +344,18 @@ class MpesaPaymentController extends Controller
             : null;
 
         if (! $stkRequest) {
+            $values = [];
+            foreach ($callback->CallbackMetadata->Item ?? [] as $item) {
+                if (isset($item->Name)) {
+                    $values[$item->Name] = $item->Value ?? null;
+                }
+            }
+            app(PlatformPaybillLicenceService::class)->acceptStkResult(
+                $checkoutRequestId ? (string) $checkoutRequestId : null,
+                $resultCode,
+                $values,
+            );
+
             return response()->json(['ResultCode' => 0, 'ResultDesc' => 'Accepted']);
         }
 

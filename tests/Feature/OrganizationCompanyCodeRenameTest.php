@@ -57,28 +57,4 @@ class OrganizationCompanyCodeRenameTest extends TestCase
         ])->assertOk()
             ->assertJsonPath('organization.company_code', 'MOON');
     }
-
-    public function test_legacy_archive_company_code_is_preserved_when_renaming_with_archive_enabled(): void
-    {
-        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
-        Sanctum::actingAs($superAdmin);
-
-        $org = Organization::where('company_code', 'DEMO')->firstOrFail();
-        $settings = $org->module_settings ?? [];
-        $settings['legacy_archive'] = [
-            'enabled' => true,
-            'database' => 'lightstores_demo',
-            'label' => 'Demo legacy',
-        ];
-        $org->forceFill(['module_settings' => $settings])->save();
-
-        $this->patchJson("/api/v1/admin/organizations/{$org->id}/company-code", [
-            'company_code' => 'DEMOSHOP',
-        ])->assertOk();
-
-        $org->refresh();
-        $this->assertSame('DEMOSHOP', $org->company_code);
-        $this->assertSame('DEMO', $org->module_settings['legacy_archive']['legacy_company_code'] ?? null);
-        $this->assertTrue($org->matchesLegacyCompanyCode('DEMO'));
-    }
 }

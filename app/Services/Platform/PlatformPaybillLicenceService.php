@@ -5,6 +5,7 @@ namespace App\Services\Platform;
 use App\Models\Organization;
 use App\Models\PlatformBillingSetting;
 use App\Models\PlatformLicenceBalance;
+use App\Models\PlatformLicenceCheckout;
 use App\Models\PlatformLicencePayment;
 use App\Models\PlatformPlan;
 use App\Models\PlatformSubscription;
@@ -41,6 +42,8 @@ class PlatformPaybillLicenceService
             'organization_id' => $platform?->id,
             'short_code' => $this->blankToNull($data['short_code'] ?? null),
             'account_name_prefix' => $this->blankToNull($data['account_name_prefix'] ?? null),
+            'duration_discount_percent' => min(100, max(0, (float) ($data['duration_discount_percent'] ?? $row->duration_discount_percent ?? 0))),
+            'duration_discount_min_months' => max(1, (int) ($data['duration_discount_min_months'] ?? $row->duration_discount_min_months ?? 3)),
         ]);
         $row->save();
 
@@ -334,6 +337,11 @@ class PlatformPaybillLicenceService
             ->lockForUpdate()
             ->first();
 
+        $quoted = $this->applyPendingCheckout($payment, $org, $amount);
+        if ($quoted) {
+            return $quoted;
+        }
+
         $balance = round((float) $balanceRow->balance + $amount, 2);
         $subscription = PlatformSubscription::query()
             ->with('plan')
@@ -412,6 +420,268 @@ class PlatformPaybillLicenceService
         ])->save();
 
         return $payment->fresh();
+    }
+
+    /**
+     * @return array{amount: float, discount: float, discount_percent: float, months: int, days: int, unit_price: float}
+     */
+    public static function quoteMonths(float $unitPrice, int $months, int $minMonths, float $percent): array
+    {
+        $months = max(1, min(36, $months));
+        $gross = round($unitPrice * $months, 2);
+        $appliedPercent = ($months > $minMonths && $percent > 0) ? min(100, $percent) : 0.0;
+        $discount = round($gross * $appliedPercent / 100, 2);
+
+        return [
+            'months' => $months,
+            'unit_price' => round($unitPrice, 2),
+            'gross' => $gross,
+            'discount' => $discount,
+            'discount_percent' => $appliedPercent,
+            'amount' => round($gross - $discount, 2),
+            'days' => $months * 30,
+        ];
+    }
+
+    /** @return array{percent: float, min_months: int} */
+    public function durationDiscount(): array
+    {
+        $settings = $this->settings();
+
+        return [
+            'percent' => (float) ($settings?->duration_discount_percent ?? 0),
+            'min_months' => (int) ($settings?->duration_discount_min_months ?? 3),
+        ];
+    }
+
+    /**
+     * Active monthly plans the organisation can choose, with the feature text the platform admin wrote.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function monthlyPlanChoices(): array
+    {
+        if (! \Illuminate\Support\Facades\Schema::hasTable('platform_plans')) {
+            return [];
+        }
+
+        $discount = $this->durationDiscount();
+
+        return PlatformPlan::query()
+            ->where('is_active', true)
+            ->orderBy('monthly_price')
+            ->orderBy('name')
+            ->get()
+            ->filter(fn (PlatformPlan $plan) => (float) ($plan->monthly_price ?? 0) > 0)
+            ->map(function (PlatformPlan $plan) use ($discount) {
+                $details = is_array($plan->feature_details) ? $plan->feature_details : [];
+                $features = [];
+                foreach ($details as $row) {
+                    if (! is_array($row)) {
+                        continue;
+                    }
+                    $label = trim((string) ($row['label'] ?? ''));
+                    if ($label === '') {
+                        continue;
+                    }
+                    $detail = trim((string) ($row['detail'] ?? ''));
+                    $features[] = $detail !== '' ? $label.': '.$detail : $label;
+                }
+
+                return [
+                    'id' => (int) $plan->id,
+                    'name' => $plan->name,
+                    'description' => $plan->description,
+                    'currency' => $plan->currency ?: 'KES',
+                    'monthly_price' => round((float) $plan->monthly_price, 2),
+                    'features' => $features,
+                    'section_keys' => array_values($plan->section_keys ?? []),
+                    'workspace_keys' => array_values($plan->workspace_keys ?? []),
+                    'discount_percent' => $discount['percent'],
+                    'discount_min_months' => $discount['min_months'],
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    public function retryUnapplied(PlatformLicencePayment $payment): PlatformLicencePayment
+    {
+        if ($payment->status === 'applied' || ! $payment->organization_id) {
+            return $payment;
+        }
+
+        $org = $payment->organization;
+        if (! $org) {
+            return $payment;
+        }
+
+        return DB::transaction(function () use ($payment, $org) {
+            $locked = PlatformLicencePayment::query()->whereKey($payment->id)->lockForUpdate()->first();
+            if (! $locked || $locked->status === 'applied') {
+                return $locked ?? $payment;
+            }
+
+            return $this->applyCredit($locked, $org, (float) $locked->amount);
+        });
+    }
+
+    /**
+     * Safaricom STK callback for a licence checkout. C2B for the same receipt stays idempotent.
+     *
+     * @param  array<string, mixed>  $values
+     */
+    public function acceptStkResult(?string $checkoutRequestId, int $resultCode, array $values): void
+    {
+        if ($checkoutRequestId === null || $checkoutRequestId === '' || $resultCode !== 0) {
+            return;
+        }
+        if (! \Illuminate\Support\Facades\Schema::hasTable('platform_licence_checkouts')) {
+            return;
+        }
+
+        $checkout = PlatformLicenceCheckout::query()
+            ->where('checkout_request_id', $checkoutRequestId)
+            ->first();
+        if (! $checkout) {
+            return;
+        }
+
+        $transactionId = trim((string) ($values['MpesaReceiptNumber'] ?? ''));
+        if ($transactionId === '') {
+            return;
+        }
+
+        $org = $checkout->organization;
+        $this->acceptC2b([
+            'TransID' => $transactionId,
+            'TransAmount' => $values['Amount'] ?? $checkout->amount,
+            'MSISDN' => $values['PhoneNumber'] ?? $checkout->phone_number,
+            'BillRefNumber' => $org?->company_code,
+            'BusinessShortCode' => $this->settings()?->short_code,
+        ]);
+    }
+
+    public function startCheckout(Organization $org, PlatformPlan $plan, int $months, ?string $phone = null): PlatformLicenceCheckout
+    {
+        $discount = $this->durationDiscount();
+        $quote = self::quoteMonths(
+            (float) $plan->monthly_price,
+            $months,
+            $discount['min_months'],
+            $discount['percent'],
+        );
+
+        return PlatformLicenceCheckout::query()->create([
+            'organization_id' => $org->id,
+            'plan_id' => $plan->id,
+            'months' => $quote['months'],
+            'amount' => $quote['amount'],
+            'discount_percent' => $quote['discount_percent'],
+            'phone_number' => $phone,
+            'status' => 'pending',
+        ]);
+    }
+
+    protected function applyPendingCheckout(PlatformLicencePayment $payment, Organization $org, float $amount): ?PlatformLicencePayment
+    {
+        if (! \Illuminate\Support\Facades\Schema::hasTable('platform_licence_checkouts')) {
+            return null;
+        }
+
+        $checkout = PlatformLicenceCheckout::query()
+            ->where('organization_id', $org->id)
+            ->where('status', 'pending')
+            ->whereBetween('amount', [$amount - 1, $amount + 1])
+            ->orderByDesc('id')
+            ->lockForUpdate()
+            ->first();
+
+        if (! $checkout) {
+            return null;
+        }
+
+        $plan = $checkout->plan_id ? PlatformPlan::query()->find($checkout->plan_id) : null;
+        $subscription = PlatformSubscription::query()
+            ->where('organization_id', $org->id)
+            ->lockForUpdate()
+            ->first();
+
+        if (! $plan) {
+            return null;
+        }
+
+        if (! $subscription) {
+            $subscription = PlatformSubscription::query()->create([
+                'organization_id' => $org->id,
+                'plan_id' => $plan->id,
+                'status' => 'active',
+                'is_trial' => false,
+                'currency' => $plan->currency ?: 'KES',
+                'license_basis' => $plan->license_basis ?: 'org',
+                'amount' => $plan->monthly_price,
+                'renewal_price' => $plan->monthly_price,
+            ]);
+        }
+
+        $subscription->plan_id = $plan->id;
+        $subscription->is_trial = false;
+        $subscription->status = 'active';
+        $subscription->save();
+        $this->extendSubscription($subscription, [
+            'product' => 'monthly',
+            'price' => (float) $checkout->amount,
+            'days' => max(1, (int) $checkout->months) * 30,
+        ]);
+        $this->applyPlanEntitlements($org, $plan);
+
+        $checkout->status = 'paid';
+        $checkout->mpesa_receipt = $payment->mpesa_transaction_id;
+        $checkout->save();
+
+        $periodAfter = $subscription?->fresh()?->current_period_end?->toDateString();
+        $payment->fill([
+            'status' => 'applied',
+            'product' => 'monthly',
+            'days_added' => max(1, (int) $checkout->months) * 30,
+            'amount_applied' => $amount,
+            'balance_after' => 0,
+            'period_end_after' => $periodAfter,
+            'note' => 'plan_checkout',
+        ])->save();
+
+        return $payment->fresh();
+    }
+
+    protected function applyPlanEntitlements(Organization $org, PlatformPlan $plan): void
+    {
+        $workspaces = array_values(array_filter($plan->workspace_keys ?? []));
+        if ($workspaces !== []) {
+            $applications = [];
+            foreach (\App\Services\Erp\ApplicationProvisioner::ids() as $id) {
+                $applications[$id] = in_array($id, $workspaces, true);
+            }
+            $applications['admin'] = true;
+            $modules = app(\App\Services\Erp\ApplicationProvisioner::class)
+                ->enabledModulesFromApplications($applications);
+            $org->enabled_modules = app(\App\Services\OrganizationProvisioningService::class)
+                ->normalizeEnabledModules($modules);
+        }
+
+        $sections = array_values(array_filter($plan->section_keys ?? []));
+        if ($sections !== []) {
+            $map = \App\Services\Erp\BackofficeSections::DEFAULTS;
+            foreach (array_keys($map) as $key) {
+                $map[$key] = in_array($key, $sections, true);
+            }
+            $settings = $org->module_settings ?? [];
+            $sales = is_array($settings['sales'] ?? null) ? $settings['sales'] : [];
+            $sales['backoffice_sections'] = $map;
+            $settings['sales'] = $sales;
+            $org->module_settings = $settings;
+        }
+
+        $org->save();
     }
 
     /** @param  array{product: string, price: float, days: int}  $product */

@@ -24,7 +24,7 @@ class BackgroundJobDispatchController extends Controller
         $data = $request->validate([
             'format' => ['required', 'string', 'in:csv,pdf,print'],
             'filename' => ['sometimes', 'string', 'max:120'],
-            'source' => ['sometimes', 'string', 'in:api,inline_rows,legacy_archive_sales,product_catalog,customer_catalog,supplier_catalog'],
+            'source' => ['sometimes', 'string', 'in:api,inline_rows,product_catalog,customer_catalog,supplier_catalog'],
             'path' => ['nullable', 'string', 'max:200'],
             'search_params' => ['sometimes', 'array'],
             'estimated_row_count' => ['sometimes', 'integer', 'min:0'],

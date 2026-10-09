@@ -1166,15 +1166,5 @@ return [
             'clock_in_late_after' => '08:15',
             'hikvision_agent_poll_minutes' => 10,
         ],
-        'legacy_archive' => [
-            'enabled' => false,
-            'database' => null,
-            'host' => null,
-            'port' => null,
-            'username' => null,
-            'password' => null,
-            'label' => 'LightStores archive',
-            'cutover_date' => null,
-        ],
     ],
 ];

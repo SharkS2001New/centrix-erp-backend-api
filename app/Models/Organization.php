@@ -53,35 +53,6 @@ class Organization extends Model
                 ->contains(fn ($alias) => self::normalizeCompanyCodeIdentifier((string) $alias) === $normalized));
     }
 
-    public function legacyArchiveCompanyCode(): ?string
-    {
-        $legacy = $this->module_settings['legacy_archive']['legacy_company_code'] ?? null;
-
-        return filled($legacy) ? (string) $legacy : null;
-    }
-
-    public function matchesLegacyCompanyCode(string $legacyCode): bool
-    {
-        $normalized = self::normalizeCompanyCodeIdentifier($legacyCode);
-        if ($normalized === '') {
-            return false;
-        }
-
-        $candidates = array_filter([
-            $this->company_code,
-            $this->legacyArchiveCompanyCode(),
-            ...($this->company_code_aliases ?? []),
-        ]);
-
-        foreach ($candidates as $candidate) {
-            if (self::normalizeCompanyCodeIdentifier((string) $candidate) === $normalized) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     /** Set at registration only — never updated afterward. */
     public static function immutableAttributes(): array
     {

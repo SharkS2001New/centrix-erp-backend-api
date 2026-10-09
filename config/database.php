@@ -66,10 +66,6 @@ return [
 
         'mysql' => $mysql,
 
-        'legacy' => array_merge($mysql, [
-            'database' => env('LEGACY_DB_DATABASE', 'lightstores_legacy'),
-        ]),
-
         'mariadb' => array_merge($mysql, ['driver' => 'mariadb']),
 
         'pgsql' => [

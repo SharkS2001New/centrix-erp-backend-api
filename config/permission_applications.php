@@ -147,7 +147,6 @@ return [
                     'discount_summary',
                     'payment_collection',
                     'vat_collected',
-                    'legacy_archive',
                 ],
             ],
             'module_labels' => [

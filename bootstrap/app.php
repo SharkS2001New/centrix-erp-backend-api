@@ -58,7 +58,6 @@ return Application::configure(basePath: dirname(__DIR__))
             'erp.password_expiry' => \App\Http\Middleware\EnsurePasswordNotForcedExpired::class,
             'erp.organization_license' => \App\Http\Middleware\EnsureOrganizationLicenseActive::class,
             'erp.mpesa_callback_ip' => \App\Http\Middleware\EnsureMpesaCallbackIp::class,
-            'erp.legacy_archive' => \App\Http\Middleware\EnsureLegacyArchiveEnabled::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

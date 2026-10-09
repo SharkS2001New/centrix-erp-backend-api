@@ -85,11 +85,6 @@ class Sale extends Model
         'deleted_at' => 'datetime',
     ];
 
-    public function isLegacyImport(): bool
-    {
-        return (bool) ($this->fulfillment_meta['legacy_import'] ?? false);
-    }
-
     /** @return 'online'|'offline'|null */
     public function mobileOrderConnectivity(): ?string
     {

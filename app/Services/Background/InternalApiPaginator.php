@@ -82,7 +82,6 @@ class InternalApiPaginator
         '/kra-responses',
         '/tills',
         '/reports/',
-        '/legacy-archive/',
     ];
 
     public function __construct(
@@ -298,27 +297,6 @@ class InternalApiPaginator
         } finally {
             $this->revokeToken($token);
         }
-    }
-
-    /**
-     * @param  array<string, mixed>  $searchParams
-     * @return array{rows: list<array<string, mixed>>, row_count: int, truncated: bool}
-     */
-    public function fetchLegacyArchiveSales(
-        array $searchParams,
-        User $user,
-        ?callable $onProgress = null,
-        ?BackgroundTask $cancelTask = null,
-    ): array {
-        return $this->fetchAll(
-            '/reports/legacy-archive/sales',
-            $searchParams,
-            $user,
-            self::API_VALIDATED_MAX_PER_PAGE,
-            (int) config('background.max_export_rows', 100_000),
-            $onProgress,
-            $cancelTask,
-        );
     }
 
     protected function createBackgroundToken(User $user): NewAccessToken

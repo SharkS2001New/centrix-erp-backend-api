@@ -19,7 +19,6 @@ class BackofficeSections
         'sales_orders',
         'shop_debtors',
         'field_sales',
-        'legacy_system',
         'after_sales',
         'promotions',
         'customers',
@@ -40,7 +39,6 @@ class BackofficeSections
         'sales_orders' => true,
         'shop_debtors' => true,
         'field_sales' => true,
-        'legacy_system' => true,
         'after_sales' => true,
         'promotions' => true,
         'customers' => true,
@@ -86,7 +84,6 @@ class BackofficeSections
         'sales.loyalty_cards' => 'promotions',
         'sales.loading_sheets' => 'field_sales',
         'sales.field_attendance' => 'field_sales',
-        'sales.legacy_orders' => 'legacy_system',
         'accounting.expenses' => 'expenses',
         'investors.investors' => 'investors',
         'investors.reports' => 'investors',
@@ -103,37 +100,36 @@ class BackofficeSections
         'purchasing.supplier_returns' => 'suppliers',
         'reports.hub' => 'reports',
         'reports.builder' => 'reports',
-        'reports.daily_sales' => 'reports',
-        'reports.sales_by_product' => 'reports',
-        'reports.sales_by_supplier' => 'reports',
-        'reports.sales_by_user' => 'reports',
-        'reports.sales_by_customer' => 'reports',
-        'reports.sales_by_channel' => 'reports',
-        'reports.sales_pipeline' => 'reports',
-        'reports.category_sales' => 'reports',
-        'reports.credit_outstanding' => 'reports',
-        'reports.stock_on_hand' => 'reports',
-        'reports.low_stock' => 'reports',
-        'reports.stock_movement' => 'reports',
-        'reports.stock_chain' => 'reports',
-        'reports.stock_valuation' => 'reports',
-        'reports.stock_reservations' => 'reports',
-        'reports.stock_transfers' => 'reports',
-        'reports.branch_stock_transfers' => 'reports',
-        'reports.returns' => 'reports',
-        'reports.price_list' => 'reports',
-        'reports.open_lpo' => 'reports',
-        'reports.purchases_by_supplier' => 'reports',
-        'reports.stock_receipts' => 'reports',
-        'reports.supplier_returns' => 'reports',
-        'reports.damages' => 'reports',
-        'reports.eod_cashier' => 'reports',
-        'reports.eod_report' => 'reports',
-        'reports.till_sessions' => 'reports',
-        'reports.discount_summary' => 'reports',
-        'reports.payment_collection' => 'reports',
-        'reports.vat_collected' => 'reports',
-        'reports.legacy_archive' => 'reports',
+        'reports.daily_sales' => 'sales_orders',
+        'reports.sales_by_product' => 'sales_orders',
+        'reports.sales_by_supplier' => 'suppliers',
+        'reports.sales_by_user' => 'sales_orders',
+        'reports.sales_by_customer' => 'customers',
+        'reports.sales_by_channel' => 'sales_orders',
+        'reports.sales_pipeline' => 'sales_orders',
+        'reports.category_sales' => 'products',
+        'reports.credit_outstanding' => 'customers',
+        'reports.stock_on_hand' => 'inventory',
+        'reports.low_stock' => 'inventory',
+        'reports.stock_movement' => 'inventory',
+        'reports.stock_chain' => 'inventory',
+        'reports.stock_valuation' => 'inventory',
+        'reports.stock_reservations' => 'inventory',
+        'reports.stock_transfers' => 'stock_movements',
+        'reports.branch_stock_transfers' => 'stock_movements',
+        'reports.returns' => 'after_sales',
+        'reports.price_list' => 'products',
+        'reports.open_lpo' => 'suppliers',
+        'reports.purchases_by_supplier' => 'suppliers',
+        'reports.stock_receipts' => 'stock_movements',
+        'reports.supplier_returns' => 'suppliers',
+        'reports.damages' => 'stock_movements',
+        'reports.eod_cashier' => 'pos',
+        'reports.eod_report' => 'pos',
+        'reports.till_sessions' => 'pos',
+        'reports.discount_summary' => 'pos',
+        'reports.payment_collection' => 'pos',
+        'reports.vat_collected' => 'pos',
     ];
 
     /**
@@ -153,7 +149,28 @@ class BackofficeSections
             }
         }
 
-        return $out;
+        return self::applyTillFloat($out, false);
+    }
+
+    /**
+     * Till sessions, end of day, and till management live in Till operations.
+     * A till float keeps that group on.
+     *
+     * @param  array<string, bool>  $sections
+     * @return array<string, bool>
+     */
+    public static function applyTillFloat(array $sections, bool $tillFloat): array
+    {
+        if ($tillFloat) {
+            $sections['pos'] = true;
+        }
+
+        return $sections;
+    }
+
+    public static function salesUsesTillFloat(array $sales): bool
+    {
+        return ! empty($sales['require_pos_till_float']) || ! empty($sales['require_backoffice_till_float']);
     }
 
     /** @return array<string, bool> */
@@ -166,7 +183,7 @@ class BackofficeSections
         $sales = app(CapabilityGate::class)->forOrganization($organization)->moduleSettings('sales');
         $stored = is_array($sales['backoffice_sections'] ?? null) ? $sales['backoffice_sections'] : null;
 
-        return self::normalize($stored);
+        return self::applyTillFloat(self::normalize($stored), self::salesUsesTillFloat($sales));
     }
 
     public static function enabled(?Organization $organization, string $section): bool

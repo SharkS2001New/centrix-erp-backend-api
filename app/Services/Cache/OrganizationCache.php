@@ -40,8 +40,6 @@ class OrganizationCache
         Cache::put($versionKey, self::capabilitiesVersion($organizationId) + 1, 86400 * 30);
 
         self::flush($organizationId);
-
-        Cache::forget(self::tag($organizationId).':legacy_archive:connectable');
     }
 
     /**

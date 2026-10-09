@@ -13,7 +13,6 @@ use App\Http\Controllers\Api\V1\Operations\PaymentOperationsController;
 use App\Http\Controllers\Api\V1\Operations\TillOperationsController;
 use App\Http\Controllers\Api\V1\Operations\ReferencePickerController;
 use App\Http\Controllers\Api\V1\Operations\ReportController;
-use App\Http\Controllers\Api\V1\Operations\LegacyArchiveController;
 use App\Http\Controllers\Api\V1\Operations\HrReportController;
 use App\Http\Controllers\Api\V1\Operations\ReportBuilderController;
 use App\Http\Controllers\Api\V1\Operations\ExternalAccountingController;
@@ -491,19 +490,6 @@ Route::middleware('auth:sanctum')->group(function () {
                 ->middleware('erp.permission:reports.kra_receipts.view|pricing_tax.kra_invoices.view|admin.kra_responses.view');
             Route::get('kra-unfiscalized-sales', [ReportController::class, 'kraUnfiscalizedSales']);
             Route::get('audit-trail', [ReportController::class, 'auditTrail']);
-
-            Route::prefix('legacy-archive')->group(function () {
-                Route::get('status', [LegacyArchiveController::class, 'status']);
-            });
-
-            Route::middleware('erp.legacy_archive')->prefix('legacy-archive')->group(function () {
-                Route::get('summary', [LegacyArchiveController::class, 'summary']);
-                Route::get('sales/{channel}/{legacyOrderNum}', [LegacyArchiveController::class, 'showSale'])
-                    ->where('channel', 'pos|mobile|debtor');
-                Route::get('sales', [LegacyArchiveController::class, 'sales']);
-                Route::post('sales/materialize', [LegacyArchiveController::class, 'materialize'])
-                    ->middleware('erp.permission:sales.manage');
-            });
         });
 
         Route::middleware('erp.permission:reports.view|hospitality.reports.view')->group(function () {

@@ -164,26 +164,6 @@ class GenerateReportExportJob implements ShouldQueue
                 return;
             }
 
-            if ($source === 'legacy_archive_sales') {
-                $searchParams = ReportExportSearchParams::sanitize($payload['search_params'] ?? []);
-                $onProgress(8, 'Fetching legacy archive sales…');
-                $result = $paginator->eachPage(
-                    '/reports/legacy-archive/sales',
-                    $searchParams,
-                    $user,
-                    function (array $batch) use ($onBatch): void {
-                        $onBatch($this->mapLegacyArchiveSalesRows($batch));
-                    },
-                    InternalApiPaginator::API_VALIDATED_MAX_PER_PAGE,
-                    null,
-                    $onProgress,
-                    $task,
-                );
-                $truncated = $truncated || $result['truncated'];
-
-                return;
-            }
-
             if ($source === 'product_catalog') {
                 $searchParams = ReportExportSearchParams::sanitize($payload['search_params'] ?? []);
                 $onProgress(8, 'Fetching products…');
@@ -266,33 +246,4 @@ class GenerateReportExportJob implements ShouldQueue
         };
     }
 
-    /**
-     * @param  list<array<string, mixed>>  $rows
-     * @return list<array<string, mixed>>
-     */
-    protected function mapLegacyArchiveSalesRows(array $rows): array
-    {
-        $channelLabels = [
-            'pos' => 'POS',
-            'mobile' => 'MOBILE',
-            'debtor' => 'DEBTOR / credit',
-        ];
-
-        return array_map(static function (array $row) use ($channelLabels): array {
-            $channel = (string) ($row['archive_channel'] ?? $row['channel'] ?? '');
-            $saleDate = $row['legacy_sale_date'] ?? $row['sale_date'] ?? null;
-
-            return [
-                'order' => $row['legacy_order_label'] ?? $row['legacy_order_num'] ?? '',
-                'channel' => $channelLabels[$channel] ?? $channel,
-                'date' => $saleDate ? substr((string) $saleDate, 0, 10) : '',
-                'customer' => $row['customer_name'] ?? '',
-                'created_by' => $row['created_by'] ?? '',
-                'total' => isset($row['order_total'])
-                    ? number_format((float) $row['order_total'], 2, '.', ',')
-                    : '',
-                'materialized' => ! empty($row['materialized_sale_id']) ? 'Yes' : 'Archive only',
-            ];
-        }, $rows);
-    }
 }

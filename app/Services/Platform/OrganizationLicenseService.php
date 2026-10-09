@@ -65,6 +65,8 @@ class OrganizationLicenseService
                 'modules' => [],
                 'paybill' => app(PlatformPaybillLicenceService::class)->instructionsFor($org, null),
                 'offers' => app(PlatformPaybillLicenceService::class)->paymentOffers($org, null),
+                'plans' => app(PlatformPaybillLicenceService::class)->monthlyPlanChoices(),
+                'duration_discount' => app(PlatformPaybillLicenceService::class)->durationDiscount(),
             ];
             $missing['access'] = $this->accessMode($missing);
 
@@ -102,6 +104,8 @@ class OrganizationLicenseService
         $license['access'] = $this->accessMode($license);
         $license['paybill'] = app(PlatformPaybillLicenceService::class)->instructionsFor($org, $sub);
         $license['offers'] = app(PlatformPaybillLicenceService::class)->paymentOffers($org, $sub);
+        $license['plans'] = app(PlatformPaybillLicenceService::class)->monthlyPlanChoices();
+        $license['duration_discount'] = app(PlatformPaybillLicenceService::class)->durationDiscount();
 
         return $license;
     }
@@ -251,6 +255,7 @@ class OrganizationLicenseService
             'erp/organization/profile',
             'erp/organization/logo',
             'erp/organization/subscription',
+            'erp/organization/licence',
             'products',
             'categories',
             'sub-categories',

@@ -35,9 +35,6 @@ class RenameOrganizationCompanyCodeCommand extends Command
         $this->info("Organization #{$org->id} ({$org->org_name})");
         $this->line("  Primary code: {$org->company_code}");
         $this->line('  Aliases: '.implode(', ', $org->company_code_aliases ?? []) ?: '(none)');
-        if (filled($org->module_settings['legacy_archive']['legacy_company_code'] ?? null)) {
-            $this->line('  Legacy archive company code: '.$org->module_settings['legacy_archive']['legacy_company_code']);
-        }
         $this->newLine();
         $this->comment("Users can sign in with {$org->company_code} or the old code {$oldCode}.");
 

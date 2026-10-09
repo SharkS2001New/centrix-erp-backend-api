@@ -134,4 +134,47 @@ class MpesaService
             throw $e;
         }
     }
+
+    /**
+     * Lipa na M-Pesa Paybill prompt. Shop tills keep CustomerBuyGoodsOnline.
+     *
+     * @return array<string, mixed>
+     */
+    public function stkPaybill(string $phone, int $amount, string $accountReference, ?string $partyB = null): array
+    {
+        $this->assertReadyForStkPush();
+        $accessToken = $this->getAccessToken();
+        $timestamp = Carbon::now()->format('YmdHis');
+        $password = base64_encode($this->config['shortcode'].$this->config['passkey'].$timestamp);
+        $paybill = trim((string) ($partyB !== null && $partyB !== '' ? $partyB : $this->config['shortcode']));
+        $reference = substr(preg_replace('/\s+/', '', $accountReference) ?? '', 0, 12);
+
+        $payload = [
+            'BusinessShortCode' => $this->config['shortcode'],
+            'Password' => $password,
+            'Timestamp' => $timestamp,
+            'TransactionType' => 'CustomerPayBillOnline',
+            'Amount' => $amount,
+            'PartyA' => $phone,
+            'PartyB' => $paybill,
+            'PhoneNumber' => $phone,
+            'CallBackURL' => $this->config['stk_callback_url'],
+            'AccountReference' => $reference !== '' ? $reference : 'CENTRIX',
+            'TransactionDesc' => 'Centrix licence',
+        ];
+
+        try {
+            $url = $this->baseUrl.'/mpesa/stkpush/v1/processrequest';
+            $headers = [
+                'Authorization: Bearer '.$accessToken,
+                'Content-Type: application/json',
+            ];
+
+            return $this->makeRequest($url, $headers, $payload);
+        } catch (\Throwable $e) {
+            Log::error('Licence STK Push Error', ['message' => $e->getMessage()]);
+
+            throw $e;
+        }
+    }
 }

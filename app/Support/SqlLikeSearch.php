@@ -13,7 +13,6 @@ use Illuminate\Support\Facades\Schema;
  * Apply only after the caller has scoped the query to the authenticated tenant:
  * organization_id, branch limits, and (for sales) CentrixSalesScope::excludeLegacyMaterialized().
  *
- * Does not query LightStores legacy archive databases — use legacy archive APIs for that data.
  * Uses substring matching (%term%) on Centrix tables; user-supplied % and _ are escaped.
  * Multi-word product queries require every token to match (AND), tokens may appear in any order.
  * Money-like terms also match exact unit_price (e.g. 6300, 6,300.00).

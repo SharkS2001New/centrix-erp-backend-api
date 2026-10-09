@@ -11,8 +11,6 @@ use App\Services\Auth\UserPermissionService;
 use App\Services\Cache\OrganizationCache;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\WorkspaceResolver;
-use App\Services\Legacy\LegacyArchiveReader;
-use App\Services\Legacy\OrganizationLegacyArchiveService;
 use App\Services\Mobile\ManagerAppModuleAccessService;
 use App\Services\Mobile\MobileAppModuleAccessService;
 use Illuminate\Http\Request;
@@ -167,26 +165,9 @@ class ErpCapabilitiesController extends Controller
         if (! $isMobileChannel) {
             $payload['platform_advanced_data_import_enabled'] = $gate->advancedDataImportPlatformEnabled();
             $payload['advanced_data_import_pages'] = $gate->advancedDataImportPagesEnabled();
-
-            $archive = app(LegacyArchiveReader::class);
-            if ($org) {
-                $payload['legacy_archive_enabled'] = $archive->isEnabled($org);
-                $payload['legacy_archive_available'] = $this->legacyArchiveConnectable($org, $archive);
-                $payload['legacy_archive_cutover_date'] = $archive->cutoverDate($org)?->toDateString();
-                $payload['legacy_archive_label'] = app(OrganizationLegacyArchiveService::class)->forOrganization($org)['label'] ?? 'LightStores archive';
-            } else {
-                $payload['legacy_archive_enabled'] = false;
-                $payload['legacy_archive_available'] = false;
-                $payload['legacy_archive_cutover_date'] = null;
-                $payload['legacy_archive_label'] = null;
-            }
         } else {
             $payload['platform_advanced_data_import_enabled'] = false;
             $payload['advanced_data_import_pages'] = [];
-            $payload['legacy_archive_enabled'] = false;
-            $payload['legacy_archive_available'] = false;
-            $payload['legacy_archive_cutover_date'] = null;
-            $payload['legacy_archive_label'] = null;
         }
 
         if (isset($payload['module_settings']) && is_array($payload['module_settings'])) {
@@ -334,17 +315,5 @@ class ErpCapabilitiesController extends Controller
         }
 
         return $payload;
-    }
-
-    /** Ping only — avoid counting legacy archive tables on login/capabilities. */
-    protected function legacyArchiveConnectable(Organization $org, LegacyArchiveReader $archive): bool
-    {
-        if (! app(OrganizationLegacyArchiveService::class)->isConfigured($org)) {
-            return false;
-        }
-
-        $cacheKey = OrganizationCache::tag($org->id).':legacy_archive:connectable';
-
-        return Cache::remember($cacheKey, 300, fn () => $archive->isAvailable($org));
     }
 }

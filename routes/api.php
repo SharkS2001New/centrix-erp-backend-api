@@ -27,8 +27,6 @@ use App\Http\Controllers\Api\V1\CentrixPayments\PaymentAccountController as Cent
 use App\Http\Controllers\Api\V1\CentrixPayments\TransactionController as CentrixPaymentTransactionController;
 use App\Http\Controllers\Api\V1\MpesaPaybillAccountController;
 use App\Http\Controllers\Api\V1\EquityBankAccountController;
-use App\Http\Controllers\Api\V1\LegacyOrdersController;
-use App\Http\Controllers\Api\V1\LegacyReturnsController;
 use App\Http\Controllers\Api\V1\DamageController;
 use App\Http\Controllers\Api\V1\DepartmentController;
 use App\Http\Controllers\Api\V1\DispatchTripController;
@@ -90,8 +88,8 @@ use App\Http\Controllers\Api\V1\PlatformMarketingPortfolioController;
 use App\Http\Controllers\Api\V1\PlatformMailController;
 use App\Http\Controllers\Api\V1\PlatformPlanController;
 use App\Http\Controllers\Api\V1\PlatformPaybillController;
+use App\Http\Controllers\Api\V1\SetupProfileMenuController;
 use App\Http\Controllers\Api\V1\PlatformSubscriptionController;
-use App\Http\Controllers\Api\V1\LegacyImportConverterController;
 use App\Http\Controllers\Api\V1\PlatformDatabaseBackupController;
 use App\Http\Controllers\Api\V1\RetailPackageImportController;
 use App\Http\Controllers\Api\V1\PlatformSystemIssueReportController;
@@ -489,11 +487,6 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::post('admin/operational-prune/optimize', [\App\Http\Controllers\Api\V1\PlatformOperationalPruneController::class, 'optimize'])
             ->middleware(['erp.super_admin']);
-        Route::post('admin/legacy-import-converter/convert', [LegacyImportConverterController::class, 'convert'])
-            ->middleware(['erp.super_admin']);
-        Route::get('admin/legacy-import-converter/tasks/{taskId}/download', [LegacyImportConverterController::class, 'download'])
-            ->middleware(['erp.super_admin']);
-
         Route::get('admin/platform-invoices/billing-context', [PlatformInvoiceController::class, 'billingContext'])
             ->middleware(['erp.super_admin']);
         Route::get('admin/platform-invoices/design-templates', [PlatformInvoiceController::class, 'designTemplates'])
@@ -520,6 +513,11 @@ Route::prefix('v1')->group(function () {
         Route::delete('admin/platform-invoices/{invoice}', [PlatformInvoiceController::class, 'destroy'])
             ->middleware(['erp.super_admin'])
             ->whereNumber('invoice');
+
+        Route::get('admin/setup-profiles', [SetupProfileMenuController::class, 'index'])
+            ->middleware(['erp.super_admin']);
+        Route::put('admin/setup-profiles/{profileKey}', [SetupProfileMenuController::class, 'update'])
+            ->middleware(['erp.super_admin']);
 
         Route::get('admin/platform-paybill', [PlatformPaybillController::class, 'show'])
             ->middleware(['erp.super_admin']);
@@ -553,6 +551,9 @@ Route::prefix('v1')->group(function () {
         Route::get('admin/organizations/{organization}/platform-subscription', [PlatformSubscriptionController::class, 'forOrganization'])
             ->middleware(['erp.super_admin']);
         Route::get('erp/organization/subscription', [PlatformSubscriptionController::class, 'tenantSubscription']);
+        Route::post('erp/organization/licence/checkout', [PlatformPaybillController::class, 'checkout']);
+        Route::post('erp/organization/licence/stk', [PlatformPaybillController::class, 'stk']);
+        Route::post('erp/organization/licence/verify', [PlatformPaybillController::class, 'verify']);
 
         Route::prefix('admin/platform-contracts')
             ->middleware(['erp.super_admin'])
@@ -749,8 +750,6 @@ Route::prefix('v1')->group(function () {
                 Route::patch('security', [ErpSettingsController::class, 'updateSecurity']);
                 Route::get('local-printing', [ErpSettingsController::class, 'localPrinting']);
                 Route::patch('local-printing', [ErpSettingsController::class, 'updateLocalPrinting']);
-                Route::get('legacy-archive', [ErpSettingsController::class, 'legacyArchive']);
-                Route::patch('legacy-archive', [ErpSettingsController::class, 'updateLegacyArchive']);
                 Route::get('hr', [ErpSettingsController::class, 'hr']);
                 Route::patch('hr', [ErpSettingsController::class, 'updateHr']);
             });
@@ -1119,21 +1118,6 @@ Route::prefix('v1')->group(function () {
             Route::apiResource('returns', ReturnRecordController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:sales.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:sales.manage']);
-            Route::get('legacy-orders', [LegacyOrdersController::class, 'index'])
-                ->middleware(['erp.legacy_archive', 'erp.permission:sales.view']);
-            Route::get('legacy-orders/{id}', [LegacyOrdersController::class, 'show'])
-                ->middleware(['erp.legacy_archive', 'erp.permission:sales.view']);
-            Route::get('legacy-orders/{saleId}/return-lines', [LegacyOrdersController::class, 'returnLines'])
-                ->middleware(['erp.legacy_archive', 'erp.permission:sales.view']);
-            Route::delete('legacy-orders/{id}', [LegacyOrdersController::class, 'destroy'])
-                ->middleware(['erp.legacy_archive', 'erp.permission:sales.manage']);
-            Route::post('legacy-returns/{id}/approve', [LegacyReturnsController::class, 'approve'])
-                ->middleware(['erp.legacy_archive', 'erp.permission:sales.manage']);
-            Route::apiResource('legacy-returns', LegacyReturnsController::class)
-                ->only(['index', 'show', 'store'])
-                ->middleware('erp.legacy_archive')
-                ->middlewareFor(['index', 'show'], ['erp.permission:sales.view'])
-                ->middlewareFor(['store'], ['erp.permission:sales.manage']);
             Route::get('sales/mobile-orders/pending-returns', [MobileOrdersQuickActionsController::class, 'pendingReturns'])
                 ->middleware('erp.permission:sales.view|sales.manage');
             Route::get('sales/mobile-orders/performed-returns', [MobileOrdersQuickActionsController::class, 'performedReturns'])

@@ -33,6 +33,7 @@ class BackofficeSectionsTest extends TestCase
         $this->assertSame('suppliers', BackofficeSections::sectionForPermissionCode('purchasing.lpo.view'));
         $this->assertSame('customers', BackofficeSections::sectionForPermissionCode('customers.customers.view'));
         $this->assertSame('sales_orders', BackofficeSections::sectionForPermissionCode('sales.order_queue_paid.view'));
+        $this->assertSame('pos', BackofficeSections::sectionForPermissionCode('reports.till_sessions.view'));
         $this->assertNull(BackofficeSections::sectionForPermissionCode('pos.terminal.view'));
     }
 
@@ -56,5 +57,19 @@ class BackofficeSectionsTest extends TestCase
 
         $this->assertCount(1, $modules);
         $this->assertSame('customers', $modules[0]['module']);
+    }
+
+    public function test_till_float_keeps_till_operations_on(): void
+    {
+        $sections = BackofficeSections::applyTillFloat(
+            BackofficeSections::normalize(['pos' => false, 'reports' => false]),
+            true,
+        );
+
+        $this->assertTrue($sections['pos']);
+        $this->assertFalse($sections['reports']);
+        $this->assertTrue(BackofficeSections::salesUsesTillFloat([
+            'require_backoffice_till_float' => true,
+        ]));
     }
 }

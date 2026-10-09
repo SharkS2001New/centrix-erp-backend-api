@@ -64,7 +64,6 @@ return [
                 'returns' => ['label' => 'Returns & credit notes', 'actions' => ['view', 'create']],
                 'loading_sheets' => ['label' => 'Loading sheets', 'actions' => ['view']],
                 'field_attendance' => ['label' => 'Field attendance', 'actions' => ['view', 'create']],
-                'legacy_orders' => ['label' => 'Legacy orders', 'actions' => ['view']],
             ],
         ],
         'mobile_sales' => [
@@ -288,7 +287,6 @@ return [
                 'kra_unfiscalized_sales' => ['label' => 'Unfiscalized sales', 'actions' => ['view']],
                 // HR (shown under Human Resources in the roles matrix)
                 'payroll_summary' => ['label' => 'Payroll summary', 'actions' => ['view']],
-                'legacy_archive' => ['label' => 'Legacy sales archive', 'actions' => ['view']],
             ],
         ],
         'ai' => [

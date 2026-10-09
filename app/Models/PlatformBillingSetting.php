@@ -11,6 +11,13 @@ class PlatformBillingSetting extends Model
         'organization_id',
         'short_code',
         'account_name_prefix',
+        'duration_discount_percent',
+        'duration_discount_min_months',
+    ];
+
+    protected $casts = [
+        'duration_discount_percent' => 'decimal:2',
+        'duration_discount_min_months' => 'integer',
     ];
 
     public function organization(): BelongsTo
