@@ -11,6 +11,11 @@ class PlatformBillingSetting extends Model
         'organization_id',
         'short_code',
         'account_name_prefix',
+        'policy',
+    ];
+
+    protected $casts = [
+        'policy' => 'array',
     ];
 
     public function organization(): BelongsTo

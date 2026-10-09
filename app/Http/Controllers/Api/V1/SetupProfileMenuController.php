@@ -39,16 +39,59 @@ class SetupProfileMenuController extends Controller
             'accounting.*' => 'sometimes|boolean',
             'applications' => 'sometimes|array',
             'applications.*' => 'sometimes|boolean',
+            'label' => 'sometimes|string|max:80',
         ]);
 
-        $saved = $this->menus->save($profileKey, $data);
+        try {
+            $saved = $this->menus->save($profileKey, $data);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
 
         return response()->json([
             'data' => [
                 'key' => $profileKey,
+                'label' => $saved['label'],
+                'industry' => $saved['industry'],
+                'custom' => $saved['custom'],
                 'menu_groups' => $saved['menu_groups'],
                 'applications' => $saved['applications'],
             ],
         ]);
+    }
+
+    public function store(Request $request)
+    {
+        if (! Schema::hasTable('platform_setup_profiles')) {
+            return response()->json([
+                'message' => 'Setup types are not ready yet. Run the latest database migration.',
+            ], 503);
+        }
+
+        $data = $request->validate([
+            'name' => 'required|string|max:80',
+            'industry' => 'required|in:commerce,hospitality',
+        ]);
+
+        try {
+            $row = $this->menus->create($data['name'], $data['industry']);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 503);
+        }
+
+        return response()->json(['data' => $row], 201);
+    }
+
+    public function destroy(string $profileKey)
+    {
+        try {
+            $this->menus->delete($profileKey);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json(['data' => ['deleted' => true]]);
     }
 }

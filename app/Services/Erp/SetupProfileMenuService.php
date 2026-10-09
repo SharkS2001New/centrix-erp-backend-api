@@ -99,10 +99,38 @@ class SetupProfileMenuService
     /** @return list<string> */
     public function profileKeys(): array
     {
+        return array_values(array_unique(array_merge($this->builtinKeys(), $this->customKeys())));
+    }
+
+    /** @return list<string> */
+    public function builtinKeys(): array
+    {
         return array_values(array_filter(
             array_keys(config('erp.profiles', [])),
             fn (string $key) => $key !== 'platform',
         ));
+    }
+
+    /** @return list<string> */
+    public function customKeys(): array
+    {
+        if (! $this->tableReady()) {
+            return [];
+        }
+
+        return PlatformSetupProfile::query()
+            ->orderBy('id')
+            ->get()
+            ->filter(fn (PlatformSetupProfile $row) => ($row->menu_groups['custom'] ?? false) === true)
+            ->pluck('profile_key')
+            ->map(fn ($key) => (string) $key)
+            ->values()
+            ->all();
+    }
+
+    public function isCustom(string $profileKey): bool
+    {
+        return in_array($profileKey, $this->customKeys(), true);
     }
 
     /**
@@ -135,11 +163,11 @@ class SetupProfileMenuService
         $profile = config('erp.profiles.'.$profileKey, []);
         $ids = $profile['application_ids'] ?? null;
         if (! is_array($ids) || $ids === []) {
-            $industry = $profile['industry'] ?? 'commerce';
+            $industry = is_string($profile['industry'] ?? null) && $profile['industry'] !== ''
+                ? $profile['industry']
+                : $this->storedIndustry($profileKey);
 
-            return $industry === 'hospitality'
-                ? ['hotel_bar_pos', 'hospitality_backoffice', 'accounting', 'hr', 'admin']
-                : ['pos', 'backoffice', 'distribution', 'accounting', 'hr', 'admin'];
+            return $this->applicationIdsForIndustry($industry);
         }
 
         return array_values(array_map('strval', $ids));
@@ -190,7 +218,17 @@ class SetupProfileMenuService
     }
 
     /**
-     * @return list<array{key: string, label: string, industry: string|null, application_ids: list<string>, applications: array<string, bool>, menu_groups: array<string, mixed>}>
+     * @return list<string>
+     */
+    public function applicationIdsForIndustry(string $industry): array
+    {
+        return $industry === 'hospitality'
+            ? ['hotel_bar_pos', 'hospitality_backoffice', 'accounting', 'hr', 'admin']
+            : ['pos', 'backoffice', 'distribution', 'accounting', 'hr', 'admin'];
+    }
+
+    /**
+     * @return list<array{key: string, label: string, industry: string|null, custom: bool, application_ids: list<string>, applications: array<string, bool>, menu_groups: array<string, mixed>}>
      */
     public function all(): array
     {
@@ -198,17 +236,73 @@ class SetupProfileMenuService
         $rows = [];
         foreach ($this->profileKeys() as $key) {
             $profile = $profiles[$key] ?? [];
-            $rows[] = [
-                'key' => $key,
-                'label' => (string) ($profile['label'] ?? $key),
-                'industry' => $profile['industry'] ?? null,
-                'application_ids' => $this->applicationIdsForProfile($key),
-                'applications' => $this->applicationsForProfile($key),
-                'menu_groups' => $this->forProfile($key),
-            ];
+            $rows[] = $this->present($key, (string) ($profile['label'] ?? $key), $profile['industry'] ?? null, false);
+        }
+
+        foreach ($this->customKeys() as $key) {
+            $stored = $this->storedDocument($key) ?? [];
+            $rows[] = $this->present(
+                $key,
+                (string) ($stored['label'] ?? $key),
+                is_string($stored['industry'] ?? null) ? $stored['industry'] : 'commerce',
+                true,
+            );
         }
 
         return $rows;
+    }
+
+    /**
+     * @return array{key: string, label: string, industry: string|null, custom: bool, application_ids: list<string>, applications: array<string, bool>, menu_groups: array<string, mixed>}
+     */
+    public function create(string $name, string $industry): array
+    {
+        if (! $this->tableReady()) {
+            throw new \RuntimeException('Setup types are not ready yet. Run the latest database migration.');
+        }
+
+        $name = trim($name);
+        if ($name === '') {
+            throw new \InvalidArgumentException('Give this setup type a name.');
+        }
+        if (mb_strlen($name) > 80) {
+            throw new \InvalidArgumentException('The name must be 80 characters or fewer.');
+        }
+        if (! in_array($industry, ['commerce', 'hospitality'], true)) {
+            throw new \InvalidArgumentException('Choose Retail & Distribution or Hotel & Hospitality.');
+        }
+        if ($this->labelTaken($name)) {
+            throw new \InvalidArgumentException('A setup type with this name already exists.');
+        }
+
+        $key = $this->uniqueCustomKey($name);
+        $applications = array_fill_keys($this->applicationIdsForIndustry($industry), false);
+        $menu = $this->applyApplicationGate($this->normalize(null), $applications);
+
+        PlatformSetupProfile::query()->create([
+            'profile_key' => $key,
+            'menu_groups' => array_merge($menu, [
+                'applications' => $applications,
+                'label' => $name,
+                'industry' => $industry,
+                'custom' => true,
+            ]),
+        ]);
+
+        return $this->present($key, $name, $industry, true);
+    }
+
+    public function delete(string $profileKey): void
+    {
+        if (! $this->isCustom($profileKey)) {
+            throw new \InvalidArgumentException('Built-in setup types stay in the list.');
+        }
+
+        if (\App\Models\Organization::query()->where('deployment_profile', $profileKey)->exists()) {
+            throw new \InvalidArgumentException('An organisation still uses this setup type. Choose another setup on that organisation first.');
+        }
+
+        PlatformSetupProfile::query()->where('profile_key', $profileKey)->delete();
     }
 
     /**
@@ -233,17 +327,147 @@ class SetupProfileMenuService
                 is_array($existing['applications'] ?? null) ? $existing['applications'] : null,
             );
 
+        $menu = $this->applyApplicationGate($menu, $applications);
+        $custom = ($existing['custom'] ?? false) === true || $this->isCustom($profileKey);
+        $label = $custom
+            ? $this->resolveCustomLabel($profileKey, $payload, $existing)
+            : (string) (config('erp.profiles.'.$profileKey.'.label') ?? $profileKey);
+        $industry = $custom
+            ? $this->storedIndustry($profileKey)
+            : (config('erp.profiles.'.$profileKey.'.industry') ?? null);
+
+        $document = array_merge($menu, ['applications' => $applications]);
+        if ($custom) {
+            $document['custom'] = true;
+            $document['label'] = $label;
+            $document['industry'] = $industry;
+        }
+
         if ($this->tableReady()) {
             PlatformSetupProfile::query()->updateOrCreate(
                 ['profile_key' => $profileKey],
-                ['menu_groups' => array_merge($menu, ['applications' => $applications])],
+                ['menu_groups' => $document],
             );
         }
 
         return [
             'menu_groups' => $menu,
             'applications' => $applications,
+            'label' => $label,
+            'industry' => $industry,
+            'custom' => $custom,
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @param  array<string, mixed>|null  $existing
+     */
+    protected function resolveCustomLabel(string $profileKey, array $payload, ?array $existing): string
+    {
+        $current = trim((string) ($existing['label'] ?? ''));
+        if (! array_key_exists('label', $payload)) {
+            return $current !== '' ? $current : $profileKey;
+        }
+
+        $label = trim((string) $payload['label']);
+        if ($label === '') {
+            throw new \InvalidArgumentException('Give this setup type a name.');
+        }
+        if (mb_strlen($label) > 80) {
+            throw new \InvalidArgumentException('The name must be 80 characters or fewer.');
+        }
+        if ($this->labelTaken($label, $profileKey)) {
+            throw new \InvalidArgumentException('A setup type with this name already exists.');
+        }
+
+        return $label;
+    }
+
+    protected function labelTaken(string $name, ?string $exceptKey = null): bool
+    {
+        $needle = mb_strtolower(trim($name));
+        foreach ($this->all() as $row) {
+            if ($exceptKey !== null && $row['key'] === $exceptKey) {
+                continue;
+            }
+            if (mb_strtolower(trim((string) $row['label'])) === $needle) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected function uniqueCustomKey(string $name): string
+    {
+        $slug = \Illuminate\Support\Str::slug($name);
+        if ($slug === '') {
+            $slug = 'setup';
+        }
+        $base = 'custom_'.substr($slug, 0, 48);
+        $key = substr($base, 0, 60);
+        $n = 2;
+        $taken = array_flip($this->profileKeys());
+        $n = 2;
+        while (isset($taken[$key]) || ($this->tableReady() && PlatformSetupProfile::query()->where('profile_key', $key)->exists())) {
+            if ($n > 50) {
+                throw new \InvalidArgumentException('Could not create a unique setup type.');
+            }
+            $suffix = '_'.$n;
+            $key = substr($base, 0, 60 - strlen($suffix)).$suffix;
+            $n++;
+        }
+
+        return $key;
+    }
+
+    protected function storedIndustry(string $profileKey): string
+    {
+        $stored = $this->storedDocument($profileKey);
+        $industry = is_array($stored) ? ($stored['industry'] ?? null) : null;
+
+        return $industry === 'hospitality' ? 'hospitality' : 'commerce';
+    }
+
+    /**
+     * @return array{key: string, label: string, industry: string|null, custom: bool, application_ids: list<string>, applications: array<string, bool>, menu_groups: array<string, mixed>}
+     */
+    protected function present(string $key, string $label, ?string $industry, bool $custom): array
+    {
+        return [
+            'key' => $key,
+            'label' => $label,
+            'industry' => $industry,
+            'custom' => $custom,
+            'application_ids' => $this->applicationIdsForProfile($key),
+            'applications' => $this->applicationsForProfile($key),
+            'menu_groups' => $this->forProfile($key),
+        ];
+    }
+
+    /**
+     * Menu groups stay off unless that application is included in the setup type.
+     *
+     * @param  array{backoffice: array<string, bool>, hr: array<string, bool>, accounting: array<string, bool>}  $menu
+     * @param  array<string, bool>  $applications
+     * @return array{backoffice: array<string, bool>, hr: array<string, bool>, accounting: array<string, bool>}
+     */
+    protected function applyApplicationGate(array $menu, array $applications): array
+    {
+        $backofficeOn = ($applications['backoffice'] ?? false) === true
+            || ($applications['hospitality_backoffice'] ?? false) === true;
+        if (! $backofficeOn) {
+            $menu['backoffice'] = array_fill_keys(BackofficeSections::SECTION_KEYS, false);
+        }
+        if (($applications['hr'] ?? false) !== true) {
+            $menu['hr'] = array_fill_keys(self::HR_KEYS, false);
+        }
+        if (($applications['accounting'] ?? false) !== true) {
+            $menu['accounting'] = array_fill_keys(self::ACCOUNTING_KEYS, false);
+        }
+
+        return $menu;
     }
 
     /**

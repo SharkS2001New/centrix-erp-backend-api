@@ -516,7 +516,11 @@ Route::prefix('v1')->group(function () {
 
         Route::get('admin/setup-profiles', [SetupProfileMenuController::class, 'index'])
             ->middleware(['erp.super_admin']);
+        Route::post('admin/setup-profiles', [SetupProfileMenuController::class, 'store'])
+            ->middleware(['erp.super_admin']);
         Route::put('admin/setup-profiles/{profileKey}', [SetupProfileMenuController::class, 'update'])
+            ->middleware(['erp.super_admin']);
+        Route::delete('admin/setup-profiles/{profileKey}', [SetupProfileMenuController::class, 'destroy'])
             ->middleware(['erp.super_admin']);
 
         Route::get('admin/platform-paybill', [PlatformPaybillController::class, 'show'])
@@ -551,7 +555,15 @@ Route::prefix('v1')->group(function () {
         Route::get('admin/organizations/{organization}/platform-subscription', [PlatformSubscriptionController::class, 'forOrganization'])
             ->middleware(['erp.super_admin']);
         Route::get('erp/organization/subscription', [PlatformSubscriptionController::class, 'tenantSubscription']);
+        Route::get('erp/organization/billing', [\App\Http\Controllers\Api\V1\OrganizationBillingController::class, 'show']);
+        Route::get('admin/billing-policy', [\App\Http\Controllers\Api\V1\OrganizationBillingController::class, 'policy'])
+            ->middleware(['erp.super_admin']);
+        Route::put('admin/billing-policy', [\App\Http\Controllers\Api\V1\OrganizationBillingController::class, 'updatePolicy'])
+            ->middleware(['erp.super_admin']);
+        Route::get('admin/billing-overview', [\App\Http\Controllers\Api\V1\OrganizationBillingController::class, 'overview'])
+            ->middleware(['erp.super_admin']);
         Route::post('erp/organization/licence/checkout', [PlatformPaybillController::class, 'checkout']);
+        Route::post('erp/organization/licence/notify', [PlatformPaybillController::class, 'notify']);
         Route::post('erp/organization/licence/stk', [PlatformPaybillController::class, 'stk']);
         Route::post('erp/organization/licence/verify', [PlatformPaybillController::class, 'verify']);
 

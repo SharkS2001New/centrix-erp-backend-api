@@ -92,6 +92,21 @@ class OrganizationProvisionController extends Controller
             ])
             ->values();
 
+        $customProfiles = collect($setupMenus->all())
+            ->filter(fn (array $row) => ($row['custom'] ?? false) === true)
+            ->map(fn (array $row) => [
+                'key' => $row['key'],
+                'label' => $row['label'],
+                'industry' => $row['industry'],
+                'modules' => [],
+                'applications' => $row['applications'],
+                'menu_groups' => $row['menu_groups'],
+                'application_ids' => $row['application_ids'],
+            ])
+            ->values();
+
+        $tenantProfiles = $tenantProfiles->concat($customProfiles)->values();
+
         return response()->json([
             'industries' => IndustryRegistry::optionsPayload(),
             // Full catalog for legacy clients; prefer applications_by_industry for industry isolation.
@@ -706,7 +721,10 @@ class OrganizationProvisionController extends Controller
     /** @return list<string> */
     protected function tenantDeploymentProfileKeys(): array
     {
-        return array_keys(collect(config('erp.profiles', []))->except('platform')->all());
+        return array_values(array_unique(array_merge(
+            array_keys(collect(config('erp.profiles', []))->except('platform')->all()),
+            app(SetupProfileMenuService::class)->customKeys(),
+        )));
     }
 
     /** @return array<string, mixed> */

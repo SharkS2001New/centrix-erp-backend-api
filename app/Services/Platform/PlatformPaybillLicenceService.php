@@ -5,6 +5,7 @@ namespace App\Services\Platform;
 use App\Models\Organization;
 use App\Models\PlatformBillingSetting;
 use App\Models\PlatformLicenceBalance;
+use App\Models\PlatformLicenceCheckout;
 use App\Models\PlatformLicencePayment;
 use App\Models\PlatformPlan;
 use App\Models\PlatformSubscription;
@@ -334,6 +335,11 @@ class PlatformPaybillLicenceService
             ->lockForUpdate()
             ->first();
 
+        $quoted = $this->applyPendingCheckout($payment, $org, $amount);
+        if ($quoted) {
+            return $quoted;
+        }
+
         $balance = round((float) $balanceRow->balance + $amount, 2);
         $subscription = PlatformSubscription::query()
             ->with('plan')
@@ -477,6 +483,203 @@ class PlatformPaybillLicenceService
             })
             ->values()
             ->all();
+    }
+
+    /**
+     * @return array{amount: float, discount: float, discount_percent: float, months: int, days: int, unit_price: float, gross: float}
+     */
+    public static function quoteMonths(float $unitPrice, int $months, int $minMonths, float $percent): array
+    {
+        $months = max(1, min(36, $months));
+        $gross = round($unitPrice * $months, 2);
+        $appliedPercent = ($months > $minMonths && $percent > 0) ? min(100, $percent) : 0.0;
+        $discount = round($gross * $appliedPercent / 100, 2);
+
+        return [
+            'months' => $months,
+            'unit_price' => round($unitPrice, 2),
+            'gross' => $gross,
+            'discount' => $discount,
+            'discount_percent' => $appliedPercent,
+            'amount' => round($gross - $discount, 2),
+            'days' => $months * 30,
+        ];
+    }
+
+    public function startCheckout(Organization $org, PlatformPlan $plan, int $months, ?string $phone = null): PlatformLicenceCheckout
+    {
+        $discount = $this->durationDiscount();
+        $quote = self::quoteMonths(
+            (float) $plan->monthly_price,
+            $months,
+            $discount['min_months'],
+            $discount['percent'],
+        );
+
+        return PlatformLicenceCheckout::query()->create([
+            'organization_id' => $org->id,
+            'plan_id' => $plan->id,
+            'months' => $quote['months'],
+            'amount' => $quote['amount'],
+            'discount_percent' => $quote['discount_percent'],
+            'phone_number' => $phone,
+            'status' => 'pending',
+        ]);
+    }
+
+    public function retryUnapplied(PlatformLicencePayment $payment): PlatformLicencePayment
+    {
+        if ($payment->status === 'applied' || ! $payment->organization_id) {
+            return $payment;
+        }
+
+        $org = $payment->organization;
+        if (! $org) {
+            return $payment;
+        }
+
+        return DB::transaction(function () use ($payment, $org) {
+            $locked = PlatformLicencePayment::query()->whereKey($payment->id)->lockForUpdate()->first();
+            if (! $locked || $locked->status === 'applied') {
+                return $locked ?? $payment;
+            }
+
+            return $this->applyCredit($locked, $org, (float) $locked->amount);
+        });
+    }
+
+    /**
+     * @param  array<string, mixed>  $values
+     */
+    public function acceptStkResult(?string $checkoutRequestId, int $resultCode, array $values): void
+    {
+        if ($checkoutRequestId === null || $checkoutRequestId === '' || $resultCode !== 0) {
+            return;
+        }
+        if (! \Illuminate\Support\Facades\Schema::hasTable('platform_licence_checkouts')) {
+            return;
+        }
+
+        $checkout = PlatformLicenceCheckout::query()
+            ->where('checkout_request_id', $checkoutRequestId)
+            ->first();
+        if (! $checkout) {
+            return;
+        }
+
+        $transactionId = trim((string) ($values['MpesaReceiptNumber'] ?? ''));
+        if ($transactionId === '') {
+            return;
+        }
+
+        $org = $checkout->organization;
+        $this->acceptC2b([
+            'TransID' => $transactionId,
+            'TransAmount' => $values['Amount'] ?? $checkout->amount,
+            'MSISDN' => $values['PhoneNumber'] ?? $checkout->phone_number,
+            'BillRefNumber' => $org?->company_code,
+            'BusinessShortCode' => $this->settings()?->short_code,
+        ]);
+    }
+
+    protected function applyPendingCheckout(PlatformLicencePayment $payment, Organization $org, float $amount): ?PlatformLicencePayment
+    {
+        if (! \Illuminate\Support\Facades\Schema::hasTable('platform_licence_checkouts')) {
+            return null;
+        }
+
+        $checkout = PlatformLicenceCheckout::query()
+            ->where('organization_id', $org->id)
+            ->where('status', 'pending')
+            ->whereBetween('amount', [$amount - 1, $amount + 1])
+            ->orderByDesc('id')
+            ->lockForUpdate()
+            ->first();
+
+        if (! $checkout) {
+            return null;
+        }
+
+        $plan = $checkout->plan_id ? PlatformPlan::query()->find($checkout->plan_id) : null;
+        if (! $plan) {
+            return null;
+        }
+
+        $subscription = PlatformSubscription::query()
+            ->where('organization_id', $org->id)
+            ->lockForUpdate()
+            ->first();
+
+        if (! $subscription) {
+            $subscription = PlatformSubscription::query()->create([
+                'organization_id' => $org->id,
+                'plan_id' => $plan->id,
+                'status' => 'active',
+                'is_trial' => false,
+                'currency' => $plan->currency ?: 'KES',
+                'license_basis' => $plan->license_basis ?: 'org',
+                'amount' => $plan->monthly_price,
+                'renewal_price' => $plan->monthly_price,
+            ]);
+        }
+
+        $subscription->plan_id = $plan->id;
+        $subscription->is_trial = false;
+        $subscription->status = 'active';
+        $subscription->save();
+        $this->extendSubscription($subscription, [
+            'product' => 'monthly',
+            'price' => (float) $checkout->amount,
+            'days' => max(1, (int) $checkout->months) * 30,
+        ]);
+        $this->applyPlanEntitlements($org, $plan);
+
+        $checkout->status = 'paid';
+        $checkout->mpesa_receipt = $payment->mpesa_transaction_id;
+        $checkout->save();
+
+        $payment->fill([
+            'status' => 'applied',
+            'product' => 'monthly',
+            'days_added' => max(1, (int) $checkout->months) * 30,
+            'amount_applied' => $amount,
+            'balance_after' => 0,
+            'period_end_after' => $subscription->fresh()?->current_period_end?->toDateString(),
+            'note' => 'plan_checkout',
+        ])->save();
+
+        return $payment->fresh();
+    }
+
+    protected function applyPlanEntitlements(Organization $org, PlatformPlan $plan): void
+    {
+        $workspaces = array_values(array_filter($plan->workspace_keys ?? []));
+        if ($workspaces !== []) {
+            $applications = [];
+            foreach (\App\Services\Erp\ApplicationProvisioner::ids() as $id) {
+                $applications[$id] = in_array($id, $workspaces, true);
+            }
+            $applications['admin'] = true;
+            $modules = app(\App\Services\Erp\ApplicationProvisioner::class)
+                ->enabledModulesFromApplications($applications);
+            $org->enabled_modules = app(\App\Services\OrganizationProvisioningService::class)
+                ->normalizeEnabledModules($modules);
+        }
+
+        $sections = array_values(array_filter($plan->section_keys ?? []));
+        if ($sections !== []) {
+            $map = \App\Services\Erp\BackofficeSections::DEFAULTS;
+            foreach (array_keys($map) as $key) {
+                $map[$key] = in_array($key, $sections, true);
+            }
+            $settings = $org->module_settings ?? [];
+            $sales = is_array($settings['sales'] ?? null) ? $settings['sales'] : [];
+            $sales['backoffice_sections'] = $map;
+            $settings['sales'] = $sales;
+            $org->module_settings = $settings;
+        }
+
+        $org->save();
     }
 
     /** @param  array{product: string, price: float, days: int}  $product */

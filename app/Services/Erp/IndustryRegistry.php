@@ -36,6 +36,13 @@ class IndustryRegistry
             return $fromProfile;
         }
 
+        if (str_starts_with($profileKey, 'custom_')) {
+            $stored = self::storedCustomIndustry($profileKey);
+            if ($stored !== null) {
+                return $stored;
+            }
+        }
+
         foreach (self::ids() as $industryId) {
             $keys = config("erp_industries.definitions.{$industryId}.profile_keys", []);
             if (is_array($keys) && in_array($profileKey, $keys, true)) {
@@ -44,6 +51,21 @@ class IndustryRegistry
         }
 
         return 'commerce';
+    }
+
+    protected static function storedCustomIndustry(string $profileKey): ?string
+    {
+        try {
+            if (! \Illuminate\Support\Facades\Schema::hasTable('platform_setup_profiles')) {
+                return null;
+            }
+            $row = \App\Models\PlatformSetupProfile::query()->where('profile_key', $profileKey)->first();
+            $industry = is_array($row?->menu_groups) ? ($row->menu_groups['industry'] ?? null) : null;
+
+            return in_array($industry, ['commerce', 'hospitality'], true) ? $industry : null;
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     public static function labelForIndustry(string $industryId): string

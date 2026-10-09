@@ -256,6 +256,7 @@ class OrganizationLicenseService
             'erp/organization/logo',
             'erp/organization/subscription',
             'erp/organization/licence',
+            'erp/organization/billing',
             'products',
             'categories',
             'sub-categories',
