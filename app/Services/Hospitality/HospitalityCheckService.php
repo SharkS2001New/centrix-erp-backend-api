@@ -855,6 +855,14 @@ class HospitalityCheckService
 
             $fresh = $check->fresh();
             if ($isFull) {
+                $chargedMeta = app(\App\Services\Platform\SaleTokenCharge::class)->charge(
+                    $user,
+                    is_array($fresh->meta) ? $fresh->meta : [],
+                );
+                if ((int) ($chargedMeta['tokens_charged'] ?? 0) !== (int) data_get($fresh->meta, 'tokens_charged', 0)) {
+                    $fresh->update(['meta' => $chargedMeta]);
+                    $fresh = $fresh->fresh();
+                }
                 app(HospitalityCheckStockService::class)->deductForSettledCheck($fresh, $user);
                 app(HospitalityPosEmailReportService::class)->notifySettleIfEnabled($org, $fresh);
                 // Prepaid Hotel POS room nights — occupy until expected checkout (separate from PMS folio stays).

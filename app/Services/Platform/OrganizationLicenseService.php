@@ -62,6 +62,8 @@ class OrganizationLicenseService
                 'plan_name' => null,
                 'subscription_id' => null,
                 'token_balance' => $this->tokenBalanceFor($org),
+                'sale_tokens' => app(BillingPolicy::class)->saleCost(),
+                'write_costs' => app(BillingPolicy::class)->current()['write_costs'],
                 'modules' => [],
                 'paybill' => app(PlatformPaybillLicenceService::class)->instructionsFor($org, null),
                 'offers' => app(PlatformPaybillLicenceService::class)->paymentOffers($org, null),
@@ -99,6 +101,8 @@ class OrganizationLicenseService
             'plan_name' => $sub->plan?->name,
             'subscription_id' => $sub->id,
             'token_balance' => $this->tokenBalanceFor($org),
+            'sale_tokens' => app(BillingPolicy::class)->saleCost(),
+            'write_costs' => app(BillingPolicy::class)->current()['write_costs'],
             'modules' => $this->licensedModules($sub),
         ];
         $license['access'] = $this->accessMode($license);
@@ -208,28 +212,42 @@ class OrganizationLicenseService
             ->value('token_balance') ?? 0);
     }
 
-    /** Spend one token for a create, update, or delete. Returns false when the balance is empty. */
-    public function reserveToken(int $organizationId): bool
+    /** Spend tokens for a customer create, update, or delete. A cost of 0 does not touch the balance. */
+    public function reserveTokens(int $organizationId, int $amount): bool
     {
         if ($organizationId <= 0) {
             return false;
         }
+        if ($amount <= 0) {
+            return true;
+        }
 
         return PlatformLicenceBalance::query()
             ->where('organization_id', $organizationId)
-            ->where('token_balance', '>=', 1)
-            ->decrement('token_balance') > 0;
+            ->where('token_balance', '>=', $amount)
+            ->decrement('token_balance', $amount) > 0;
     }
 
-    public function refundToken(int $organizationId): void
+    public function refundTokens(int $organizationId, int $amount): void
     {
-        if ($organizationId <= 0) {
+        if ($organizationId <= 0 || $amount <= 0) {
             return;
         }
 
         PlatformLicenceBalance::query()
             ->where('organization_id', $organizationId)
-            ->increment('token_balance');
+            ->increment('token_balance', $amount);
+    }
+
+    /** Spend one token for a create, update, or delete. Returns false when the balance is empty. */
+    public function reserveToken(int $organizationId): bool
+    {
+        return $this->reserveTokens($organizationId, 1);
+    }
+
+    public function refundToken(int $organizationId): void
+    {
+        $this->refundTokens($organizationId, 1);
     }
 
     public function needsPayment(?array $license): bool

@@ -22,12 +22,11 @@ class BillingPolicy
             'low_balance_second_percent' => 10,
             'grace_enabled' => true,
             'grace_max_tokens' => 25,
-            'actions' => [
-                ['key' => 'sales.invoice.create', 'label' => 'Create sales invoice', 'tokens' => 1, 'notes' => 'Standard operation'],
-                ['key' => 'customers.update', 'label' => 'Update customer', 'tokens' => 1, 'notes' => 'Standard operation'],
-                ['key' => 'purchasing.lpo.create', 'label' => 'Create purchase order', 'tokens' => 1, 'notes' => 'Standard operation'],
-                ['key' => 'inventory.import', 'label' => 'Bulk import', 'tokens' => 0, 'notes' => 'Configurable. Based on record count when enabled.'],
-                ['key' => 'sales.invoice.reverse', 'label' => 'Finalised invoice reversal', 'tokens' => 0, 'notes' => 'Requires platform review'],
+            'sale_tokens' => 1,
+            'write_costs' => [
+                'create' => 1,
+                'update' => 1,
+                'delete' => 1,
             ],
             'offline' => [
                 'enabled' => false,
@@ -49,6 +48,12 @@ class BillingPolicy
         return $this->normalize(is_array($stored) ? $stored : []);
     }
 
+    /** Tokens spent once, when a completed sale is saved online or an offline order syncs. */
+    public function saleCost(): int
+    {
+        return (int) $this->current()['sale_tokens'];
+    }
+
     /** @param  array<string, mixed>  $incoming */
     public function save(array $incoming): array
     {
@@ -68,24 +73,8 @@ class BillingPolicy
     public function normalize(array $incoming): array
     {
         $defaults = self::defaults();
-        $actions = [];
-        foreach (is_array($incoming['actions'] ?? null) ? $incoming['actions'] : $defaults['actions'] as $row) {
-            if (! is_array($row)) {
-                continue;
-            }
-            $label = trim((string) ($row['label'] ?? ''));
-            if ($label === '') {
-                continue;
-            }
-            $actions[] = [
-                'key' => trim((string) ($row['key'] ?? '')) ?: str($label)->slug('.')->toString(),
-                'label' => $label,
-                'tokens' => max(0, (int) ($row['tokens'] ?? 0)),
-                'notes' => trim((string) ($row['notes'] ?? '')),
-            ];
-        }
-
         $offline = is_array($incoming['offline'] ?? null) ? $incoming['offline'] : [];
+        $writeCosts = is_array($incoming['write_costs'] ?? null) ? $incoming['write_costs'] : [];
 
         return [
             'token_value_kes' => max(1, (int) ($incoming['token_value_kes'] ?? $defaults['token_value_kes'])),
@@ -98,7 +87,12 @@ class BillingPolicy
             'low_balance_second_percent' => min(100, max(0, (int) ($incoming['low_balance_second_percent'] ?? 10))),
             'grace_enabled' => filter_var($incoming['grace_enabled'] ?? true, FILTER_VALIDATE_BOOLEAN),
             'grace_max_tokens' => min(100, max(0, (int) ($incoming['grace_max_tokens'] ?? 25))),
-            'actions' => $actions !== [] ? $actions : $defaults['actions'],
+            'sale_tokens' => $this->saleTokens($incoming, $writeCosts, (int) $defaults['sale_tokens']),
+            'write_costs' => [
+                'create' => $this->writeCost($writeCosts, 'create', $defaults['write_costs']['create']),
+                'update' => $this->writeCost($writeCosts, 'update', $defaults['write_costs']['update']),
+                'delete' => $this->writeCost($writeCosts, 'delete', $defaults['write_costs']['delete']),
+            ],
             'offline' => [
                 'enabled' => filter_var($offline['enabled'] ?? false, FILTER_VALIDATE_BOOLEAN),
                 'max_allowance' => max(0, (int) ($offline['max_allowance'] ?? 100)),
@@ -106,5 +100,29 @@ class BillingPolicy
                 'sync_hours' => max(1, (int) ($offline['sync_hours'] ?? 72)),
             ],
         ];
+    }
+
+    /**
+     * Older policies stored a create/update/delete price. A sale uses the create price until sale_tokens is saved.
+     *
+     * @param  array<string, mixed>  $incoming
+     * @param  array<string, mixed>  $writeCosts
+     */
+    protected function saleTokens(array $incoming, array $writeCosts, int $fallback): int
+    {
+        if (array_key_exists('sale_tokens', $incoming)) {
+            return min(1000, max(0, (int) $incoming['sale_tokens']));
+        }
+        if (array_key_exists('create', $writeCosts)) {
+            return min(1000, max(0, (int) $writeCosts['create']));
+        }
+
+        return $fallback;
+    }
+
+    /** @param  array<string, mixed>  $writeCosts */
+    protected function writeCost(array $writeCosts, string $verb, int $fallback): int
+    {
+        return min(1000, max(0, (int) ($writeCosts[$verb] ?? $fallback)));
     }
 }

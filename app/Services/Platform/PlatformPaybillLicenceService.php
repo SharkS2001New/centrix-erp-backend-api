@@ -198,9 +198,9 @@ class PlatformPaybillLicenceService
             'summary' => 'The shillings you pay become tokens. Paying 500 KES gives the organisation 500 tokens. Any other amount works the same way.',
             'features' => array_merge(
                 [
-                    'Each create, update, or delete uses 1 token',
+                    'Each completed sale uses the published token cost when that order is saved online',
+                    'An offline sale waits until sync uploads it, and a repeat upload of the same order is not charged again',
                     'Reading pages and reports uses 0 tokens',
-                    'Every user spends from the same organisation balance, so more people saving records uses more tokens',
                     'When the balance reaches 0, only products, customers, suppliers, and sales reports stay open',
                 ],
                 $unlocked,

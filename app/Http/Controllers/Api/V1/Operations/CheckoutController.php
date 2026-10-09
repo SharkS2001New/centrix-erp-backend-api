@@ -47,6 +47,7 @@ use App\Services\Sales\PosCashRoundingSettings;
 use App\Services\Sales\OrderNumberAllocator;
 use App\Services\Sales\PosDailyOrderNumberAllocator;
 use App\Services\Sales\PosOfflineCheckoutIdempotency;
+use App\Services\Platform\SaleTokenCharge;
 use App\Services\Organization\OrganizationReferenceDataService;
 use App\Services\Sales\SameDayCustomerOrderService;
 use App\Services\Sales\SaleRouteResolver;
@@ -1483,6 +1484,17 @@ class CheckoutController extends Controller
             }
 
             $runSideEffects = ! $isParkedOrder && $orderStatus !== 'pending_approval';
+
+            if ($runSideEffects) {
+                $chargedMeta = app(SaleTokenCharge::class)->charge(
+                    $user,
+                    is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [],
+                );
+                if ((int) ($chargedMeta['tokens_charged'] ?? 0) !== (int) data_get($sale->fulfillment_meta, 'tokens_charged', 0)) {
+                    $sale->fulfillment_meta = $chargedMeta;
+                    $sale->save();
+                }
+            }
 
             return [
                 'sale' => $sale,

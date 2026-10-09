@@ -10,7 +10,9 @@ use Symfony\Component\HttpFoundation\Response;
 
 class EnsureOrganizationLicenseActive
 {
-    public function __construct(protected OrganizationLicenseService $licenses) {}
+    public function __construct(
+        protected OrganizationLicenseService $licenses,
+    ) {}
 
     public function handle(Request $request, Closure $next): Response
     {
@@ -37,15 +39,6 @@ class EnsureOrganizationLicenseActive
 
         $license = $this->licenses->resolveForOrganization($org);
         $mode = $this->licenses->accessMode($license);
-        $chargesToken = $mode === 'token' && $this->requestUsesToken($request);
-
-        if ($chargesToken && ! $this->licenses->reserveToken((int) $org->id)) {
-            throw new HttpResponseException(response()->json([
-                'message' => 'This organisation has no Centrix tokens left. A create, update, or delete uses 1 token. Reading is still free on products, customers, suppliers, and sales reports until you top up.',
-                'code' => 'organization_tokens_depleted',
-                'license' => $this->licenses->resolveForOrganization($org),
-            ], 403));
-        }
 
         if ($this->licenses->needsPayment($license) && ! $this->licenses->allowsLimitedRoute($path)) {
             throw new HttpResponseException(response()->json([
@@ -57,25 +50,6 @@ class EnsureOrganizationLicenseActive
             ], 403));
         }
 
-        try {
-            $response = $next($request);
-        } catch (\Throwable $e) {
-            if ($chargesToken) {
-                $this->licenses->refundToken((int) $org->id);
-            }
-            throw $e;
-        }
-
-        if ($chargesToken && $response->getStatusCode() >= 400) {
-            $this->licenses->refundToken((int) $org->id);
-        }
-
-        return $response;
-    }
-
-    /** Create, update, and delete spend one token. Reads do not. */
-    protected function requestUsesToken(Request $request): bool
-    {
-        return in_array(strtoupper($request->method()), ['POST', 'PUT', 'PATCH', 'DELETE'], true);
+        return $next($request);
     }
 }
