@@ -474,6 +474,7 @@ class PlatformPaybillLicenceService
                     'description' => $plan->description,
                     'currency' => $plan->currency ?: 'KES',
                     'monthly_price' => round((float) $plan->monthly_price, 2),
+                    'yearly_price' => $plan->yearly_price !== null ? round((float) $plan->yearly_price, 2) : null,
                     'features' => $features,
                     'section_keys' => array_values($plan->section_keys ?? []),
                     'workspace_keys' => array_values($plan->workspace_keys ?? []),
@@ -506,8 +507,20 @@ class PlatformPaybillLicenceService
         ];
     }
 
-    public function startCheckout(Organization $org, PlatformPlan $plan, int $months, ?string $phone = null): PlatformLicenceCheckout
+    public function startCheckout(Organization $org, PlatformPlan $plan, int $months, ?string $phone = null, ?string $billing = null): PlatformLicenceCheckout
     {
+        if ($billing === 'yearly' && (float) ($plan->yearly_price ?? 0) > 0) {
+            return PlatformLicenceCheckout::query()->create([
+                'organization_id' => $org->id,
+                'plan_id' => $plan->id,
+                'months' => 12,
+                'amount' => round((float) $plan->yearly_price, 2),
+                'discount_percent' => 0,
+                'phone_number' => $phone,
+                'status' => 'pending',
+            ]);
+        }
+
         $discount = $this->durationDiscount();
         $quote = self::quoteMonths(
             (float) $plan->monthly_price,

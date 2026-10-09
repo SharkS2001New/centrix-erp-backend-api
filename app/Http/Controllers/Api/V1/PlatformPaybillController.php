@@ -106,7 +106,8 @@ class PlatformPaybillController extends Controller
         }
 
         $months = (int) $request->input('months');
-        $checkout = $this->paybill->startCheckout($org, $plan, $months);
+        $billing = $request->input('billing') === 'yearly' ? 'yearly' : 'monthly';
+        $checkout = $this->paybill->startCheckout($org, $plan, $billing === 'yearly' ? 12 : $months, null, $billing);
         $instructions = $this->paybill->instructionsFor($org, null);
         $sent = $this->notifyAdmin($org, $plan, $checkout, $instructions);
 
@@ -131,6 +132,7 @@ class PlatformPaybillController extends Controller
             'plan_id' => 'required|integer',
             'months' => 'required|integer|min:1|max:36',
             'phone' => 'required|string|max:20',
+            'billing' => 'sometimes|in:monthly,yearly',
         ]);
 
         $plan = $this->findSelfServePlan((int) $data['plan_id']);
@@ -143,7 +145,13 @@ class PlatformPaybillController extends Controller
             return response()->json(['message' => 'Enter a valid M-Pesa phone number.'], 422);
         }
 
-        $checkout = $this->paybill->startCheckout($org, $plan, (int) $data['months'], $phone);
+        $checkout = $this->paybill->startCheckout(
+            $org,
+            $plan,
+            ($data['billing'] ?? 'monthly') === 'yearly' ? 12 : (int) $data['months'],
+            $phone,
+            $data['billing'] ?? 'monthly',
+        );
         $platform = $this->platformOrganization();
         if (! $platform) {
             return response()->json([
@@ -189,12 +197,20 @@ class PlatformPaybillController extends Controller
             'mpesa_code' => 'nullable|string|max:20',
             'plan_id' => 'nullable|integer',
             'months' => 'nullable|integer|min:1|max:36',
+            'billing' => 'nullable|in:monthly,yearly',
         ]);
 
         if (! empty($data['plan_id'])) {
             $plan = PlatformPlan::query()->where('is_active', true)->find($data['plan_id']);
             if ($plan && (float) ($plan->monthly_price ?? 0) > 0) {
-                $this->paybill->startCheckout($org, $plan, (int) ($data['months'] ?? 1));
+                $billing = ($data['billing'] ?? 'monthly') === 'yearly' ? 'yearly' : 'monthly';
+                $this->paybill->startCheckout(
+                    $org,
+                    $plan,
+                    $billing === 'yearly' ? 12 : (int) ($data['months'] ?? 1),
+                    null,
+                    $billing,
+                );
             }
         }
 
