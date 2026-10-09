@@ -760,10 +760,10 @@ class OrganizationPlatformConfigService
             'backoffice_sections' => \App\Services\Erp\BackofficeSections::forOrganization($org),
             'edit_order_statuses' => $this->normalizeRequiredActionStatuses(
                 $sales['edit_order_statuses'] ?? null,
-            'hr_sections' => \App\Services\Erp\SetupProfileMenuService::storedGroup($sales, 'hr_sections', \App\Services\Erp\SetupProfileMenuService::HR_KEYS),
-            'accounting_sections' => \App\Services\Erp\SetupProfileMenuService::storedGroup($sales, 'accounting_sections', \App\Services\Erp\SetupProfileMenuService::ACCOUNTING_KEYS),
                 config('erp.module_settings_defaults.sales.edit_order_statuses', ['booked', 'pending', 'editable']),
             ),
+            'hr_sections' => \App\Services\Erp\SetupProfileMenuService::storedGroup($sales, 'hr_sections', \App\Services\Erp\SetupProfileMenuService::HR_KEYS),
+            'accounting_sections' => \App\Services\Erp\SetupProfileMenuService::storedGroup($sales, 'accounting_sections', \App\Services\Erp\SetupProfileMenuService::ACCOUNTING_KEYS),
             'print_invoice_statuses' => $this->normalizeOptionalActionStatuses(
                 $sales['print_invoice_statuses'] ?? null,
             ),
