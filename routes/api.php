@@ -534,6 +534,7 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin'])
             ->group(function () {
                 Route::get('/', [PlatformPlanController::class, 'index']);
+                Route::post('compose', [PlatformPlanController::class, 'compose']);
                 Route::post('/', [PlatformPlanController::class, 'store']);
                 Route::get('{platform_plan}', [PlatformPlanController::class, 'show'])->whereNumber('platform_plan');
                 Route::patch('{platform_plan}', [PlatformPlanController::class, 'update'])->whereNumber('platform_plan');

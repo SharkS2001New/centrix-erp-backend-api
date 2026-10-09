@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\PlatformPlan;
+use App\Services\Platform\SelfServePlanComposer;
 use Illuminate\Http\Request;
 
 class PlatformPlanController extends Controller
@@ -13,6 +14,21 @@ class PlatformPlanController extends Controller
         return response()->json([
             'data' => PlatformPlan::query()->orderBy('name')->get(),
         ]);
+    }
+
+    public function compose(Request $request, SelfServePlanComposer $composer)
+    {
+        $data = $request->validate([
+            'description' => 'required|string|min:8|max:4000',
+        ]);
+
+        $created = $composer->createFromWords($data['description']);
+
+        return response()->json([
+            'data' => $created['plan'],
+            'summary' => $created['summary'],
+            'message' => 'Centrix AI created this plan.',
+        ], 201);
     }
 
     public function store(Request $request)
