@@ -80,7 +80,7 @@ class OrganizationProvisionController extends Controller
                 'label' => $profile['label'] ?? $key,
                 'industry' => $profile['industry'] ?? IndustryRegistry::industryForProfile($key),
                 'modules' => $profile['modules'] ?? [],
-                'applications' => $this->applications->applicationsFromProfileModules($profile['modules'] ?? []),
+                'applications' => $setupMenus->applicationsForProfile($key),
                 'menu_groups' => $setupMenus->forProfile($key),
                 'application_ids' => array_key_exists('application_ids', $profile)
                     ? $profile['application_ids']

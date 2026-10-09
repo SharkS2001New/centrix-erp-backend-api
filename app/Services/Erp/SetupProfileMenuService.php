@@ -110,18 +110,87 @@ class SetupProfileMenuService
      */
     public function forProfile(string $profileKey): array
     {
-        if (! $this->tableReady()) {
-            return $this->defaults();
-        }
-
-        $row = PlatformSetupProfile::query()->where('profile_key', $profileKey)->first();
-        $stored = is_array($row?->menu_groups) ? $row->menu_groups : null;
-
-        return $this->normalize($stored);
+        return $this->normalize($this->storedDocument($profileKey));
     }
 
     /**
-     * @return list<array{key: string, label: string, industry: string|null, menu_groups: array<string, mixed>}>
+     * Applications included in this setup type. External POS is `pos`.
+     * Unsaved setups use the profile's built-in modules.
+     *
+     * @return array<string, bool>
+     */
+    public function applicationsForProfile(string $profileKey): array
+    {
+        $stored = $this->storedDocument($profileKey);
+        $raw = is_array($stored['applications'] ?? null) ? $stored['applications'] : null;
+
+        return $this->normalizeApplications($profileKey, $raw);
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function applicationIdsForProfile(string $profileKey): array
+    {
+        $profile = config('erp.profiles.'.$profileKey, []);
+        $ids = $profile['application_ids'] ?? null;
+        if (! is_array($ids) || $ids === []) {
+            $industry = $profile['industry'] ?? 'commerce';
+
+            return $industry === 'hospitality'
+                ? ['hotel_bar_pos', 'hospitality_backoffice', 'accounting', 'hr', 'admin']
+                : ['pos', 'backoffice', 'distribution', 'accounting', 'hr', 'admin'];
+        }
+
+        return array_values(array_map('strval', $ids));
+    }
+
+    /**
+     * @param  array<string, mixed>|null  $raw
+     * @return array<string, bool>
+     */
+    public function normalizeApplications(string $profileKey, ?array $raw): array
+    {
+        $defaults = $this->defaultApplications($profileKey);
+        if (! is_array($raw)) {
+            return $defaults;
+        }
+
+        foreach (array_keys($defaults) as $id) {
+            if (array_key_exists($id, $raw)) {
+                $defaults[$id] = filter_var($raw[$id], FILTER_VALIDATE_BOOLEAN);
+            }
+        }
+
+        if (($defaults['pos'] ?? false) === true) {
+            $defaults['backoffice'] = true;
+        }
+        if (($defaults['hotel_bar_pos'] ?? false) === true) {
+            $defaults['hospitality_backoffice'] = true;
+        }
+
+        return $defaults;
+    }
+
+    /**
+     * @return array<string, bool>
+     */
+    public function defaultApplications(string $profileKey): array
+    {
+        $profile = config('erp.profiles.'.$profileKey, []);
+        $fromModules = app(ApplicationProvisioner::class)->applicationsFromProfileModules(
+            is_array($profile['modules'] ?? null) ? $profile['modules'] : [],
+        );
+        $out = [];
+        foreach ($this->applicationIdsForProfile($profileKey) as $id) {
+            $out[$id] = (bool) ($fromModules[$id] ?? false);
+        }
+
+        return $out;
+    }
+
+    /**
+     * @return list<array{key: string, label: string, industry: string|null, application_ids: list<string>, applications: array<string, bool>, menu_groups: array<string, mixed>}>
      */
     public function all(): array
     {
@@ -133,6 +202,8 @@ class SetupProfileMenuService
                 'key' => $key,
                 'label' => (string) ($profile['label'] ?? $key),
                 'industry' => $profile['industry'] ?? null,
+                'application_ids' => $this->applicationIdsForProfile($key),
+                'applications' => $this->applicationsForProfile($key),
                 'menu_groups' => $this->forProfile($key),
             ];
         }
@@ -141,24 +212,52 @@ class SetupProfileMenuService
     }
 
     /**
-     * @param  array<string, mixed>  $menuGroups
-     * @return array{backoffice: array<string, bool>, hr: array<string, bool>, accounting: array<string, bool>}
+     * @param  array<string, mixed>  $payload
+     * @return array{menu_groups: array<string, mixed>, applications: array<string, bool>}
      */
-    public function save(string $profileKey, array $menuGroups): array
+    public function save(string $profileKey, array $payload): array
     {
         if (! in_array($profileKey, $this->profileKeys(), true)) {
             throw new \InvalidArgumentException('Unknown setup type.');
         }
 
-        $normalized = $this->normalize($menuGroups);
+        $existing = $this->storedDocument($profileKey);
+        $menu = $this->normalize($payload);
+        $applications = array_key_exists('applications', $payload)
+            ? $this->normalizeApplications(
+                $profileKey,
+                is_array($payload['applications']) ? $payload['applications'] : [],
+            )
+            : $this->normalizeApplications(
+                $profileKey,
+                is_array($existing['applications'] ?? null) ? $existing['applications'] : null,
+            );
+
         if ($this->tableReady()) {
             PlatformSetupProfile::query()->updateOrCreate(
                 ['profile_key' => $profileKey],
-                ['menu_groups' => $normalized],
+                ['menu_groups' => array_merge($menu, ['applications' => $applications])],
             );
         }
 
-        return $normalized;
+        return [
+            'menu_groups' => $menu,
+            'applications' => $applications,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    protected function storedDocument(string $profileKey): ?array
+    {
+        if (! $this->tableReady()) {
+            return null;
+        }
+
+        $row = PlatformSetupProfile::query()->where('profile_key', $profileKey)->first();
+
+        return is_array($row?->menu_groups) ? $row->menu_groups : null;
     }
 
     protected function tableReady(): bool

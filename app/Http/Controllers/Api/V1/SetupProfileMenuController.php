@@ -37,12 +37,17 @@ class SetupProfileMenuController extends Controller
             'hr.*' => 'sometimes|boolean',
             'accounting' => 'sometimes|array',
             'accounting.*' => 'sometimes|boolean',
+            'applications' => 'sometimes|array',
+            'applications.*' => 'sometimes|boolean',
         ]);
+
+        $saved = $this->menus->save($profileKey, $data);
 
         return response()->json([
             'data' => [
                 'key' => $profileKey,
-                'menu_groups' => $this->menus->save($profileKey, $data),
+                'menu_groups' => $saved['menu_groups'],
+                'applications' => $saved['applications'],
             ],
         ]);
     }

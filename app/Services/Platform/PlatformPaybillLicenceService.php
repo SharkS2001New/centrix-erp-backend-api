@@ -414,6 +414,71 @@ class PlatformPaybillLicenceService
         return $payment->fresh();
     }
 
+    /** @return array{percent: float, min_months: int} */
+    public function durationDiscount(): array
+    {
+        $settings = $this->settings();
+
+        return [
+            'percent' => (float) ($settings?->duration_discount_percent ?? 0),
+            'min_months' => (int) ($settings?->duration_discount_min_months ?? 3),
+        ];
+    }
+
+    /**
+     * Active self-serve plans an organisation can choose on the subscription screen.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function monthlyPlanChoices(): array
+    {
+        if (! \Illuminate\Support\Facades\Schema::hasTable('platform_plans')) {
+            return [];
+        }
+        if (! \Illuminate\Support\Facades\Schema::hasColumn('platform_plans', 'self_serve')) {
+            return [];
+        }
+
+        $discount = $this->durationDiscount();
+
+        return PlatformPlan::query()
+            ->where('is_active', true)
+            ->where('self_serve', true)
+            ->where('monthly_price', '>', 0)
+            ->orderBy('monthly_price')
+            ->orderBy('name')
+            ->get()
+            ->map(function (PlatformPlan $plan) use ($discount) {
+                $features = [];
+                foreach (is_array($plan->feature_details) ? $plan->feature_details : [] as $row) {
+                    if (! is_array($row)) {
+                        continue;
+                    }
+                    $label = trim((string) ($row['label'] ?? ''));
+                    if ($label === '') {
+                        continue;
+                    }
+                    $detail = trim((string) ($row['detail'] ?? ''));
+                    $features[] = $detail !== '' ? $label.': '.$detail : $label;
+                }
+
+                return [
+                    'id' => (int) $plan->id,
+                    'name' => $plan->name,
+                    'description' => $plan->description,
+                    'currency' => $plan->currency ?: 'KES',
+                    'monthly_price' => round((float) $plan->monthly_price, 2),
+                    'features' => $features,
+                    'section_keys' => array_values($plan->section_keys ?? []),
+                    'workspace_keys' => array_values($plan->workspace_keys ?? []),
+                    'discount_percent' => $discount['percent'],
+                    'discount_min_months' => $discount['min_months'],
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
     /** @param  array{product: string, price: float, days: int}  $product */
     protected function extendSubscription(PlatformSubscription $subscription, array $product): void
     {
