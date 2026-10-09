@@ -450,8 +450,9 @@ class PlatformPaybillLicenceService
         return PlatformPlan::query()
             ->where('is_active', true)
             ->where('self_serve', true)
-            ->where('monthly_price', '>', 0)
-            ->orderBy('monthly_price')
+            ->where(function ($query) {
+                $query->where('monthly_price', '>', 0)->orWhere('yearly_price', '>', 0);
+            })
             ->orderBy('name')
             ->get()
             ->map(function (PlatformPlan $plan) use ($discount) {
@@ -472,8 +473,9 @@ class PlatformPaybillLicenceService
                     'id' => (int) $plan->id,
                     'name' => $plan->name,
                     'description' => $plan->description,
+                    'interval' => in_array(strtolower((string) $plan->interval), ['annual', 'yearly'], true) ? 'yearly' : 'monthly',
                     'currency' => $plan->currency ?: 'KES',
-                    'monthly_price' => round((float) $plan->monthly_price, 2),
+                    'monthly_price' => $plan->monthly_price !== null ? round((float) $plan->monthly_price, 2) : null,
                     'yearly_price' => $plan->yearly_price !== null ? round((float) $plan->yearly_price, 2) : null,
                     'features' => $features,
                     'section_keys' => array_values($plan->section_keys ?? []),
@@ -535,6 +537,21 @@ class PlatformPaybillLicenceService
             'months' => $quote['months'],
             'amount' => $quote['amount'],
             'discount_percent' => $quote['discount_percent'],
+            'phone_number' => $phone,
+            'status' => 'pending',
+        ]);
+    }
+
+    public function startTokenCheckout(Organization $org, ?string $phone = null): PlatformLicenceCheckout
+    {
+        $policy = app(BillingPolicy::class)->current();
+
+        return PlatformLicenceCheckout::query()->create([
+            'organization_id' => $org->id,
+            'plan_id' => null,
+            'months' => 0,
+            'amount' => round((float) ($policy['token_pack_price_kes'] ?? 0), 2),
+            'discount_percent' => 0,
             'phone_number' => $phone,
             'status' => 'pending',
         ]);
@@ -615,7 +632,7 @@ class PlatformPaybillLicenceService
 
         $plan = $checkout->plan_id ? PlatformPlan::query()->find($checkout->plan_id) : null;
         if (! $plan) {
-            return null;
+            return $this->applyTokenCheckout($payment, $org, $checkout, $amount);
         }
 
         $subscription = PlatformSubscription::query()
@@ -636,14 +653,19 @@ class PlatformPaybillLicenceService
             ]);
         }
 
+        $yearly = in_array(strtolower((string) $plan->interval), ['annual', 'yearly'], true);
+        $renewal = $yearly ? (float) ($plan->yearly_price ?: $checkout->amount) : (float) ($plan->monthly_price ?: $checkout->amount);
+        $days = $yearly ? 365 : max(1, (int) $checkout->months) * 30;
         $subscription->plan_id = $plan->id;
         $subscription->is_trial = false;
         $subscription->status = 'active';
+        $subscription->amount = $renewal;
+        $subscription->renewal_price = $renewal;
         $subscription->save();
         $this->extendSubscription($subscription, [
-            'product' => 'monthly',
+            'product' => $yearly ? 'yearly' : 'monthly',
             'price' => (float) $checkout->amount,
-            'days' => max(1, (int) $checkout->months) * 30,
+            'days' => $days,
         ]);
         $this->applyPlanEntitlements($org, $plan);
 
@@ -653,12 +675,50 @@ class PlatformPaybillLicenceService
 
         $payment->fill([
             'status' => 'applied',
-            'product' => 'monthly',
-            'days_added' => max(1, (int) $checkout->months) * 30,
+            'product' => $yearly ? 'yearly' : 'monthly',
+            'days_added' => $days,
             'amount_applied' => $amount,
             'balance_after' => 0,
             'period_end_after' => $subscription->fresh()?->current_period_end?->toDateString(),
             'note' => 'plan_checkout',
+        ])->save();
+
+        return $payment->fresh();
+    }
+
+    protected function applyTokenCheckout(
+        PlatformLicencePayment $payment,
+        Organization $org,
+        PlatformLicenceCheckout $checkout,
+        float $amount,
+    ): PlatformLicencePayment {
+        $policy = app(BillingPolicy::class)->current();
+        $packPrice = (float) ($policy['token_pack_price_kes'] ?? 0);
+        $packTokens = (int) ($policy['token_pack_tokens'] ?? 0);
+        $value = max(1, (int) ($policy['token_value_kes'] ?? 1));
+        $tokens = $packPrice > 0 && abs($amount - $packPrice) <= 1
+            ? $packTokens
+            : max(0, (int) round($amount / $value));
+
+        $balanceRow = PlatformLicenceBalance::query()->firstOrCreate(
+            ['organization_id' => $org->id],
+            ['balance' => 0],
+        );
+        $balanceRow = PlatformLicenceBalance::query()->whereKey($balanceRow->id)->lockForUpdate()->first();
+        $balanceRow->token_balance = (int) $balanceRow->token_balance + $tokens;
+        $balanceRow->save();
+
+        $checkout->status = 'paid';
+        $checkout->mpesa_receipt = $payment->mpesa_transaction_id;
+        $checkout->save();
+
+        $payment->fill([
+            'status' => 'applied',
+            'product' => 'token',
+            'days_added' => null,
+            'amount_applied' => $amount,
+            'balance_after' => (int) $balanceRow->token_balance,
+            'note' => 'token_checkout',
         ])->save();
 
         return $payment->fresh();

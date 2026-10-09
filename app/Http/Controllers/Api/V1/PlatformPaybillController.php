@@ -100,13 +100,33 @@ class PlatformPaybillController extends Controller
             return response()->json(['message' => 'No organisation on this login.'], 422);
         }
 
-        $plan = $this->activeMonthlyPlan($request);
+        $billing = $request->input('billing') === 'yearly' ? 'yearly' : ($request->input('billing') === 'token' ? 'token' : 'monthly');
+        if ($billing === 'token') {
+            $checkout = $this->paybill->startTokenCheckout($org);
+            if ((float) $checkout->amount <= 0) {
+                $checkout->delete();
+
+                return response()->json(['message' => 'A platform administrator has not published a token pack price yet.'], 422);
+            }
+            $instructions = $this->paybill->instructionsFor($org, null);
+            $sent = $this->notifyAdmin($org, null, $checkout, $instructions);
+
+            return response()->json([
+                'message' => $sent
+                    ? 'Centrix has been notified on WhatsApp. Pay the Paybill with your organisation code as the account number.'
+                    : 'WhatsApp could not be sent. Pay the Paybill with your organisation code, then enter the M-Pesa code and check now.',
+                'whatsapp_sent' => $sent,
+                'checkout' => $this->checkoutPayload($checkout),
+                'paybill' => $instructions,
+            ]);
+        }
+
+        $plan = $this->activePublishedPlan($request, $billing);
         if ($plan instanceof \Illuminate\Http\JsonResponse) {
             return $plan;
         }
 
         $months = (int) $request->input('months');
-        $billing = $request->input('billing') === 'yearly' ? 'yearly' : 'monthly';
         $checkout = $this->paybill->startCheckout($org, $plan, $billing === 'yearly' ? 12 : $months, null, $billing);
         $instructions = $this->paybill->instructionsFor($org, null);
         $sent = $this->notifyAdmin($org, $plan, $checkout, $instructions);
@@ -129,29 +149,39 @@ class PlatformPaybillController extends Controller
         }
 
         $data = $request->validate([
-            'plan_id' => 'required|integer',
-            'months' => 'required|integer|min:1|max:36',
+            'plan_id' => 'required_unless:billing,token|integer',
+            'months' => 'required_unless:billing,token|integer|min:1|max:36',
             'phone' => 'required|string|max:20',
-            'billing' => 'sometimes|in:monthly,yearly',
+            'billing' => 'sometimes|in:monthly,yearly,token',
         ]);
-
-        $plan = $this->findSelfServePlan((int) $data['plan_id']);
-        if (! $plan || (float) ($plan->monthly_price ?? 0) <= 0) {
-            return response()->json(['message' => 'Choose an active monthly plan.'], 422);
-        }
 
         $phone = PhoneNumber::normalize($data['phone']);
         if ($phone === null) {
             return response()->json(['message' => 'Enter a valid M-Pesa phone number.'], 422);
         }
 
-        $checkout = $this->paybill->startCheckout(
-            $org,
-            $plan,
-            ($data['billing'] ?? 'monthly') === 'yearly' ? 12 : (int) $data['months'],
-            $phone,
-            $data['billing'] ?? 'monthly',
-        );
+        $billing = ($data['billing'] ?? 'monthly') === 'yearly' ? 'yearly' : (($data['billing'] ?? 'monthly') === 'token' ? 'token' : 'monthly');
+        if ($billing === 'token') {
+            $checkout = $this->paybill->startTokenCheckout($org, $phone);
+            if ((float) $checkout->amount <= 0) {
+                $checkout->delete();
+
+                return response()->json(['message' => 'A platform administrator has not published a token pack price yet.'], 422);
+            }
+        } else {
+            $plan = $this->findSelfServePlan((int) $data['plan_id']);
+            $priced = $billing === 'yearly' ? (float) ($plan->yearly_price ?? 0) : (float) ($plan->monthly_price ?? 0);
+            if (! $plan || $priced <= 0) {
+                return response()->json(['message' => $billing === 'yearly' ? 'Choose an active yearly plan.' : 'Choose an active monthly plan.'], 422);
+            }
+            $checkout = $this->paybill->startCheckout(
+                $org,
+                $plan,
+                $billing === 'yearly' ? 12 : (int) $data['months'],
+                $phone,
+                $billing,
+            );
+        }
         $platform = $this->platformOrganization();
         if (! $platform) {
             return response()->json([
@@ -197,13 +227,16 @@ class PlatformPaybillController extends Controller
             'mpesa_code' => 'nullable|string|max:20',
             'plan_id' => 'nullable|integer',
             'months' => 'nullable|integer|min:1|max:36',
-            'billing' => 'nullable|in:monthly,yearly',
+            'billing' => 'nullable|in:monthly,yearly,token',
         ]);
 
-        if (! empty($data['plan_id'])) {
+        $billing = ($data['billing'] ?? 'monthly') === 'yearly' ? 'yearly' : (($data['billing'] ?? '') === 'token' ? 'token' : 'monthly');
+        if ($billing === 'token') {
+            $this->paybill->startTokenCheckout($org);
+        } elseif (! empty($data['plan_id'])) {
             $plan = PlatformPlan::query()->where('is_active', true)->find($data['plan_id']);
-            if ($plan && (float) ($plan->monthly_price ?? 0) > 0) {
-                $billing = ($data['billing'] ?? 'monthly') === 'yearly' ? 'yearly' : 'monthly';
+            $priced = $billing === 'yearly' ? (float) ($plan->yearly_price ?? 0) : (float) ($plan->monthly_price ?? 0);
+            if ($plan && $priced > 0) {
                 $this->paybill->startCheckout(
                     $org,
                     $plan,
@@ -252,15 +285,16 @@ class PlatformPaybillController extends Controller
         ]);
     }
 
-    protected function activeMonthlyPlan(Request $request): PlatformPlan|\Illuminate\Http\JsonResponse
+    protected function activePublishedPlan(Request $request, string $billing): PlatformPlan|\Illuminate\Http\JsonResponse
     {
         $data = $request->validate([
             'plan_id' => 'required|integer',
             'months' => 'required|integer|min:1|max:36',
         ]);
         $plan = $this->findSelfServePlan((int) $data['plan_id']);
-        if (! $plan || (float) ($plan->monthly_price ?? 0) <= 0) {
-            return response()->json(['message' => 'Choose an active monthly plan.'], 422);
+        $priced = $billing === 'yearly' ? (float) ($plan->yearly_price ?? 0) : (float) ($plan->monthly_price ?? 0);
+        if (! $plan || $priced <= 0) {
+            return response()->json(['message' => $billing === 'yearly' ? 'Choose an active yearly plan.' : 'Choose an active monthly plan.'], 422);
         }
 
         return $plan;
@@ -299,7 +333,7 @@ class PlatformPaybillController extends Controller
     }
 
     /** @param  array<string, mixed>|null  $instructions */
-    protected function notifyAdmin(Organization $org, PlatformPlan $plan, PlatformLicenceCheckout $checkout, ?array $instructions): bool
+    protected function notifyAdmin(Organization $org, ?PlatformPlan $plan, PlatformLicenceCheckout $checkout, ?array $instructions): bool
     {
         $to = SystemIssueAlertSettingsResolver::whatsappNumberE164();
         $config = $this->whatsappConfig();
@@ -311,8 +345,10 @@ class PlatformPaybillController extends Controller
         $message = implode("\n", [
             'Centrix licence payment',
             $org->org_name.' ('.$org->company_code.')',
-            'Plan: '.$plan->name.' for '.$checkout->months.' month(s)',
-            'Amount: '.number_format((float) $checkout->amount, 2).' '.($plan->currency ?: 'KES'),
+            $plan
+                ? 'Plan: '.$plan->name.' for '.$checkout->months.' '.($plan->interval === 'annual' ? 'year' : 'month(s)')
+                : 'Token pack',
+            'Amount: '.number_format((float) $checkout->amount, 2).' '.($plan?->currency ?: 'KES'),
             'Paybill: '.$paybill,
             'Account: '.$org->company_code,
             'They paid the Paybill and asked you to confirm it.',
