@@ -74,6 +74,12 @@ class UserLoginChannelService
             return;
         }
 
+        // Web users open External POS from the module switcher. Terminal permission
+        // and the organisation module are checked when the session is switched.
+        if ($channel === self::POS && in_array(self::BACKOFFICE, $allowed, true)) {
+            return;
+        }
+
         // Unified web login issues a backoffice token; POS-only accounts use the same sign-in page.
         if ($channel === self::BACKOFFICE) {
             $webEligible = array_intersect($allowed, [self::BACKOFFICE, self::POS]);

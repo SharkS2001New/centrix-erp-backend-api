@@ -643,8 +643,6 @@ class OrganizationPlatformConfigService
             'enable_backoffice_order_edit' => true,
             'backoffice_order_edit_layout' => 'modern',
             'backoffice_sections' => \App\Services\Erp\BackofficeSections::DEFAULTS,
-            'hr_sections' => \App\Services\Erp\SetupProfileMenuService::defaultGroup(\App\Services\Erp\SetupProfileMenuService::HR_KEYS),
-            'accounting_sections' => \App\Services\Erp\SetupProfileMenuService::defaultGroup(\App\Services\Erp\SetupProfileMenuService::ACCOUNTING_KEYS),
             'reserve_stock_on_cart' => true,
             'cart_reservation_ttl_minutes' => 15,
             'mobile_cart_reservation_ttl_minutes' => 30,
@@ -719,9 +717,9 @@ class OrganizationPlatformConfigService
                 (bool) ($org->enabled_modules['sales.pos'] ?? false),
             ),
             'require_pos_till_float' => (bool) ($sales['require_pos_till_float'] ?? false),
-            'require_backoffice_till_float' => (bool) ($sales['require_backoffice_till_float'] ?? false),
             'enable_pos_cash_rounding' => PosCashRoundingSettings::enabled($sales, $customSales),
             'receipt_show_all_payment_methods' => (bool) ($sales['receipt_show_all_payment_methods'] ?? true),
+            'require_backoffice_till_float' => (bool) ($sales['require_backoffice_till_float'] ?? false),
             'external_pos_layout' => in_array(($sales['external_pos_layout'] ?? 'modern'), ['modern', 'classic'], true)
                 ? (string) $sales['external_pos_layout']
                 : 'modern',
@@ -760,10 +758,10 @@ class OrganizationPlatformConfigService
             'append_same_day_customer_orders' => (bool) ($sales['append_same_day_customer_orders'] ?? false),
             'enable_backoffice_order_edit' => (bool) ($sales['enable_backoffice_order_edit'] ?? true),
             'backoffice_sections' => \App\Services\Erp\BackofficeSections::forOrganization($org),
-            'hr_sections' => \App\Services\Erp\SetupProfileMenuService::storedGroup($sales, 'hr_sections', \App\Services\Erp\SetupProfileMenuService::HR_KEYS),
-            'accounting_sections' => \App\Services\Erp\SetupProfileMenuService::storedGroup($sales, 'accounting_sections', \App\Services\Erp\SetupProfileMenuService::ACCOUNTING_KEYS),
             'edit_order_statuses' => $this->normalizeRequiredActionStatuses(
                 $sales['edit_order_statuses'] ?? null,
+            'hr_sections' => \App\Services\Erp\SetupProfileMenuService::storedGroup($sales, 'hr_sections', \App\Services\Erp\SetupProfileMenuService::HR_KEYS),
+            'accounting_sections' => \App\Services\Erp\SetupProfileMenuService::storedGroup($sales, 'accounting_sections', \App\Services\Erp\SetupProfileMenuService::ACCOUNTING_KEYS),
                 config('erp.module_settings_defaults.sales.edit_order_statuses', ['booked', 'pending', 'editable']),
             ),
             'print_invoice_statuses' => $this->normalizeOptionalActionStatuses(

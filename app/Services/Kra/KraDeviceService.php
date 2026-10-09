@@ -282,15 +282,15 @@ class KraDeviceService
      */
     protected function uploadPluChunk(array $chunk, string $path, int $batch): array
     {
-        $pluItems = array_map(
-            fn ($product) => self::buildComstorePluItemFromProduct($product),
-            $chunk,
-        );
-        $payload = $this->buildComstoreUploadPayload($pluItems);
-        $result = $this->postToDevice($path, $payload, [
+                $pluItems = array_map(
+                    fn ($product) => self::buildComstorePluItemFromProduct($product),
+                    $chunk,
+                );
+                $payload = $this->buildComstoreUploadPayload($pluItems);
+                $result = $this->postToDevice($path, $payload, [
             'batch' => $batch,
-            'plu_count' => count($pluItems),
-        ]);
+                    'plu_count' => count($pluItems),
+                ]);
 
         if ($result['success'] ?? false) {
             return [
@@ -333,12 +333,12 @@ class KraDeviceService
      */
     protected function registerPluChunk(array $chunk, string $path, int $batch): array
     {
-        $pluData = array_map(fn ($product) => self::buildPluLineFromProduct($product), $chunk);
+                $pluData = array_map(fn ($product) => self::buildPluLineFromProduct($product), $chunk);
         $payload = $this->buildProductRegisterPayload($pluData, $batch, $path);
-        $result = $this->postToDevice($path, $payload, [
+                $result = $this->postToDevice($path, $payload, [
             'batch' => $batch,
-            'plu_count' => count($pluData),
-        ]);
+                    'plu_count' => count($pluData),
+                ]);
 
         if ($result['success'] ?? false) {
             return [

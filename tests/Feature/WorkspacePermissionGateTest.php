@@ -245,6 +245,45 @@ class WorkspacePermissionGateTest extends TestCase
         $this->assertContains('admin', $ids);
     }
 
+    public function test_web_user_with_terminal_permission_can_switch_to_external_pos(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $org = Organization::findOrFail($admin->organization_id);
+        $modules = is_array($org->enabled_modules) ? $org->enabled_modules : [];
+        $modules['sales.pos'] = true;
+        $modules['sales.backend'] = true;
+        $org->update(['enabled_modules' => $modules]);
+
+        $user = $this->makeUserWithPermissions($admin, [
+            'pos.terminal.view',
+            'sales.orders.view',
+        ]);
+
+        $ids = $this->workspaceIdsFor($user);
+
+        $this->assertContains('pos', $ids);
+        $this->assertContains('backoffice', $ids);
+    }
+
+    public function test_web_user_without_terminal_permission_does_not_see_external_pos(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $org = Organization::findOrFail($admin->organization_id);
+        $modules = is_array($org->enabled_modules) ? $org->enabled_modules : [];
+        $modules['sales.pos'] = true;
+        $modules['sales.backend'] = true;
+        $org->update(['enabled_modules' => $modules]);
+
+        $user = $this->makeUserWithPermissions($admin, [
+            'sales.orders.view',
+        ]);
+
+        $ids = $this->workspaceIdsFor($user);
+
+        $this->assertNotContains('pos', $ids);
+        $this->assertContains('backoffice', $ids);
+    }
+
     public function test_admin_attendance_clock_permission_unlocks_administration_workspace(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();

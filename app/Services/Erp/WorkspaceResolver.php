@@ -126,6 +126,14 @@ class WorkspaceResolver
         }
 
         $channels = app(UserLoginChannelService::class)->channelsFor($user);
+
+        // External POS is a web module. Offer it in the switcher to web users;
+        // the organisation module and pos.terminal.view still decide access.
+        if ($workspaceId === 'pos') {
+            return in_array(UserLoginChannelService::POS, $channels, true)
+                || in_array(UserLoginChannelService::BACKOFFICE, $channels, true);
+        }
+
         $workspaceChannel = $this->workspaceLoginChannel($workspaceId);
 
         return in_array($workspaceChannel, $channels, true);

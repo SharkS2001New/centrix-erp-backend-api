@@ -61,11 +61,6 @@ class PlatformPlanController extends Controller
             'seat_limit' => 'nullable|integer|min:1',
             'workspace_keys' => 'sometimes|array',
             'module_keys' => 'sometimes|array',
-            'section_keys' => 'sometimes|array',
-            'section_keys.*' => 'string|max:40',
-            'feature_details' => 'sometimes|array',
-            'feature_details.*.label' => 'required_with:feature_details|string|max:120',
-            'feature_details.*.detail' => 'nullable|string|max:500',
             'is_active' => 'sometimes|boolean',
             'auto_invoice_template_id' => 'nullable|integer',
         ]);
