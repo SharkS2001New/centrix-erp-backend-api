@@ -28,4 +28,9 @@ class DrivingCourse extends Model
     {
         return $this->hasMany(DrivingEnrolment::class, 'course_id');
     }
+
+    public function packages(): HasMany
+    {
+        return $this->hasMany(DrivingCoursePackage::class, 'course_id');
+    }
 }

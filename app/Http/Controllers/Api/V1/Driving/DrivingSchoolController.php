@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Driving;
 
 use App\Http\Controllers\Controller;
 use App\Models\Driving\DrivingAssessment;
+use App\Models\Driving\DrivingAttendanceLog;
 use App\Models\Driving\DrivingCourse;
 use App\Models\Driving\DrivingExpense;
 use App\Models\Driving\DrivingInstructor;
@@ -21,6 +22,7 @@ use App\Services\Driving\DrivingSchoolService;
 use App\Services\Erp\CapabilityGate;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -53,7 +55,7 @@ class DrivingSchoolController extends Controller
         if ($status = $request->input('status')) {
             $query->where('status', $status);
         }
-        $query->orderByDesc('id');
+        $query->with(['enrolments.course:id,code,name', 'enrolments.package:id,name'])->orderByDesc('id');
         if ($request->input('format') === 'csv') {
             return $this->csv('students.csv', ['Number', 'Name', 'Phone', 'Status', 'Registered'], $query->get()->map(fn ($row) => [
                 $row->student_number, $row->full_name, $row->phone, $row->status, optional($row->registered_on)->toDateString(),
@@ -97,18 +99,37 @@ class DrivingSchoolController extends Controller
             'status' => ['nullable', Rule::in(['active', 'inactive', 'completed', 'suspended'])],
             'notes' => ['nullable', 'string', 'max:2000'],
             'registered_on' => ['nullable', 'date'],
+            'course_id' => ['nullable', 'integer', 'required_with:package_id'],
+            'package_id' => ['nullable', 'integer', 'required_with:course_id'],
         ]);
-        $this->driving->assertNoDuplicateStudent($org->id, $data['phone']);
-        $student = DrivingStudent::query()->create([
-            ...$data,
-            'organization_id' => $org->id,
-            'branch_id' => $this->driving->branchIdForWrite($request->user(), isset($data['branch_id']) ? (int) $data['branch_id'] : null, $request),
-            'student_number' => $this->driving->nextNumber(DrivingStudent::class, $org->id, 'student_number', 'DS-'),
-            'registered_on' => $data['registered_on'] ?? now()->toDateString(),
-            'status' => $data['status'] ?? 'active',
-        ]);
-        $this->audit->logModel($request->user(), 'create', $student);
-        $this->driving->queueNotice($org->id, $student->id, 'student_registration', 'Student '.$student->student_number.' was registered. The message is queued, not sent.');
+        $courseId = $data['course_id'] ?? null;
+        $packageId = $data['package_id'] ?? null;
+        unset($data['course_id'], $data['package_id']);
+        $student = DB::transaction(function () use ($request, $org, $data, $courseId, $packageId) {
+            $this->driving->assertNoDuplicateStudent($org->id, $data['phone']);
+            $student = DrivingStudent::query()->create([
+                ...$data,
+                'organization_id' => $org->id,
+                'branch_id' => $this->driving->branchIdForWrite($request->user(), isset($data['branch_id']) ? (int) $data['branch_id'] : null, $request),
+                'student_number' => $this->driving->nextNumber(DrivingStudent::class, $org->id, 'student_number', 'DS-'),
+                'registered_on' => $data['registered_on'] ?? now()->toDateString(),
+                'status' => $data['status'] ?? 'active',
+            ]);
+            $this->audit->logModel($request->user(), 'create', $student);
+            $this->driving->queueNotice($org->id, $student->id, 'student_registration', 'Student '.$student->student_number.' was registered. The message is queued, not sent.');
+            if ($courseId) {
+                $this->driving->enrol($org, $request->user(), [
+                    'student_id' => $student->id,
+                    'course_id' => $courseId,
+                    'package_id' => $packageId,
+                    'enrolled_on' => $student->registered_on instanceof \DateTimeInterface
+                        ? $student->registered_on->format('Y-m-d')
+                        : (string) $student->registered_on,
+                ]);
+            }
+
+            return $student->load(['enrolments.course:id,code,name', 'enrolments.package:id,name']);
+        });
 
         return response()->json(['data' => $student], 201);
     }
@@ -142,7 +163,7 @@ class DrivingSchoolController extends Controller
 
     public function courses(Request $request)
     {
-        $query = $this->driving->scoped(DrivingCourse::query(), $request->user(), $request);
+        $query = $this->driving->scoped(DrivingCourse::query()->with('packages'), $request->user(), $request);
 
         return response()->json($query->orderBy('name')->paginate(100));
     }
@@ -171,8 +192,16 @@ class DrivingSchoolController extends Controller
             'is_active' => $data['is_active'] ?? true,
         ]);
         $this->audit->logModel($request->user(), 'create', $course);
+        $package = $this->driving->openPackage($course, [
+            'name' => 'Standard',
+            'price' => $course->price,
+            'registration_fee' => $course->registration_fee,
+            'practical_lessons' => $course->practical_lessons,
+            'theory_lessons' => $course->theory_lessons,
+        ]);
+        $this->audit->logModel($request->user(), 'create', $package);
 
-        return response()->json(['data' => $course], 201);
+        return response()->json(['data' => $course->load('packages')], 201);
     }
 
     public function updateCourse(Request $request, DrivingCourse $course)
@@ -197,12 +226,29 @@ class DrivingSchoolController extends Controller
         return response()->json(['data' => $course->fresh()]);
     }
 
+    public function storePackage(Request $request, DrivingCourse $course)
+    {
+        $this->owns($request, (int) $course->organization_id);
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:160', Rule::unique('driving_course_packages', 'name')->where('course_id', $course->id)],
+            'price' => ['required', 'numeric', 'min:0'],
+            'registration_fee' => ['nullable', 'numeric', 'min:0'],
+            'practical_lessons' => ['nullable', 'integer', 'min:0', 'max:500'],
+            'theory_lessons' => ['nullable', 'integer', 'min:0', 'max:500'],
+        ]);
+        $package = $this->driving->openPackage($course, $data);
+        $this->audit->logModel($request->user(), 'create', $package);
+
+        return response()->json(['data' => $package], 201);
+    }
+
     public function enrol(Request $request)
     {
         $org = $this->organization($request);
         $data = $request->validate([
             'student_id' => ['required', 'integer'],
             'course_id' => ['required', 'integer'],
+            'package_id' => ['nullable', 'integer'],
             'enrolled_on' => ['nullable', 'date'],
         ]);
 
@@ -311,6 +357,40 @@ class DrivingSchoolController extends Controller
         }
 
         return response()->json(['data' => $service], 201);
+    }
+
+    public function attendance(Request $request)
+    {
+        $day = $request->input('date')
+            ? Carbon::parse($request->input('date'))->toDateString()
+            : now()->toDateString();
+        $logs = $this->driving->scoped(
+            DrivingAttendanceLog::query()->with('student:id,full_name,student_number'),
+            $request->user(),
+            $request,
+        )
+            ->whereDate('recorded_at', $day)
+            ->orderBy('recorded_at')
+            ->orderBy('id')
+            ->get();
+
+        return response()->json(['date' => $day, 'data' => $logs]);
+    }
+
+    public function storeAttendance(Request $request)
+    {
+        $org = $this->organization($request);
+        $data = $request->validate([
+            'student_id' => ['required', 'integer'],
+            'direction' => ['required', Rule::in(['in', 'out'])],
+            'verification' => ['nullable', Rule::in(['none', 'signature', 'thumb'])],
+            'mark' => ['nullable', 'string', 'max:150000'],
+            'recorded_at' => ['nullable', 'date'],
+        ]);
+
+        return response()->json([
+            'data' => $this->driving->recordAttendance($org, $request->user(), $data),
+        ], 201);
     }
 
     public function lessons(Request $request)

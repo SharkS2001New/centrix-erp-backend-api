@@ -265,7 +265,10 @@ Route::prefix('v1')->group(function () {
             Route::get('courses', [DrivingSchoolController::class, 'courses']);
             Route::post('courses', [DrivingSchoolController::class, 'storeCourse']);
             Route::put('courses/{course}', [DrivingSchoolController::class, 'updateCourse'])->whereNumber('course');
+            Route::post('courses/{course}/packages', [DrivingSchoolController::class, 'storePackage'])->whereNumber('course');
             Route::post('enrolments', [DrivingSchoolController::class, 'enrol']);
+            Route::get('attendance', [DrivingSchoolController::class, 'attendance']);
+            Route::post('attendance', [DrivingSchoolController::class, 'storeAttendance']);
             Route::get('instructors', [DrivingSchoolController::class, 'instructors']);
             Route::post('instructors', [DrivingSchoolController::class, 'storeInstructor']);
             Route::get('vehicles', [DrivingSchoolController::class, 'vehicles']);

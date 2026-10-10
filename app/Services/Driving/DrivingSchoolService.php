@@ -3,7 +3,9 @@
 namespace App\Services\Driving;
 
 use App\Models\Driving\DrivingAssessment;
+use App\Models\Driving\DrivingAttendanceLog;
 use App\Models\Driving\DrivingCourse;
+use App\Models\Driving\DrivingCoursePackage;
 use App\Models\Driving\DrivingEnrolment;
 use App\Models\Driving\DrivingExpense;
 use App\Models\Driving\DrivingInstructor;
@@ -235,45 +237,66 @@ class DrivingSchoolService
                     'course_id' => ['This course is not offered at the student’s branch.'],
                 ]);
             }
+            $package = null;
+            if (! empty($input['package_id'])) {
+                $package = DrivingCoursePackage::query()
+                    ->where('organization_id', $org->id)
+                    ->where('course_id', $course->id)
+                    ->whereKey($input['package_id'])
+                    ->where('is_active', true)
+                    ->first();
+                if (! $package) {
+                    throw ValidationException::withMessages([
+                        'package_id' => ['Choose a package that belongs to this course.'],
+                    ]);
+                }
+            }
+            $price = $package ? $package->price : $course->price;
+            $registrationFee = $package ? $package->registration_fee : $course->registration_fee;
+            $lessonsRequired = $package
+                ? (int) $package->theory_lessons + (int) $package->practical_lessons
+                : (int) $course->theory_lessons + (int) $course->practical_lessons;
             $enrolment = DrivingEnrolment::query()->create([
                 'organization_id' => $org->id,
                 'branch_id' => $student->branch_id,
                 'student_id' => $student->id,
                 'course_id' => $course->id,
+                'package_id' => $package?->id,
                 'status' => 'active',
                 'enrolled_on' => $input['enrolled_on'] ?? now()->toDateString(),
-                'price' => $course->price,
-                'registration_fee' => $course->registration_fee,
-                'lessons_required' => (int) $course->theory_lessons + (int) $course->practical_lessons,
+                'price' => $price,
+                'registration_fee' => $registrationFee,
+                'lessons_required' => $lessonsRequired,
                 'lessons_completed' => 0,
             ]);
             $this->audit->logModel($user, 'create', $enrolment);
-            if ((float) $course->price > 0) {
+            $offer = $package ? $course->name.' · '.$package->name : $course->name;
+            if ((float) $price > 0) {
                 $this->createInvoice($org, $user, [
                     'student_id' => $student->id,
                     'enrolment_id' => $enrolment->id,
                     'branch_id' => $student->branch_id,
                     'kind' => 'course',
-                    'amount' => $course->price,
+                    'amount' => $price,
                     'discount' => 0,
                     'issued_on' => $enrolment->enrolled_on->toDateString(),
-                    'notes' => $course->name,
+                    'notes' => $offer,
                 ]);
             }
-            if ((float) $course->registration_fee > 0) {
+            if ((float) $registrationFee > 0) {
                 $this->createInvoice($org, $user, [
                     'student_id' => $student->id,
                     'enrolment_id' => $enrolment->id,
                     'branch_id' => $student->branch_id,
                     'kind' => 'registration',
-                    'amount' => $course->registration_fee,
+                    'amount' => $registrationFee,
                     'discount' => 0,
                     'issued_on' => $enrolment->enrolled_on->toDateString(),
                     'notes' => 'Registration fee',
                 ]);
             }
 
-            return $enrolment->load('course');
+            return $enrolment->load(['course', 'package']);
         });
     }
 
@@ -529,6 +552,93 @@ class DrivingSchoolService
             'day' => (string) $row->day,
             'collected' => round((float) $row->collected, 2),
         ])->all();
+    }
+
+    /**
+     * @param  array<string, mixed>  $input
+     */
+    public function openPackage(DrivingCourse $course, array $input): DrivingCoursePackage
+    {
+        return DrivingCoursePackage::query()->create([
+            'organization_id' => $course->organization_id,
+            'course_id' => $course->id,
+            'name' => $input['name'],
+            'price' => $input['price'],
+            'registration_fee' => $input['registration_fee'] ?? 0,
+            'practical_lessons' => $input['practical_lessons'] ?? 0,
+            'theory_lessons' => $input['theory_lessons'] ?? 0,
+            'is_active' => true,
+        ]);
+    }
+
+    /**
+     * Record a student arriving or leaving. A signature or thumb mark is optional.
+     *
+     * @param  array<string, mixed>  $input
+     */
+    public function recordAttendance(Organization $org, User $user, array $input): DrivingAttendanceLog
+    {
+        return DB::transaction(function () use ($org, $user, $input) {
+            $student = DrivingStudent::query()
+                ->where('organization_id', $org->id)
+                ->whereKey($input['student_id'])
+                ->lockForUpdate()
+                ->firstOrFail();
+            $when = isset($input['recorded_at']) ? Carbon::parse($input['recorded_at']) : now();
+            $direction = $input['direction'];
+            $last = DrivingAttendanceLog::query()
+                ->where('organization_id', $org->id)
+                ->where('student_id', $student->id)
+                ->whereDate('recorded_at', $when->toDateString())
+                ->latest('recorded_at')
+                ->latest('id')
+                ->lockForUpdate()
+                ->first();
+            if ($direction === 'in' && $last && $last->direction === 'in') {
+                throw ValidationException::withMessages([
+                    'direction' => ['This student is already checked in. Check them out when they leave.'],
+                ]);
+            }
+            if ($direction === 'out' && (! $last || $last->direction !== 'in')) {
+                throw ValidationException::withMessages([
+                    'direction' => ['Check this student in before checking them out.'],
+                ]);
+            }
+            $verification = $input['verification'] ?? 'none';
+            $log = DrivingAttendanceLog::query()->create([
+                'organization_id' => $org->id,
+                'branch_id' => $student->branch_id,
+                'student_id' => $student->id,
+                'direction' => $direction,
+                'recorded_at' => $when->toDateTimeString(),
+                'verification' => $verification,
+                'mark' => $this->attendanceMark($verification, $input['mark'] ?? null),
+                'recorded_by' => $user->id,
+            ]);
+            $this->audit->logModel($user, 'create', $log, null, [
+                'student_id' => $student->id,
+                'direction' => $direction,
+                'verification' => $verification,
+                'recorded_at' => $when->toDateTimeString(),
+            ]);
+
+            return $log->load('student:id,full_name,student_number');
+        });
+    }
+
+    protected function attendanceMark(string $verification, mixed $mark): ?string
+    {
+        if ($verification === 'none') {
+            return null;
+        }
+        $mark = trim((string) $mark);
+        if ($mark === '' || ! preg_match('#^data:image/(png|jpeg);base64,[A-Za-z0-9+/=]+$#', $mark)) {
+            throw ValidationException::withMessages([
+                'mark' => ['Draw a signature or thumb mark before saving this attendance.'],
+            ]);
+        }
+
+        return $mark;
     }
 
     public function maskDocument(?string $number): ?string
