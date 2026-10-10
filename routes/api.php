@@ -109,6 +109,7 @@ use App\Http\Controllers\Api\V1\PosCatalogPricingController;
 use App\Http\Controllers\Api\V1\PositionController;
 use App\Http\Controllers\Api\V1\PriceHistoryController;
 use App\Http\Controllers\Api\V1\ProductController;
+use App\Http\Controllers\Api\V1\RemoteImageController;
 use App\Http\Controllers\Api\V1\CustomerImportController;
 use App\Http\Controllers\Api\V1\ProductImportController;
 use App\Http\Controllers\Api\V1\EmployeeImportController;
@@ -226,6 +227,7 @@ Route::prefix('v1')->group(function () {
 
     Route::middleware(['auth:sanctum', 'erp.tenant', 'erp.session_idle', 'erp.password_expiry', 'throttle:api'])->group(function () {
         Route::get('auth/me', [AuthController::class, 'me']);
+        Route::post('media/import-image', [RemoteImageController::class, 'import']);
         Route::patch('auth/me', [AuthController::class, 'updateMe']);
         Route::post('auth/email/verify/begin', [AuthController::class, 'beginEmailVerification']);
         Route::post('auth/email/verify/confirm', [AuthController::class, 'confirmEmailVerification']);

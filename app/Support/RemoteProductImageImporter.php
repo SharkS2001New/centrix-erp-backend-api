@@ -12,9 +12,9 @@ class RemoteProductImageImporter
     public const MAX_BYTES = 5 * 1024 * 1024;
 
     /**
-     * @return array{path: string, mime_type: string, size: int, file_name: string}
+     * @return array{mime: string, contents: string}
      */
-    public function import(string $url, string $directory): array
+    public function download(string $url): array
     {
         $url = trim($url);
         $this->assertPublicHttpUrl($url);
@@ -57,6 +57,18 @@ class RemoteProductImageImporter
                 'url' => 'That URL is not a JPEG, PNG, or WebP image.',
             ]);
         }
+
+        return ['mime' => $mime, 'contents' => $bytes];
+    }
+
+    /**
+     * @return array{path: string, mime_type: string, size: int, file_name: string}
+     */
+    public function import(string $url, string $directory): array
+    {
+        $downloaded = $this->download($url);
+        $bytes = $downloaded['contents'];
+        $mime = $downloaded['mime'];
 
         $tmp = tempnam(sys_get_temp_dir(), 'centrix-remote-img-');
         if ($tmp === false) {

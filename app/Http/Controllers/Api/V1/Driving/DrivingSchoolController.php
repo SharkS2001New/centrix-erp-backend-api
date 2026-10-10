@@ -563,8 +563,15 @@ class DrivingSchoolController extends Controller
             'school_name' => ['nullable', 'string', 'max:160'],
             'reminder_hours' => ['nullable', 'integer', 'min:1', 'max:168'],
             'sms_enabled' => ['nullable', 'boolean'],
+            'features' => ['nullable', 'array'],
+            'features.vehicles' => ['nullable', 'boolean'],
+            'features.assessments' => ['nullable', 'boolean'],
+            'features.fees' => ['nullable', 'boolean'],
+            'features.expenses' => ['nullable', 'boolean'],
+            'features.theory' => ['nullable', 'boolean'],
         ]);
-        $org->putModuleSettingsSection('driving', $data);
+        $current = is_array($org->module_settings) ? ($org->module_settings['driving'] ?? []) : [];
+        $org->putModuleSettingsSection('driving', array_replace($current, $data));
         $this->audit->log($request->user(), 'update', 'organizations', $org->id, null, ['driving' => $data], $request);
 
         return response()->json([
