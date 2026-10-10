@@ -227,6 +227,13 @@ return [
         'children' => [],
     ],
 
+    'driving' => [
+        'label' => 'Driving School',
+        'nav_group' => 'Driving School',
+        'kind' => 'domain',
+        'children' => [],
+    ],
+
     /** Report API slug => reports module key */
     'report_modules' => [
         'daily-sales' => 'sales.reports',

@@ -12,6 +12,7 @@ return [
         'commerce',
         'hospitality',
         'spa',
+        'driving',
     ],
 
     'definitions' => [
@@ -67,6 +68,18 @@ return [
                 'spa',
                 'accounting',
                 'hr',
+                'admin',
+            ],
+        ],
+        'driving' => [
+            'label' => 'Driving School',
+            'description' => 'Student enrolment, lessons, instructors, vehicles, fees, and school reports.',
+            'default_profile' => 'driving_school',
+            'profile_keys' => [
+                'driving_school',
+            ],
+            'permission_application_ids' => [
+                'driving',
                 'admin',
             ],
         ],

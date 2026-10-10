@@ -116,6 +116,8 @@ class RoleTemplateService
             }
         } elseif ($industry === 'spa') {
             $steps[] = 'Open SPA & Kinyozi and choose salon, kinyozi, or both before the first appointment.';
+        } elseif ($industry === 'driving') {
+            $steps[] = 'Open Driving School, add a course, then register the first student.';
         } else {
             if ($enabledModules['sales.pos'] ?? false) {
                 $steps[] = 'Configure payment methods and open a till session before the first POS sale.';

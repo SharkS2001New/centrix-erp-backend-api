@@ -115,6 +115,13 @@ return [
         'home_path' => '/spa',
         'module_keys' => ['spa'],
     ],
+    'driving' => [
+        'label' => 'Driving School',
+        'description' => 'Students, lessons, instructors, vehicles, and school fees.',
+        'icon' => 'truck',
+        'home_path' => '/driving-school',
+        'module_keys' => ['driving'],
+    ],
     'admin' => [
         'label' => 'Administration',
         'description' => 'Users, roles, permissions, company setup, and system settings.',

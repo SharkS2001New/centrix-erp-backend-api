@@ -140,6 +140,13 @@ class ApplicationProvisioner
             $modules = $this->applyDomainDisableRules($modules, $this->disablePatch('spa'));
         }
 
+        if ($applications['driving']) {
+            $modules = $this->mergeModulePatch($modules, $this->enablePatch('driving'));
+        } else {
+            $modules = $this->mergeModulePatch($modules, $this->disablePatch('driving'));
+            $modules = $this->applyDomainDisableRules($modules, $this->disablePatch('driving'));
+        }
+
         foreach (['distribution', 'accounting', 'hr', 'admin'] as $id) {
             if ($applications[$id]) {
                 $modules = $this->mergeModulePatch($modules, $this->enablePatch($id));
@@ -235,6 +242,7 @@ class ApplicationProvisioner
             'hr' => (bool) ($enabledModules['hr_payroll'] ?? false),
             'admin' => (bool) ($enabledModules['admin'] ?? false),
             'spa' => (bool) ($enabledModules['spa'] ?? false),
+            'driving' => (bool) ($enabledModules['driving'] ?? false),
             default => false,
         };
     }
@@ -314,6 +322,7 @@ class ApplicationProvisioner
             ],
             'admin' => ['admin' => true],
             'spa' => ['spa' => true],
+            'driving' => ['driving' => true],
             default => [],
         };
     }
@@ -359,6 +368,7 @@ class ApplicationProvisioner
             ],
             'admin' => ['admin' => false],
             'spa' => ['spa' => false],
+            'driving' => ['driving' => false],
             default => [],
         };
     }

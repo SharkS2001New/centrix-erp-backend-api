@@ -207,15 +207,19 @@ class WorkspaceResolver
         $industry = IndustryRegistry::industryForProfile((string) $profile);
 
         if ($industry === 'hospitality') {
-            return ! in_array($workspaceId, ['pos', 'backoffice', 'distribution', 'spa'], true);
+            return ! in_array($workspaceId, ['pos', 'backoffice', 'distribution', 'spa', 'driving'], true);
         }
 
         if ($industry === 'spa') {
-            return ! in_array($workspaceId, ['pos', 'backoffice', 'distribution', 'hotel_bar_pos', 'hospitality_backoffice'], true);
+            return ! in_array($workspaceId, ['pos', 'backoffice', 'distribution', 'hotel_bar_pos', 'hospitality_backoffice', 'driving'], true);
+        }
+
+        if ($industry === 'driving') {
+            return ! in_array($workspaceId, ['pos', 'backoffice', 'distribution', 'hotel_bar_pos', 'hospitality_backoffice', 'spa'], true);
         }
 
         // Retail & Distribution (and other commerce profiles).
-        return ! in_array($workspaceId, ['hotel_bar_pos', 'hospitality_backoffice', 'spa'], true);
+        return ! in_array($workspaceId, ['hotel_bar_pos', 'hospitality_backoffice', 'spa', 'driving'], true);
     }
 
     /** @param  array<string, mixed>  $definition @param  array<string, bool>  $permissionMap */

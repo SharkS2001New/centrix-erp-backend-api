@@ -30,6 +30,7 @@ use App\Http\Controllers\Api\V1\EquityBankAccountController;
 use App\Http\Controllers\Api\V1\DamageController;
 use App\Http\Controllers\Api\V1\DepartmentController;
 use App\Http\Controllers\Api\V1\DispatchTripController;
+use App\Http\Controllers\Api\V1\Driving\DrivingSchoolController;
 use App\Http\Controllers\Api\V1\DriverController;
 use App\Http\Controllers\Api\V1\EmployeeAllowanceController;
 use App\Http\Controllers\Api\V1\EmployeeAttendanceController;
@@ -252,6 +253,40 @@ Route::prefix('v1')->group(function () {
         Route::post('auth/switch-operator', [AuthController::class, 'switchOperator'])
             ->middleware('throttle:auth-login');
         Route::post('auth/me/pin', [AuthController::class, 'updateMyPin']);
+
+        Route::prefix('driving-school')->group(function () {
+            Route::get('dashboard', [DrivingSchoolController::class, 'dashboard']);
+            Route::get('students', [DrivingSchoolController::class, 'students']);
+            Route::post('students', [DrivingSchoolController::class, 'storeStudent']);
+            Route::get('students/{student}', [DrivingSchoolController::class, 'showStudent'])->whereNumber('student');
+            Route::put('students/{student}', [DrivingSchoolController::class, 'updateStudent'])->whereNumber('student');
+            Route::get('courses', [DrivingSchoolController::class, 'courses']);
+            Route::post('courses', [DrivingSchoolController::class, 'storeCourse']);
+            Route::put('courses/{course}', [DrivingSchoolController::class, 'updateCourse'])->whereNumber('course');
+            Route::post('enrolments', [DrivingSchoolController::class, 'enrol']);
+            Route::get('instructors', [DrivingSchoolController::class, 'instructors']);
+            Route::post('instructors', [DrivingSchoolController::class, 'storeInstructor']);
+            Route::get('vehicles', [DrivingSchoolController::class, 'vehicles']);
+            Route::post('vehicles', [DrivingSchoolController::class, 'storeVehicle']);
+            Route::put('vehicles/{vehicle}', [DrivingSchoolController::class, 'updateVehicle'])->whereNumber('vehicle');
+            Route::post('vehicles/{vehicle}/services', [DrivingSchoolController::class, 'storeService'])->whereNumber('vehicle');
+            Route::get('lessons', [DrivingSchoolController::class, 'lessons']);
+            Route::post('lessons', [DrivingSchoolController::class, 'storeLesson']);
+            Route::put('lessons/{lesson}', [DrivingSchoolController::class, 'updateLesson'])->whereNumber('lesson');
+            Route::get('assessments', [DrivingSchoolController::class, 'assessments']);
+            Route::post('assessments', [DrivingSchoolController::class, 'storeAssessment']);
+            Route::get('invoices', [DrivingSchoolController::class, 'invoices']);
+            Route::post('invoices', [DrivingSchoolController::class, 'storeInvoice']);
+            Route::post('payments', [DrivingSchoolController::class, 'storePayment']);
+            Route::post('payments/{payment}/refunds', [DrivingSchoolController::class, 'storeRefund'])->whereNumber('payment');
+            Route::get('expenses', [DrivingSchoolController::class, 'expenses']);
+            Route::post('expenses', [DrivingSchoolController::class, 'storeExpense']);
+            Route::get('reports', [DrivingSchoolController::class, 'reports']);
+            Route::get('notifications', [DrivingSchoolController::class, 'notifications']);
+            Route::get('settings', [DrivingSchoolController::class, 'settings']);
+            Route::put('settings', [DrivingSchoolController::class, 'updateSettings']);
+        });
+
         Route::delete('auth/me/pin', [AuthController::class, 'clearMyPin']);
         Route::get('auth/memberships', [AuthController::class, 'memberships']);
         Route::post('auth/switch-organization', [AuthController::class, 'switchOrganization']);

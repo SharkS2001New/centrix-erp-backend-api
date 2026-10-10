@@ -17,6 +17,7 @@ return [
         'hr',
         'admin',
         'spa',
+        'driving',
     ],
 
     'definitions' => [
@@ -64,6 +65,11 @@ return [
             'label' => 'SPA & Kinyozi',
             'description' => 'Salon and barbershop appointments, treatments, chairs, walk-in sales, clients, and stock. Does not use retail or hotel tills.',
             'icon' => 'spa',
+        ],
+        'driving' => [
+            'label' => 'Driving School',
+            'description' => 'Students, courses, lesson scheduling, instructors, training vehicles, fees, and school reports.',
+            'icon' => 'truck',
         ],
     ],
 ];

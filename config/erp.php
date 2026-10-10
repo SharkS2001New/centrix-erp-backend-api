@@ -200,6 +200,16 @@ return [
             ]),
             'default_channels' => ['backend'],
         ],
+        'driving_school' => [
+            'label' => 'Driving School',
+            'industry' => 'driving',
+            'application_ids' => ['driving', 'admin'],
+            'modules' => array_merge($allModulesFalse, [
+                'driving' => true,
+                'admin' => true,
+            ]),
+            'default_channels' => ['backend'],
+        ],
     ],
 
     /*
@@ -218,6 +228,7 @@ return [
         'Human resources' => ['sort' => 50, 'description' => 'Employees, payroll, dashboard, and HR reports'],
         'Administration' => ['sort' => 70, 'description' => 'Users, roles, branches, org preferences'],
         'SPA & Kinyozi' => ['sort' => 65, 'description' => 'Salon and barbershop appointments, services, and walk-in sales'],
+        'Driving School' => ['sort' => 66, 'description' => 'Students, lessons, instructors, vehicles, and school fees'],
     ],
 
     /** Keys only platform super admin may set (registration or Platform → Organizations). */
