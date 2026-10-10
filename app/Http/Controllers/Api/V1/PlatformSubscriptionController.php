@@ -110,6 +110,7 @@ class PlatformSubscriptionController extends Controller
 
         $syncFromPlan = ! $request->exists('sync_from_plan') || $request->boolean('sync_from_plan');
         unset($data['sync_from_plan']);
+        $data = $this->withPeriodInstants($data);
 
         $planIdChanging = array_key_exists('plan_id', $data)
             && (int) ($data['plan_id'] ?? 0) !== (int) ($platform_subscription->plan_id ?? 0);
@@ -161,10 +162,12 @@ class PlatformSubscriptionController extends Controller
             'status' => 'sometimes|string|max:30',
         ]);
 
-        $end = $data['current_period_end']
-            ?? Carbon::parse($platform_subscription->current_period_end ?? now())
-                ->addDays((int) ($data['days'] ?? 30))
-                ->toDateString();
+        $end = $this->licenses->normalizePeriodInstant(
+            $data['current_period_end']
+                ?? Carbon::parse($platform_subscription->current_period_end ?? now())
+                    ->addDays((int) ($data['days'] ?? 30)),
+            true,
+        );
 
         $platform_subscription->update([
             'current_period_end' => $end,
@@ -189,7 +192,6 @@ class PlatformSubscriptionController extends Controller
     {
         $platform_subscription->update([
             'status' => 'cancelled',
-            'is_trial' => false,
         ]);
 
         $org = $platform_subscription->organization;
@@ -204,7 +206,33 @@ class PlatformSubscriptionController extends Controller
 
         return response()->json([
             'data' => $platform_subscription->fresh()->load($with),
-            'message' => 'Licence revoked. Organization users have been signed out.',
+            'message' => 'Licence revoked. Organization users have been signed out. You can restore it without assigning a new plan.',
+        ]);
+    }
+
+    public function unrevoke(PlatformSubscription $platform_subscription)
+    {
+        if (strtolower((string) $platform_subscription->status) !== 'cancelled') {
+            return response()->json([
+                'message' => 'This licence is not revoked.',
+            ], 422);
+        }
+
+        $status = $this->licenses->restoredStatus($platform_subscription);
+        $platform_subscription->update(['status' => $status]);
+
+        $with = ['organization', 'plan', 'invoice'];
+        if (Schema::hasColumn('platform_subscriptions', 'initial_invoice_id')) {
+            $with[] = 'initialInvoice';
+        }
+
+        $passed = $status === 'expired';
+
+        return response()->json([
+            'data' => $platform_subscription->fresh()->load($with),
+            'message' => $passed
+                ? 'Licence restored, but the end date and hour have already passed. Set a new end time to open the system.'
+                : 'Licence restored. It opens and closes at the saved date and hour.',
         ]);
     }
 
@@ -252,6 +280,22 @@ class PlatformSubscriptionController extends Controller
             ->first();
 
         return response()->json(['data' => $sub]);
+    }
+
+    /** @param  array<string, mixed>  $data */
+    protected function withPeriodInstants(array $data): array
+    {
+        if (array_key_exists('current_period_start', $data)) {
+            $data['current_period_start'] = $this->licenses->normalizePeriodInstant($data['current_period_start'], false);
+        }
+        if (array_key_exists('current_period_end', $data)) {
+            $data['current_period_end'] = $this->licenses->normalizePeriodInstant($data['current_period_end'], true);
+        }
+        if (array_key_exists('trial_ends_at', $data)) {
+            $data['trial_ends_at'] = $this->licenses->normalizePeriodInstant($data['trial_ends_at'], true);
+        }
+
+        return $data;
     }
 
     protected function assertInvoiceBelongsToOrganization(?int $invoiceId, int $organizationId): void

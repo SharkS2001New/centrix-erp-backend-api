@@ -3,7 +3,7 @@
 namespace Tests\Unit;
 
 use App\Services\Platform\SelfServePlanComposer;
-use PHPUnit\Framework\TestCase;
+use Tests\TestCase;
 
 class SelfServePlanComposerTest extends TestCase
 {
@@ -27,5 +27,16 @@ class SelfServePlanComposerTest extends TestCase
         $this->assertSame(['hotel_bar_pos'], $draft['workspace_keys']);
         $this->assertSame(['reports'], $draft['section_keys']);
         $this->assertCount(1, $draft['features']);
+    }
+
+    public function test_a_short_description_is_enough_for_the_plan_prompt(): void
+    {
+        $prompt = (new SelfServePlanComposer($this->createStub(\App\Services\Ai\AiProviderFactory::class)))->systemPrompt();
+
+        $this->assertStringContainsString('A short line is enough', $prompt);
+        $this->assertStringContainsString('pos (External POS)', $prompt);
+        $this->assertStringContainsString('hotel_bar_pos (Hotel POS)', $prompt);
+        $this->assertStringContainsString('sales_orders (Sales & orders)', $prompt);
+        $this->assertStringContainsString('must not be mixed with retail', $prompt);
     }
 }

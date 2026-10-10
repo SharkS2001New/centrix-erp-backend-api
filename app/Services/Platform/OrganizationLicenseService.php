@@ -75,26 +75,15 @@ class OrganizationLicenseService
             return $missing;
         }
 
-        $expiresAt = $sub->trial_ends_at ?? $sub->current_period_end;
-        // Compare calendar dates (start of day). Using endOfDay() made
-        // Carbon::today()->diffInDays() a tiny negative on the day after expiry,
-        // which (int)-casts to 0 — so expired orgs stayed "active" and could log in.
-        $endDate = $expiresAt ? Carbon::parse($expiresAt)->startOfDay() : null;
-        $daysRemaining = $endDate
-            ? (int) Carbon::today()->startOfDay()->diffInDays($endDate, false)
-            : null;
-
-        $status = strtolower((string) $sub->status);
-        if (in_array($status, self::ACTIVE_STATUSES, true) && $daysRemaining !== null && $daysRemaining < 0) {
-            $status = 'expired';
-        }
-        if (in_array($status, ['cancelled'], true)) {
-            $status = 'expired';
-        }
+        $window = $this->periodWindow($sub);
+        $status = $window['status'];
+        $daysRemaining = $window['days_remaining'];
 
         $license = [
             'status' => $status ?: 'active',
-            'expires_at' => $expiresAt?->toDateString(),
+            'starts_at' => $window['starts_at'],
+            'expires_at' => $window['expires_at'],
+            'seconds_remaining' => $window['seconds_remaining'],
             'is_trial' => (bool) ($sub->is_trial || $status === 'trialing'),
             'days_remaining' => $daysRemaining,
             'warning_days' => self::WARNING_DAYS,
@@ -122,6 +111,9 @@ class OrganizationLicenseService
         }
 
         $status = strtolower((string) ($license['status'] ?? ''));
+        if ($status === 'scheduled') {
+            return false;
+        }
         if (in_array($status, ['missing', 'expired', 'cancelled', 'inactive'], true)) {
             return true;
         }
@@ -150,6 +142,10 @@ class OrganizationLicenseService
         }
 
         $status = strtolower((string) ($license['status'] ?? ''));
+        if (($license['status'] ?? '') === 'scheduled') {
+            return 'expired';
+        }
+
         $onTrial = $status === 'trialing' || ! empty($license['is_trial']);
 
         if ($onTrial && ! $this->isExpired($license)) {
@@ -222,10 +218,20 @@ class OrganizationLicenseService
             return true;
         }
 
-        return PlatformLicenceBalance::query()
+        $before = (int) (PlatformLicenceBalance::query()
+            ->where('organization_id', $organizationId)
+            ->value('token_balance') ?? 0);
+
+        $spent = PlatformLicenceBalance::query()
             ->where('organization_id', $organizationId)
             ->where('token_balance', '>=', $amount)
             ->decrement('token_balance', $amount) > 0;
+
+        if ($spent) {
+            app(TokenLowBalanceNotifier::class)->afterChange($organizationId, $before, $before - $amount);
+        }
+
+        return $spent;
     }
 
     public function refundTokens(int $organizationId, int $amount): void
@@ -234,9 +240,15 @@ class OrganizationLicenseService
             return;
         }
 
+        $before = (int) (PlatformLicenceBalance::query()
+            ->where('organization_id', $organizationId)
+            ->value('token_balance') ?? 0);
+
         PlatformLicenceBalance::query()
             ->where('organization_id', $organizationId)
             ->increment('token_balance', $amount);
+
+        app(TokenLowBalanceNotifier::class)->afterChange($organizationId, $before, $before + $amount);
     }
 
     /** Spend one token for a create, update, or delete. Returns false when the balance is empty. */
@@ -376,12 +388,15 @@ class OrganizationLicenseService
 
         $isTrial = (bool) ($payload['is_trial'] ?? (($payload['status'] ?? '') === 'trialing'));
         $status = $payload['status'] ?? ($isTrial ? 'trialing' : 'active');
-        $start = $payload['current_period_start'] ?? now()->toDateString();
-        $end = $payload['current_period_end']
-            ?? $payload['trial_ends_at']
-            ?? ($isTrial
-                ? now()->addDays((int) ($payload['trial_days'] ?? 14))->toDateString()
-                : $this->periodEndForPlanInterval($start, $plan?->interval));
+        $start = $this->normalizePeriodInstant($payload['current_period_start'] ?? now(), false);
+        $end = $this->normalizePeriodInstant(
+            $payload['current_period_end']
+                ?? $payload['trial_ends_at']
+                ?? ($isTrial
+                    ? now()->addDays((int) ($payload['trial_days'] ?? 14))
+                    : $this->periodEndForPlanInterval($start, $plan?->interval)),
+            true,
+        );
 
         $attrs = [
             'plan_id' => $plan?->id,
@@ -425,11 +440,93 @@ class OrganizationLicenseService
     public function periodEndForPlanInterval(string $start, ?string $interval): string
     {
         $key = strtolower(trim((string) $interval));
-        $from = Carbon::parse($start)->startOfDay();
-        if (in_array($key, ['annual', 'yearly', 'year'], true)) {
-            return $from->copy()->addYear()->toDateString();
+        $from = Carbon::parse($start);
+        $end = in_array($key, ['annual', 'yearly', 'year'], true)
+            ? $from->copy()->addYear()
+            : $from->copy()->addDays(30);
+        if ($from->format('H:i:s') === '00:00:00') {
+            $end = $end->endOfDay();
         }
 
-        return $from->copy()->addDays(30)->toDateString();
+        return $end->format('Y-m-d H:i:s');
+    }
+
+    /**
+     * A date-only value lasts the whole calendar day. A value with an hour is exact.
+     */
+    public function licenceMoment(mixed $value, bool $endOfDayWhenDateOnly = false): ?Carbon
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        $text = trim((string) ($value instanceof Carbon ? $value->format('Y-m-d H:i:s') : $value));
+        if ($text === '') {
+            return null;
+        }
+
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $text)) {
+            $parsed = Carbon::parse($text);
+
+            return $endOfDayWhenDateOnly ? $parsed->endOfDay() : $parsed->startOfDay();
+        }
+
+        return Carbon::parse($text);
+    }
+
+    public function normalizePeriodInstant(mixed $value, bool $isEnd): ?string
+    {
+        $moment = $this->licenceMoment($value, $isEnd);
+
+        return $moment?->format('Y-m-d H:i:s');
+    }
+
+    /**
+     * Open from the start hour, close at the end hour. Cancelled stays closed.
+     *
+     * @return array{status: string, starts_at: ?string, expires_at: ?string, seconds_remaining: ?int, days_remaining: ?int}
+     */
+    public function periodWindow(PlatformSubscription $sub, ?Carbon $now = null): array
+    {
+        $now = ($now ?? now())->copy();
+        $expiresAt = $this->licenceMoment($sub->trial_ends_at ?? $sub->current_period_end, true);
+        $startsAt = $this->licenceMoment($sub->current_period_start, false);
+        $stored = strtolower((string) $sub->status);
+        $status = $stored !== '' ? $stored : 'active';
+
+        if ($stored === 'cancelled') {
+            $status = 'expired';
+        } elseif ($startsAt && $now->lt($startsAt) && in_array($stored, self::ACTIVE_STATUSES, true)) {
+            $status = 'scheduled';
+        } elseif ($expiresAt && $now->greaterThanOrEqualTo($expiresAt) && in_array($stored, [...self::ACTIVE_STATUSES, 'expired', ''], true)) {
+            $status = 'expired';
+        }
+
+        $seconds = $expiresAt ? (int) $now->diffInSeconds($expiresAt, false) : null;
+
+        return [
+            'status' => $status,
+            'starts_at' => $startsAt?->toIso8601String(),
+            'expires_at' => $expiresAt?->toIso8601String(),
+            'seconds_remaining' => $seconds,
+            'days_remaining' => $seconds === null ? null : (int) floor($seconds / 86400),
+        ];
+    }
+
+    /** Status to store when a revoked licence is restored. */
+    public function restoredStatus(PlatformSubscription $sub): string
+    {
+        if ($sub->is_trial) {
+            $end = $this->licenceMoment($sub->trial_ends_at ?? $sub->current_period_end, true);
+
+            return ($end && now()->greaterThanOrEqualTo($end)) ? 'expired' : 'trialing';
+        }
+
+        $end = $this->licenceMoment($sub->current_period_end ?? $sub->trial_ends_at, true);
+        if ($end && now()->greaterThanOrEqualTo($end)) {
+            return 'expired';
+        }
+
+        return 'active';
     }
 }

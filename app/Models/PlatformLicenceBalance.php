@@ -11,11 +11,13 @@ class PlatformLicenceBalance extends Model
         'organization_id',
         'balance',
         'token_balance',
+        'token_alert_level',
     ];
 
     protected $casts = [
         'balance' => 'decimal:2',
         'token_balance' => 'integer',
+        'token_alert_level' => 'integer',
     ];
 
     public function organization(): BelongsTo

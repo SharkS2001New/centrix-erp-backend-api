@@ -42,9 +42,11 @@ class EnsureOrganizationLicenseActive
 
         if ($this->licenses->needsPayment($license) && ! $this->licenses->allowsLimitedRoute($path)) {
             throw new HttpResponseException(response()->json([
-                'message' => $mode === 'expired'
-                    ? 'This Centrix licence has expired. Pay on the Centrix Paybill to restore the rest of the system. Products, customers, suppliers, and sales reports stay available.'
-                    : 'This organisation is on the free Centrix plan. Pay on the Centrix Paybill to open the rest of the system. Products, customers, suppliers, and sales reports stay available.',
+                'message' => ($license['status'] ?? '') === 'scheduled'
+                    ? 'This Centrix licence opens at '.($license['starts_at'] ?? 'the scheduled time').'.'
+                    : ($mode === 'expired'
+                        ? 'This Centrix licence has expired. Pay on the Centrix Paybill to restore the rest of the system. Products, customers, suppliers, and sales reports stay available.'
+                        : 'This organisation is on the free Centrix plan. Pay on the Centrix Paybill to open the rest of the system. Products, customers, suppliers, and sales reports stay available.'),
                 'code' => 'organization_license_upgrade_required',
                 'license' => $license,
             ], 403));

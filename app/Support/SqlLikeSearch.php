@@ -4,6 +4,7 @@ namespace App\Support;
 
 use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
 use Illuminate\Database\Query\Builder as QueryBuilder;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -19,8 +20,36 @@ use Illuminate\Support\Facades\Schema;
  */
 class SqlLikeSearch
 {
+    /**
+     * One unbroken search is turned into an ngram phrase. MySQL rejects that
+     * (error 191) once the phrase exceeds 128 words, which a long pasted number does.
+     */
+    public const MAX_TERM_LENGTH = 80;
+
+    public const TOO_LONG_MESSAGE = 'That search is too long. Use a shorter name, code, or number.';
+
     /** @var bool|null Cached for the request: ngram FULLTEXT index present + enabled. */
     protected static ?bool $productNameFulltext = null;
+
+    public static function isTooLong(string $term): bool
+    {
+        return mb_strlen(trim($term)) > self::MAX_TERM_LENGTH;
+    }
+
+    /**
+     * Stop before the query runs so a pasted string never becomes a server error.
+     */
+    public static function abortIfTooLong(string $term): void
+    {
+        if (! self::isTooLong($term)) {
+            return;
+        }
+
+        throw new HttpResponseException(response()->json([
+            'message' => self::TOO_LONG_MESSAGE,
+            'code' => 'search_too_long',
+        ], 422));
+    }
 
     public static function escape(string $term): string
     {
@@ -133,7 +162,7 @@ class SqlLikeSearch
             ? '%'.self::escape($compact).'%'
             : null;
 
-        if (self::canUseProductNameFulltext() && mb_strlen($ftToken) >= 2) {
+        if (self::canUseProductNameFulltext() && mb_strlen($ftToken) >= 2 && mb_strlen($ftToken) <= self::MAX_TERM_LENGTH) {
             // BOOLEAN MODE + ngram: substring-friendly; keep LIKE as OR for safety on odd tokens.
             $inner->orWhere(function ($name) use ($nameColumn, $ftToken, $containsLike, $compactLike) {
                 $name->whereRaw('MATCH('.$nameColumn.') AGAINST(? IN BOOLEAN MODE)', [$ftToken])
@@ -190,6 +219,8 @@ class SqlLikeSearch
         if ($term === '') {
             return null;
         }
+
+        self::abortIfTooLong($term);
 
         $tokens = self::tokenize($term);
         if ($tokens === []) {
@@ -393,6 +424,8 @@ class SqlLikeSearch
             return;
         }
 
+        self::abortIfTooLong($term);
+
         if (preg_match('/^#?S0*(\d+)$/i', $term, $matches) || ctype_digit($term)) {
             // S1554 and 1554 must resolve identically (org order_num). Also accept the
             // same integer as Cash Sales / pos_order_num so either form finds the ticket.
@@ -503,6 +536,8 @@ class SqlLikeSearch
             return;
         }
 
+        self::abortIfTooLong($term);
+
         $like = '%'.self::escape($term).'%';
 
         $query->where(function ($inner) use ($term, $like) {
@@ -539,6 +574,8 @@ class SqlLikeSearch
         if ($term === '' || $columns === []) {
             return;
         }
+
+        self::abortIfTooLong($term);
 
         $like = '%'.self::escape($term).'%';
 

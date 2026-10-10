@@ -49,6 +49,33 @@ class SelfServePlanComposer
     public function __construct(protected AiProviderFactory $providers) {}
 
     /**
+     * Centrix already knows its own applications. The admin only writes a short line.
+     */
+    public function systemPrompt(): string
+    {
+        $apps = [];
+        foreach (self::WORKSPACES as $key => $label) {
+            $detail = (string) (config('erp_applications.definitions.'.$key.'.description') ?? '');
+            $apps[] = $key.' ('.$label.'): '.$detail;
+        }
+        $sections = [];
+        foreach (self::SECTIONS as $key => $label) {
+            $sections[] = $key.' ('.$label.')';
+        }
+
+        return 'You create one Centrix ERP self-serve subscription plan from a short description. '
+            .'Centrix is a Kenya business system sold per organisation. Retail, wholesale, and distribution share one set of applications. Hotel is a separate industry and must not be mixed with retail unless the description asks for both. '
+            .'A short line is enough. You decide the name, the card text, the applications, and the Backoffice sections from what that kind of business needs. Do not wait for the administrator to list screens. '
+            .'Use the price they wrote, in KES. If they did not write a price, set price to 0. interval is yearly only when they say year, yearly, or annual; otherwise monthly. '
+            .'External POS (pos) is the shop till and also needs backoffice. Hotel POS (hotel_bar_pos) is the bar, restaurant, and room charge and also needs hospitality_backoffice. Do not give a shop plan Hotel POS, and do not give a hotel plan External POS or retail Backoffice. '
+            .'A small shop gets the till, products, sales, customers, inventory, suppliers, and reports. Add distribution only for delivery or wholesale dispatch, accounting only for books or the ledger, and hr only for staff or payroll. Administration (admin) is for users and branches when the description is a normal operating plan. '
+            .'Return JSON only, no markdown. Shape: {"name":"","description":"","interval":"monthly|yearly","price":0,"features":[{"label":"","detail":""}],"workspace_keys":[],"section_keys":[]}. '
+            .'workspace_keys must be chosen from: '.implode(' ', $apps).' '
+            .'section_keys must be chosen from: '.implode(', ', $sections).'. '
+            .'features are a few short lines the organisation will read on the plan card.';
+    }
+
+    /**
      * @return array{plan: PlatformPlan, summary: array<string, mixed>}
      */
     public function createFromWords(string $words): array
@@ -60,13 +87,7 @@ class SelfServePlanComposer
             ]);
         }
 
-        $system = 'You create one Centrix ERP self-serve subscription plan from the administrator\'s words. '
-            .'Return JSON only, no markdown. Shape: {"name":"","description":"","interval":"monthly|yearly","price":0,"features":[{"label":"","detail":""}],"workspace_keys":[],"section_keys":[]}. '
-            .'price is KES. interval is yearly only when they ask for a year or annual price. '
-            .'workspace_keys must be chosen from: '.implode(', ', array_keys(self::WORKSPACES)).'. '
-            .'section_keys must be chosen from: '.implode(', ', array_keys(self::SECTIONS)).'. '
-            .'Include only the applications and Backoffice sections the words ask for. Do not mix Hotel and Retail unless they asked for both. '
-            .'features are short lines the organisation will read on the plan card.';
+        $system = $this->systemPrompt();
 
         try {
             $turn = $this->providers->make($runtime)->chat([
@@ -90,7 +111,7 @@ class SelfServePlanComposer
         }
         if (! is_array($parsed)) {
             throw ValidationException::withMessages([
-                'description' => ['Centrix AI did not return a plan. Try describing the name, price, and what it includes.'],
+                'description' => ['Centrix AI did not return a plan. Try a short line such as “Small shop, 2000 a month”.'],
             ]);
         }
 
@@ -130,7 +151,7 @@ class SelfServePlanComposer
         $price = round((float) ($parsed['price'] ?? $parsed['amount'] ?? 0), 2);
         if ($name === '' || $price <= 0) {
             throw ValidationException::withMessages([
-                'description' => ['Include a plan name and a price in KES, for example “Basic sales, 2000 a month, orders and reports”.'],
+                'description' => ['Add a price in KES to that short description, for example “Small shop, 2000 a month”.'],
             ]);
         }
 

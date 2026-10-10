@@ -404,9 +404,11 @@ class PlatformPaybillLicenceService
     protected function creditTokensFromBalance(PlatformLicencePayment $payment, PlatformLicenceBalance $balanceRow, float $moneyBalance): PlatformLicencePayment
     {
         $tokens = max(0, (int) round($moneyBalance));
-        $balanceRow->token_balance = (int) $balanceRow->token_balance + $tokens;
+        $beforeTokens = (int) $balanceRow->token_balance;
+        $balanceRow->token_balance = $beforeTokens + $tokens;
         $balanceRow->balance = 0;
         $balanceRow->save();
+        app(TokenLowBalanceNotifier::class)->afterChange((int) $balanceRow->organization_id, $beforeTokens, $beforeTokens + $tokens);
 
         $payment->fill([
             'status' => 'applied',
@@ -705,8 +707,10 @@ class PlatformPaybillLicenceService
             ['balance' => 0],
         );
         $balanceRow = PlatformLicenceBalance::query()->whereKey($balanceRow->id)->lockForUpdate()->first();
-        $balanceRow->token_balance = (int) $balanceRow->token_balance + $tokens;
+        $beforeTokens = (int) $balanceRow->token_balance;
+        $balanceRow->token_balance = $beforeTokens + $tokens;
         $balanceRow->save();
+        app(TokenLowBalanceNotifier::class)->afterChange((int) $balanceRow->organization_id, $beforeTokens, $beforeTokens + $tokens);
 
         $checkout->status = 'paid';
         $checkout->mpesa_receipt = $payment->mpesa_transaction_id;
@@ -758,26 +762,26 @@ class PlatformPaybillLicenceService
     /** @param  array{product: string, price: float, days: int}  $product */
     protected function extendSubscription(PlatformSubscription $subscription, array $product): void
     {
-        $today = Carbon::today()->startOfDay();
+        $now = now();
         $current = $subscription->current_period_end ?? $subscription->trial_ends_at;
-        $base = $current ? Carbon::parse($current)->startOfDay() : $today->copy();
-        if ($base->lt($today)) {
-            $base = $today->copy();
+        $base = $current ? Carbon::parse($current) : $now->copy();
+        if ($base->lt($now)) {
+            $base = $now->copy();
         }
 
         $end = $product['product'] === 'yearly'
             ? $base->copy()->addYear()
             : $base->copy()->addDays((int) $product['days']);
 
-        $stillCurrent = $current && Carbon::parse($current)->startOfDay()->gte($today);
+        $stillCurrent = $current && Carbon::parse($current)->gte($now);
         $subscription->forceFill([
             'status' => 'active',
             'is_trial' => false,
             'trial_ends_at' => null,
             'current_period_start' => $stillCurrent && $subscription->current_period_start
-                ? $subscription->current_period_start->toDateString()
-                : $today->toDateString(),
-            'current_period_end' => $end->toDateString(),
+                ? $subscription->current_period_start->format('Y-m-d H:i:s')
+                : $now->format('Y-m-d H:i:s'),
+            'current_period_end' => $end->format('Y-m-d H:i:s'),
         ])->save();
     }
 

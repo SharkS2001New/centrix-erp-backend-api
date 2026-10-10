@@ -15,9 +15,9 @@ class PlatformSubscription extends Model
     ];
 
     protected $casts = [
-        'current_period_start' => 'date',
-        'current_period_end' => 'date',
-        'trial_ends_at' => 'date',
+        'current_period_start' => 'datetime',
+        'current_period_end' => 'datetime',
+        'trial_ends_at' => 'datetime',
         'is_trial' => 'boolean',
         'first_payment_price' => 'decimal:2',
         'renewal_price' => 'decimal:2',

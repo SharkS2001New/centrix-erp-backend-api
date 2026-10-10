@@ -4,6 +4,7 @@ namespace Tests\Unit;
 
 use App\Support\SqlLikeSearch;
 use Illuminate\Database\Query\Builder;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -247,6 +248,24 @@ class SqlLikeSearchTest extends TestCase
         $bindings = $query->getBindings();
         $this->assertContains('%Wanjiku%', $bindings);
         $this->assertGreaterThanOrEqual(4, count($bindings));
+    }
+
+    public function test_a_very_long_search_is_rejected_before_the_query(): void
+    {
+        $query = DB::table('products');
+
+        try {
+            SqlLikeSearch::applyProductSearch($query, str_repeat('2', 200));
+            $this->fail('A search of a few hundred characters should be refused.');
+        } catch (HttpResponseException $e) {
+            $this->assertSame(422, $e->getResponse()->getStatusCode());
+            $payload = $e->getResponse()->getData(true);
+            $this->assertSame('search_too_long', $payload['code']);
+            $this->assertSame(SqlLikeSearch::TOO_LONG_MESSAGE, $payload['message']);
+        }
+
+        $this->assertStringNotContainsString('match(', strtolower($query->toSql()));
+        $this->assertSame([], $query->getBindings());
     }
 
     public function test_empty_search_term_is_no_op(): void

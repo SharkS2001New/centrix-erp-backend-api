@@ -19,7 +19,7 @@ class PlatformPlanController extends Controller
     public function compose(Request $request, SelfServePlanComposer $composer)
     {
         $data = $request->validate([
-            'description' => 'required|string|min:8|max:4000',
+            'description' => 'required|string|min:2|max:4000',
         ]);
 
         $created = $composer->createFromWords($data['description']);
