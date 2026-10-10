@@ -222,9 +222,11 @@ class SetupProfileMenuService
      */
     public function applicationIdsForIndustry(string $industry): array
     {
-        return $industry === 'hospitality'
-            ? ['hotel_bar_pos', 'hospitality_backoffice', 'accounting', 'hr', 'admin']
-            : ['pos', 'backoffice', 'distribution', 'accounting', 'hr', 'admin'];
+        return match ($industry) {
+            'hospitality' => ['hotel_bar_pos', 'hospitality_backoffice', 'accounting', 'hr', 'admin'],
+            'spa' => ['spa', 'accounting', 'hr', 'admin'],
+            default => ['pos', 'backoffice', 'distribution', 'accounting', 'hr', 'admin'],
+        };
     }
 
     /**
@@ -268,8 +270,8 @@ class SetupProfileMenuService
         if (mb_strlen($name) > 80) {
             throw new \InvalidArgumentException('The name must be 80 characters or fewer.');
         }
-        if (! in_array($industry, ['commerce', 'hospitality'], true)) {
-            throw new \InvalidArgumentException('Choose Retail & Distribution or Hotel & Hospitality.');
+        if (! in_array($industry, IndustryRegistry::ids(), true)) {
+            throw new \InvalidArgumentException('Choose Retail & Distribution, Hotel & Hospitality, or SPA & Kinyozi.');
         }
         if ($this->labelTaken($name)) {
             throw new \InvalidArgumentException('A setup type with this name already exists.');

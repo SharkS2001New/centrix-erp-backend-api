@@ -133,6 +133,13 @@ class ApplicationProvisioner
             }
         }
 
+        if ($applications['spa']) {
+            $modules = $this->mergeModulePatch($modules, $this->enablePatch('spa'));
+        } else {
+            $modules = $this->mergeModulePatch($modules, $this->disablePatch('spa'));
+            $modules = $this->applyDomainDisableRules($modules, $this->disablePatch('spa'));
+        }
+
         foreach (['distribution', 'accounting', 'hr', 'admin'] as $id) {
             if ($applications[$id]) {
                 $modules = $this->mergeModulePatch($modules, $this->enablePatch($id));
@@ -227,6 +234,7 @@ class ApplicationProvisioner
                 || (bool) ($enabledModules['payments'] ?? false),
             'hr' => (bool) ($enabledModules['hr_payroll'] ?? false),
             'admin' => (bool) ($enabledModules['admin'] ?? false),
+            'spa' => (bool) ($enabledModules['spa'] ?? false),
             default => false,
         };
     }
@@ -305,6 +313,7 @@ class ApplicationProvisioner
                 'hr_payroll.reports' => true,
             ],
             'admin' => ['admin' => true],
+            'spa' => ['spa' => true],
             default => [],
         };
     }
@@ -349,6 +358,7 @@ class ApplicationProvisioner
                 'hr_payroll.reports' => false,
             ],
             'admin' => ['admin' => false],
+            'spa' => ['spa' => false],
             default => [],
         };
     }

@@ -84,10 +84,8 @@ class OrganizationProvisionController extends Controller
                 'menu_groups' => $setupMenus->forProfile($key),
                 'application_ids' => array_key_exists('application_ids', $profile)
                     ? $profile['application_ids']
-                    : (
-                        ($profile['industry'] ?? IndustryRegistry::industryForProfile($key)) === 'hospitality'
-                            ? ['hotel_bar_pos', 'hospitality_backoffice', 'accounting', 'hr', 'admin']
-                            : ['pos', 'backoffice', 'distribution', 'accounting', 'hr', 'admin']
+                    : $setupMenus->applicationIdsForIndustry(
+                        (string) ($profile['industry'] ?? IndustryRegistry::industryForProfile($key)),
                     ),
             ])
             ->values();
@@ -111,10 +109,9 @@ class OrganizationProvisionController extends Controller
             'industries' => IndustryRegistry::optionsPayload(),
             // Full catalog for legacy clients; prefer applications_by_industry for industry isolation.
             'applications' => $this->applications->optionsPayload(),
-            'applications_by_industry' => [
-                'commerce' => $this->applications->optionsPayload('commerce'),
-                'hospitality' => $this->applications->optionsPayload('hospitality'),
-            ],
+            'applications_by_industry' => collect(IndustryRegistry::ids())
+                ->mapWithKeys(fn (string $id) => [$id => $this->applications->optionsPayload($id)])
+                ->all(),
             'profiles' => $tenantProfiles,
             'modules' => collect(ModuleRegistry::optionsPayload())->values(),
             'default_sales_platform' => $this->platformConfig->defaultSalesPlatformConfig('wholesale_retail'),
@@ -122,7 +119,7 @@ class OrganizationProvisionController extends Controller
                 ->orderBy('name')
                 ->get(['id', 'name', 'description', 'deployment_profile', 'enabled_modules', 'sales_platform']),
             'notes' => [
-                'industry' => 'Select industry first (Retail & Distribution vs Hotel & Hospitality). Applications and roles follow that industry.',
+                'industry' => 'Select industry first (Retail & Distribution, Hotel & Hospitality, or SPA & Kinyozi). Applications and roles follow that industry.',
                 'applications' => 'Enable or disable tenant applications for this setup type. Hotel & Hospitality only exposes Hotel POS and Hotel Backoffice.',
                 'custom_profile' => 'Within Retail & Distribution, Custom setup starts from a blank module map.',
                 'sales_platform' => 'Checkout vs save order, order workflow, and stock timing are configured by the platform super admin — not the organization manager.',

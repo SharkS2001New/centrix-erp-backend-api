@@ -220,6 +220,13 @@ return [
         'kind' => 'reports',
     ],
 
+    'spa' => [
+        'label' => 'SPA & Kinyozi',
+        'nav_group' => 'SPA & Kinyozi',
+        'kind' => 'domain',
+        'children' => [],
+    ],
+
     /** Report API slug => reports module key */
     'report_modules' => [
         'daily-sales' => 'sales.reports',

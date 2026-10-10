@@ -108,6 +108,13 @@ return [
         // Any hr.* feature permission unlocks the shell (employees, payroll, leave, …).
         'permission_prefixes' => ['hr.'],
     ],
+    'spa' => [
+        'label' => 'SPA & Kinyozi',
+        'description' => 'Appointments, treatments, barber chairs, walk-in sales, and salon stock.',
+        'icon' => 'spa',
+        'home_path' => '/spa',
+        'module_keys' => ['spa'],
+    ],
     'admin' => [
         'label' => 'Administration',
         'description' => 'Users, roles, permissions, company setup, and system settings.',

@@ -24,6 +24,7 @@ class SelfServePlanComposer
         'accounting' => 'Accounting',
         'hr' => 'Human Resources',
         'admin' => 'Administration',
+        'spa' => 'SPA & Kinyozi',
     ];
 
     /** @var array<string, string> */
@@ -64,7 +65,7 @@ class SelfServePlanComposer
         }
 
         return 'You create one Centrix ERP self-serve subscription plan from a short description. '
-            .'Centrix is a Kenya business system sold per organisation. Retail, wholesale, and distribution share one set of applications. Hotel is a separate industry and must not be mixed with retail unless the description asks for both. '
+            .'Centrix is a Kenya business system sold per organisation. Retail, wholesale, and distribution share one set of applications. Hotel is a separate industry and must not be mixed with retail unless the description asks for both. SPA & Kinyozi is its own industry and must not be mixed with retail or hotel. '
             .'A short line is enough. You decide the name, the card text, the applications, and the Backoffice sections from what that kind of business needs. Do not wait for the administrator to list screens. '
             .'Use the price they wrote, in KES. If they did not write a price, set price to 0. interval is yearly only when they say year, yearly, or annual; otherwise monthly. '
             .'External POS (pos) is the shop till and also needs backoffice. Hotel POS (hotel_bar_pos) is the bar, restaurant, and room charge and also needs hospitality_backoffice. Do not give a shop plan Hotel POS, and do not give a hotel plan External POS or retail Backoffice. '

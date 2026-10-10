@@ -62,7 +62,7 @@ class IndustryRegistry
             $row = \App\Models\PlatformSetupProfile::query()->where('profile_key', $profileKey)->first();
             $industry = is_array($row?->menu_groups) ? ($row->menu_groups['industry'] ?? null) : null;
 
-            return in_array($industry, ['commerce', 'hospitality'], true) ? $industry : null;
+            return in_array($industry, self::ids(), true) ? $industry : null;
         } catch (\Throwable) {
             return null;
         }

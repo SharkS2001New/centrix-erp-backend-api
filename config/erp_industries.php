@@ -11,6 +11,7 @@ return [
     'order' => [
         'commerce',
         'hospitality',
+        'spa',
     ],
 
     'definitions' => [
@@ -50,6 +51,20 @@ return [
                 // Centrix Manager (approvals / reports) when hotel ops enable the manager channel.
                 'manager',
                 // Shared finance/HR/admin when those apps are later enabled for a hotel tenant.
+                'accounting',
+                'hr',
+                'admin',
+            ],
+        ],
+        'spa' => [
+            'label' => 'SPA & Kinyozi',
+            'description' => 'Salons, spas, and barbershops. Appointments, treatments, chairs, and walk-in sales.',
+            'default_profile' => 'spa_kinyozi',
+            'profile_keys' => [
+                'spa_kinyozi',
+            ],
+            'permission_application_ids' => [
+                'spa',
                 'accounting',
                 'hr',
                 'admin',

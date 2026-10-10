@@ -114,6 +114,8 @@ class RoleTemplateService
             if ($enabledModules['hospitality.backend'] ?? false) {
                 $steps[] = 'Set up rooms, rate plans, and front-desk defaults in Hotel Backoffice.';
             }
+        } elseif ($industry === 'spa') {
+            $steps[] = 'Open SPA & Kinyozi and choose salon, kinyozi, or both before the first appointment.';
         } else {
             if ($enabledModules['sales.pos'] ?? false) {
                 $steps[] = 'Configure payment methods and open a till session before the first POS sale.';

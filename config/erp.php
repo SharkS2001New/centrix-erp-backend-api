@@ -190,6 +190,16 @@ return [
             ]),
             'default_channels' => ['backend'],
         ],
+        'spa_kinyozi' => [
+            'label' => 'SPA & Kinyozi',
+            'industry' => 'spa',
+            'application_ids' => ['spa', 'accounting', 'hr', 'admin'],
+            'modules' => array_merge($allModulesFalse, [
+                'spa' => true,
+                'admin' => true,
+            ]),
+            'default_channels' => ['backend'],
+        ],
     ],
 
     /*
@@ -207,6 +217,7 @@ return [
         'Accounting' => ['sort' => 40, 'description' => 'GL, payments, dashboard, and financial reports'],
         'Human resources' => ['sort' => 50, 'description' => 'Employees, payroll, dashboard, and HR reports'],
         'Administration' => ['sort' => 70, 'description' => 'Users, roles, branches, org preferences'],
+        'SPA & Kinyozi' => ['sort' => 65, 'description' => 'Salon and barbershop appointments, services, and walk-in sales'],
     ],
 
     /** Keys only platform super admin may set (registration or Platform → Organizations). */

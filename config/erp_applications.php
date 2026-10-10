@@ -16,6 +16,7 @@ return [
         'accounting',
         'hr',
         'admin',
+        'spa',
     ],
 
     'definitions' => [
@@ -58,6 +59,11 @@ return [
             'label' => 'Administration',
             'description' => 'Users, roles, branches, company setup, and organization settings. When disabled, configure the tenant from the platform instead.',
             'icon' => 'settings',
+        ],
+        'spa' => [
+            'label' => 'SPA & Kinyozi',
+            'description' => 'Salon and barbershop appointments, treatments, chairs, walk-in sales, clients, and stock. Does not use retail or hotel tills.',
+            'icon' => 'spa',
         ],
     ],
 ];
