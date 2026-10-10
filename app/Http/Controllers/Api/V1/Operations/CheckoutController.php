@@ -52,6 +52,7 @@ use App\Services\Organization\OrganizationReferenceDataService;
 use App\Services\Sales\SameDayCustomerOrderService;
 use App\Services\Sales\SaleRouteResolver;
 use App\Support\CustomerCreditLimit;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
@@ -369,6 +370,23 @@ class CheckoutController extends Controller
                 return $this->checkoutEmptyPreviousOrderEditCancel($cart, $user, $gate, $input);
             }
             throw new InvalidArgumentException('Cart is empty.');
+        }
+
+        if ($this->isPosCheckoutChannel($cart)) {
+            $org = $user->organization;
+            if (! $org && method_exists($user, 'loadMissing')) {
+                $user->loadMissing('organization');
+                $org = $user->organization;
+            }
+            $licenses = app(\App\Services\Platform\OrganizationLicenseService::class);
+            $license = $licenses->resolveForOrganization($org);
+            if (! $licenses->externalPosAllowed($license)) {
+                throw new HttpResponseException(response()->json([
+                    'message' => 'External POS needs a monthly or yearly subscription. Token billing cannot run this till, because sales are taken offline and uploaded later.',
+                    'code' => 'external_pos_subscription_required',
+                    'license' => $license,
+                ], 403));
+            }
         }
 
         app(DiscountApprovalService::class)->assertCheckoutAllowed(

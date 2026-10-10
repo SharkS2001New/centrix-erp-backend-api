@@ -50,6 +50,28 @@ class OrganizationLicenseAccessTest extends TestCase
         ]));
     }
 
+    public function test_external_pos_requires_a_dated_subscription_not_tokens(): void
+    {
+        $licenses = app(OrganizationLicenseService::class);
+
+        $this->assertFalse($licenses->externalPosAllowed([
+            'status' => 'expired',
+            'days_remaining' => -3,
+            'token_balance' => 500,
+        ]));
+        $this->assertTrue($licenses->externalPosAllowed([
+            'status' => 'active',
+            'days_remaining' => 20,
+            'is_trial' => false,
+            'token_balance' => 500,
+        ]));
+        $this->assertTrue($licenses->externalPosAllowed([
+            'status' => 'trialing',
+            'is_trial' => true,
+            'days_remaining' => 5,
+        ]));
+    }
+
     public function test_limited_routes_allow_catalogue_and_sales_reports_only(): void
     {
         $licenses = app(OrganizationLicenseService::class);

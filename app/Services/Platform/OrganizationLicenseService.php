@@ -267,6 +267,15 @@ class OrganizationLicenseService
         return in_array($this->accessMode($license), ['free', 'expired'], true);
     }
 
+    /**
+     * External POS sells offline and uploads later, so a token balance cannot run that till.
+     * A monthly or yearly period (or a trial) can.
+     */
+    public function externalPosAllowed(?array $license): bool
+    {
+        return $this->accessMode($license) !== 'token';
+    }
+
     /** Routes a free or expired organisation may still call. Shop M-Pesa stays separate. */
     public function allowsLimitedRoute(string $path): bool
     {
