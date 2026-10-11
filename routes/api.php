@@ -527,6 +527,12 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::post('admin/operational-prune/optimize', [\App\Http\Controllers\Api\V1\PlatformOperationalPruneController::class, 'optimize'])
             ->middleware(['erp.super_admin']);
+        Route::get('admin/demo-data', [\App\Http\Controllers\Api\V1\PlatformDemoDataController::class, 'show'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/demo-data', [\App\Http\Controllers\Api\V1\PlatformDemoDataController::class, 'store'])
+            ->middleware(['erp.super_admin']);
+        Route::delete('admin/demo-data', [\App\Http\Controllers\Api\V1\PlatformDemoDataController::class, 'destroy'])
+            ->middleware(['erp.super_admin']);
         Route::get('admin/platform-invoices/billing-context', [PlatformInvoiceController::class, 'billingContext'])
             ->middleware(['erp.super_admin']);
         Route::get('admin/platform-invoices/design-templates', [PlatformInvoiceController::class, 'designTemplates'])

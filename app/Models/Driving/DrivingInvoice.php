@@ -3,7 +3,9 @@
 namespace App\Models\Driving;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class DrivingInvoice extends Model
 {
@@ -18,9 +20,19 @@ class DrivingInvoice extends Model
         'issued_on' => 'date',
     ];
 
+    public function student(): BelongsTo
+    {
+        return $this->belongsTo(DrivingStudent::class, 'student_id');
+    }
+
     public function payments(): HasMany
     {
         return $this->hasMany(DrivingPayment::class, 'invoice_id');
+    }
+
+    public function latestPayment(): HasOne
+    {
+        return $this->hasOne(DrivingPayment::class, 'invoice_id')->latestOfMany();
     }
 
     public function netAmount(): float

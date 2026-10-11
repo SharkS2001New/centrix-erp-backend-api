@@ -3,6 +3,7 @@
 namespace App\Models\Driving;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class DrivingPayment extends Model
@@ -17,6 +18,16 @@ class DrivingPayment extends Model
         'received_on' => 'date',
         'provider_confirmed' => 'boolean',
     ];
+
+    public function invoice(): BelongsTo
+    {
+        return $this->belongsTo(DrivingInvoice::class, 'invoice_id');
+    }
+
+    public function student(): BelongsTo
+    {
+        return $this->belongsTo(DrivingStudent::class, 'student_id');
+    }
 
     public function refunds(): HasMany
     {

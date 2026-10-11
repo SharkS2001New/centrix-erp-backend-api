@@ -487,7 +487,14 @@ class DrivingSchoolController extends Controller
     public function invoices(Request $request)
     {
         $org = $this->organization($request);
-        $page = DrivingInvoice::query()->where('organization_id', $org->id)->latest('id')->paginate(50);
+        $page = DrivingInvoice::query()
+            ->with([
+                'student:id,student_number,full_name,phone,email,id_document_number',
+                'latestPayment',
+            ])
+            ->where('organization_id', $org->id)
+            ->latest('id')
+            ->paginate(50);
         $page->getCollection()->transform(function (DrivingInvoice $invoice) {
             $invoice->setAttribute('outstanding', $this->driving->invoiceOutstanding($invoice));
 
@@ -526,6 +533,14 @@ class DrivingSchoolController extends Controller
             'received_on' => ['nullable', 'date'],
         ]);
         $payment = $this->driving->takePayment($org, $request->user(), $data);
+        $payment->load([
+            'student:id,student_number,full_name,phone,email,id_document_number',
+            'invoice:id,invoice_number,kind,amount,discount,status,student_id',
+        ]);
+        $payment->setAttribute(
+            'outstanding',
+            $payment->invoice ? $this->driving->invoiceOutstanding($payment->invoice) : 0,
+        );
 
         return response()->json([
             'data' => $payment,
