@@ -446,6 +446,12 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin', 'erp.org_provisioning']);
         Route::get('admin/organizations/{organization}', [OrganizationProvisionController::class, 'show'])
             ->middleware(['erp.super_admin']);
+        Route::get('admin/organizations/{organization}/demo-data', [OrganizationProvisionController::class, 'organizationDemoData'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/organizations/{organization}/demo-data', [OrganizationProvisionController::class, 'seedOrganizationDemoData'])
+            ->middleware(['erp.super_admin']);
+        Route::delete('admin/organizations/{organization}/demo-data', [OrganizationProvisionController::class, 'removeOrganizationDemoData'])
+            ->middleware(['erp.super_admin']);
         Route::post('admin/organizations/{organization}/hospitality/seed-demo-data', [OrganizationProvisionController::class, 'seedHospitalityDemoData'])
             ->middleware(['erp.super_admin']);
         Route::post('admin/organizations/{organization}/hospitality/remove-demo-data', [OrganizationProvisionController::class, 'removeHospitalityDemoData'])
@@ -526,12 +532,6 @@ Route::prefix('v1')->group(function () {
         Route::post('admin/operational-prune/stream', [\App\Http\Controllers\Api\V1\PlatformOperationalPruneController::class, 'runStream'])
             ->middleware(['erp.super_admin']);
         Route::post('admin/operational-prune/optimize', [\App\Http\Controllers\Api\V1\PlatformOperationalPruneController::class, 'optimize'])
-            ->middleware(['erp.super_admin']);
-        Route::get('admin/demo-data', [\App\Http\Controllers\Api\V1\PlatformDemoDataController::class, 'show'])
-            ->middleware(['erp.super_admin']);
-        Route::post('admin/demo-data', [\App\Http\Controllers\Api\V1\PlatformDemoDataController::class, 'store'])
-            ->middleware(['erp.super_admin']);
-        Route::delete('admin/demo-data', [\App\Http\Controllers\Api\V1\PlatformDemoDataController::class, 'destroy'])
             ->middleware(['erp.super_admin']);
         Route::get('admin/platform-invoices/billing-context', [PlatformInvoiceController::class, 'billingContext'])
             ->middleware(['erp.super_admin']);

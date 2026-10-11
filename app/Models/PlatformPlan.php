@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class PlatformPlan extends Model
 {
     protected $fillable = [
-        'name', 'code', 'description', 'interval', 'license_basis',
+        'name', 'code', 'industry', 'description', 'interval', 'license_basis',
         'price', 'first_payment_price', 'renewal_price',
         'monthly_price', 'yearly_price', 'token_pack_price', 'token_pack_days',
         'currency',

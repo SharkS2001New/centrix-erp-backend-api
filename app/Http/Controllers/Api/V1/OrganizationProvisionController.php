@@ -29,6 +29,7 @@ use Illuminate\Validation\ValidationException;
 use App\Services\Erp\OrderWorkflowService;
 use App\Services\Auth\RoleTemplateService;
 use App\Services\Platform\OrganizationLicenseService;
+use App\Services\Platform\PlatformDemoDataService;
 
 class OrganizationProvisionController extends Controller
 {
@@ -343,6 +344,32 @@ class OrganizationProvisionController extends Controller
             ),
             ...$result,
         ]);
+    }
+
+    /** GET /api/v1/admin/organizations/{organization}/demo-data */
+    public function organizationDemoData(int $organization)
+    {
+        $org = $this->findTenantOrganization($organization);
+
+        return response()->json(app(PlatformDemoDataService::class)->organizationStatus($org));
+    }
+
+    /** POST /api/v1/admin/organizations/{organization}/demo-data */
+    public function seedOrganizationDemoData(int $organization)
+    {
+        $org = $this->findTenantOrganization($organization);
+        $result = app(PlatformDemoDataService::class)->seedOrganization($org);
+
+        return response()->json($result);
+    }
+
+    /** DELETE /api/v1/admin/organizations/{organization}/demo-data */
+    public function removeOrganizationDemoData(int $organization)
+    {
+        $org = $this->findTenantOrganization($organization);
+        $result = app(PlatformDemoDataService::class)->clearOrganization($org);
+
+        return response()->json($result);
     }
 
     /** DELETE /api/v1/admin/organizations/{organization} */

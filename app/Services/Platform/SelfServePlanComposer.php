@@ -71,7 +71,8 @@ class SelfServePlanComposer
             .'Use the price they wrote, in KES. If they did not write a price, set price to 0. interval is yearly only when they say year, yearly, or annual; otherwise monthly. '
             .'External POS (pos) is the shop till and also needs backoffice. Hotel POS (hotel_bar_pos) is the bar, restaurant, and room charge and also needs hospitality_backoffice. Do not give a shop plan Hotel POS, and do not give a hotel plan External POS or retail Backoffice. '
             .'A small shop gets the till, products, sales, customers, inventory, suppliers, and reports. Add distribution only for delivery or wholesale dispatch, accounting only for books or the ledger, and hr only for staff or payroll. Administration (admin) is for users and branches when the description is a normal operating plan. '
-            .'Return JSON only, no markdown. Shape: {"name":"","description":"","interval":"monthly|yearly","price":0,"features":[{"label":"","detail":""}],"workspace_keys":[],"section_keys":[]}. '
+            .'Return JSON only, no markdown. Shape: {"name":"","description":"","industry":"commerce|hospitality|spa|driving","interval":"monthly|yearly","price":0,"features":[{"label":"","detail":""}],"workspace_keys":[],"section_keys":[]}. '
+            .'industry is commerce for a shop, wholesale, or distribution plan, hospitality for a hotel, spa for a salon or kinyozi, and driving for a driving school. The price is the price written for that industry only. '
             .'workspace_keys must be chosen from: '.implode(' ', $apps).' '
             .'section_keys must be chosen from: '.implode(', ', $sections).'. '
             .'features are a few short lines the organisation will read on the plan card.';
@@ -130,6 +131,7 @@ class SelfServePlanComposer
             'renewal_price' => $draft['price'],
             'monthly_price' => $yearly ? null : $draft['price'],
             'yearly_price' => $yearly ? $draft['price'] : null,
+            'industry' => $draft['industry'],
             'workspace_keys' => $draft['workspace_keys'],
             'section_keys' => $draft['section_keys'],
             'feature_details' => $draft['features'],
@@ -145,7 +147,7 @@ class SelfServePlanComposer
 
     /**
      * @param  array<string, mixed>  $parsed
-     * @return array{name: string, description: ?string, interval: string, price: float, features: list<array{label: string, detail: ?string}>, workspace_keys: list<string>, section_keys: list<string>}
+     * @return array{name: string, description: ?string, industry: string, interval: string, price: float, features: list<array{label: string, detail: ?string}>, workspace_keys: list<string>, section_keys: list<string>}
      */
     public function normalize(array $parsed): array
     {
@@ -195,15 +197,60 @@ class SelfServePlanComposer
             }
         }
 
+        $industry = $this->industryFor($workspaces, $name.' '.(string) ($parsed['description'] ?? '').' '.(string) ($parsed['industry'] ?? ''));
+        $allowed = array_flip(config('erp_industries.definitions.'.$industry.'.permission_application_ids', []));
+        $workspaces = array_values(array_filter(
+            array_unique($workspaces),
+            fn (string $id) => isset($allowed[$id]),
+        ));
+        if ($industry !== 'commerce') {
+            $sections = [];
+        }
+
         return [
             'name' => $name,
             'description' => trim((string) ($parsed['description'] ?? '')) ?: null,
+            'industry' => $industry,
             'interval' => $yearly ? 'yearly' : 'monthly',
             'price' => $price,
             'features' => $features,
-            'workspace_keys' => array_values(array_unique($workspaces)),
+            'workspace_keys' => $workspaces,
             'section_keys' => array_values(array_unique($sections)),
         ];
+    }
+
+    /**
+     * @param  list<string>  $workspaces
+     */
+    protected function industryFor(array $workspaces, string $text): string
+    {
+        $asked = strtolower($text);
+        $explicit = null;
+        foreach (['commerce', 'hospitality', 'spa', 'driving'] as $id) {
+            if (preg_match('/\b'.preg_quote($id, '/').'\b/', $asked)) {
+                $explicit = $id;
+            }
+        }
+        if ($explicit) {
+            return $explicit;
+        }
+        if (array_intersect($workspaces, ['driving'])) {
+            return 'driving';
+        }
+        if (array_intersect($workspaces, ['spa'])) {
+            return 'spa';
+        }
+        if (array_intersect($workspaces, ['hotel_bar_pos', 'hospitality_backoffice']) || str_contains($asked, 'hotel')) {
+            return 'hospitality';
+        }
+        if (str_contains($asked, 'kinyozi') || str_contains($asked, 'salon')) {
+            return 'spa';
+        }
+        if (str_contains($asked, 'driving school')) {
+            return 'driving';
+        }
+
+        return 'commerce';
     }
 
     /** @return array<string, mixed> */
@@ -226,6 +273,7 @@ class SelfServePlanComposer
         return [
             'name' => $plan->name,
             'description' => $plan->description,
+            'industry' => $plan->industry ?: 'commerce',
             'interval' => $yearly ? 'Yearly' : 'Monthly',
             'price' => $yearly ? (float) $plan->yearly_price : (float) $plan->monthly_price,
             'currency' => $plan->currency ?: 'KES',

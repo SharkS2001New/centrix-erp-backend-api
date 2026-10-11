@@ -22,10 +22,11 @@ class SelfServePlanComposerTest extends TestCase
             'section_keys' => ['reports', 'made-up'],
         ]);
 
+        $this->assertSame('hospitality', $draft['industry']);
         $this->assertSame('yearly', $draft['interval']);
         $this->assertSame(15000.0, $draft['price']);
         $this->assertSame(['hotel_bar_pos'], $draft['workspace_keys']);
-        $this->assertSame(['reports'], $draft['section_keys']);
+        $this->assertSame([], $draft['section_keys']);
         $this->assertCount(1, $draft['features']);
     }
 

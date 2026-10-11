@@ -274,12 +274,162 @@ class PlatformDemoDataService
         ];
     }
 
-    protected function seedDrivingSchool(Organization $org, Branch $branch, User $admin): void
+    public function seedOrganization(Organization $org): array
+    {
+        $profile = (string) $org->deployment_profile;
+        $branch = Branch::query()->where('organization_id', $org->id)->orderBy('id')->first();
+        $admin = User::query()
+            ->where('organization_id', $org->id)
+            ->where('is_admin', true)
+            ->orderBy('id')
+            ->first();
+
+        if (! $branch) {
+            throw ValidationException::withMessages([
+                'demo' => ['Add a branch before generating demo data for this organisation.'],
+            ]);
+        }
+        if (! $admin) {
+            throw ValidationException::withMessages([
+                'demo' => ['Add an administrator before generating demo data for this organisation.'],
+            ]);
+        }
+
+        if ($profile === 'driving_school') {
+            DB::transaction(function () use ($org, $branch, $admin) {
+                $this->clearDrivingDemo($org);
+                $this->seedDrivingSchool($org, $branch, $admin, 'DEMO-');
+            });
+            $this->stampOrganization($org, $profile);
+
+            return [
+                'profile' => $profile,
+                'message' => 'Sample students, lessons, vehicles, and payments were added to this driving school. Existing records were left in place.',
+                ...$this->organizationStatus($org),
+            ];
+        }
+
+        if ($profile === 'hotel_bar') {
+            $seeder = app(HospitalityDemoDataSeeder::class);
+            $seeder->removeForOrganization($org);
+            $result = $seeder->seedForOrganization($org, $admin);
+            $this->stampOrganization($org, $profile);
+
+            return [
+                'profile' => $profile,
+                'message' => sprintf(
+                    'Seeded %d menu products and %d tables for this hotel.',
+                    $result['products'] ?? 0,
+                    $result['tables'] ?? 0,
+                ),
+                ...$result,
+                ...$this->organizationStatus($org),
+            ];
+        }
+
+        if ($profile === 'spa_kinyozi') {
+            $this->stampOrganization($org, $profile);
+
+            return [
+                'profile' => $profile,
+                'message' => 'SPA & Kinyozi sample appointments, services, and clients load in the browser the first time someone opens the salon. Day-to-day settings stay in Administration.',
+                ...$this->organizationStatus($org),
+            ];
+        }
+
+        throw ValidationException::withMessages([
+            'demo' => ['Demo data is available for a Driving School, SPA & Kinyozi, or Hotel & Bar organisation.'],
+        ]);
+    }
+
+    public function clearOrganization(Organization $org): array
+    {
+        $profile = (string) $org->deployment_profile;
+        if ($profile === 'driving_school') {
+            DB::transaction(fn () => $this->clearDrivingDemo($org));
+        } elseif ($profile === 'hotel_bar') {
+            app(HospitalityDemoDataSeeder::class)->removeForOrganization($org);
+        }
+
+        $settings = is_array($org->module_settings) ? $org->module_settings : [];
+        unset($settings['platform_demo']);
+        $org->module_settings = $settings;
+        $org->save();
+
+        return [
+            'profile' => $profile,
+            'message' => 'Demo records for this organisation were removed. The organisation itself was kept.',
+            ...$this->organizationStatus($org->fresh()),
+        ];
+    }
+
+    public function organizationStatus(Organization $org): array
+    {
+        return [
+            'generated_at' => data_get($org->module_settings, 'platform_demo.generated_at'),
+            'profile' => $org->deployment_profile,
+        ];
+    }
+
+    protected function stampOrganization(Organization $org, string $profile): void
+    {
+        $settings = is_array($org->module_settings) ? $org->module_settings : [];
+        $settings['platform_demo'] = [
+            'managed' => false,
+            'profile' => $profile,
+            'generated_at' => now()->toIso8601String(),
+        ];
+        $org->module_settings = $settings;
+        $org->save();
+    }
+
+    protected function clearDrivingDemo(Organization $org): void
+    {
+        $studentIds = DrivingStudent::query()
+            ->where('organization_id', $org->id)
+            ->where('student_number', 'like', 'DEMO-%')
+            ->pluck('id');
+        $courseIds = DrivingCourse::query()
+            ->where('organization_id', $org->id)
+            ->where('code', 'like', 'DEMO-%')
+            ->pluck('id');
+
+        if ($studentIds->isNotEmpty()) {
+            $invoiceIds = DrivingInvoice::query()->whereIn('student_id', $studentIds)->pluck('id');
+            if ($invoiceIds->isNotEmpty() && Schema::hasTable('driving_refunds')) {
+                DB::table('driving_refunds')->whereIn('invoice_id', $invoiceIds)->delete();
+            }
+            DrivingPayment::query()->whereIn('student_id', $studentIds)->delete();
+            if ($invoiceIds->isNotEmpty()) {
+                DrivingInvoice::query()->whereIn('id', $invoiceIds)->delete();
+            }
+            DrivingLesson::query()->whereIn('student_id', $studentIds)->delete();
+            DrivingAssessment::query()->whereIn('student_id', $studentIds)->delete();
+            DrivingAttendanceLog::query()->whereIn('student_id', $studentIds)->delete();
+            DrivingEnrolment::query()->whereIn('student_id', $studentIds)->delete();
+            DrivingStudent::query()->whereIn('id', $studentIds)->delete();
+        }
+
+        DrivingInstructor::query()
+            ->where('organization_id', $org->id)
+            ->where('instructor_number', 'like', 'DEMO-%')
+            ->delete();
+        DrivingVehicle::query()
+            ->where('organization_id', $org->id)
+            ->where('registration_number', 'like', 'DEMO %')
+            ->delete();
+        if ($courseIds->isNotEmpty()) {
+            DrivingCoursePackage::query()->whereIn('course_id', $courseIds)->delete();
+            DrivingCourse::query()->whereIn('id', $courseIds)->delete();
+        }
+    }
+
+    protected function seedDrivingSchool(Organization $org, Branch $branch, User $admin, string $prefix = ''): void
     {
         $course = DrivingCourse::query()->create([
             'organization_id' => $org->id,
             'branch_id' => $branch->id,
-            'code' => 'B',
+            'code' => $prefix.'B',
             'name' => 'Class B',
             'licence_category' => 'B',
             'description' => 'Light vehicle course for new drivers.',
@@ -316,7 +466,7 @@ class PlatformDemoDataService
         $john = DrivingInstructor::query()->create([
             'organization_id' => $org->id,
             'branch_id' => $branch->id,
-            'instructor_number' => 'INS-001',
+            'instructor_number' => $prefix.'INS-001',
             'full_name' => 'John Kamau',
             'phone' => '0712000001',
             'licence_info' => 'NTSA instructor, class B',
@@ -325,7 +475,7 @@ class PlatformDemoDataService
         $maryInstructor = DrivingInstructor::query()->create([
             'organization_id' => $org->id,
             'branch_id' => $branch->id,
-            'instructor_number' => 'INS-002',
+            'instructor_number' => $prefix.'INS-002',
             'full_name' => 'Mary Wanjiku',
             'phone' => '0712000002',
             'licence_info' => 'NTSA instructor, class B',
@@ -335,7 +485,7 @@ class PlatformDemoDataService
         $axio = DrivingVehicle::query()->create([
             'organization_id' => $org->id,
             'branch_id' => $branch->id,
-            'registration_number' => 'KDS 123A',
+            'registration_number' => $prefix !== '' ? 'DEMO 123A' : 'KDS 123A',
             'make' => 'Toyota',
             'model' => 'Axio',
             'year' => 2020,
@@ -346,7 +496,7 @@ class PlatformDemoDataService
         $vitz = DrivingVehicle::query()->create([
             'organization_id' => $org->id,
             'branch_id' => $branch->id,
-            'registration_number' => 'KDS 456B',
+            'registration_number' => $prefix !== '' ? 'DEMO 456B' : 'KDS 456B',
             'make' => 'Toyota',
             'model' => 'Vitz',
             'year' => 2019,
@@ -356,11 +506,11 @@ class PlatformDemoDataService
         ]);
 
         $students = [
-            $this->drivingStudent($org, $branch, $john, 'STU-1001', 'Mary Akinyi', '0711000001', now()->toDateString()),
-            $this->drivingStudent($org, $branch, $maryInstructor, 'STU-1002', 'James Kariuki', '0711000002', now()->toDateString()),
-            $this->drivingStudent($org, $branch, $john, 'STU-1003', 'Grace Njeri', '0711000003', now()->subDays(5)->toDateString()),
-            $this->drivingStudent($org, $branch, $john, 'STU-1004', 'Peter Mwangi', '0711000004', now()->subDays(10)->toDateString()),
-            $this->drivingStudent($org, $branch, $maryInstructor, 'STU-1005', 'Faith Wanjiku', '0711000005', now()->subDays(3)->toDateString()),
+            $this->drivingStudent($org, $branch, $john, $prefix.'STU-1001', 'Mary Akinyi', '0711000001', now()->toDateString()),
+            $this->drivingStudent($org, $branch, $maryInstructor, $prefix.'STU-1002', 'James Kariuki', '0711000002', now()->toDateString()),
+            $this->drivingStudent($org, $branch, $john, $prefix.'STU-1003', 'Grace Njeri', '0711000003', now()->subDays(5)->toDateString()),
+            $this->drivingStudent($org, $branch, $john, $prefix.'STU-1004', 'Peter Mwangi', '0711000004', now()->subDays(10)->toDateString()),
+            $this->drivingStudent($org, $branch, $maryInstructor, $prefix.'STU-1005', 'Faith Wanjiku', '0711000005', now()->subDays(3)->toDateString()),
         ];
 
         $enrolments = [];
@@ -421,7 +571,7 @@ class PlatformDemoDataService
             'branch_id' => $branch->id,
             'student_id' => $students[0]->id,
             'enrolment_id' => $enrolments[0]->id,
-            'invoice_number' => 'DRV-1001',
+            'invoice_number' => $prefix.'DRV-1001',
             'kind' => 'tuition',
             'amount' => 25000,
             'discount' => 0,
@@ -444,7 +594,7 @@ class PlatformDemoDataService
             'branch_id' => $branch->id,
             'student_id' => $students[1]->id,
             'enrolment_id' => $enrolments[1]->id,
-            'invoice_number' => 'DRV-1002',
+            'invoice_number' => $prefix.'DRV-1002',
             'kind' => 'tuition',
             'amount' => 28000,
             'discount' => 0,

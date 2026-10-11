@@ -63,6 +63,7 @@ class PlatformPlanController extends Controller
         return $request->validate([
             'name' => ($creating ? 'required' : 'sometimes').'|string|max:200',
             'code' => 'nullable|string|max:50',
+            'industry' => 'sometimes|in:commerce,hospitality,spa,driving',
             'description' => 'nullable|string',
             'interval' => 'sometimes|in:monthly,annual',
             'license_basis' => 'sometimes|in:org,user',

@@ -3,6 +3,8 @@
 namespace App\Services\Platform;
 
 use App\Models\Organization;
+use App\Services\Erp\IndustryRegistry;
+use Illuminate\Validation\ValidationException;
 use App\Models\PlatformBillingSetting;
 use App\Models\PlatformLicenceBalance;
 use App\Models\PlatformLicenceCheckout;
@@ -438,7 +440,7 @@ class PlatformPaybillLicenceService
      *
      * @return list<array<string, mixed>>
      */
-    public function monthlyPlanChoices(): array
+    public function monthlyPlanChoices(Organization $org): array
     {
         if (! \Illuminate\Support\Facades\Schema::hasTable('platform_plans')) {
             return [];
@@ -448,10 +450,22 @@ class PlatformPaybillLicenceService
         }
 
         $discount = $this->durationDiscount();
+        $industry = IndustryRegistry::industryForProfile((string) $org->deployment_profile);
 
         return PlatformPlan::query()
             ->where('is_active', true)
             ->where('self_serve', true)
+            ->when(
+                \Illuminate\Support\Facades\Schema::hasColumn('platform_plans', 'industry'),
+                function ($query) use ($industry) {
+                    $query->where(function ($inner) use ($industry) {
+                        $inner->where('industry', $industry);
+                        if ($industry === 'commerce') {
+                            $inner->orWhereNull('industry')->orWhere('industry', '');
+                        }
+                    });
+                },
+            )
             ->where(function ($query) {
                 $query->where('monthly_price', '>', 0)->orWhere('yearly_price', '>', 0);
             })
@@ -481,6 +495,7 @@ class PlatformPaybillLicenceService
                     'yearly_price' => $plan->yearly_price !== null ? round((float) $plan->yearly_price, 2) : null,
                     'features' => $features,
                     'section_keys' => array_values($plan->section_keys ?? []),
+                    'industry' => $plan->industry ?: 'commerce',
                     'workspace_keys' => array_values($plan->workspace_keys ?? []),
                     'discount_percent' => $discount['percent'],
                     'discount_min_months' => $discount['min_months'],
@@ -511,8 +526,33 @@ class PlatformPaybillLicenceService
         ];
     }
 
+    protected function planMatchesIndustry(Organization $org, PlatformPlan $plan): bool
+    {
+        if (! \Illuminate\Support\Facades\Schema::hasColumn('platform_plans', 'industry')) {
+            return true;
+        }
+
+        $orgIndustry = IndustryRegistry::industryForProfile((string) $org->deployment_profile);
+        $planIndustry = trim((string) ($plan->industry ?: 'commerce'));
+
+        return $planIndustry === $orgIndustry;
+    }
+
+    protected function assertPlanMatchesIndustry(Organization $org, PlatformPlan $plan): void
+    {
+        if ($this->planMatchesIndustry($org, $plan)) {
+            return;
+        }
+
+        throw ValidationException::withMessages([
+            'plan_id' => ['That subscription package belongs to a different industry.'],
+        ]);
+    }
+
     public function startCheckout(Organization $org, PlatformPlan $plan, int $months, ?string $phone = null, ?string $billing = null): PlatformLicenceCheckout
     {
+        $this->assertPlanMatchesIndustry($org, $plan);
+
         if ($billing === 'yearly' && (float) ($plan->yearly_price ?? 0) > 0) {
             return PlatformLicenceCheckout::query()->create([
                 'organization_id' => $org->id,
@@ -635,6 +675,12 @@ class PlatformPaybillLicenceService
         $plan = $checkout->plan_id ? PlatformPlan::query()->find($checkout->plan_id) : null;
         if (! $plan) {
             return $this->applyTokenCheckout($payment, $org, $checkout, $amount);
+        }
+        if (! $this->planMatchesIndustry($org, $plan)) {
+            $payment->note = 'industry_mismatch';
+            $payment->save();
+
+            return $payment;
         }
 
         $subscription = PlatformSubscription::query()
