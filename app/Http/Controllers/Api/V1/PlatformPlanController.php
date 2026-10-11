@@ -60,7 +60,7 @@ class PlatformPlanController extends Controller
 
     protected function validated(Request $request, bool $creating = true): array
     {
-        return $request->validate([
+        $data = $request->validate([
             'name' => ($creating ? 'required' : 'sometimes').'|string|max:200',
             'code' => 'nullable|string|max:50',
             'industry' => 'sometimes|in:commerce,hospitality,spa,driving',
@@ -87,5 +87,23 @@ class PlatformPlanController extends Controller
             'is_active' => 'sometimes|boolean',
             'auto_invoice_template_id' => 'nullable|integer',
         ]);
+
+        if ($creating && empty($data['industry'])) {
+            $data['industry'] = 'commerce';
+        }
+
+        $industry = (string) ($data['industry'] ?? '');
+        if ($industry !== '' && array_key_exists('workspace_keys', $data)) {
+            $allowed = array_flip(config('erp_industries.definitions.'.$industry.'.permission_application_ids', []));
+            $data['workspace_keys'] = array_values(array_filter(
+                is_array($data['workspace_keys']) ? $data['workspace_keys'] : [],
+                fn ($id) => isset($allowed[strtolower(trim((string) $id))]),
+            ));
+        }
+        if ($industry !== '' && $industry !== 'commerce') {
+            $data['section_keys'] = [];
+        }
+
+        return $data;
     }
 }

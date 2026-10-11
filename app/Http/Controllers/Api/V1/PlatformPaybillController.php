@@ -28,11 +28,7 @@ class PlatformPaybillController extends Controller
         $settings = $this->paybill->settings();
 
         return response()->json([
-            'data' => [
-                'short_code' => $settings?->short_code ?? '',
-                'account_name_prefix' => $settings?->account_name_prefix ?? '',
-                'organization_id' => $settings?->organization_id,
-            ],
+            'data' => $this->settingsPayload($settings),
         ]);
     }
 
@@ -41,16 +37,14 @@ class PlatformPaybillController extends Controller
         $data = $request->validate([
             'short_code' => 'nullable|string|max:20',
             'account_name_prefix' => 'nullable|string|max:40',
+            'duration_discount_percent' => 'sometimes|numeric|min:0|max:100',
+            'duration_discount_min_months' => 'sometimes|integer|min:0|max:36',
         ]);
 
         $settings = $this->paybill->saveSettings($data);
 
         return response()->json([
-            'data' => [
-                'short_code' => $settings->short_code ?? '',
-                'account_name_prefix' => $settings->account_name_prefix ?? '',
-                'organization_id' => $settings->organization_id,
-            ],
+            'data' => $this->settingsPayload($settings),
             'message' => 'Centrix Paybill saved.',
         ]);
     }
@@ -389,6 +383,18 @@ class PlatformPaybillController extends Controller
             webhookVerifyToken: WhatsAppSettingsResolver::platformVerifyToken(),
             graphApiVersion: (string) config('whatsapp.graph_api_version', 'v21.0'),
         );
+    }
+
+    /** @return array<string, mixed> */
+    protected function settingsPayload(?\App\Models\PlatformBillingSetting $settings): array
+    {
+        return [
+            'short_code' => $settings?->short_code ?? '',
+            'account_name_prefix' => $settings?->account_name_prefix ?? '',
+            'organization_id' => $settings?->organization_id,
+            'duration_discount_percent' => (float) ($settings?->duration_discount_percent ?? 0),
+            'duration_discount_min_months' => (int) ($settings?->duration_discount_min_months ?? 3),
+        ];
     }
 
     /** @return array<string, mixed> */

@@ -30,6 +30,23 @@ class SelfServePlanComposerTest extends TestCase
         $this->assertCount(1, $draft['features']);
     }
 
+    public function test_a_driving_school_plan_does_not_keep_a_shop_till(): void
+    {
+        $draft = (new SelfServePlanComposer($this->createStub(\App\Services\Ai\AiProviderFactory::class)))->normalize([
+            'name' => 'School year',
+            'description' => 'Driving school lessons and fees',
+            'industry' => 'driving',
+            'interval' => 'yearly',
+            'price' => 24000,
+            'workspace_keys' => ['driving', 'pos', 'hotel_bar_pos'],
+            'section_keys' => ['reports'],
+        ]);
+
+        $this->assertSame('driving', $draft['industry']);
+        $this->assertSame(['driving'], $draft['workspace_keys']);
+        $this->assertSame([], $draft['section_keys']);
+    }
+
     public function test_a_short_description_is_enough_for_the_plan_prompt(): void
     {
         $prompt = (new SelfServePlanComposer($this->createStub(\App\Services\Ai\AiProviderFactory::class)))->systemPrompt();

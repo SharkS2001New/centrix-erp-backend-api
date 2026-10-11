@@ -9,7 +9,9 @@ use App\Models\PlatformLicenceBalance;
 use App\Models\PlatformLicencePayment;
 use App\Models\PlatformPlan;
 use App\Models\PlatformSubscription;
+use App\Models\Organization;
 use App\Models\User;
+use App\Services\Erp\IndustryRegistry;
 use App\Services\Platform\BillingPolicy;
 use App\Services\Platform\OrganizationLicenseService;
 use Illuminate\Http\Request;
@@ -49,7 +51,7 @@ class OrganizationBillingController extends Controller
                     'seat_limit' => $plan?->seat_limit,
                     'modules' => $license['modules'] ?? [],
                 ] : null,
-                'plans' => $this->catalogue(),
+                'plans' => $this->catalogue($org),
                 'usage' => [
                     'users' => User::query()->where('organization_id', $org->id)->count(),
                     'branches' => Schema::hasTable('branches')
@@ -140,6 +142,7 @@ class OrganizationBillingController extends Controller
                 'catalogue' => $plans->map(fn (PlatformPlan $plan) => [
                     'id' => $plan->id,
                     'name' => $plan->name,
+                    'industry' => $plan->industry ?: 'commerce',
                     'interval' => $plan->interval,
                     'monthly_price' => $plan->monthly_price !== null ? (float) $plan->monthly_price : null,
                     'yearly_price' => $plan->yearly_price !== null ? (float) $plan->yearly_price : null,
@@ -153,15 +156,24 @@ class OrganizationBillingController extends Controller
     }
 
     /** @return list<array<string, mixed>> */
-    protected function catalogue(): array
+    protected function catalogue(Organization $org): array
     {
         if (! Schema::hasTable('platform_plans')) {
             return [];
         }
 
+        $industry = IndustryRegistry::industryForProfile((string) $org->deployment_profile);
         $query = PlatformPlan::query()->where('is_active', true)->orderBy('monthly_price')->orderBy('name');
         if (Schema::hasColumn('platform_plans', 'self_serve')) {
             $query->where('self_serve', true);
+        }
+        if (Schema::hasColumn('platform_plans', 'industry')) {
+            $query->where(function ($inner) use ($industry) {
+                $inner->where('industry', $industry);
+                if ($industry === 'commerce') {
+                    $inner->orWhereNull('industry')->orWhere('industry', '');
+                }
+            });
         }
 
         return $query->get()->map(fn (PlatformPlan $plan) => [

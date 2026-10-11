@@ -40,11 +40,18 @@ class PlatformPaybillLicenceService
             ->first();
 
         $row = $this->settings() ?? new PlatformBillingSetting();
-        $row->fill([
+        $fill = [
             'organization_id' => $platform?->id,
             'short_code' => $this->blankToNull($data['short_code'] ?? null),
             'account_name_prefix' => $this->blankToNull($data['account_name_prefix'] ?? null),
-        ]);
+        ];
+        if (array_key_exists('duration_discount_percent', $data)) {
+            $fill['duration_discount_percent'] = min(100, max(0, round((float) $data['duration_discount_percent'], 2)));
+        }
+        if (array_key_exists('duration_discount_min_months', $data)) {
+            $fill['duration_discount_min_months'] = min(36, max(0, (int) $data['duration_discount_min_months']));
+        }
+        $row->fill($fill);
         $row->save();
 
         return $row->fresh();
