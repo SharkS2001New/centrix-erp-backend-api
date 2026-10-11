@@ -493,7 +493,7 @@ class AiSettingsResolver
         $defaults = self::defaults();
         $out = array_merge($defaults, $settings);
         $out['enabled'] = (bool) ($out['enabled'] ?? false);
-        $out['talk_enabled'] = (bool) ($out['talk_enabled'] ?? true);
+        $out['talk_enabled'] = (bool) ($out['talk_enabled'] ?? false);
         $out['talk_voice'] = self::normalizeTalkVoiceId($out['talk_voice'] ?? null);
         $out['use_platform_gemini'] = (bool) ($out['use_platform_gemini'] ?? false);
         $out['use_platform_ai'] = (bool) ($out['use_platform_ai'] ?? false);
@@ -1001,7 +1001,9 @@ class AiSettingsResolver
 
         return [
             'settings' => $settings,
-            'platform_enabled' => $gate->aiPlatformEnabled(),
+            'platform_enabled' => $gate->aiPlatformChatEnabled(),
+            'platform_chat_enabled' => $gate->aiPlatformChatEnabled(),
+            'platform_talk_enabled' => $gate->aiPlatformTalkEnabled(),
             'available' => $runtime !== null,
             'use_platform_gemini' => $platformOffersFree,
             'use_platform_ai' => $prefersPlatform,
@@ -1050,11 +1052,16 @@ class AiSettingsResolver
             }
         }
 
+        $chatOn = $gate->aiPlatformChatEnabled() && (bool) ($settings['enabled'] ?? false);
+        $talkOn = $gate->aiPlatformTalkEnabled() && (bool) ($settings['talk_enabled'] ?? false);
+
         return [
-            'platform_enabled' => $gate->aiPlatformEnabled(),
-            'enabled' => $gate->aiPlatformEnabled(),
-            'available' => $available,
-            'talk_enabled' => self::isTalkEnabled(),
+            'platform_enabled' => $gate->aiPlatformChatEnabled(),
+            'platform_chat_enabled' => $gate->aiPlatformChatEnabled(),
+            'platform_talk_enabled' => $gate->aiPlatformTalkEnabled(),
+            'enabled' => $chatOn,
+            'available' => $available && $chatOn,
+            'talk_enabled' => $talkOn,
             'talk_voice' => self::talkVoice(),
             'use_platform_gemini' => $platformOffersFree,
             'use_platform_ai' => $prefersPlatform,

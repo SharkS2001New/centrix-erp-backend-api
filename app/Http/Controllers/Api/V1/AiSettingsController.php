@@ -23,7 +23,7 @@ class AiSettingsController extends Controller
         $org = $this->erp->resolveOrganization($request);
         $gate = $this->erp->gateForRequest($request);
 
-        if (! $gate->aiPlatformEnabled()) {
+        if (! $gate->aiPlatformChatEnabled() && ! $gate->aiPlatformTalkEnabled()) {
             abort(404);
         }
 
@@ -36,6 +36,8 @@ class AiSettingsController extends Controller
         $gate = $this->erp->gateForRequest($request);
 
         $data = $request->validate([
+            'enabled' => 'sometimes|boolean',
+            'talk_enabled' => 'sometimes|boolean',
             'use_platform_ai' => 'sometimes|boolean',
             'provider' => 'sometimes|in:openai,gemini',
             'model' => 'sometimes|nullable|string|max:80',
@@ -110,11 +112,11 @@ class AiSettingsController extends Controller
 
         $data = $this->platformConfig->filterOrgManagerAiPayload($data, $gate);
 
-        if (! $gate->aiPlatformEnabled()) {
+        if (! $gate->aiPlatformChatEnabled() && ! $gate->aiPlatformTalkEnabled()) {
             abort(404);
         }
 
-        if ($data === [] && $request->hasAny(['use_platform_ai', 'provider', 'model', 'api_key', 'base_url', 'insights'])) {
+        if ($data === [] && $request->hasAny(['enabled', 'talk_enabled', 'use_platform_ai', 'provider', 'model', 'api_key', 'base_url', 'insights'])) {
             throw ValidationException::withMessages([
                 'use_platform_ai' => ['AI assistant is not enabled for this organization by the platform administrator.'],
             ]);

@@ -418,16 +418,24 @@ class OrganizationPlatformConfigService
                 $currentAi[$key] = (bool) $salesPlatform[$key];
             }
         }
+        if (array_key_exists('enable_ai_chat', $salesPlatform)) {
+            $currentAi['enable_ai_chat'] = (bool) $salesPlatform['enable_ai_chat'];
+            $currentAi['enable_ai'] = (bool) $salesPlatform['enable_ai_chat'];
+        }
+        if (array_key_exists('enable_ai_talk', $salesPlatform)) {
+            $currentAi['enable_ai_talk'] = (bool) $salesPlatform['enable_ai_talk'];
+        }
         if (array_key_exists('use_platform_gemini', $salesPlatform) && $salesPlatform['use_platform_gemini']) {
             $freeProvider = AiSettingsResolver::platformFreeAiProvider();
             $currentAi['enable_ai'] = true;
-            $currentAi['enabled'] = true;
+            $currentAi['enable_ai_chat'] = true;
             $currentAi['provider'] = $freeProvider;
             $currentAi['use_platform_gemini'] = true;
             $currentAi['use_platform_ai'] = true;
         }
-        if (array_key_exists('enable_ai', $salesPlatform) && ! $salesPlatform['enable_ai']) {
-            $currentAi['enabled'] = false;
+        if (array_key_exists('enable_ai', $salesPlatform) && ! $salesPlatform['enable_ai'] && ! ($salesPlatform['enable_ai_chat'] ?? false)) {
+            $currentAi['enable_ai'] = false;
+            $currentAi['enable_ai_chat'] = false;
             $currentAi['use_platform_gemini'] = false;
         }
         $moduleSettings['ai'] = $currentAi;
@@ -609,7 +617,9 @@ class OrganizationPlatformConfigService
             'enable_mpesa_stk' => true,
             'enable_equity_bank' => true,
             'enable_kra_integration' => true,
-            'enable_ai' => true,
+            'enable_ai' => false,
+            'enable_ai_chat' => false,
+            'enable_ai_talk' => false,
             'use_platform_gemini' => false,
             'enable_whatsapp_orders' => false,
             'enable_investors' => false,
@@ -704,7 +714,9 @@ class OrganizationPlatformConfigService
             'enable_mpesa_stk' => (bool) ($finance['enable_mpesa_stk'] ?? true),
             'enable_equity_bank' => (bool) ($finance['enable_equity_bank'] ?? true),
             'enable_kra_integration' => (bool) ($finance['enable_kra_integration'] ?? true),
-            'enable_ai' => (bool) ($ai['enable_ai'] ?? true),
+            'enable_ai' => $gate->aiPlatformChatEnabled(),
+            'enable_ai_chat' => $gate->aiPlatformChatEnabled(),
+            'enable_ai_talk' => $gate->aiPlatformTalkEnabled(),
             'use_platform_gemini' => (bool) ($ai['use_platform_gemini'] ?? false),
             'enable_whatsapp_orders' => (bool) ($whatsapp['enable_whatsapp_orders'] ?? false),
             'enable_investors' => (bool) (($gate->moduleSettings('investors')['enable_investors'] ?? false)
@@ -995,12 +1007,15 @@ class OrganizationPlatformConfigService
             unset($data[$key]);
         }
 
-        if (! $gate->aiPlatformEnabled()) {
+        if (! $gate->aiPlatformChatEnabled()) {
             unset($data['enabled'], $data['api_key'], $data['model'], $data['base_url'], $data['provider']);
+        }
+        if (! $gate->aiPlatformTalkEnabled()) {
+            unset($data['talk_enabled']);
         }
 
         // Platform selects free AI for the org; tenants choose platform vs own key via use_platform_ai.
-        unset($data['use_platform_gemini'], $data['enable_ai'], $data['enabled'], $data['tools']);
+        unset($data['use_platform_gemini'], $data['enable_ai'], $data['enable_ai_chat'], $data['enable_ai_talk'], $data['tools']);
 
         return $data;
     }

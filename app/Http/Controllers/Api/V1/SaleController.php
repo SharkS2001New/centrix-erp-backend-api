@@ -158,13 +158,13 @@ class SaleController extends BaseResourceController
             && ! $hasPaymentStatusFilterEarly
             && ! $isStageQueueBrowseRequest
         ) {
-            SalesOrderQueuePermissions::applyIndexScope(
-                $query,
-                $request->user(),
-                $gate,
-                app(UserPermissionService::class),
-                $channel,
-            );
+        SalesOrderQueuePermissions::applyIndexScope(
+            $query,
+            $request->user(),
+            $gate,
+            app(UserPermissionService::class),
+            $channel,
+        );
         }
 
         if ($isStageQueueBrowseRequest && ! $isExactOrderLookup && ! $forPosOrderEdit) {
@@ -403,7 +403,7 @@ class SaleController extends BaseResourceController
                         ->orWhere('sales.status', SalePaymentStatus::UNPAID);
                 });
             } else {
-                $query->whereRaw('(sales.order_total - COALESCE(sales.amount_paid, 0)) > 0.01');
+            $query->whereRaw('(sales.order_total - COALESCE(sales.amount_paid, 0)) > 0.01');
             }
         }
 

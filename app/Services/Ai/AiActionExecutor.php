@@ -1244,7 +1244,7 @@ class AiActionExecutor
                         $q->where('order_num', $raw)
                             ->orWhere('pos_order_num', $raw);
                     })
-                    ->first();
+                ->first();
             }
 
             if ($sale) {

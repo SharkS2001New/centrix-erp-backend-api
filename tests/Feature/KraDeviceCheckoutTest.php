@@ -58,13 +58,13 @@ class KraDeviceCheckoutTest extends TestCase
     public function test_checkout_submits_to_kra_device_when_enabled(): void
     {
         $this->fakeKraDeviceHttp([
-            'success' => true,
-            'message' => 'OK',
-            'invoice_number' => 'CU-12345',
-            'Receipt Signature' => 'SIG-ABC',
-            'signature_link' => 'https://example.test/qr',
-            'serial_number' => 'DEJA02220240050',
-            'timestamp' => '2026-06-11T12:00:00',
+                'success' => true,
+                'message' => 'OK',
+                'invoice_number' => 'CU-12345',
+                'Receipt Signature' => 'SIG-ABC',
+                'signature_link' => 'https://example.test/qr',
+                'serial_number' => 'DEJA02220240050',
+                'timestamp' => '2026-06-11T12:00:00',
         ]);
 
         $product = Product::with('vat')->first();

@@ -990,7 +990,7 @@ class CheckoutController extends Controller
                         (string) $cart->channel,
                     );
                     if ($customer) {
-                        $customerNameOverride = trim((string) ($customer->customer_name ?? ''));
+                $customerNameOverride = trim((string) ($customer->customer_name ?? ''));
                     }
                 }
                 if ($customerNameOverride === '') {
@@ -1086,7 +1086,7 @@ class CheckoutController extends Controller
                         'completed_at' => $clientCompleted,
                     ])->save();
                 } else {
-                    $sale->update(['completed_at' => now()]);
+                $sale->update(['completed_at' => now()]);
                     // Keep the original sale day on the rep's mobile dashboard after an edit.
                     if ($priorSale?->created_at) {
                         $sale->forceFill([
@@ -1315,16 +1315,16 @@ class CheckoutController extends Controller
                         (int) $sale->organization_id,
                         (string) $sale->payment_method_code,
                     );
-                    if ($method) {
-                        SalePayment::create([
-                            'sale_id' => $sale->id,
-                            'float_session_id' => $floatSessionId,
-                            'payment_method_id' => $method->id,
-                            'amount' => $payNow,
-                            'reference_number' => $input['payment_reference'] ?? null,
-                            'paid_at' => $input['payment_date'] ?? now(),
-                        ]);
-                    }
+                if ($method) {
+                    SalePayment::create([
+                        'sale_id' => $sale->id,
+                        'float_session_id' => $floatSessionId,
+                        'payment_method_id' => $method->id,
+                        'amount' => $payNow,
+                        'reference_number' => $input['payment_reference'] ?? null,
+                        'paid_at' => $input['payment_date'] ?? now(),
+                    ]);
+                }
                     $mpesaRecordedInSplits = strtoupper((string) $paymentMethodCode) === 'MPESA';
                 }
 

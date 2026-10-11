@@ -718,7 +718,7 @@ class ReportController extends Controller
         string $fromDate,
         string $toDate,
     ) {
-        $legacy = CentrixSalesScope::legacyExcludeSql('s');
+            $legacy = CentrixSalesScope::legacyExcludeSql('s');
         $statuses = CentrixSalesScope::reportPipelineStatuses();
         $saleDate = CentrixSalesScope::reportSaleDateSql('s');
         $unpaidSql = SalePaymentStatus::isUnpaidSql('s.');
@@ -731,9 +731,9 @@ class ReportController extends Controller
                     ->whereNull('c.deleted_at');
             })
             ->leftJoin('routes as r', 'r.id', '=', 'c.route_id')
-            ->where('s.organization_id', $orgId)
+                    ->where('s.organization_id', $orgId)
             ->whereIn('s.status', $statuses)
-            ->where('s.archived', 0)
+                    ->where('s.archived', 0)
             ->whereRaw($legacy)
             ->whereRaw("{$saleDate} >= ?", [$fromDate])
             ->whereRaw("{$saleDate} <= ?", [$toDate]);
@@ -3057,16 +3057,16 @@ class ReportController extends Controller
                 $q->where($preferTimestamp, '<=', $filters['to_date'].' 23:59:59');
             }
         } else {
-            if (! empty($filters['from_date']) && ! empty($filters['date_column'])) {
-                $dateColumn = $filters['date_column'];
-                if ($this->viewColumnExists($view, $dateColumn)) {
-                    $q->where($dateColumn, '>=', $filters['from_date']);
-                }
+        if (! empty($filters['from_date']) && ! empty($filters['date_column'])) {
+            $dateColumn = $filters['date_column'];
+            if ($this->viewColumnExists($view, $dateColumn)) {
+                $q->where($dateColumn, '>=', $filters['from_date']);
             }
-            if (! empty($filters['to_date']) && ! empty($filters['date_column'])) {
-                $dateColumn = $filters['date_column'];
-                if ($this->viewColumnExists($view, $dateColumn)) {
-                    $q->where($dateColumn, '<=', $filters['to_date']);
+        }
+        if (! empty($filters['to_date']) && ! empty($filters['date_column'])) {
+            $dateColumn = $filters['date_column'];
+            if ($this->viewColumnExists($view, $dateColumn)) {
+                $q->where($dateColumn, '<=', $filters['to_date']);
                 }
             }
         }

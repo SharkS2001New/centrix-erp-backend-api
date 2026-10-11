@@ -258,7 +258,7 @@ class ErpCapabilitiesController extends Controller
             $payload['ai_assistant'] = [
                 'enabled' => (bool) ($ai['enabled'] ?? false),
                 'available' => (bool) ($ai['available'] ?? false),
-                'talk_enabled' => ($ai['talk_enabled'] ?? true) !== false,
+                'talk_enabled' => ($ai['talk_enabled'] ?? false) === true,
                 'talk_voice' => \App\Services\Ai\AiSettingsResolver::talkVoice(),
             ];
         }

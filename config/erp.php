@@ -295,6 +295,8 @@ return [
         ],
         'ai' => [
             'enable_ai',
+            'enable_ai_chat',
+            'enable_ai_talk',
             'use_platform_gemini',
             'tools',
         ],
@@ -805,12 +807,14 @@ return [
             ],
         ],
         'ai' => [
-            'enable_ai' => true,
+            'enable_ai' => false,
+            'enable_ai_chat' => false,
+            'enable_ai_talk' => false,
             'use_platform_gemini' => false,
             'use_platform_ai' => false,
             'enabled' => false,
-            /** Platform-wide: header “Talk to AI” voice Q&A (STT + short TTS). */
-            'talk_enabled' => true,
+            /** Org choice: header Talk voice. Off until this organisation turns it on. */
+            'talk_enabled' => false,
             /**
              * Preferred on-device Talk voice (ERP web + Manager).
              * Clients pick the closest local TTS voice for locale + gender.

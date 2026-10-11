@@ -836,6 +836,8 @@ class OrganizationProvisionController extends Controller
             'sales_platform.enable_equity_bank' => 'sometimes|boolean',
             'sales_platform.enable_kra_integration' => 'sometimes|boolean',
             'sales_platform.enable_ai' => 'sometimes|boolean',
+            'sales_platform.enable_ai_chat' => 'sometimes|boolean',
+            'sales_platform.enable_ai_talk' => 'sometimes|boolean',
             'sales_platform.use_platform_gemini' => 'sometimes|boolean',
             'sales_platform.enable_whatsapp_orders' => 'sometimes|boolean',
             'sales_platform.enable_investors' => 'sometimes|boolean',

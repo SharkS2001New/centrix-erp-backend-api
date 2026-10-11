@@ -395,9 +395,32 @@ class CapabilityGate
 
     public function aiPlatformEnabled(): bool
     {
-        $ai = $this->moduleSettings('ai');
+        return $this->aiPlatformChatEnabled() || $this->aiPlatformTalkEnabled();
+    }
 
-        return (bool) ($ai['enable_ai'] ?? true);
+    /** Floating AI chat. Off unless a platform administrator enables it for this organisation. */
+    public function aiPlatformChatEnabled(): bool
+    {
+        $ai = $this->storedAiSettings();
+        if (array_key_exists('enable_ai_chat', $ai)) {
+            return (bool) $ai['enable_ai_chat'];
+        }
+
+        return (bool) ($ai['enable_ai'] ?? false);
+    }
+
+    /** Header Talk to Centrix. Off unless a platform administrator enables it for this organisation. */
+    public function aiPlatformTalkEnabled(): bool
+    {
+        return (bool) ($this->storedAiSettings()['enable_ai_talk'] ?? false);
+    }
+
+    /** @return array<string, mixed> */
+    protected function storedAiSettings(): array
+    {
+        $ai = $this->organization?->module_settings['ai'] ?? [];
+
+        return is_array($ai) ? $ai : [];
     }
 
     public function whatsappPlatformEnabled(): bool
