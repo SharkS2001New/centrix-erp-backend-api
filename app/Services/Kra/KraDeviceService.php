@@ -1635,9 +1635,27 @@ class KraDeviceService
      */
     public function sanitizeEtimsQrPayload(mixed $raw): ?string
     {
-        $text = trim((string) preg_replace('/\s+/u', ' ', (string) ($raw ?? '')));
+        $text = (string) ($raw ?? '');
+        if ($text === '') {
+            return null;
+        }
+
+        // Comstore replaces the "20" year with a single non-UTF-8 byte (prints as "ú").
+        // preg_replace() with /u returns null for that byte and used to discard the
+        // whole verification string, so the receipt printed the URL as text.
+        if (! mb_check_encoding($text, 'UTF-8')) {
+            $asLatin = @iconv('Windows-1252', 'UTF-8//IGNORE', $text);
+            $text = is_string($asLatin) && $asLatin !== ''
+                ? $asLatin
+                : (iconv('UTF-8', 'UTF-8//IGNORE', $text) ?: $text);
+        }
+
         $text = preg_replace('/[\x00-\x1F\x7F]/', '', $text) ?? $text;
-        $text = trim($text);
+        $collapsed = preg_replace('/\s+/u', ' ', $text);
+        if (! is_string($collapsed)) {
+            $collapsed = preg_replace('/\s+/', ' ', $text) ?? $text;
+        }
+        $text = trim($collapsed);
         if ($text === '') {
             return null;
         }
