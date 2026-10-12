@@ -19,17 +19,40 @@ class PlatformPlanController extends Controller
     public function compose(Request $request, SelfServePlanComposer $composer)
     {
         $data = $request->validate([
-            'description' => 'required|string|min:2|max:4000',
+            'description' => 'required|string|min:'.SelfServePlanComposer::MIN_BRIEF_CHARS.'|max:4000',
             'industry' => 'sometimes|in:commerce,hospitality,spa,driving',
+            'points' => 'required|integer|min:'.SelfServePlanComposer::MIN_POINTS.'|max:'.SelfServePlanComposer::MAX_POINTS,
         ]);
 
-        $created = $composer->createFromWords($data['description'], $data['industry'] ?? null);
+        $created = $composer->createFromWords($data['description'], $data['industry'] ?? null, (int) $data['points']);
 
         return response()->json([
             'data' => $created['plan'],
             'summary' => $created['summary'],
             'message' => 'Centrix AI created this plan.',
         ], 201);
+    }
+
+    public function composeUpdate(Request $request, PlatformPlan $platform_plan, SelfServePlanComposer $composer)
+    {
+        $data = $request->validate([
+            'description' => 'required|string|min:8|max:4000',
+            'industry' => 'sometimes|in:commerce,hospitality,spa,driving',
+            'points' => 'required|integer|min:'.SelfServePlanComposer::MIN_POINTS.'|max:'.SelfServePlanComposer::MAX_POINTS,
+        ]);
+
+        $updated = $composer->revisePlan(
+            $platform_plan,
+            $data['description'],
+            $data['industry'] ?? null,
+            (int) $data['points'],
+        );
+
+        return response()->json([
+            'data' => $updated['plan'],
+            'summary' => $updated['summary'],
+            'message' => 'Centrix AI updated this plan.',
+        ]);
     }
 
     public function store(Request $request)

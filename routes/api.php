@@ -581,6 +581,7 @@ Route::prefix('v1')->group(function () {
             ->group(function () {
                 Route::get('/', [PlatformPlanController::class, 'index']);
                 Route::post('compose', [PlatformPlanController::class, 'compose']);
+                Route::post('{platform_plan}/compose', [PlatformPlanController::class, 'composeUpdate'])->whereNumber('platform_plan');
                 Route::post('/', [PlatformPlanController::class, 'store']);
                 Route::get('{platform_plan}', [PlatformPlanController::class, 'show'])->whereNumber('platform_plan');
                 Route::patch('{platform_plan}', [PlatformPlanController::class, 'update'])->whereNumber('platform_plan');
