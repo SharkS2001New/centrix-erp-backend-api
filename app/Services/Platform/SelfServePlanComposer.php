@@ -79,9 +79,21 @@ class SelfServePlanComposer
     }
 
     /**
+     * The administrator picks the industry. The description only fills in price, name, and contents.
+     */
+    public function userPrompt(string $words, ?string $industry = null): string
+    {
+        if (! in_array($industry, ['commerce', 'hospitality', 'spa', 'driving'], true)) {
+            return $words;
+        }
+
+        return 'The industry is already chosen: '.$industry.'. Keep that industry. Do not switch it because of words in the description. '.$words;
+    }
+
+    /**
      * @return array{plan: PlatformPlan, summary: array<string, mixed>}
      */
-    public function createFromWords(string $words): array
+    public function createFromWords(string $words, ?string $industry = null): array
     {
         $runtime = AiSettingsResolver::resolveRuntimeForPlatformTraining();
         if (! $runtime || empty($runtime['api_key'])) {
@@ -96,7 +108,7 @@ class SelfServePlanComposer
             $turn = $this->providers->make($runtime)->chat([
                 'system' => $system,
                 'messages' => [
-                    ['role' => 'user', 'content' => $words],
+                    ['role' => 'user', 'content' => $this->userPrompt($words, $industry)],
                 ],
                 'temperature' => 0.2,
                 'max_output_tokens' => 1200,
@@ -118,7 +130,7 @@ class SelfServePlanComposer
             ]);
         }
 
-        $draft = $this->normalize($parsed);
+        $draft = $this->normalize($parsed, $industry);
         $yearly = $draft['interval'] === 'yearly';
         $plan = PlatformPlan::query()->create([
             'name' => $draft['name'],
@@ -149,7 +161,7 @@ class SelfServePlanComposer
      * @param  array<string, mixed>  $parsed
      * @return array{name: string, description: ?string, industry: string, interval: string, price: float, features: list<array{label: string, detail: ?string}>, workspace_keys: list<string>, section_keys: list<string>}
      */
-    public function normalize(array $parsed): array
+    public function normalize(array $parsed, ?string $forcedIndustry = null): array
     {
         $name = trim((string) ($parsed['name'] ?? ''));
         $price = round((float) ($parsed['price'] ?? $parsed['amount'] ?? 0), 2);
@@ -197,7 +209,10 @@ class SelfServePlanComposer
             }
         }
 
-        $industry = $this->industryFor($workspaces, $name.' '.(string) ($parsed['description'] ?? '').' '.(string) ($parsed['industry'] ?? ''));
+        $chosen = in_array($forcedIndustry, ['commerce', 'hospitality', 'spa', 'driving'], true)
+            ? $forcedIndustry
+            : null;
+        $industry = $chosen ?? $this->industryFor($workspaces, $name.' '.(string) ($parsed['description'] ?? '').' '.(string) ($parsed['industry'] ?? ''));
         $allowed = array_flip(config('erp_industries.definitions.'.$industry.'.permission_application_ids', []));
         $workspaces = array_values(array_filter(
             array_unique($workspaces),

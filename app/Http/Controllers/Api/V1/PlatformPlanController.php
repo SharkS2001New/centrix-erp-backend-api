@@ -20,9 +20,10 @@ class PlatformPlanController extends Controller
     {
         $data = $request->validate([
             'description' => 'required|string|min:2|max:4000',
+            'industry' => 'sometimes|in:commerce,hospitality,spa,driving',
         ]);
 
-        $created = $composer->createFromWords($data['description']);
+        $created = $composer->createFromWords($data['description'], $data['industry'] ?? null);
 
         return response()->json([
             'data' => $created['plan'],

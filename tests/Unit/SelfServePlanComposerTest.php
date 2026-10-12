@@ -47,6 +47,22 @@ class SelfServePlanComposerTest extends TestCase
         $this->assertSame([], $draft['section_keys']);
     }
 
+    public function test_a_chosen_industry_overrides_words_that_sound_like_another_trade(): void
+    {
+        $draft = (new SelfServePlanComposer($this->createStub(\App\Services\Ai\AiProviderFactory::class)))->normalize([
+            'name' => 'Front desk',
+            'description' => 'Driving school lessons and fees',
+            'industry' => 'driving',
+            'price' => 3000,
+            'workspace_keys' => ['driving', 'pos', 'spa'],
+            'section_keys' => ['reports'],
+        ], 'spa');
+
+        $this->assertSame('spa', $draft['industry']);
+        $this->assertSame(['spa'], $draft['workspace_keys']);
+        $this->assertSame([], $draft['section_keys']);
+    }
+
     public function test_a_short_description_is_enough_for_the_plan_prompt(): void
     {
         $prompt = (new SelfServePlanComposer($this->createStub(\App\Services\Ai\AiProviderFactory::class)))->systemPrompt();
