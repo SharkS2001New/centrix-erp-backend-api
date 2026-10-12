@@ -1073,12 +1073,56 @@ class AiSettingsResolver
         ];
     }
 
-    /** Platform admin switch for header Talk-to-AI voice Q&A. */
+    /** Platform-wide voice credentials switch. This does not turn Talk on for an organisation. */
     public static function isTalkEnabled(): bool
     {
         $settings = self::forPlatformTraining();
 
         return (bool) ($settings['talk_enabled'] ?? true);
+    }
+
+    /** Floating chat is on only when the platform enabled it for this organisation and the organisation turned it on. */
+    public static function chatEnabledForUser(?User $user): bool
+    {
+        if (! $user) {
+            return false;
+        }
+
+        $organization = $user->organization;
+        if (! $organization) {
+            return false;
+        }
+
+        $gate = app(\App\Services\Erp\ErpContext::class)->gateForUser($user);
+        if (! $gate->aiPlatformChatEnabled()) {
+            return false;
+        }
+
+        $settings = self::forOrganization($organization);
+
+        return (bool) ($settings['enabled'] ?? false);
+    }
+
+    /** Header Talk is on only when the platform enabled it for this organisation and the organisation left it on. */
+    public static function talkEnabledForUser(?User $user): bool
+    {
+        if (! $user || ! self::isTalkEnabled()) {
+            return false;
+        }
+
+        $organization = $user->organization;
+        if (! $organization) {
+            return false;
+        }
+
+        $gate = app(\App\Services\Erp\ErpContext::class)->gateForUser($user);
+        if (! $gate->aiPlatformTalkEnabled()) {
+            return false;
+        }
+
+        $settings = self::forOrganization($organization);
+
+        return (bool) ($settings['talk_enabled'] ?? false);
     }
 
     /**

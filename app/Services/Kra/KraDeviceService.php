@@ -1642,11 +1642,11 @@ class KraDeviceService
             return null;
         }
 
-        if (preg_match('/(20\d{2}-\d{2}-\d{2}\s+\d{1,2}:\d{2}\s+\S+\s+\S+\s+https:\/\/\S+)/i', $text, $full)) {
+        if (preg_match('/(20\d{2}-\d{2}-\d{2}\s+\d{1,2}:\d{2}(?::\d{2})?\s+\S+\s+\S+\s+https:\/\/\S+)/i', $text, $full)) {
             return rtrim($full[1], '),.;');
         }
 
-        if (preg_match('/(\d{2}-\d{2}-\d{2}\s+\d{1,2}:\d{2}\s+\S+\s+\S+\s+https:\/\/\S+)/i', $text, $short)) {
+        if (preg_match('/(\d{2}-\d{2}-\d{2}\s+\d{1,2}:\d{2}(?::\d{2})?\s+\S+\s+\S+\s+https:\/\/\S+)/i', $text, $short)) {
             return '20'.rtrim($short[1], '),.;');
         }
 

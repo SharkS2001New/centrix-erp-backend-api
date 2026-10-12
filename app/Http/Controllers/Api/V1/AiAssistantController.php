@@ -48,8 +48,8 @@ class AiAssistantController extends Controller
             'supports_page_explore' => true,
             'supports_feedback' => Schema::hasTable('ai_assistant_feedback'),
             'supports_streaming' => filter_var(config('ai.stream_responses', true), FILTER_VALIDATE_BOOLEAN),
-            'supports_voice_transcribe' => AiSettingsResolver::isTalkEnabled(),
-            'talk_enabled' => AiSettingsResolver::isTalkEnabled(),
+            'supports_voice_transcribe' => AiSettingsResolver::talkEnabledForUser($user),
+            'talk_enabled' => AiSettingsResolver::talkEnabledForUser($user),
             'talk_voice' => AiSettingsResolver::talkVoice(),
             'fast_mode' => filter_var(config('ai.fast_mode', true), FILTER_VALIDATE_BOOLEAN),
             'runtime' => [
@@ -96,6 +96,7 @@ class AiAssistantController extends Controller
     public function chat(Request $request)
     {
         $this->rejectImageContent($request);
+        $this->assertChatEnabled($request);
 
         $data = $request->validate([
             'context' => 'nullable|string|in:products,reports,report_builder,general,erp',
@@ -148,9 +149,7 @@ class AiAssistantController extends Controller
         }
 
         if (! empty($data['voice_mode'])) {
-            if (! AiSettingsResolver::isTalkEnabled()) {
-                abort(403, 'Talk to AI is turned off by the platform administrator.');
-            }
+            $this->assertTalkEnabled($request);
             $data['page_context'] = array_merge($data['page_context'] ?? [], ['voice_mode' => true]);
         }
 
@@ -176,6 +175,7 @@ class AiAssistantController extends Controller
 
     public function chatStream(Request $request)
     {
+        $this->assertChatEnabled($request);
         $this->rejectImageContent($request);
 
         $data = $request->validate([
@@ -219,9 +219,7 @@ class AiAssistantController extends Controller
         }
 
         if (! empty($data['voice_mode'])) {
-            if (! AiSettingsResolver::isTalkEnabled()) {
-                abort(403, 'Talk to AI is turned off by the platform administrator.');
-            }
+            $this->assertTalkEnabled($request);
             $data['page_context'] = array_merge($data['page_context'] ?? [], ['voice_mode' => true]);
         }
 
@@ -305,9 +303,7 @@ class AiAssistantController extends Controller
      */
     public function transcribe(Request $request)
     {
-        if (! AiSettingsResolver::isTalkEnabled()) {
-            abort(403, 'Talk to AI is turned off by the platform administrator.');
-        }
+        $this->assertTalkEnabled($request);
 
         $data = $request->validate([
             'audio' => 'required|file|max:12288',
@@ -409,6 +405,20 @@ class AiAssistantController extends Controller
         }
 
         return response()->json(null, 204);
+    }
+
+    protected function assertChatEnabled(Request $request): void
+    {
+        if (! AiSettingsResolver::chatEnabledForUser($request->user())) {
+            abort(403, 'AI chat is turned off for this organization.');
+        }
+    }
+
+    protected function assertTalkEnabled(Request $request): void
+    {
+        if (! AiSettingsResolver::talkEnabledForUser($request->user())) {
+            abort(403, 'Talk to Centrix is turned off for this organization.');
+        }
     }
 
     protected function rejectImageContent(Request $request): void
