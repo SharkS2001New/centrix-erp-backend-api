@@ -299,6 +299,14 @@ class CreditNoteService
                 ]];
             }
 
+            if ($this->creditNoteNeedsFreshTraderInvoice($creditNote)) {
+                $stored = $creditNote->kra_request_payload;
+                if (is_array($stored)) {
+                    unset($stored['sign_structure']['TraderSystemInvoiceNumber']);
+                    $creditNote->kra_request_payload = $stored;
+                }
+            }
+
             $invoiceNumber = $service->traderInvoiceForCreditNote($creditNote, $financeSettings);
             $buyerPin = $return->customer?->kra_pin ?? $return->sale?->customer?->kra_pin ?? null;
 
@@ -850,16 +858,69 @@ class CreditNoteService
         return in_array($invoiceType, ['credit', 'credit_note', 'creditnote'], true);
     }
 
+    /**
+     * Receipt number the control unit stored for the original sale.
+     * That is the trader receipt number, not the long CU invoice printed beside it.
+     * Sending the CU number makes credit notes fail with receiptNo / code 314 while the sale itself succeeded.
+     */
     protected function relevantInvoiceNumberFromKraResponse(KraResponse $kra): string
     {
-        $payload = $kra->response_payload ?? [];
-        $cuInv = trim((string) ($payload['cu_inv_no'] ?? $payload['cu-inv-no'] ?? ''));
-        if ($cuInv !== '') {
-            $trimmed = ltrim($cuInv, '0');
-
-            return $trimmed !== '' ? $trimmed : $cuInv;
+        $request = is_array($kra->request_payload) ? $kra->request_payload : [];
+        $sign = is_array($request['sign_structure'] ?? null) ? $request['sign_structure'] : [];
+        $trader = $this->receiptReference((string) ($sign['TraderSystemInvoiceNumber'] ?? ''));
+        if ($trader !== null) {
+            return $trader;
         }
 
-        return trim((string) ($kra->invoice_number ?? ''));
+        $column = $this->receiptReference((string) ($kra->invoice_number ?? ''));
+        if ($column !== null) {
+            return $column;
+        }
+
+        $payload = is_array($kra->response_payload) ? $kra->response_payload : [];
+        $cuInv = trim((string) ($payload['cu_inv_no'] ?? $payload['cu-inv-no'] ?? ''));
+        if (str_contains($cuInv, '/')) {
+            $tail = $this->receiptReference(trim(substr($cuInv, (int) strrpos($cuInv, '/') + 1)));
+            if ($tail !== null) {
+                return $tail;
+            }
+        }
+
+        $stripped = ltrim($cuInv, '0');
+
+        return $this->receiptReference($stripped !== '' ? $stripped : $cuInv) ?? '';
+    }
+
+    /**
+     * A previous credit note was rejected because its own receipt reference was bad.
+     * The next try must not send that same trader invoice number again.
+     */
+    protected function creditNoteNeedsFreshTraderInvoice(CreditNote $creditNote): bool
+    {
+        $message = trim((string) $creditNote->kra_error_message);
+        if ($message === '') {
+            return false;
+        }
+
+        return (bool) preg_match(
+            '/receiptNo\s+is\s+error|\(Code\s*314\)|\bCode\s*314\b|\(Code\s*12\)|\(Code\s*994\)|duplicate\s+invoice|receipt or invoice reference was rejected|not valid for this credit note|fresh receipt reference/i',
+            $message,
+        );
+    }
+
+    /** Comstore receipt / trader invoice numbers are numeric and at most 10 digits. */
+    protected function receiptReference(string $value): ?string
+    {
+        $trimmed = trim($value);
+        if ($trimmed === '' || strlen($trimmed) > 10 || ! ctype_digit($trimmed)) {
+            return null;
+        }
+
+        $normalized = ltrim($trimmed, '0');
+        if ($normalized === '' || (int) $normalized <= 0) {
+            return null;
+        }
+
+        return $normalized;
     }
 }

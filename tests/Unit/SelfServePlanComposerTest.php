@@ -162,16 +162,11 @@ TXT;
         $this->assertSame('Point 8', $draft['features'][7]['label']);
     }
 
-    public function test_a_short_line_and_a_low_point_count_are_rejected(): void
+    public function test_a_short_line_is_accepted_and_a_low_point_count_is_rejected(): void
     {
         $composer = new SelfServePlanComposer($this->createStub(\App\Services\Ai\AiProviderFactory::class));
 
-        try {
-            $composer->guardBriefLength('Small shop, 2000 a month');
-            $this->fail('A short line should be rejected.');
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            $this->assertArrayHasKey('description', $e->errors());
-        }
+        $composer->guardBriefLength('Small shop, 2000 a month');
 
         try {
             $composer->normalizePointCount(7);
@@ -182,6 +177,49 @@ TXT;
 
         $this->assertSame(8, $composer->normalizePointCount(8));
         $this->assertSame(12, $composer->normalizePointCount(12));
+    }
+
+    public function test_a_short_line_becomes_a_plan_when_the_model_reply_is_not_json(): void
+    {
+        $composer = new SelfServePlanComposer($this->createStub(\App\Services\Ai\AiProviderFactory::class));
+        $draft = $composer->planDraft('Small shop, 2000 a month', 'commerce', 8, null);
+
+        $this->assertSame('Small shop', $draft['name']);
+        $this->assertSame('commerce', $draft['industry']);
+        $this->assertSame('monthly', $draft['interval']);
+        $this->assertSame(2000.0, $draft['price']);
+        $this->assertCount(8, $draft['features']);
+        $this->assertContains('pos', $draft['workspace_keys']);
+        $this->assertContains('products', $draft['section_keys']);
+    }
+
+    public function test_a_messy_model_reply_still_decodes_and_is_padded_to_eight_points(): void
+    {
+        $composer = new SelfServePlanComposer($this->createStub(\App\Services\Ai\AiProviderFactory::class));
+        $parsed = $composer->decodePlanJson("Here is the plan:\n```json\n{\"name\":\"Lodge\",\"price\":8000,\"features\":[{\"title\":\"Rooms\",\"description\":\"Check guests in.\"},],}\n```");
+
+        $this->assertIsArray($parsed);
+        $this->assertSame('Lodge', $parsed['name']);
+        $this->assertSame('Rooms', $parsed['features'][0]['label']);
+
+        $draft = $composer->planDraft('Lodge at 8000 Ksh a year', 'hospitality', 8, $parsed);
+
+        $this->assertSame('yearly', $draft['interval']);
+        $this->assertSame(8000.0, $draft['price']);
+        $this->assertCount(8, $draft['features']);
+        $this->assertSame('Rooms', $draft['features'][0]['label']);
+        $this->assertSame(['hotel_bar_pos', 'hospitality_backoffice', 'admin'], $draft['workspace_keys']);
+    }
+
+    public function test_a_cut_off_json_reply_can_still_be_read(): void
+    {
+        $composer = new SelfServePlanComposer($this->createStub(\App\Services\Ai\AiProviderFactory::class));
+        $parsed = $composer->decodePlanJson('{"name":"Shop","price":2000,"features":[{"label":"Till","detail":"Sell');
+
+        $this->assertIsArray($parsed);
+        $this->assertSame('Shop', $parsed['name']);
+        $this->assertSame(2000, $parsed['price']);
+        $this->assertSame('Till', $parsed['features'][0]['label']);
     }
 
     public function test_a_plan_is_written_back_as_editable_text(): void
@@ -229,9 +267,9 @@ TXT;
         $composer = new SelfServePlanComposer($this->createStub(\App\Services\Ai\AiProviderFactory::class));
         $prompt = $composer->systemPrompt(12);
 
-        $this->assertStringContainsString('A short line is not enough', $prompt);
+        $this->assertStringContainsString('A short line is enough', $prompt);
         $this->assertStringContainsString('exactly 12 feature points', $prompt);
-        $this->assertStringNotContainsString('A short line is enough', $prompt);
+        $this->assertStringNotContainsString('A short line is not enough', $prompt);
         $this->assertStringContainsString('pos (External POS)', $prompt);
         $this->assertStringContainsString('hotel_bar_pos (Hotel POS)', $prompt);
         $this->assertStringContainsString('sales_orders (Sales & orders)', $prompt);

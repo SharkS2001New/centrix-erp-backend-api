@@ -533,6 +533,16 @@ class AuthController extends Controller
         }
 
         if ($user instanceof User) {
+            app(\App\Services\Audit\AuditLogger::class)->log(
+                $user,
+                'logout',
+                'users',
+                (int) $user->id,
+                null,
+                ['username' => $user->username],
+                $request,
+            );
+
             // Revoke access first so logout returns quickly; cart cleanup can be slow
             // (reservations / M-Pesa) and must not delay the login screen.
             $userId = (int) $user->id;

@@ -7,10 +7,14 @@ use App\Models\Sale;
 use App\Observers\OrganizationObserver;
 use App\Observers\SaleObserver;
 use App\Services\Ai\AiSettingsResolver;
+use App\Services\Audit\AuditLogger;
+use App\Services\Audit\ModelChangeAuditor;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Queue\Events\JobFailed;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
@@ -18,7 +22,10 @@ use Laravel\Sanctum\Sanctum;
 
 class AppServiceProvider extends ServiceProvider
 {
-    public function register(): void {}
+    public function register(): void
+    {
+        $this->app->singleton(AuditLogger::class);
+    }
 
     public function boot(): void
     {
@@ -40,6 +47,7 @@ class AppServiceProvider extends ServiceProvider
 
         Organization::observe(OrganizationObserver::class);
         Sale::observe(SaleObserver::class);
+        $this->auditModelChanges();
 
         $this->configureRateLimiting();
         $this->configureCorsFromRuntimeEnv();
@@ -52,6 +60,28 @@ class AppServiceProvider extends ServiceProvider
         ) {
             DB::prohibitDestructiveCommands();
         }
+    }
+
+    protected function auditModelChanges(): void
+    {
+        Event::listen('eloquent.created: *', function (string $event, array $payload): void {
+            $model = $payload[0] ?? null;
+            if ($model instanceof Model) {
+                app(ModelChangeAuditor::class)->created($model);
+            }
+        });
+        Event::listen('eloquent.updated: *', function (string $event, array $payload): void {
+            $model = $payload[0] ?? null;
+            if ($model instanceof Model) {
+                app(ModelChangeAuditor::class)->updated($model);
+            }
+        });
+        Event::listen('eloquent.deleted: *', function (string $event, array $payload): void {
+            $model = $payload[0] ?? null;
+            if ($model instanceof Model) {
+                app(ModelChangeAuditor::class)->deleted($model);
+            }
+        });
     }
 
     protected function reportFailedQueueJobs(): void

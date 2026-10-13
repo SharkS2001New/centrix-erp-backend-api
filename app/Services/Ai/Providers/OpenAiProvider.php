@@ -70,6 +70,9 @@ class OpenAiProvider implements AiProviderInterface, AiStreamingProviderInterfac
         if ($this->usesGroqEndpoint()) {
             $payload['max_completion_tokens'] = $payload['max_tokens'];
         }
+        if (! $stream && ! empty($request['json'])) {
+            $payload['response_format'] = ['type' => 'json_object'];
+        }
 
         $tools = $this->formatTools($request['tools'] ?? []);
         if ($tools !== []) {

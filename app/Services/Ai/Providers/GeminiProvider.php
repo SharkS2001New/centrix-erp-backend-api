@@ -407,6 +407,9 @@ class GeminiProvider implements AiProviderInterface
                 'thinkingLevel' => $thinkingLevel,
             ];
         }
+        if (! empty($request['json'])) {
+            $config['responseMimeType'] = 'application/json';
+        }
 
         return $config;
     }

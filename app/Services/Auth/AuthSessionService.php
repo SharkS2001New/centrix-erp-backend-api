@@ -459,6 +459,19 @@ class AuthSessionService
         $authUser->refresh();
         $effective = $account->effectiveUser();
 
+        app(\App\Services\Audit\AuditLogger::class)->log(
+            $effective,
+            'login',
+            'users',
+            (int) $effective->id,
+            null,
+            [
+                'username' => $effective->username,
+                'login_channel' => $loginChannel,
+            ],
+            app()->bound('request') ? request() : null,
+        );
+
         return $this->attachPasswordExpiry([
             'token' => $newToken->plainTextToken,
             'user' => $effective,
