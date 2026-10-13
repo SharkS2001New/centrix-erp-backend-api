@@ -6,14 +6,45 @@ use App\Http\Controllers\Controller;
 use App\Models\PlatformPlan;
 use App\Services\Platform\SelfServePlanComposer;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 
 class PlatformPlanController extends Controller
 {
     public function index()
     {
+        $query = PlatformPlan::query();
+        if (Schema::hasColumn('platform_plans', 'sort_order')) {
+            $query->orderBy('sort_order')->orderBy('name');
+        } else {
+            $query->orderBy('name');
+        }
+
         return response()->json([
-            'data' => PlatformPlan::query()->orderBy('name')->get(),
+            'data' => $query->get(),
         ]);
+    }
+
+    public function reorder(Request $request)
+    {
+        $data = $request->validate([
+            'ids' => 'required|array|min:1',
+            'ids.*' => 'integer|distinct',
+        ]);
+        if (! Schema::hasColumn('platform_plans', 'sort_order')) {
+            return response()->json(['message' => 'Plan order is not available yet.'], 422);
+        }
+
+        $ids = array_values(array_map('intval', $data['ids']));
+        $found = PlatformPlan::query()->whereIn('id', $ids)->pluck('id');
+        if ($found->count() !== count($ids)) {
+            return response()->json(['message' => 'One of those plans was not found.'], 422);
+        }
+
+        foreach ($ids as $index => $id) {
+            PlatformPlan::query()->whereKey($id)->update(['sort_order' => $index + 1]);
+        }
+
+        return response()->json(['message' => 'Card order saved.']);
     }
 
     public function compose(Request $request, SelfServePlanComposer $composer)
@@ -59,8 +90,9 @@ class PlatformPlanController extends Controller
     {
         $data = $this->validated($request);
         $plan = PlatformPlan::query()->create($data);
+        PlatformPlan::placeAtEnd($plan);
 
-        return response()->json(['data' => $plan, 'message' => 'Plan created.'], 201);
+        return response()->json(['data' => $plan->fresh(), 'message' => 'Plan created.'], 201);
     }
 
     public function show(PlatformPlan $platform_plan)

@@ -17,6 +17,8 @@ class PlatformLicenceCheckout extends Model
         'checkout_request_id',
         'mpesa_receipt',
         'status',
+        'result_code',
+        'result_desc',
     ];
 
     protected $casts = [

@@ -580,6 +580,7 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin'])
             ->group(function () {
                 Route::get('/', [PlatformPlanController::class, 'index']);
+                Route::post('reorder', [PlatformPlanController::class, 'reorder']);
                 Route::post('compose', [PlatformPlanController::class, 'compose']);
                 Route::post('{platform_plan}/compose', [PlatformPlanController::class, 'composeUpdate'])->whereNumber('platform_plan');
                 Route::post('/', [PlatformPlanController::class, 'store']);
@@ -614,6 +615,7 @@ Route::prefix('v1')->group(function () {
         Route::post('erp/organization/licence/checkout', [PlatformPaybillController::class, 'checkout']);
         Route::post('erp/organization/licence/notify', [PlatformPaybillController::class, 'notify']);
         Route::post('erp/organization/licence/stk', [PlatformPaybillController::class, 'stk']);
+        Route::get('erp/organization/licence/status', [PlatformPaybillController::class, 'status']);
         Route::post('erp/organization/licence/verify', [PlatformPaybillController::class, 'verify']);
 
         Route::prefix('admin/platform-contracts')

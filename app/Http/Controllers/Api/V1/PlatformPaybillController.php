@@ -200,13 +200,43 @@ class PlatformPaybillController extends Controller
             ]);
         }
 
-        $checkout->checkout_request_id = $stk['CheckoutRequestID'] ?? null;
+        $checkoutRequestId = trim((string) ($stk['CheckoutRequestID'] ?? ''));
+        $responseCode = (string) ($stk['ResponseCode'] ?? '');
+        if ($checkoutRequestId === '' || isset($stk['errorCode']) || ($responseCode !== '' && $responseCode !== '0')) {
+            $message = (string) ($stk['errorMessage'] ?? $stk['ResponseDescription'] ?? 'M-Pesa rejected the prompt.');
+
+            return response()->json([
+                'message' => $message.' Pay the Paybill with your organisation code, then check the M-Pesa code.',
+                'checkout' => $this->checkoutPayload($checkout),
+                'stk' => false,
+            ]);
+        }
+
+        $checkout->checkout_request_id = $checkoutRequestId;
         $checkout->save();
 
         return response()->json([
-            'message' => 'M-Pesa prompt sent. Enter your PIN, then check the payment with the M-Pesa code.',
+            'message' => 'M-Pesa prompt sent. Enter your PIN. This page confirms the subscription when Safaricom reports the payment.',
             'checkout' => $this->checkoutPayload($checkout->fresh()),
             'stk' => true,
+        ]);
+    }
+
+    public function status(Request $request)
+    {
+        $org = $request->user()?->organization;
+        if (! $org) {
+            return response()->json(['message' => 'No organisation on this login.'], 422);
+        }
+
+        $checkoutId = $request->query('checkout_id');
+        $status = $this->paybill->statusFor($org, is_numeric($checkoutId) ? (int) $checkoutId : null);
+        $license = $status['status'] === 'paid'
+            ? app(OrganizationLicenseService::class)->resolveForOrganization($org->fresh())
+            : null;
+
+        return response()->json($status + [
+            'license' => $license,
         ]);
     }
 

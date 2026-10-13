@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\Schema;
 
 class PlatformPlan extends Model
 {
@@ -13,7 +14,7 @@ class PlatformPlan extends Model
         'monthly_price', 'yearly_price', 'token_pack_price', 'token_pack_days',
         'currency',
         'seat_limit', 'workspace_keys', 'module_keys', 'section_keys', 'feature_details',
-        'self_serve', 'is_active',
+        'self_serve', 'is_active', 'sort_order',
         'auto_invoice_template_id',
     ];
 
@@ -31,7 +32,18 @@ class PlatformPlan extends Model
         'feature_details' => 'array',
         'self_serve' => 'boolean',
         'is_active' => 'boolean',
+        'sort_order' => 'integer',
     ];
+
+    public static function placeAtEnd(self $plan): void
+    {
+        if (! Schema::hasColumn('platform_plans', 'sort_order')) {
+            return;
+        }
+
+        $next = (int) static::query()->where('id', '!=', $plan->id)->max('sort_order') + 1;
+        $plan->forceFill(['sort_order' => $next])->save();
+    }
 
     public function subscriptions(): HasMany
     {

@@ -354,6 +354,7 @@ class MpesaPaymentController extends Controller
                 $checkoutRequestId ? (string) $checkoutRequestId : null,
                 $resultCode,
                 $values,
+                $resultDesc,
             );
 
             return response()->json(['ResultCode' => 0, 'ResultDesc' => 'Accepted']);

@@ -476,6 +476,10 @@ class PlatformPaybillLicenceService
             ->where(function ($query) {
                 $query->where('monthly_price', '>', 0)->orWhere('yearly_price', '>', 0);
             })
+            ->when(
+                \Illuminate\Support\Facades\Schema::hasColumn('platform_plans', 'sort_order'),
+                fn ($query) => $query->orderBy('sort_order'),
+            )
             ->orderBy('name')
             ->get()
             ->map(function (PlatformPlan $plan) use ($discount) {
@@ -628,11 +632,14 @@ class PlatformPaybillLicenceService
     }
 
     /**
+     * Same callback Safaricom uses for shop STK. A licence prompt has no shop
+     * STK row, so the receipt is applied to the subscription checkout.
+     *
      * @param  array<string, mixed>  $values
      */
-    public function acceptStkResult(?string $checkoutRequestId, int $resultCode, array $values): void
+    public function acceptStkResult(?string $checkoutRequestId, int $resultCode, array $values, ?string $resultDesc = null): void
     {
-        if ($checkoutRequestId === null || $checkoutRequestId === '' || $resultCode !== 0) {
+        if ($checkoutRequestId === null || $checkoutRequestId === '') {
             return;
         }
         if (! \Illuminate\Support\Facades\Schema::hasTable('platform_licence_checkouts')) {
@@ -642,7 +649,13 @@ class PlatformPaybillLicenceService
         $checkout = PlatformLicenceCheckout::query()
             ->where('checkout_request_id', $checkoutRequestId)
             ->first();
-        if (! $checkout) {
+        if (! $checkout || $checkout->status === 'paid') {
+            return;
+        }
+
+        if ($resultCode !== 0) {
+            $this->rememberStkResult($checkout, $resultCode, $resultDesc);
+
             return;
         }
 
@@ -652,13 +665,131 @@ class PlatformPaybillLicenceService
         }
 
         $org = $checkout->organization;
-        $this->acceptC2b([
+        $payment = $this->acceptC2b([
             'TransID' => $transactionId,
             'TransAmount' => $values['Amount'] ?? $checkout->amount,
             'MSISDN' => $values['PhoneNumber'] ?? $checkout->phone_number,
             'BillRefNumber' => $org?->company_code,
             'BusinessShortCode' => $this->settings()?->short_code,
         ]);
+
+        if ($payment && $payment->status !== 'applied' && $org) {
+            $payment->organization_id = $org->id;
+            $payment->bill_ref_number = $payment->bill_ref_number ?: $org->company_code;
+            $payment->account_reference = $payment->account_reference ?: $org->company_code;
+            $payment->save();
+            $this->retryUnapplied($payment->fresh());
+        }
+    }
+
+    /**
+     * @return array{status: string, checkout_id: ?int, stk_failed: bool, message: string, mpesa_receipt: ?string}
+     */
+    public function statusFor(Organization $org, ?int $checkoutId = null): array
+    {
+        if (! \Illuminate\Support\Facades\Schema::hasTable('platform_licence_checkouts')) {
+            return $this->statusPayload(null, 'Licence checkout is not available yet.');
+        }
+
+        $query = PlatformLicenceCheckout::query()->where('organization_id', $org->id);
+        $checkout = $checkoutId
+            ? (clone $query)->whereKey($checkoutId)->first()
+            : (clone $query)->orderByDesc('id')->first();
+
+        if ($checkout && $checkout->status === 'pending') {
+            $this->attachUnmatchedPayment($checkout);
+            $checkout->refresh();
+        }
+
+        return $this->statusPayload($checkout);
+    }
+
+    protected function attachUnmatchedPayment(PlatformLicenceCheckout $checkout): void
+    {
+        $org = $checkout->organization;
+        if (! $org) {
+            return;
+        }
+
+        $amount = (float) $checkout->amount;
+        $code = strtoupper(preg_replace('/\s+/', '', (string) $org->company_code) ?? '');
+        $phone = PhoneNumber::normalize((string) $checkout->phone_number);
+
+        $payment = PlatformLicencePayment::query()
+            ->where('status', '!=', 'applied')
+            ->whereBetween('amount', [$amount - 1, $amount + 1])
+            ->orderByDesc('id')
+            ->get()
+            ->first(function (PlatformLicencePayment $row) use ($org, $code, $phone) {
+                if ((int) $row->organization_id === (int) $org->id) {
+                    return true;
+                }
+                if ($row->organization_id) {
+                    return false;
+                }
+                $reference = strtoupper((string) ($row->account_reference ?: $row->bill_ref_number));
+                if ($code !== '' && $reference !== '' && (str_starts_with($code, $reference) || str_starts_with($reference, $code))) {
+                    return true;
+                }
+
+                return $phone !== null && PhoneNumber::normalize((string) $row->phone_number) === $phone;
+            });
+
+        if (! $payment) {
+            return;
+        }
+
+        $payment->organization_id = $org->id;
+        $payment->bill_ref_number = $payment->bill_ref_number ?: $org->company_code;
+        $payment->save();
+        $this->retryUnapplied($payment->fresh());
+    }
+
+    /** @return array{status: string, checkout_id: ?int, stk_failed: bool, message: string, mpesa_receipt: ?string} */
+    protected function statusPayload(?PlatformLicenceCheckout $checkout, ?string $fallback = null): array
+    {
+        $status = $checkout?->status ?? 'none';
+        $failed = $checkout
+            && $status !== 'paid'
+            && $checkout->result_code !== null
+            && (int) $checkout->result_code !== 0;
+
+        $message = $fallback ?? match (true) {
+            $status === 'paid' => 'M-Pesa payment confirmed. This organisation is paid.',
+            $failed => $this->stkFailureMessage((int) $checkout->result_code, $checkout->result_desc),
+            $status === 'pending' => 'Waiting for M-Pesa to confirm this payment.',
+            default => 'No subscription payment is in progress.',
+        };
+
+        return [
+            'status' => $status,
+            'checkout_id' => $checkout?->id,
+            'stk_failed' => $failed,
+            'message' => $message,
+            'mpesa_receipt' => $checkout?->mpesa_receipt,
+        ];
+    }
+
+    protected function rememberStkResult(PlatformLicenceCheckout $checkout, int $resultCode, ?string $resultDesc): void
+    {
+        if (! \Illuminate\Support\Facades\Schema::hasColumn('platform_licence_checkouts', 'result_code')) {
+            return;
+        }
+
+        $checkout->result_code = $resultCode;
+        $checkout->result_desc = $this->stkFailureMessage($resultCode, $resultDesc);
+        $checkout->save();
+    }
+
+    protected function stkFailureMessage(int $resultCode, ?string $resultDesc): string
+    {
+        return match ($resultCode) {
+            1032 => 'Payment cancelled on the phone. You can send the prompt again, or pay the Paybill.',
+            1037 => 'The M-Pesa prompt timed out. Send it again, or pay the Paybill.',
+            1 => 'Insufficient M-Pesa balance.',
+            2001 => 'Wrong M-Pesa PIN. Send the prompt again.',
+            default => trim((string) $resultDesc) !== '' ? trim((string) $resultDesc) : 'M-Pesa did not complete this payment.',
+        };
     }
 
     protected function applyPendingCheckout(PlatformLicencePayment $payment, Organization $org, float $amount): ?PlatformLicencePayment

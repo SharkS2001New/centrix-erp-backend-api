@@ -129,6 +129,60 @@ class PlatformPaybillLicenceTest extends TestCase
         $this->assertSame(0, PlatformLicencePayment::query()->count());
     }
 
+    public function test_stk_callback_applies_the_subscription_checkout(): void
+    {
+        [$org, $plan] = $this->seedLicensedOrg('MOON', '0712000111', '2026-09-01');
+        $this->configurePaybill();
+        $service = app(PlatformPaybillLicenceService::class);
+        $checkout = $service->startCheckout($org, $plan, 1, '254712000111', 'monthly');
+        $checkout->checkout_request_id = 'ws_CO_licence_1';
+        $checkout->save();
+
+        $this->postJson('/api/v1/payments/stk/callback', [
+            'Body' => [
+                'stkCallback' => [
+                    'CheckoutRequestID' => 'ws_CO_licence_1',
+                    'ResultCode' => 0,
+                    'ResultDesc' => 'The service request is processed successfully.',
+                    'CallbackMetadata' => [
+                        'Item' => [
+                            ['Name' => 'Amount', 'Value' => 1500],
+                            ['Name' => 'MpesaReceiptNumber', 'Value' => 'STKMOON1'],
+                            ['Name' => 'PhoneNumber', 'Value' => '254712000111'],
+                        ],
+                    ],
+                ],
+            ],
+        ])->assertOk();
+
+        $checkout->refresh();
+        $this->assertSame('paid', $checkout->status);
+        $this->assertSame('STKMOON1', $checkout->mpesa_receipt);
+        $sub = PlatformSubscription::query()->where('organization_id', $org->id)->first();
+        $this->assertSame('active', $sub->status);
+        $this->assertSame('2026-11-07', $sub->current_period_end->toDateString());
+    }
+
+    public function test_cancelled_stk_prompt_stays_payable_by_paybill(): void
+    {
+        [$org, $plan] = $this->seedLicensedOrg('MOON', '0712000111', '2026-09-01');
+        $this->configurePaybill();
+        $service = app(PlatformPaybillLicenceService::class);
+        $checkout = $service->startCheckout($org, $plan, 1, '254712000111', 'monthly');
+        $checkout->checkout_request_id = 'ws_CO_licence_cancel';
+        $checkout->save();
+
+        $service->acceptStkResult('ws_CO_licence_cancel', 1032, [], 'Request cancelled by user');
+        $checkout->refresh();
+        $this->assertSame('pending', $checkout->status);
+        $this->assertSame(1032, (int) $checkout->result_code);
+
+        $payment = $service->acceptC2b($this->payload('PAYBILL1', 1500, 'MOON'));
+        $this->assertSame('applied', $payment->status);
+        $checkout->refresh();
+        $this->assertSame('paid', $checkout->status);
+    }
+
     public function test_centrix_callback_and_admin_list(): void
     {
         [$org] = $this->seedLicensedOrg('MOON', '0712000111', '2026-09-01');

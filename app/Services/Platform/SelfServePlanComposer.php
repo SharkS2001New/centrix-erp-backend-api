@@ -113,9 +113,10 @@ class SelfServePlanComposer
             $draft = $this->draftWithModel($words, $industry, $points);
         }
         $plan = PlatformPlan::query()->create($this->attributesFromDraft($draft) + ['is_active' => true]);
+        PlatformPlan::placeAtEnd($plan);
 
         return [
-            'plan' => $plan,
+            'plan' => $plan->fresh(),
             'summary' => $this->summary($plan),
         ];
     }
