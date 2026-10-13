@@ -3,7 +3,10 @@
 namespace App\Services\Platform;
 
 use App\Models\Organization;
+use App\Models\PlatformOneTimeQuote;
+use App\Models\User;
 use App\Services\Erp\IndustryRegistry;
+use App\Services\Notifications\AdminNotificationService;
 use Illuminate\Validation\ValidationException;
 use App\Models\PlatformBillingSetting;
 use App\Models\PlatformLicenceBalance;
@@ -198,6 +201,7 @@ class PlatformPaybillLicenceService
         ]];
 
         $example = $paybill['token_pack_price'] ?? null;
+        if (app(BillingPolicy::class)->tokensEnabled()) {
         $offers[] = [
             'id' => 'token',
             'title' => 'Token subscription',
@@ -215,6 +219,7 @@ class PlatformPaybillLicenceService
                 $unlocked,
             ),
         ];
+        }
 
         return $offers;
     }
@@ -247,7 +252,7 @@ class PlatformPaybillLicenceService
         }
         $tokenPrice = $plan->token_pack_price;
         $tokenDays = (int) ($plan->token_pack_days ?? 0);
-        if ($tokenPrice !== null && (float) $tokenPrice > 0 && $tokenDays > 0) {
+        if (app(BillingPolicy::class)->tokensEnabled() && $tokenPrice !== null && (float) $tokenPrice > 0 && $tokenDays > 0) {
             $rows[] = ['product' => 'token', 'price' => round((float) $tokenPrice, 2), 'days' => $tokenDays];
         }
 
@@ -412,6 +417,17 @@ class PlatformPaybillLicenceService
 
     protected function creditTokensFromBalance(PlatformLicencePayment $payment, PlatformLicenceBalance $balanceRow, float $moneyBalance): PlatformLicencePayment
     {
+        if (! app(BillingPolicy::class)->tokensEnabled()) {
+            $payment->fill([
+                'status' => 'unmatched',
+                'product' => null,
+                'note' => 'tokens_disabled',
+                'balance_after' => $moneyBalance,
+            ])->save();
+
+            return $payment->fresh();
+        }
+
         $tokens = max(0, (int) round($moneyBalance));
         $beforeTokens = (int) $balanceRow->token_balance;
         $balanceRow->token_balance = $beforeTokens + $tokens;
@@ -593,6 +609,102 @@ class PlatformPaybillLicenceService
             'phone_number' => $phone,
             'status' => 'pending',
         ]);
+    }
+
+    /**
+     * @return array{quote: PlatformOneTimeQuote, emailed: bool, already: bool}
+     */
+    public function requestOneTimeQuote(Organization $org, ?User $user): array
+    {
+        $recent = PlatformOneTimeQuote::query()
+            ->where('organization_id', $org->id)
+            ->where('status', 'requested')
+            ->where('created_at', '>=', now()->subHour())
+            ->latest('id')
+            ->first();
+        if ($recent) {
+            return ['quote' => $recent, 'emailed' => false, 'already' => true];
+        }
+
+        $quote = PlatformOneTimeQuote::query()->create([
+            'organization_id' => $org->id,
+            'user_id' => $user?->id,
+            'status' => 'requested',
+        ]);
+
+        $emailedTo = $this->emailOneTimeQuote($org, $user, $quote);
+        if ($emailedTo !== []) {
+            $quote->update(['emailed_to' => $emailedTo]);
+        }
+        $this->notifyOneTimeQuote($org, $user);
+
+        return ['quote' => $quote->fresh(), 'emailed' => $emailedTo !== [], 'already' => false];
+    }
+
+    /**
+     * @return list<string>
+     */
+    protected function emailOneTimeQuote(Organization $org, ?User $user, PlatformOneTimeQuote $quote): array
+    {
+        $recipients = User::query()
+            ->where('is_super_admin', true)
+            ->where('is_active', true)
+            ->whereNotNull('email')
+            ->pluck('email')
+            ->map(fn ($email) => strtolower(trim((string) $email)))
+            ->push(strtolower(trim((string) config('erp.platform_super_admin_email'))))
+            ->push(strtolower(trim((string) config('backup.notify_email'))))
+            ->filter(fn ($email) => filter_var($email, FILTER_VALIDATE_EMAIL) !== false)
+            ->unique()
+            ->values();
+
+        if ($recipients->isEmpty()) {
+            return [];
+        }
+
+        $who = trim((string) ($user?->full_name ?: $user?->email ?: 'An organisation user'));
+        $subject = 'Centrix one-time payment quote — '.$org->company_code;
+        $body = implode("\n", [
+            $org->org_name.' ('.$org->company_code.') asked to buy Centrix as a one-time payment.',
+            'Requested by '.$who.($user?->email ? ' <'.$user->email.'>' : '').'.',
+            'Quote '.$quote->id.'.',
+            'Reply with a price. This is not a payment.',
+        ]);
+        $mailbox = app(PlatformMailboxService::class);
+        $sent = [];
+        foreach ($recipients as $to) {
+            try {
+                $mailbox->send($to, $subject, $body, $user, [
+                    'kind' => 'one_time_licence_quote',
+                    'no_reply' => true,
+                    'organization_id' => $org->id,
+                    'quote_id' => $quote->id,
+                ]);
+                $sent[] = $to;
+            } catch (\Throwable) {
+                continue;
+            }
+        }
+
+        return $sent;
+    }
+
+    protected function notifyOneTimeQuote(Organization $org, ?User $user): void
+    {
+        if (! $user) {
+            return;
+        }
+
+        try {
+            app(AdminNotificationService::class)->notifySuperAdmins($user, [
+                'type' => 'licence_quote',
+                'severity' => 'default',
+                'title' => 'One-time payment quote',
+                'message' => $org->org_name.' ('.$org->company_code.') asked for a Centrix one-time payment quote.',
+            ]);
+        } catch (\Throwable) {
+            // The quote is already saved. A bell notification is extra.
+        }
     }
 
     public function startTokenCheckout(Organization $org, ?string $phone = null): PlatformLicenceCheckout
@@ -879,6 +991,14 @@ class PlatformPaybillLicenceService
         float $amount,
     ): PlatformLicencePayment {
         $policy = app(BillingPolicy::class)->current();
+        if (($policy['tokens_enabled'] ?? true) !== true) {
+            $payment->fill([
+                'status' => 'unmatched',
+                'note' => 'tokens_disabled',
+            ])->save();
+
+            return $payment;
+        }
         $packPrice = (float) ($policy['token_pack_price_kes'] ?? 0);
         $packTokens = (int) ($policy['token_pack_tokens'] ?? 0);
         $value = max(1, (int) ($policy['token_value_kes'] ?? 1));

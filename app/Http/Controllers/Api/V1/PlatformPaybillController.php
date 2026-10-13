@@ -9,6 +9,7 @@ use App\Models\PlatformLicencePayment;
 use App\Models\PlatformPlan;
 use App\Models\WhatsappConfig;
 use App\Services\MpesaService;
+use App\Services\Platform\BillingPolicy;
 use App\Services\Platform\OrganizationLicenseService;
 use App\Services\Platform\PlatformPaybillLicenceService;
 use App\Services\SystemIssues\SystemIssueAlertSettingsResolver;
@@ -22,6 +23,15 @@ use Illuminate\Support\Facades\Schema;
 class PlatformPaybillController extends Controller
 {
     public function __construct(protected PlatformPaybillLicenceService $paybill) {}
+
+    protected function tokensTurnedOff(): ?\Illuminate\Http\JsonResponse
+    {
+        if (app(BillingPolicy::class)->tokensEnabled()) {
+            return null;
+        }
+
+        return response()->json(['message' => 'Token billing is turned off.'], 422);
+    }
 
     public function show()
     {
@@ -60,8 +70,71 @@ class PlatformPaybillController extends Controller
             $query->where('status', $status);
         }
 
+        $product = trim((string) $request->query('product', ''));
+        if (in_array($product, ['monthly', 'yearly', 'token'], true)) {
+            $query->where('product', $product);
+        }
+
+        if ($request->filled('from_date')) {
+            $query->where('created_at', '>=', $request->input('from_date'));
+        }
+        if ($request->filled('to_date')) {
+            $query->where('created_at', '<=', $request->input('to_date').' 23:59:59');
+        }
+
+        $q = trim((string) $request->query('q', ''));
+        if ($q !== '') {
+            $like = '%'.$q.'%';
+            $query->where(function ($inner) use ($like) {
+                $inner->where('mpesa_transaction_id', 'like', $like)
+                    ->orWhere('phone_number', 'like', $like)
+                    ->orWhere('bill_ref_number', 'like', $like)
+                    ->orWhere('account_reference', 'like', $like)
+                    ->orWhereHas('organization', function ($org) use ($like) {
+                        $org->where('org_name', 'like', $like)
+                            ->orWhere('company_code', 'like', $like);
+                    });
+            });
+        }
+
+        $perPage = min(max((int) $request->query('per_page', 25), 1), 100);
+
+        return response()->json($query->paginate($perPage));
+    }
+
+    public function retry(PlatformLicencePayment $payment)
+    {
+        $payment = $this->paybill->retryUnapplied($payment->fresh());
+
         return response()->json([
-            'data' => $query->limit(100)->get(),
+            'message' => $payment->status === 'applied'
+                ? 'Payment applied to the organisation licence.'
+                : 'Payment is still unmatched. Check the account number and the plan price.',
+            'data' => $payment->load('organization:id,company_code,org_name,primary_tel'),
+        ]);
+    }
+
+    public function oneTimeQuote(Request $request)
+    {
+        $org = $request->user()?->organization;
+        if (! $org) {
+            return response()->json(['message' => 'No organisation on this login.'], 422);
+        }
+
+        $result = $this->paybill->requestOneTimeQuote($org, $request->user());
+        $message = $result['already']
+            ? 'The Centrix administrator already has your quote request.'
+            : ($result['emailed']
+                ? 'Your quote request was emailed to the Centrix administrator.'
+                : 'Your quote request was saved. The Centrix administrator could not be emailed just now.');
+
+        return response()->json([
+            'message' => $message,
+            'data' => [
+                'id' => $result['quote']->id,
+                'status' => $result['quote']->status,
+                'emailed' => $result['emailed'],
+            ],
         ]);
     }
 
@@ -96,6 +169,9 @@ class PlatformPaybillController extends Controller
 
         $billing = $request->input('billing') === 'yearly' ? 'yearly' : ($request->input('billing') === 'token' ? 'token' : 'monthly');
         if ($billing === 'token') {
+            if ($off = $this->tokensTurnedOff()) {
+                return $off;
+            }
             $checkout = $this->paybill->startTokenCheckout($org);
             if ((float) $checkout->amount <= 0) {
                 $checkout->delete();
@@ -156,6 +232,9 @@ class PlatformPaybillController extends Controller
 
         $billing = ($data['billing'] ?? 'monthly') === 'yearly' ? 'yearly' : (($data['billing'] ?? 'monthly') === 'token' ? 'token' : 'monthly');
         if ($billing === 'token') {
+            if ($off = $this->tokensTurnedOff()) {
+                return $off;
+            }
             $checkout = $this->paybill->startTokenCheckout($org, $phone);
             if ((float) $checkout->amount <= 0) {
                 $checkout->delete();
@@ -256,6 +335,9 @@ class PlatformPaybillController extends Controller
 
         $billing = ($data['billing'] ?? 'monthly') === 'yearly' ? 'yearly' : (($data['billing'] ?? '') === 'token' ? 'token' : 'monthly');
         if ($billing === 'token') {
+            if ($off = $this->tokensTurnedOff()) {
+                return $off;
+            }
             $this->paybill->startTokenCheckout($org);
         } elseif (! empty($data['plan_id'])) {
             $plan = PlatformPlan::query()->where('is_active', true)->find($data['plan_id']);

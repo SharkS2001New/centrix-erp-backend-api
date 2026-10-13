@@ -99,6 +99,7 @@ class OrganizationBillingController extends Controller
     public function updatePolicy(Request $request, BillingPolicy $policy)
     {
         $data = $request->validate([
+            'tokens_enabled' => 'sometimes|boolean',
             'token_value_kes' => 'sometimes|integer|min:1|max:100000',
             'token_pack_tokens' => 'sometimes|integer|min:1|max:1000000',
             'token_pack_price_kes' => 'sometimes|integer|min:0|max:100000000',

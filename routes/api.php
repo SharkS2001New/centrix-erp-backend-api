@@ -575,12 +575,14 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::get('admin/platform-licence-payments', [PlatformPaybillController::class, 'payments'])
             ->middleware(['erp.super_admin']);
+        Route::post('admin/platform-licence-payments/{payment}/retry', [PlatformPaybillController::class, 'retry'])
+            ->middleware(['erp.super_admin']);
 
         Route::prefix('admin/platform-plans')
             ->middleware(['erp.super_admin'])
             ->group(function () {
                 Route::get('/', [PlatformPlanController::class, 'index']);
-                Route::post('reorder', [PlatformPlanController::class, 'reorder']);
+                Route::match(['post', 'put'], 'reorder', [PlatformPlanController::class, 'reorder']);
                 Route::post('compose', [PlatformPlanController::class, 'compose']);
                 Route::post('{platform_plan}/compose', [PlatformPlanController::class, 'composeUpdate'])->whereNumber('platform_plan');
                 Route::post('/', [PlatformPlanController::class, 'store']);
@@ -617,6 +619,7 @@ Route::prefix('v1')->group(function () {
         Route::post('erp/organization/licence/stk', [PlatformPaybillController::class, 'stk']);
         Route::get('erp/organization/licence/status', [PlatformPaybillController::class, 'status']);
         Route::post('erp/organization/licence/verify', [PlatformPaybillController::class, 'verify']);
+        Route::post('erp/organization/licence/one-time-quote', [PlatformPaybillController::class, 'oneTimeQuote']);
 
         Route::prefix('admin/platform-contracts')
             ->middleware(['erp.super_admin'])

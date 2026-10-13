@@ -14,6 +14,7 @@ class BillingPolicy
     public static function defaults(): array
     {
         return [
+            'tokens_enabled' => true,
             'token_value_kes' => 1,
             'token_pack_tokens' => 500,
             'token_pack_price_kes' => 500,
@@ -48,6 +49,17 @@ class BillingPolicy
         return $this->normalize(is_array($stored) ? $stored : []);
     }
 
+    public function tokensEnabled(): bool
+    {
+        return $this->tokensEnabledFrom($this->current());
+    }
+
+    /** @param  array<string, mixed>  $policy */
+    public function tokensEnabledFrom(array $policy): bool
+    {
+        return ($policy['tokens_enabled'] ?? true) === true;
+    }
+
     /** Tokens spent once, when a completed sale is saved online or an offline order syncs. */
     public function saleCost(): int
     {
@@ -77,6 +89,9 @@ class BillingPolicy
         $writeCosts = is_array($incoming['write_costs'] ?? null) ? $incoming['write_costs'] : [];
 
         return [
+            'tokens_enabled' => array_key_exists('tokens_enabled', $incoming)
+                ? filter_var($incoming['tokens_enabled'], FILTER_VALIDATE_BOOLEAN)
+                : (bool) $defaults['tokens_enabled'],
             'token_value_kes' => max(1, (int) ($incoming['token_value_kes'] ?? $defaults['token_value_kes'])),
             'token_pack_tokens' => max(1, (int) ($incoming['token_pack_tokens'] ?? $defaults['token_pack_tokens'])),
             'token_pack_price_kes' => max(0, (int) ($incoming['token_pack_price_kes'] ?? $defaults['token_pack_price_kes'])),

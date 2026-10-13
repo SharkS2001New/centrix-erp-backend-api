@@ -70,9 +70,7 @@ class OrganizationLicenseService
                 'plans' => app(PlatformPaybillLicenceService::class)->monthlyPlanChoices($org),
                 'duration_discount' => app(PlatformPaybillLicenceService::class)->durationDiscount(),
             ];
-            $missing['access'] = $this->accessMode($missing);
-
-            return $missing;
+            return $this->stampAccess($missing);
         }
 
         $window = $this->periodWindow($sub);
@@ -94,7 +92,7 @@ class OrganizationLicenseService
             'write_costs' => app(BillingPolicy::class)->current()['write_costs'],
             'modules' => $this->licensedModules($sub),
         ];
-        $license['access'] = $this->accessMode($license);
+        $license = $this->stampAccess($license);
         $license['paybill'] = app(PlatformPaybillLicenceService::class)->instructionsFor($org, $sub);
         $license['offers'] = app(PlatformPaybillLicenceService::class)->paymentOffers($org, $sub);
         $license['plans'] = app(PlatformPaybillLicenceService::class)->monthlyPlanChoices($org);
@@ -130,6 +128,18 @@ class OrganizationLicenseService
     }
 
     /**
+     * @param  array<string, mixed>  $license
+     * @return array<string, mixed>
+     */
+    protected function stampAccess(array $license): array
+    {
+        $license['tokens_enabled'] = app(BillingPolicy::class)->tokensEnabled();
+        $license['access'] = $this->accessMode($license);
+
+        return $license;
+    }
+
+    /**
      * trial = free trial still inside its dates, full system.
      * full = paid monthly or yearly. token = shilling balance.
      * free = no subscription. expired = trial or paid period ended.
@@ -160,7 +170,7 @@ class OrganizationLicenseService
             return 'full';
         }
 
-        if ((int) ($license['token_balance'] ?? 0) > 0) {
+        if ((int) ($license['token_balance'] ?? 0) > 0 && ($license['tokens_enabled'] ?? true)) {
             return 'token';
         }
 
