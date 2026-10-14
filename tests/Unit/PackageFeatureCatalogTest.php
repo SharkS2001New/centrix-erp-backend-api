@@ -39,6 +39,15 @@ class PackageFeatureCatalogTest extends TestCase
         $this->assertNotContains('inventory', $sections);
     }
 
+    public function test_one_sales_feature_opens_only_its_section(): void
+    {
+        $sections = (new PackageFeatureCatalog())->backofficeSections([
+            'backoffice' => ['sales.orders'],
+        ]);
+
+        $this->assertSame(['sales_orders'], $sections);
+    }
+
     public function test_unpaid_permission_features_are_turned_off(): void
     {
         $org = new Organization();

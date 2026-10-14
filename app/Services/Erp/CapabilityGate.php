@@ -19,6 +19,11 @@ class CapabilityGate
         protected ?Organization $organization = null,
     ) {}
 
+    protected bool $packageResolved = false;
+
+    /** @var array{modules: list<string>, features: array<string, list<string>>}|null */
+    protected ?array $packageCache = null;
+
     public function organization(): ?Organization
     {
         return $this->organization;
@@ -33,6 +38,14 @@ class CapabilityGate
     {
         if (! $this->organization) {
             return false;
+        }
+
+        $decision = $this->packageDecision($moduleKey);
+        if ($decision === false) {
+            return false;
+        }
+        if ($decision === true) {
+            return true;
         }
 
         if (str_ends_with($moduleKey, '.reports')) {
@@ -278,6 +291,11 @@ class CapabilityGate
     /** Mobile app, mobile login channel, and backoffice mobile-order views when enabled for the org. */
     public function mobileSalesEnabled(): bool
     {
+        $package = $this->package();
+        if (is_array($package)) {
+            return in_array('mobile', $package['modules'], true);
+        }
+
         if (! $this->selfEnabled('sales.mobile')) {
             return false;
         }
@@ -293,6 +311,11 @@ class CapabilityGate
         // Platform org has no tenant sales.backend modules but must allow manager-channel ops.
         if ($this->isPlatformOrganization()) {
             return true;
+        }
+
+        $package = $this->package();
+        if (is_array($package)) {
+            return in_array('manager', $package['modules'], true);
         }
 
         $sales = $this->moduleSettings('sales');
@@ -506,6 +529,121 @@ class CapabilityGate
             );
         }
 
+        return $this->overlayPackageSettings($section, $merged);
+    }
+
+    /**
+     * The payment package on this organisation, when it stores a feature list.
+     *
+     * @return array{modules: list<string>, features: array<string, list<string>>}|null
+     */
+    public function package(): ?array
+    {
+        if ($this->packageResolved) {
+            return $this->packageCache;
+        }
+
+        $this->packageResolved = true;
+        $this->packageCache = app(\App\Services\Platform\PackageFeatureCatalog::class)
+            ->packageFor($this->organization);
+
+        return $this->packageCache;
+    }
+
+    /**
+     * True when the package includes this module, false when it leaves it out,
+     * null when this organisation has no feature list yet.
+     */
+    protected function packageDecision(string $moduleKey): ?bool
+    {
+        $package = $this->package();
+        if ($package === null) {
+            return null;
+        }
+
+        $owners = $this->packageOwners($moduleKey);
+        if ($owners === null) {
+            return null;
+        }
+
+        $have = array_flip($package['modules']);
+        foreach ($owners as $owner) {
+            if (isset($have[$owner])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** @return list<string>|null */
+    protected function packageOwners(string $moduleKey): ?array
+    {
+        return match ($moduleKey) {
+            'sales' => ['pos', 'mobile', 'backoffice'],
+            'sales.pos' => ['pos'],
+            'sales.mobile' => ['mobile'],
+            'sales.backend', 'sales.dashboard', 'sales.reports' => ['backoffice'],
+            'hospitality' => ['hotel_bar_pos', 'hospitality_backoffice'],
+            'hospitality.bar_pos' => ['hotel_bar_pos'],
+            'hospitality.backend', 'hospitality.dashboard', 'hospitality.reports' => ['hospitality_backoffice'],
+            'distribution', 'distribution.dashboard', 'distribution.reports' => ['distribution'],
+            'accounting', 'accounting.dashboard', 'accounting.reports' => ['accounting'],
+            'hr_payroll', 'hr_payroll.dashboard', 'hr_payroll.reports' => ['hr'],
+            'admin' => ['admin'],
+            'spa' => ['spa'],
+            'driving' => ['driving'],
+            default => null,
+        };
+    }
+
+    /** @param  array<string, mixed>  $merged */
+    protected function overlayPackageSettings(string $section, array $merged): array
+    {
+        $package = $this->package();
+        if ($package === null) {
+            return $merged;
+        }
+
+        $modules = array_flip($package['modules']);
+        $features = is_array($package['features']) ? $package['features'] : [];
+
+        if ($section === 'sales') {
+            $merged['enable_mobile_orders'] = isset($modules['mobile']);
+            $merged['enable_manager_app'] = isset($modules['manager']);
+            $profile = (string) ($this->organization?->deployment_profile ?? 'wholesale_retail');
+            $industry = IndustryRegistry::industryForProfile($profile);
+            if ($industry === 'commerce' || isset($modules['backoffice'])) {
+                $catalog = app(\App\Services\Platform\PackageFeatureCatalog::class);
+                $on = isset($modules['backoffice'])
+                    ? ($catalog->backofficeSections(['backoffice' => $features['backoffice'] ?? []]) ?? [])
+                    : [];
+                $map = BackofficeSections::DEFAULTS;
+                foreach (array_keys($map) as $key) {
+                    $map[$key] = in_array($key, $on, true);
+                }
+                $merged['backoffice_sections'] = $map;
+            }
+        }
+
+        if ($section === 'spa' || $section === 'driving') {
+            $picked = array_flip(array_map('strval', is_array($features[$section] ?? null) ? $features[$section] : []));
+            $flags = is_array($merged['features'] ?? null) ? $merged['features'] : [];
+            foreach (app(\App\Services\Platform\PackageFeatureCatalog::class)->forIndustry($section === 'spa' ? 'spa' : 'driving') as $entry) {
+                if (($entry['id'] ?? '') !== $section) {
+                    continue;
+                }
+                foreach ($entry['features'] ?? [] as $feature) {
+                    $flag = (string) ($feature['flag'] ?? '');
+                    if ($flag === '') {
+                        continue;
+                    }
+                    $flags[$flag] = isset($modules[$section]) && isset($picked[(string) $feature['id']]);
+                }
+            }
+            $merged['features'] = $flags;
+        }
+
         return $merged;
     }
 
@@ -709,6 +847,10 @@ class CapabilityGate
                 ? $discounts->requiresDiscountRequestWorkflow($sales, $user)
                 : $discounts->discountApprovalEnabled($sales);
             $moduleSettings['sales'] = $sales;
+            if ($this->package() !== null) {
+                $moduleSettings['spa'] = $this->moduleSettings('spa');
+                $moduleSettings['driving'] = $this->moduleSettings('driving');
+            }
 
             $moduleSettings['general'] = GeneralSettingsResolver::forGate($this);
             $moduleSettings['local_printing'] = \App\Services\Print\LocalPrintingSettingsResolver::forGate($this);

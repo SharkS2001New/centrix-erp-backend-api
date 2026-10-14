@@ -15,20 +15,32 @@ use Illuminate\Support\Facades\Schema;
  */
 class FreePlanAccess
 {
-    /** @return array<string, array{page_keys: list<string>}> */
+    /** @return array<string, array{page_keys: list<string>, workspace_keys: list<string>, feature_keys: array<string, list<string>>}> */
     public function normalize(?array $raw): array
     {
         $raw = is_array($raw) ? $raw : [];
+        $catalog = app(PackageFeatureCatalog::class);
         $out = [];
         foreach ($this->industries() as $industry => $definition) {
             $incoming = is_array($raw[$industry] ?? null) ? $raw[$industry] : [];
             $known = $this->pageIds($definition);
-            $picked = [];
-            foreach ((array) ($incoming['page_keys'] ?? []) as $key) {
-                $id = strtolower(trim((string) $key));
-                if ($id !== '' && in_array($id, $known, true) && ! in_array($id, $picked, true)) {
-                    $picked[] = $id;
+            $explicitFeatures = array_key_exists('feature_keys', $incoming) && is_array($incoming['feature_keys']);
+            if ($explicitFeatures) {
+                $workspaceKeys = array_values(array_unique(array_merge(
+                    array_map('strval', array_keys($incoming['feature_keys'])),
+                    array_map('strval', (array) ($incoming['workspace_keys'] ?? [])),
+                )));
+                $features = $catalog->normalize($industry, $workspaceKeys, $incoming['feature_keys']);
+                $picked = $this->pagesForFeatures($industry, $features);
+            } else {
+                $picked = [];
+                foreach ((array) ($incoming['page_keys'] ?? []) as $key) {
+                    $id = strtolower(trim((string) $key));
+                    if ($id !== '' && in_array($id, $known, true) && ! in_array($id, $picked, true)) {
+                        $picked[] = $id;
+                    }
                 }
+                $features = $picked === [] ? [] : $this->featuresForPages($industry, $picked);
             }
             if ($picked === []) {
                 $picked = array_values(array_intersect((array) ($definition['default'] ?? ['dashboard']), $known));
@@ -36,7 +48,18 @@ class FreePlanAccess
             if ($picked === []) {
                 $picked = array_slice($known, 0, 1);
             }
-            $out[$industry] = ['page_keys' => $picked];
+            if ($features === []) {
+                $features = $this->featuresForPages($industry, $picked);
+            }
+            $workspaces = array_keys($features);
+            if ($workspaces === []) {
+                $workspaces = array_values(array_filter((array) ($definition['workspaces'] ?? [])));
+            }
+            $out[$industry] = [
+                'page_keys' => $picked,
+                'workspace_keys' => array_values($workspaces),
+                'feature_keys' => $features,
+            ];
         }
 
         return $out;
@@ -99,7 +122,8 @@ class FreePlanAccess
     {
         $industry = $this->knownIndustry($industry);
         $definition = $this->industries()[$industry];
-        $pageKeys = $this->normalize([$industry => $selection ?? []])[$industry]['page_keys'];
+        $stored = $this->normalize([$industry => $selection ?? []])[$industry];
+        $pageKeys = $stored['page_keys'];
         $pages = [];
         $rules = [];
         $api = [];
@@ -126,10 +150,15 @@ class FreePlanAccess
             }
         }
 
+        foreach ($this->moduleApiPrefixes($stored['workspace_keys'] ?? []) as $prefix) {
+            $api[] = $prefix;
+        }
+
         return [
             'industry' => $industry,
             'page_keys' => $pageKeys,
-            'workspace_keys' => array_values(array_filter((array) ($definition['workspaces'] ?? []))),
+            'workspace_keys' => array_values($stored['workspace_keys'] ?? []),
+            'feature_keys' => $stored['feature_keys'] ?? [],
             'pages' => $pages,
             'rules' => $rules,
             'api' => array_values(array_unique($api)),
@@ -276,5 +305,118 @@ class FreePlanAccess
         }
 
         return $ids;
+    }
+
+    /**
+     * @param  array<string, list<string>>  $featureKeys
+     * @return list<string>
+     */
+    protected function pagesForFeatures(string $industry, array $featureKeys): array
+    {
+        $known = array_flip($this->pageIds($this->industries()[$industry] ?? []));
+        $picked = [];
+        $add = function (array $ids) use (&$picked, $known): void {
+            foreach ($ids as $id) {
+                $id = (string) $id;
+                if (isset($known[$id]) && ! in_array($id, $picked, true)) {
+                    $picked[] = $id;
+                }
+            }
+        };
+
+        foreach ($featureKeys as $moduleId => $ids) {
+            foreach ((array) $ids as $featureId) {
+                $featureId = (string) $featureId;
+                $prefix = explode('.', $featureId, 2)[0];
+                $flag = explode('.', $featureId, 2)[1] ?? '';
+                if ($industry === 'hospitality' && $prefix === 'hospitality') {
+                    $add(match ($flag) {
+                        'dashboard' => ['dashboard'],
+                        'rooms', 'reservations', 'frontdesk', 'folios', 'housekeeping', 'outlets' => ['rooms'],
+                        'orders', 'payments_breakdown' => ['sales'],
+                        'reports' => ['reports'],
+                        default => [],
+                    });
+                    continue;
+                }
+                if ($industry === 'hospitality' && $prefix === 'catalogue') {
+                    $add(['catalogue']);
+                    continue;
+                }
+                if ($industry === 'hospitality' && $prefix === 'inventory') {
+                    $add(['stock']);
+                    continue;
+                }
+                if ($industry === 'hospitality' && $prefix === 'purchasing') {
+                    $add(['purchasing']);
+                    continue;
+                }
+                if ($moduleId === 'spa' || ($industry === 'spa' && $prefix === 'spa')) {
+                    $add([$flag]);
+                    continue;
+                }
+                if ($moduleId === 'driving' || ($industry === 'driving' && $prefix === 'driving')) {
+                    $add([$flag === 'fees' ? 'payments' : $flag]);
+                    continue;
+                }
+                $sections = app(PackageFeatureCatalog::class)->backofficeSections([(string) $moduleId => [$featureId]]) ?? [];
+                $add($sections);
+            }
+        }
+
+        return $picked;
+    }
+
+    /**
+     * @param  list<string>  $pageKeys
+     * @return array<string, list<string>>
+     */
+    protected function featuresForPages(string $industry, array $pageKeys): array
+    {
+        $wanted = array_flip($pageKeys);
+        $out = [];
+        foreach (app(PackageFeatureCatalog::class)->forIndustry($industry) as $module) {
+            $picked = [];
+            foreach ($module['features'] ?? [] as $feature) {
+                $pages = $this->pagesForFeatures($industry, [(string) $module['id'] => [(string) $feature['id']]]);
+                foreach ($pages as $page) {
+                    if (isset($wanted[$page])) {
+                        $picked[] = (string) $feature['id'];
+                        break;
+                    }
+                }
+            }
+            if ($picked !== []) {
+                $out[(string) $module['id']] = $picked;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * @param  list<string>  $workspaceKeys
+     * @return list<string>
+     */
+    protected function moduleApiPrefixes(array $workspaceKeys): array
+    {
+        $map = [
+            'pos' => ['pos'],
+            'mobile' => ['mobile'],
+            'manager' => ['manager'],
+            'accounting' => ['accounting'],
+            'hr' => ['attendance', 'payroll', 'employees'],
+            'distribution' => ['fulfillment'],
+            'hotel_bar_pos' => ['hospitality/pos'],
+            'admin' => ['branches', 'users'],
+        ];
+        $out = [];
+        foreach ($workspaceKeys as $id) {
+            foreach ($map[(string) $id] ?? [] as $prefix) {
+                $out[] = $prefix;
+            }
+        }
+
+        return $out;
     }
 }

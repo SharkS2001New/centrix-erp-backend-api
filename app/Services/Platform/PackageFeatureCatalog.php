@@ -3,6 +3,7 @@
 namespace App\Services\Platform;
 
 use App\Models\Organization;
+use App\Models\PlatformSubscription;
 use App\Services\Erp\IndustryRegistry;
 
 /**
@@ -11,22 +12,6 @@ use App\Services\Erp\IndustryRegistry;
  */
 class PackageFeatureCatalog
 {
-    /** @var array<string, list<string>> */
-    private const BACKOFFICE_SECTIONS = [
-        'dashboard' => ['dashboard'],
-        'catalogue' => ['products'],
-        'pos' => ['pos'],
-        'pricing_tax' => ['pricing_tax'],
-        'sales' => ['sales_orders', 'field_sales', 'after_sales', 'promotions'],
-        'shop_debtors' => ['shop_debtors'],
-        'customers' => ['customers'],
-        'accounting' => ['expenses'],
-        'investors' => ['investors'],
-        'inventory' => ['inventory', 'stock_movements'],
-        'purchasing' => ['suppliers'],
-        'reports' => ['reports'],
-    ];
-
     /** @return array<string, list<array<string, mixed>>> */
     public function all(): array
     {
@@ -127,6 +112,34 @@ class PackageFeatureCatalog
     }
 
     /**
+     * Saved package for this organisation. Null when the plan has no feature list,
+     * so organisations on an older package keep the access they already have.
+     *
+     * @return array{modules: list<string>, features: array<string, list<string>>}|null
+     */
+    public function packageFor(?Organization $organization): ?array
+    {
+        if ($organization === null || $organization->id === null) {
+            return null;
+        }
+
+        $subscription = PlatformSubscription::query()
+            ->where('organization_id', (int) $organization->id)
+            ->whereNotNull('plan_id')
+            ->latest('id')
+            ->first();
+        $plan = $subscription?->plan;
+        if (! $plan || ! is_array($plan->feature_keys)) {
+            return null;
+        }
+
+        return [
+            'modules' => array_values(array_map('strval', array_keys($plan->feature_keys))),
+            'features' => $plan->feature_keys,
+        ];
+    }
+
+    /**
      * Backoffice sidebar sections implied by the paid Backoffice features.
      * Null when this package does not list Backoffice features.
      *
@@ -141,13 +154,40 @@ class PackageFeatureCatalog
 
         $sections = [];
         foreach ($featureKeys['backoffice'] as $featureId) {
-            $registryModule = explode('.', (string) $featureId, 2)[0];
-            foreach (self::BACKOFFICE_SECTIONS[$registryModule] ?? [] as $section) {
+            foreach ($this->sectionsForFeature((string) $featureId) as $section) {
                 $sections[$section] = true;
             }
         }
 
         return array_keys($sections);
+    }
+
+    /** @return list<string> */
+    private function sectionsForFeature(string $featureId): array
+    {
+        [$module, $feature] = array_pad(explode('.', $featureId, 2), 2, '');
+
+        return match ($module) {
+            'dashboard' => ['dashboard'],
+            'catalogue' => ['products'],
+            'pricing_tax' => ['pricing_tax'],
+            'shop_debtors' => ['shop_debtors'],
+            'customers' => ['customers'],
+            'investors' => ['investors'],
+            'purchasing' => ['suppliers'],
+            'reports' => ['reports'],
+            'accounting' => $feature === 'expenses' ? ['expenses'] : [],
+            'payments' => ['sales_orders'],
+            'inventory' => in_array($feature, ['movements', 'transfers'], true) ? ['stock_movements'] : ['inventory'],
+            'pos' => in_array($feature, ['till_management', 'end_of_day', 'payments_breakdown'], true) ? ['pos'] : [],
+            'sales' => match ($feature) {
+                'vouchers', 'loyalty_cards' => ['promotions'],
+                'returns' => ['after_sales'],
+                'loading_sheets', 'field_attendance' => ['field_sales'],
+                default => ['sales_orders'],
+            },
+            default => [],
+        };
     }
 
     /**
@@ -161,6 +201,16 @@ class PackageFeatureCatalog
             return $map;
         }
 
+        return $this->filterMapToFeatures($map, $allowed);
+    }
+
+    /**
+     * @param  array<string, bool>  $map
+     * @param  array<string, true>  $allowed
+     * @return array<string, bool>
+     */
+    public function filterMapToFeatures(array $map, array $allowed): array
+    {
         $known = $this->knownPermissionFeatureIds();
         foreach (array_keys($map) as $code) {
             if (! is_string($code) || ! preg_match('/^([a-z0-9_]+)\.([a-z0-9_]+)\.[a-z0-9_]+$/', $code, $match)) {
@@ -178,7 +228,8 @@ class PackageFeatureCatalog
     /** @return array<string, true>|null */
     public function allowedFeatureSet(?Organization $org): ?array
     {
-        $licence = $org?->module_settings['licence']['features'] ?? null;
+        $package = $this->packageFor($org);
+        $licence = is_array($package) ? $package['features'] : ($org?->module_settings['licence']['features'] ?? null);
         if (! is_array($licence)) {
             return null;
         }

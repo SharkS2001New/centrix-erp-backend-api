@@ -99,6 +99,12 @@ class OrganizationLicenseAccessTest extends TestCase
         $opened = $access->grantFor('commerce', ['page_keys' => ['dashboard', 'products']]);
         $this->assertTrue($access->allowsPath('api/v1/products', $opened));
         $this->assertSame(['dashboard'], $access->grantFor('spa', [])['page_keys']);
+
+        $fromFeatures = $access->grantFor('commerce', [
+            'feature_keys' => ['backoffice' => ['catalogue.products']],
+        ]);
+        $this->assertContains('products', $fromFeatures['page_keys']);
+        $this->assertNotContains('customers', $fromFeatures['page_keys']);
     }
 
     public function test_yearly_cycle_and_org_renewal_amount(): void

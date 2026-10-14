@@ -1098,21 +1098,22 @@ class PlatformPaybillLicenceService
 
     protected function applyPlanEntitlements(Organization $org, PlatformPlan $plan): void
     {
-        $workspaces = array_values(array_filter(array_map(
-            static fn ($key) => strtolower(trim((string) $key)),
-            $plan->workspace_keys ?? [],
-        )));
         $featureKeys = is_array($plan->feature_keys) ? $plan->feature_keys : null;
         $explicit = is_array($featureKeys);
+        $workspaces = $explicit
+            ? array_values(array_map(
+                static fn ($key) => strtolower(trim((string) $key)),
+                array_keys($featureKeys),
+            ))
+            : array_values(array_filter(array_map(
+                static fn ($key) => strtolower(trim((string) $key)),
+                $plan->workspace_keys ?? [],
+            )));
 
         if ($workspaces !== []) {
             $applications = [];
             foreach (\App\Services\Erp\ApplicationProvisioner::ids() as $id) {
                 $applications[$id] = in_array($id, $workspaces, true);
-            }
-            $applications['admin'] = true;
-            if (! in_array('admin', $workspaces, true)) {
-                $workspaces[] = 'admin';
             }
             $modules = app(\App\Services\Erp\ApplicationProvisioner::class)
                 ->enabledModulesFromApplications($applications);
@@ -1153,7 +1154,7 @@ class PlatformPaybillLicenceService
             $settings['licence'] = [
                 'plan_id' => $plan->id,
                 'modules' => $workspaces,
-                'features' => $this->withAdminFeatures($plan, $featureKeys),
+                'features' => $featureKeys,
             ];
             $this->applyFlagModule($settings, 'spa', $featureKeys);
             $this->applyFlagModule($settings, 'driving', $featureKeys);
@@ -1168,32 +1169,6 @@ class PlatformPaybillLicenceService
         $org->module_settings = $settings;
         $org->save();
         \App\Services\Cache\OrganizationCache::invalidateCapabilities((int) $org->id);
-    }
-
-    /**
-     * @param  array<string, list<string>>  $featureKeys
-     * @return array<string, list<string>>
-     */
-    protected function withAdminFeatures(PlatformPlan $plan, array $featureKeys): array
-    {
-        if (isset($featureKeys['admin']) && $featureKeys['admin'] !== []) {
-            return $featureKeys;
-        }
-
-        $admin = [];
-        foreach (app(PackageFeatureCatalog::class)->forIndustry((string) $plan->industry) as $module) {
-            if (($module['id'] ?? '') !== 'admin') {
-                continue;
-            }
-            foreach ($module['features'] ?? [] as $feature) {
-                $admin[] = (string) $feature['id'];
-            }
-        }
-        if ($admin !== []) {
-            $featureKeys['admin'] = $admin;
-        }
-
-        return $featureKeys;
     }
 
     /**

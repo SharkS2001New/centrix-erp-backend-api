@@ -576,11 +576,60 @@ class UserPermissionService
         }
 
         if (! $user->is_super_admin && $gate?->organization()) {
-            $map = app(\App\Services\Platform\PackageFeatureCatalog::class)
-                ->filterPermissionMap($map, $gate->organization());
+            $map = $this->applyPackageFeatureCeiling($map, $gate->organization());
         }
 
         return $map;
+    }
+
+    /**
+     * A paid package limits features from the organisation record.
+     * Package 1 limits them from the free-plan card while access is free.
+     *
+     * @param  array<string, bool>  $map
+     * @return array<string, bool>
+     */
+    protected function applyPackageFeatureCeiling(array $map, \App\Models\Organization $org): array
+    {
+        $catalog = app(\App\Services\Platform\PackageFeatureCatalog::class);
+        $licenses = app(\App\Services\Platform\OrganizationLicenseService::class);
+        if ($this->packageCeilingMode($licenses, $org) === 'free') {
+            $industry = app(\App\Services\Platform\FreePlanAccess::class)->industryFor($org);
+            $features = app(\App\Services\Platform\FreePlanAccess::class)->stored()[$industry]['feature_keys'] ?? [];
+            $allowed = [];
+            foreach (is_array($features) ? $features : [] as $featureIds) {
+                foreach ((array) $featureIds as $featureId) {
+                    $featureId = trim((string) $featureId);
+                    if ($featureId !== '') {
+                        $allowed[$featureId] = true;
+                    }
+                }
+            }
+            if ($allowed !== []) {
+                return $catalog->filterMapToFeatures($map, $allowed);
+            }
+        }
+
+        return $catalog->filterPermissionMap($map, $org);
+    }
+
+    protected function packageCeilingMode(\App\Services\Platform\OrganizationLicenseService $licenses, \App\Models\Organization $org): string
+    {
+        if ($licenses->isPlatformOrganization($org)) {
+            return 'full';
+        }
+
+        $subscription = \App\Models\PlatformSubscription::query()->where('organization_id', $org->id)->first();
+        $license = [
+            'status' => $subscription?->status ?: 'missing',
+            'is_trial' => (bool) ($subscription?->is_trial),
+            'starts_at' => $subscription?->starts_at,
+            'expires_at' => $subscription?->expires_at,
+            'token_balance' => $licenses->tokenBalanceFor($org),
+            'tokens_enabled' => app(\App\Services\Platform\BillingPolicy::class)->tokensEnabled(),
+        ];
+
+        return $licenses->accessMode($license);
     }
 
     /**
