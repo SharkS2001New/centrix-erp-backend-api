@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\Auth\PasswordExpiryService;
+use App\Services\Platform\FreePlanAccess;
 use App\Services\Platform\OrganizationLicenseService;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Cache\OrganizationCache;
@@ -154,6 +155,9 @@ class ErpCapabilitiesController extends Controller
             && config('erp.allow_org_provisioning');
         $payload['password_expiry'] = app(PasswordExpiryService::class)->statusForUser($user);
         $payload['license'] = app(OrganizationLicenseService::class)->resolveForOrganization($org);
+        if ($org && ! $user->is_super_admin && ($payload['license']['access'] ?? '') === 'free') {
+            $payload = app(FreePlanAccess::class)->maskCapabilities($org, $payload);
+        }
 
         $loginChannel = $this->requestLoginChannel($request);
         $isMobileChannel = in_array($loginChannel, ['mobile', 'manager'], true);

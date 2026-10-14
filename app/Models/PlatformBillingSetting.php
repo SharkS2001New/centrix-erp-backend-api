@@ -14,10 +14,12 @@ class PlatformBillingSetting extends Model
         'duration_discount_percent',
         'duration_discount_min_months',
         'policy',
+        'free_plan_access',
     ];
 
     protected $casts = [
         'policy' => 'array',
+        'free_plan_access' => 'array',
         'duration_discount_percent' => 'decimal:2',
         'duration_discount_min_months' => 'integer',
     ];

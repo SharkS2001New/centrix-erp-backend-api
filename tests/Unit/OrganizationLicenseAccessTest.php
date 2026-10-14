@@ -85,4 +85,19 @@ class OrganizationLicenseAccessTest extends TestCase
         $this->assertFalse($licenses->allowsLimitedRoute('api/v1/reports/profit-loss'));
         $this->assertFalse($licenses->allowsLimitedRoute('api/v1/payroll/runs'));
     }
+
+    public function test_package_one_opens_the_dashboard_until_more_pages_are_allowed(): void
+    {
+        $access = app(\App\Services\Platform\FreePlanAccess::class);
+        $grant = $access->grantFor('commerce', []);
+
+        $this->assertTrue($access->allowsPath('api/v1/reports/dashboard', $grant));
+        $this->assertTrue($access->allowsPath('api/v1/erp/capabilities', $grant));
+        $this->assertFalse($access->allowsPath('api/v1/products', $grant));
+        $this->assertFalse($access->allowsPath('api/v1/customers', $grant));
+
+        $opened = $access->grantFor('commerce', ['page_keys' => ['dashboard', 'products']]);
+        $this->assertTrue($access->allowsPath('api/v1/products', $opened));
+        $this->assertSame(['dashboard'], $access->grantFor('spa', [])['page_keys']);
+    }
 }

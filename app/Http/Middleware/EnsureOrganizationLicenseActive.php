@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Services\Platform\FreePlanAccess;
 use App\Services\Platform\OrganizationLicenseService;
 use Closure;
 use Illuminate\Http\Exceptions\HttpResponseException;
@@ -40,13 +41,16 @@ class EnsureOrganizationLicenseActive
         $license = $this->licenses->resolveForOrganization($org);
         $mode = $this->licenses->accessMode($license);
 
-        if ($this->licenses->needsPayment($license) && ! $this->licenses->allowsLimitedRoute($path)) {
+        $allowed = $mode === 'free'
+            ? app(FreePlanAccess::class)->allowsRoute($org, $path)
+            : $this->licenses->allowsLimitedRoute($path);
+        if ($this->licenses->needsPayment($license) && ! $allowed) {
             throw new HttpResponseException(response()->json([
                 'message' => ($license['status'] ?? '') === 'scheduled'
                     ? 'This Centrix licence opens at '.($license['starts_at'] ?? 'the scheduled time').'.'
                     : ($mode === 'expired'
                         ? 'This Centrix licence has expired. Pay on the Centrix Paybill to restore the rest of the system. Products, customers, suppliers, and sales reports stay available.'
-                        : 'This organisation is on the free Centrix plan. Pay on the Centrix Paybill to open the rest of the system. Products, customers, suppliers, and sales reports stay available.'),
+                        : 'This organisation is on Package 1. Open a bigger plan to use the rest of Centrix.'),
                 'code' => 'organization_license_upgrade_required',
                 'license' => $license,
             ], 403));

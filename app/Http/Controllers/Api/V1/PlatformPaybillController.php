@@ -10,6 +10,7 @@ use App\Models\PlatformPlan;
 use App\Models\WhatsappConfig;
 use App\Services\MpesaService;
 use App\Services\Platform\BillingPolicy;
+use App\Services\Platform\FreePlanAccess;
 use App\Services\Platform\OrganizationLicenseService;
 use App\Services\Platform\PlatformPaybillLicenceService;
 use App\Services\SystemIssues\SystemIssueAlertSettingsResolver;
@@ -49,9 +50,14 @@ class PlatformPaybillController extends Controller
             'account_name_prefix' => 'nullable|string|max:40',
             'duration_discount_percent' => 'sometimes|numeric|min:0|max:100',
             'duration_discount_min_months' => 'sometimes|integer|min:0|max:36',
+            'free_plan_access' => 'sometimes|array',
         ]);
 
         $settings = $this->paybill->saveSettings($data);
+        if (array_key_exists('free_plan_access', $data) && is_array($data['free_plan_access'])) {
+            app(FreePlanAccess::class)->persist($settings, $data['free_plan_access']);
+            $settings = $settings->fresh() ?? $settings;
+        }
 
         return response()->json([
             'data' => $this->settingsPayload($settings),
@@ -506,6 +512,8 @@ class PlatformPaybillController extends Controller
             'organization_id' => $settings?->organization_id,
             'duration_discount_percent' => (float) ($settings?->duration_discount_percent ?? 0),
             'duration_discount_min_months' => (int) ($settings?->duration_discount_min_months ?? 3),
+            'free_plan_access' => app(FreePlanAccess::class)->stored(),
+            'free_plan_catalog' => app(FreePlanAccess::class)->catalog(),
         ];
     }
 

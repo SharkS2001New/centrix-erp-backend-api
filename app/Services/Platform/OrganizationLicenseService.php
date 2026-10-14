@@ -70,7 +70,8 @@ class OrganizationLicenseService
                 'plans' => app(PlatformPaybillLicenceService::class)->monthlyPlanChoices($org),
                 'duration_discount' => app(PlatformPaybillLicenceService::class)->durationDiscount(),
             ];
-            return $this->stampAccess($missing);
+
+            return $this->finishLicense($org, $missing);
         }
 
         $window = $this->periodWindow($sub);
@@ -92,7 +93,7 @@ class OrganizationLicenseService
             'write_costs' => app(BillingPolicy::class)->current()['write_costs'],
             'modules' => $this->licensedModules($sub),
         ];
-        $license = $this->stampAccess($license);
+        $license = $this->finishLicense($org, $license);
         $license['paybill'] = app(PlatformPaybillLicenceService::class)->instructionsFor($org, $sub);
         $license['offers'] = app(PlatformPaybillLicenceService::class)->paymentOffers($org, $sub);
         $license['plans'] = app(PlatformPaybillLicenceService::class)->monthlyPlanChoices($org);
@@ -135,6 +136,17 @@ class OrganizationLicenseService
     {
         $license['tokens_enabled'] = app(BillingPolicy::class)->tokensEnabled();
         $license['access'] = $this->accessMode($license);
+
+        return $license;
+    }
+
+    /** @param  array<string, mixed>  $license
+     * @return array<string, mixed>
+     */
+    protected function finishLicense(Organization $org, array $license): array
+    {
+        $license = $this->stampAccess($license);
+        $license['free_plan'] = app(FreePlanAccess::class)->publicGrant($org);
 
         return $license;
     }

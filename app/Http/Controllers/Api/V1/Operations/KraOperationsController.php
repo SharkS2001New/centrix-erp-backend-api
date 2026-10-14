@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Operations;
 
 use App\Http\Controllers\Controller;
+use App\Models\CreditNote;
 use App\Models\KraResponse;
 use App\Models\Sale;
 use App\Services\Cache\CompletedSalesCacheService;
@@ -234,6 +235,11 @@ class KraOperationsController extends Controller
             return response()->json(['message' => 'Enable KRA device in Finance settings first.'], 422);
         }
 
+        $credits = app(CreditNoteService::class);
+        if ($credits->isCreditNoteDocument($row)) {
+            return $this->retryCreditNote($request, $row, $sale, $finance, $credits);
+        }
+
         $service = KraDeviceService::fromSettings(
             $finance,
             $gate->organization()?->id ? (int) $gate->organization()->id : null,
@@ -300,6 +306,69 @@ class KraOperationsController extends Controller
         return response()->json([
             'message' => 'KRA receipt submitted successfully.',
             'kra_response' => $row->fresh(),
+        ]);
+    }
+
+    /**
+     * A failed credit note must be retried as a credit note. Resubmitting it as a
+     * sale reuses the receipt number and KRA rejects it again (code 314).
+     *
+     * @param  array<string, mixed>  $finance
+     */
+    protected function retryCreditNote(
+        Request $request,
+        KraResponse $row,
+        Sale $sale,
+        array $finance,
+        CreditNoteService $credits,
+    ) {
+        $payload = is_array($row->response_payload) ? $row->response_payload : [];
+        $creditNoteId = (int) ($payload['credit_note_id'] ?? 0);
+        $note = $creditNoteId > 0
+            ? CreditNote::query()->where('organization_id', $sale->organization_id)->find($creditNoteId)
+            : null;
+
+        if ($note) {
+            $updated = $credits->attemptKraForCreditNote($note);
+            $fresh = $row->fresh();
+            if ((string) $updated->kra_status === 'success') {
+                return response()->json([
+                    'message' => 'KRA credit note submitted successfully.',
+                    'kra_response' => $fresh,
+                ]);
+            }
+
+            return response()->json([
+                'message' => $updated->kra_error_message ?: 'KRA credit note failed.',
+                'kra_response' => $fresh,
+            ], 422);
+        }
+
+        $source = KraResponse::query()
+            ->where('sale_id', $sale->id)
+            ->where('status', 'success')
+            ->orderBy('id')
+            ->get()
+            ->first(fn (KraResponse $candidate) => ! $credits->isCreditNoteDocument($candidate));
+
+        try {
+            $credited = $credits->fiscalCreditSaleOnly(
+                $sale,
+                $request->user(),
+                $finance,
+                is_string($payload['refund_reason_code'] ?? null) ? $payload['refund_reason_code'] : null,
+                $source,
+            );
+        } catch (InvalidArgumentException $e) {
+            return response()->json([
+                'message' => $e->getMessage(),
+                'kra_response' => $row->fresh(),
+            ], 422);
+        }
+
+        return response()->json([
+            'message' => 'KRA credit note submitted successfully.',
+            'kra_response' => $credited,
         ]);
     }
 
