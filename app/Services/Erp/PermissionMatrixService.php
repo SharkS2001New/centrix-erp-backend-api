@@ -568,6 +568,12 @@ class PermissionMatrixService
                 }
 
                 $filtered = self::filterApplicationModuleGroup($group, $def, (string) $registryModule);
+                if ($filtered !== null && $gate?->organization()) {
+                    $allowed = app(\App\Services\Platform\PackageFeatureCatalog::class)
+                        ->allowedFeatureSet($gate->organization());
+                    $filtered = app(\App\Services\Platform\PackageFeatureCatalog::class)
+                        ->restrictGroup($filtered, (string) $registryModule, $allowed);
+                }
                 if ($filtered !== null) {
                     $modules[] = $filtered;
                 }

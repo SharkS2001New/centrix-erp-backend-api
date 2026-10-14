@@ -575,6 +575,11 @@ class UserPermissionService
             $map = $this->grantManagerAppBundlePermissions($map, $gate);
         }
 
+        if (! $user->is_super_admin && $gate?->organization()) {
+            $map = app(\App\Services\Platform\PackageFeatureCatalog::class)
+                ->filterPermissionMap($map, $gate->organization());
+        }
+
         return $map;
     }
 

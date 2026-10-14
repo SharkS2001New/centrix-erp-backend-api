@@ -13,8 +13,8 @@ class PlatformPlan extends Model
         'price', 'first_payment_price', 'renewal_price',
         'monthly_price', 'yearly_price', 'token_pack_price', 'token_pack_days',
         'currency',
-        'seat_limit', 'workspace_keys', 'module_keys', 'section_keys', 'feature_details',
-        'self_serve', 'is_active', 'sort_order',
+        'seat_limit', 'workspace_keys', 'module_keys', 'section_keys', 'feature_keys', 'feature_details',
+        'self_serve', 'is_active', 'is_recommended', 'sort_order',
         'auto_invoice_template_id',
     ];
 
@@ -29,8 +29,10 @@ class PlatformPlan extends Model
         'workspace_keys' => 'array',
         'module_keys' => 'array',
         'section_keys' => 'array',
+        'feature_keys' => 'array',
         'feature_details' => 'array',
         'self_serve' => 'boolean',
+        'is_recommended' => 'boolean',
         'is_active' => 'boolean',
         'sort_order' => 'integer',
     ];

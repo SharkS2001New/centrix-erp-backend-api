@@ -4,6 +4,8 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\PlatformPlan;
+use App\Services\Platform\PackageFeatureCatalog;
+use App\Services\Platform\PlatformPaybillLicenceService;
 use App\Services\Platform\SelfServePlanComposer;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
@@ -21,6 +23,7 @@ class PlatformPlanController extends Controller
 
         return response()->json([
             'data' => $query->get(),
+            'catalog' => app(PackageFeatureCatalog::class)->all(),
         ]);
     }
 
@@ -91,6 +94,7 @@ class PlatformPlanController extends Controller
         $data = $this->validated($request);
         $plan = PlatformPlan::query()->create($data);
         PlatformPlan::placeAtEnd($plan);
+        $this->keepOneRecommended($plan->fresh());
 
         return response()->json(['data' => $plan->fresh(), 'message' => 'Plan created.'], 201);
     }
@@ -102,9 +106,15 @@ class PlatformPlanController extends Controller
 
     public function update(Request $request, PlatformPlan $platform_plan)
     {
-        $platform_plan->update($this->validated($request, false));
+        $data = $this->validated($request, false);
+        $platform_plan->update($data);
+        $fresh = $platform_plan->fresh();
+        $this->keepOneRecommended($fresh);
+        if (array_key_exists('workspace_keys', $data) || array_key_exists('feature_keys', $data)) {
+            app(PlatformPaybillLicenceService::class)->syncPlanSubscribers($fresh);
+        }
 
-        return response()->json(['data' => $platform_plan->fresh(), 'message' => 'Plan updated.']);
+        return response()->json(['data' => $fresh->fresh(), 'message' => 'Plan updated.']);
     }
 
     public function destroy(PlatformPlan $platform_plan)
@@ -112,6 +122,19 @@ class PlatformPlanController extends Controller
         $platform_plan->delete();
 
         return response()->json(['message' => 'Plan deleted.']);
+    }
+
+    protected function keepOneRecommended(PlatformPlan $plan): void
+    {
+        if (! $plan->is_recommended || ! \Illuminate\Support\Facades\Schema::hasColumn('platform_plans', 'is_recommended')) {
+            return;
+        }
+
+        PlatformPlan::query()
+            ->where('id', '!=', $plan->id)
+            ->where('industry', $plan->industry)
+            ->where('interval', $plan->interval)
+            ->update(['is_recommended' => false]);
     }
 
     protected function validated(Request $request, bool $creating = true): array
@@ -136,11 +159,13 @@ class PlatformPlanController extends Controller
             'module_keys' => 'sometimes|array',
             'section_keys' => 'sometimes|array',
             'section_keys.*' => 'string|max:40',
+            'feature_keys' => 'sometimes|array',
             'feature_details' => 'sometimes|array',
             'feature_details.*.label' => 'required_with:feature_details|string|max:120',
             'feature_details.*.detail' => 'nullable|string|max:500',
             'self_serve' => 'sometimes|boolean',
             'is_active' => 'sometimes|boolean',
+            'is_recommended' => 'sometimes|boolean',
             'auto_invoice_template_id' => 'nullable|integer',
         ]);
 
@@ -149,15 +174,32 @@ class PlatformPlanController extends Controller
         }
 
         $industry = (string) ($data['industry'] ?? '');
-        if ($industry !== '' && array_key_exists('workspace_keys', $data)) {
+        if ($industry !== '' && array_key_exists('workspace_keys', $data) && ! array_key_exists('feature_keys', $data)) {
             $allowed = array_flip(config('erp_industries.definitions.'.$industry.'.permission_application_ids', []));
             $data['workspace_keys'] = array_values(array_filter(
                 is_array($data['workspace_keys']) ? $data['workspace_keys'] : [],
                 fn ($id) => isset($allowed[strtolower(trim((string) $id))]),
             ));
         }
-        if ($industry !== '' && $industry !== 'commerce') {
+        if ($industry !== '' && $industry !== 'commerce' && ! array_key_exists('feature_keys', $data)) {
             $data['section_keys'] = [];
+        }
+
+        if ($industry !== '' && array_key_exists('feature_keys', $data) && Schema::hasColumn('platform_plans', 'feature_keys')) {
+            $catalog = app(PackageFeatureCatalog::class);
+            $workspaces = array_key_exists('workspace_keys', $data)
+                ? (array) $data['workspace_keys']
+                : [];
+            $data['feature_keys'] = $catalog->normalize(
+                $industry,
+                $workspaces,
+                is_array($data['feature_keys']) ? $data['feature_keys'] : [],
+            );
+            $data['workspace_keys'] = array_keys($data['feature_keys']);
+            $sections = $catalog->backofficeSections($data['feature_keys']);
+            if ($sections !== null) {
+                $data['section_keys'] = $sections;
+            }
         }
 
         return $data;

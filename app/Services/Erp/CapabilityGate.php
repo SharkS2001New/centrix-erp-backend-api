@@ -295,10 +295,13 @@ class CapabilityGate
             return true;
         }
 
+        $sales = $this->moduleSettings('sales');
+        if (array_key_exists('enable_manager_app', $sales) && $sales['enable_manager_app'] === false) {
+            return false;
+        }
+
         // Sales tenants: Manager follows the sales platform toggle.
         if ($this->enabled('sales.backend')) {
-            $sales = $this->moduleSettings('sales');
-
             return (bool) ($sales['enable_manager_app'] ?? true);
         }
 

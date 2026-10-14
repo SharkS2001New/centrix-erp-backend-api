@@ -17,6 +17,7 @@ use App\Models\PlatformSubscription;
 use App\Support\PhoneNumber;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Centrix SaaS Paybill. Shop paybills stay on sale matching.
@@ -528,6 +529,7 @@ class PlatformPaybillLicenceService
                     'section_keys' => array_values($plan->section_keys ?? []),
                     'industry' => $plan->industry ?: 'commerce',
                     'workspace_keys' => array_values($plan->workspace_keys ?? []),
+                    'is_recommended' => Schema::hasColumn('platform_plans', 'is_recommended') && (bool) $plan->is_recommended,
                     'discount_percent' => $discount['percent'],
                     'discount_min_months' => $discount['min_months'],
                 ];
@@ -1076,35 +1078,152 @@ class PlatformPaybillLicenceService
         return $payment->fresh();
     }
 
+    /** Organisations already on this package pick up its modules and features. */
+    public function syncPlanSubscribers(PlatformPlan $plan): void
+    {
+        $orgIds = PlatformSubscription::query()
+            ->where('plan_id', $plan->id)
+            ->pluck('organization_id');
+
+        Organization::query()
+            ->whereIn('id', $orgIds)
+            ->get()
+            ->each(function (Organization $org) use ($plan): void {
+                if ($this->isPlatform($org)) {
+                    return;
+                }
+                $this->applyPlanEntitlements($org, $plan);
+            });
+    }
+
     protected function applyPlanEntitlements(Organization $org, PlatformPlan $plan): void
     {
-        $workspaces = array_values(array_filter($plan->workspace_keys ?? []));
+        $workspaces = array_values(array_filter(array_map(
+            static fn ($key) => strtolower(trim((string) $key)),
+            $plan->workspace_keys ?? [],
+        )));
+        $featureKeys = is_array($plan->feature_keys) ? $plan->feature_keys : null;
+        $explicit = is_array($featureKeys);
+
         if ($workspaces !== []) {
             $applications = [];
             foreach (\App\Services\Erp\ApplicationProvisioner::ids() as $id) {
                 $applications[$id] = in_array($id, $workspaces, true);
             }
             $applications['admin'] = true;
+            if (! in_array('admin', $workspaces, true)) {
+                $workspaces[] = 'admin';
+            }
             $modules = app(\App\Services\Erp\ApplicationProvisioner::class)
                 ->enabledModulesFromApplications($applications);
+            if ($explicit) {
+                $modules['sales.mobile'] = in_array('mobile', $workspaces, true);
+                if (! in_array('pos', $workspaces, true)) {
+                    $modules['sales.pos'] = false;
+                }
+            }
             $org->enabled_modules = app(\App\Services\OrganizationProvisioningService::class)
                 ->normalizeEnabledModules($modules);
         }
 
+        $settings = is_array($org->module_settings) ? $org->module_settings : [];
+        $sales = is_array($settings['sales'] ?? null) ? $settings['sales'] : [];
+
         $sections = array_values(array_filter($plan->section_keys ?? []));
-        if ($sections !== []) {
+        $sectionsFromFeatures = false;
+        if ($explicit && is_array($featureKeys)) {
+            $fromFeatures = app(PackageFeatureCatalog::class)->backofficeSections($featureKeys);
+            if ($fromFeatures !== null) {
+                $sections = $fromFeatures;
+                $sectionsFromFeatures = true;
+            }
+        }
+        if ($sections !== [] || $sectionsFromFeatures) {
             $map = \App\Services\Erp\BackofficeSections::DEFAULTS;
             foreach (array_keys($map) as $key) {
                 $map[$key] = in_array($key, $sections, true);
             }
-            $settings = $org->module_settings ?? [];
-            $sales = is_array($settings['sales'] ?? null) ? $settings['sales'] : [];
             $sales['backoffice_sections'] = $map;
-            $settings['sales'] = $sales;
-            $org->module_settings = $settings;
         }
 
+        if ($explicit) {
+            $sales['enable_mobile_orders'] = in_array('mobile', $workspaces, true);
+            $sales['enable_manager_app'] = in_array('manager', $workspaces, true);
+            $settings['sales'] = $sales;
+            $settings['licence'] = [
+                'plan_id' => $plan->id,
+                'modules' => $workspaces,
+                'features' => $this->withAdminFeatures($plan, $featureKeys),
+            ];
+            $this->applyFlagModule($settings, 'spa', $featureKeys);
+            $this->applyFlagModule($settings, 'driving', $featureKeys);
+        } elseif ($sections !== [] || $sectionsFromFeatures) {
+            $settings['sales'] = $sales;
+        }
+
+        if ($workspaces === [] && ! $explicit && $sections === [] && ! $sectionsFromFeatures) {
+            return;
+        }
+
+        $org->module_settings = $settings;
         $org->save();
+        \App\Services\Cache\OrganizationCache::invalidateCapabilities((int) $org->id);
+    }
+
+    /**
+     * @param  array<string, list<string>>  $featureKeys
+     * @return array<string, list<string>>
+     */
+    protected function withAdminFeatures(PlatformPlan $plan, array $featureKeys): array
+    {
+        if (isset($featureKeys['admin']) && $featureKeys['admin'] !== []) {
+            return $featureKeys;
+        }
+
+        $admin = [];
+        foreach (app(PackageFeatureCatalog::class)->forIndustry((string) $plan->industry) as $module) {
+            if (($module['id'] ?? '') !== 'admin') {
+                continue;
+            }
+            foreach ($module['features'] ?? [] as $feature) {
+                $admin[] = (string) $feature['id'];
+            }
+        }
+        if ($admin !== []) {
+            $featureKeys['admin'] = $admin;
+        }
+
+        return $featureKeys;
+    }
+
+    /**
+     * @param  array<string, mixed>  $settings
+     * @param  array<string, list<string>>  $featureKeys
+     */
+    protected function applyFlagModule(array &$settings, string $moduleId, array $featureKeys): void
+    {
+        if (! array_key_exists($moduleId, $featureKeys)) {
+            return;
+        }
+
+        $selected = array_flip($featureKeys[$moduleId]);
+        $flags = [];
+        foreach (app(PackageFeatureCatalog::class)->forIndustry($moduleId === 'spa' ? 'spa' : 'driving') as $module) {
+            if (($module['id'] ?? '') !== $moduleId) {
+                continue;
+            }
+            foreach ($module['features'] ?? [] as $feature) {
+                $flag = (string) ($feature['flag'] ?? '');
+                if ($flag === '') {
+                    continue;
+                }
+                $flags[$flag] = isset($selected[(string) $feature['id']]);
+            }
+        }
+
+        $section = is_array($settings[$moduleId] ?? null) ? $settings[$moduleId] : [];
+        $section['features'] = $flags;
+        $settings[$moduleId] = $section;
     }
 
     /** @param  array{product: string, price: float, days: int}  $product */
