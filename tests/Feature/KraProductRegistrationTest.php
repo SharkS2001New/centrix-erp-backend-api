@@ -281,16 +281,51 @@ class KraProductRegistrationTest extends TestCase
             'sync' => true,
         ]);
 
-        $response->assertStatus(422);
-        $message = strtolower((string) (
-            $response->json('message')
-            ?? $response->json('errors.kra.0')
-            ?? json_encode($response->json())
-        ));
+        $response->assertOk();
+        $this->assertTrue($response->json('success'));
+        $this->assertSame(1, $response->json('registered_count'));
+        $this->assertSame(1, $response->json('skipped_count'));
+        $message = strtolower((string) $response->json('message'));
         $this->assertStringContainsString('invalid beta', $message);
         $this->assertStringContainsString('kra-bad-b', $message);
-        // Batch fails, then singles until the rejecting product is found (may be first single).
         $this->assertGreaterThanOrEqual(2, $calls);
+    }
+
+    public function test_register_products_stops_when_the_device_itself_fails(): void
+    {
+        $org = Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['finance']['kra_plu_register_path'] = '/api/upload-plu-data';
+        $settings['finance']['kra_plu_upload_batch_size'] = 2;
+        $org->update(['module_settings' => $settings]);
+
+        $template = Product::query()->firstOrFail();
+        $products = collect([
+            $this->makeProductClone($template, 'KRA-DEV-A', 'KRA Device Alpha'),
+            $this->makeProductClone($template, 'KRA-DEV-B', 'KRA Device Beta'),
+        ]);
+
+        $calls = 0;
+        config([
+            'testing.kra_agent_command_handler' => function (string $path) use (&$calls) {
+                if ($path !== '/api/upload-plu-data') {
+                    return ['success' => true, 'message' => 'OK'];
+                }
+                $calls++;
+
+                return [
+                    'status' => 200,
+                    'body' => ['success' => false, 'message' => 'Device not initialized'],
+                ];
+            },
+        ]);
+
+        $this->postJson('/api/v1/kra/register-products', [
+            'product_codes' => $products->pluck('product_code')->all(),
+            'sync' => true,
+        ])->assertStatus(422);
+
+        $this->assertSame(1, $calls);
     }
 
     public function test_register_products_requires_kra_device_enabled(): void

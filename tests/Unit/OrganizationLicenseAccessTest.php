@@ -100,4 +100,20 @@ class OrganizationLicenseAccessTest extends TestCase
         $this->assertTrue($access->allowsPath('api/v1/products', $opened));
         $this->assertSame(['dashboard'], $access->grantFor('spa', [])['page_keys']);
     }
+
+    public function test_yearly_cycle_and_org_renewal_amount(): void
+    {
+        $licenses = app(OrganizationLicenseService::class);
+        $plan = new \App\Models\PlatformPlan(['interval' => 'yearly', 'yearly_price' => 48000]);
+        $subscription = new \App\Models\PlatformSubscription(['renewal_price' => 51000]);
+        $subscription->setRelation('plan', $plan);
+
+        $this->assertSame('yearly', $licenses->billingCycle($subscription));
+        $this->assertSame(51000.0, $licenses->renewalAmount($subscription));
+
+        $catalog = new \App\Models\PlatformSubscription();
+        $catalog->setRelation('plan', $plan);
+        $this->assertSame(48000.0, $licenses->renewalAmount($catalog));
+        $this->assertSame('monthly', $licenses->billingCycleForInterval('monthly'));
+    }
 }

@@ -615,6 +615,38 @@ class PlatformPaybillLicenceService
         ]);
     }
 
+    /** Renew a yearly organisation at the amount saved on that organisation. */
+    public function startRenewalCheckout(Organization $org, ?string $phone = null): PlatformLicenceCheckout
+    {
+        $subscription = PlatformSubscription::query()
+            ->with('plan')
+            ->where('organization_id', $org->id)
+            ->first();
+        $licenses = app(OrganizationLicenseService::class);
+        if (! $subscription || $licenses->billingCycle($subscription) !== 'yearly') {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'billing' => ['This organisation is not on a yearly plan.'],
+            ]);
+        }
+
+        $amount = $licenses->renewalAmount($subscription);
+        if ($amount === null || $amount <= 0) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'amount' => ['A platform administrator has not set the renew amount for this organisation.'],
+            ]);
+        }
+
+        return PlatformLicenceCheckout::query()->create([
+            'organization_id' => $org->id,
+            'plan_id' => $subscription->plan_id,
+            'months' => 12,
+            'amount' => $amount,
+            'discount_percent' => 0,
+            'phone_number' => $phone,
+            'status' => 'pending',
+        ]);
+    }
+
     /**
      * @return array{quote: PlatformOneTimeQuote, emailed: bool, already: bool}
      */
@@ -955,14 +987,22 @@ class PlatformPaybillLicenceService
             ]);
         }
 
-        $yearly = in_array(strtolower((string) $plan->interval), ['annual', 'yearly'], true);
+        $yearly = in_array(strtolower((string) $plan->interval), ['annual', 'yearly'], true)
+            || (int) $checkout->months >= 12;
         $renewal = $yearly ? (float) ($plan->yearly_price ?: $checkout->amount) : (float) ($plan->monthly_price ?: $checkout->amount);
         $days = $yearly ? 365 : max(1, (int) $checkout->months) * 30;
+        $keptRenewal = (float) ($subscription->renewal_price ?? 0);
+        $renewingSameAmount = $keptRenewal > 0 && abs($keptRenewal - (float) $checkout->amount) <= 1;
         $subscription->plan_id = $plan->id;
         $subscription->is_trial = false;
         $subscription->status = 'active';
-        $subscription->amount = $renewal;
-        $subscription->renewal_price = $renewal;
+        if (! $renewingSameAmount) {
+            $subscription->amount = $renewal;
+            $subscription->renewal_price = $renewal;
+        }
+        if (\Illuminate\Support\Facades\Schema::hasColumn('platform_subscriptions', 'billing_cycle')) {
+            $subscription->billing_cycle = $yearly ? 'yearly' : 'monthly';
+        }
         $subscription->save();
         $this->extendSubscription($subscription, [
             'product' => $yearly ? 'yearly' : 'monthly',

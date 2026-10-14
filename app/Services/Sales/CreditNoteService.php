@@ -859,33 +859,101 @@ class CreditNoteService
     }
 
     /**
-     * Invoice the control unit issued for the original sale.
-     * Credit notes must cite that CU invoice (relevantInvoiceNumber). The trader
-     * receipt we generated for the sale is a different number, and sending it
-     * makes every credit note fail with receiptNo / code 314.
+     * Receipt the control unit indexed for the original sale.
+     *
+     * On 28 Sept 2026 this always sent cu_inv_no with leading zeros removed.
+     * Comstore code 314 (receiptNo is error) rejects that long CU invoice:
+     * wrong format, or not a receipt this credit note can cite. KRA credits
+     * the original trader invoice (TraderSystemInvoiceNumber, the RECEIPT
+     * NUMBER on that sale). The device invoice number and the eTIMS QR
+     * receipt are used only when that trader receipt was not stored. The
+     * long CU is used only when no short receipt was stored.
      */
     protected function relevantInvoiceNumberFromKraResponse(KraResponse $kra): string
     {
+        $request = is_array($kra->request_payload) ? $kra->request_payload : [];
+        $sign = is_array($request['sign_structure'] ?? null) ? $request['sign_structure'] : [];
+        $trader = $this->shortReceiptReference((string) ($sign['TraderSystemInvoiceNumber'] ?? ''));
+        if ($trader !== null) {
+            return $trader;
+        }
+
+        $column = $this->shortReceiptReference((string) ($kra->invoice_number ?? ''));
+        if ($column !== null) {
+            return $column;
+        }
+
         $payload = is_array($kra->response_payload) ? $kra->response_payload : [];
+        $responseInvoice = $this->shortReceiptReference((string) ($payload['invoice_number'] ?? ''));
+        if ($responseInvoice !== null) {
+            return $responseInvoice;
+        }
+
+        $fromQr = $this->receiptNumberFromEtimsPayload($kra);
+        if ($fromQr !== '') {
+            return $fromQr;
+        }
+
         $cuInv = trim((string) ($payload['cu_inv_no'] ?? $payload['cu-inv-no'] ?? ''));
         if ($cuInv !== '') {
             if (str_contains($cuInv, '/')) {
-                $cuInv = trim(substr($cuInv, (int) strrpos($cuInv, '/') + 1));
+                $tail = $this->shortReceiptReference(trim(substr($cuInv, (int) strrpos($cuInv, '/') + 1)));
+                if ($tail !== null) {
+                    return $tail;
+                }
             }
             $trimmed = ltrim($cuInv, '0');
 
             return $trimmed !== '' ? $trimmed : $cuInv;
         }
 
-        $column = trim((string) ($kra->invoice_number ?? ''));
-        if ($column !== '' && ! str_starts_with($column, 'CN-PENDING')) {
-            return $column;
+        return '';
+    }
+
+    /**
+     * Comstore receipt numbers are numeric and at most 10 digits.
+     * CN-PENDING placeholders and the long CU invoice are not receipts.
+     */
+    protected function shortReceiptReference(string $value): ?string
+    {
+        $trimmed = trim($value);
+        if ($trimmed === '' || str_starts_with($trimmed, 'CN-PENDING')) {
+            return null;
+        }
+        if (strlen($trimmed) > 10 || ! ctype_digit($trimmed)) {
+            return null;
+        }
+        $normalized = ltrim($trimmed, '0');
+
+        return $normalized !== '' ? $normalized : null;
+    }
+
+    /**
+     * eTIMS QR payload: date, time, control-unit serial, receipt number, URL.
+     */
+    protected function receiptNumberFromEtimsPayload(KraResponse $kra): string
+    {
+        $payload = is_array($kra->response_payload) ? $kra->response_payload : [];
+        $candidates = [
+            $payload['signature_link'] ?? null,
+            $payload['receipt_signature'] ?? null,
+            $kra->signature_link ?? null,
+            $kra->receipt_signature ?? null,
+        ];
+
+        foreach ($candidates as $raw) {
+            $text = trim((string) $raw);
+            if ($text === '') {
+                continue;
+            }
+            if (preg_match('/\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}(?::\d{2})?\s+\S+\s+0*(\d{1,10})\b/', $text, $match)) {
+                $number = ltrim($match[1], '0');
+
+                return $number !== '' ? $number : '0';
+            }
         }
 
-        $request = is_array($kra->request_payload) ? $kra->request_payload : [];
-        $sign = is_array($request['sign_structure'] ?? null) ? $request['sign_structure'] : [];
-
-        return trim((string) ($sign['TraderSystemInvoiceNumber'] ?? ''));
+        return '';
     }
 
     /**

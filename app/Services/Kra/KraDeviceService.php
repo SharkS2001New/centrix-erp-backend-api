@@ -196,7 +196,8 @@ class KraDeviceService
 
     /**
      * Register catalogue products on the on-prem KRA device (LightStores PLU upload).
-     * Products already on the device (E353 / THE SAME NAME) are skipped, not failed.
+     * A product the device rejects is skipped. The rest of the catalogue still uploads.
+     * A device or connection failure stops the upload, because every item would fail the same way.
      *
      * @param  iterable<int, object>  $products
      */
@@ -222,6 +223,7 @@ class KraDeviceService
 
         $registered = 0;
         $skipped = 0;
+        $skippedProducts = [];
         $lastResponse = null;
 
         if ($this->usesUploadPluDataPayload($path)) {
@@ -235,8 +237,9 @@ class KraDeviceService
                 $outcome = $this->uploadPluChunk($chunk, $path, $index + 1);
                 if (! ($outcome['success'] ?? false)) {
                     return array_merge($outcome, [
-                        'registered_count' => $registered,
-                        'skipped_count' => $skipped,
+                        'registered_count' => $registered + (int) ($outcome['registered_count'] ?? 0),
+                        'skipped_count' => $skipped + (int) ($outcome['skipped_count'] ?? 0),
+                        'skipped_products' => array_merge($skippedProducts, $outcome['skipped_products'] ?? []),
                         'product_count' => count($items),
                         'batch' => $index + 1,
                     ]);
@@ -244,6 +247,7 @@ class KraDeviceService
 
                 $registered += (int) ($outcome['registered_count'] ?? 0);
                 $skipped += (int) ($outcome['skipped_count'] ?? 0);
+                $skippedProducts = array_merge($skippedProducts, $outcome['skipped_products'] ?? []);
                 $lastResponse = $outcome['response'] ?? $lastResponse;
             }
         } else {
@@ -253,8 +257,9 @@ class KraDeviceService
                 $outcome = $this->registerPluChunk($chunk, $path, $index + 1);
                 if (! ($outcome['success'] ?? false)) {
                     return array_merge($outcome, [
-                        'registered_count' => $registered,
-                        'skipped_count' => $skipped,
+                        'registered_count' => $registered + (int) ($outcome['registered_count'] ?? 0),
+                        'skipped_count' => $skipped + (int) ($outcome['skipped_count'] ?? 0),
+                        'skipped_products' => array_merge($skippedProducts, $outcome['skipped_products'] ?? []),
                         'product_count' => count($items),
                         'batch' => $index + 1,
                     ]);
@@ -262,15 +267,17 @@ class KraDeviceService
 
                 $registered += (int) ($outcome['registered_count'] ?? 0);
                 $skipped += (int) ($outcome['skipped_count'] ?? 0);
+                $skippedProducts = array_merge($skippedProducts, $outcome['skipped_products'] ?? []);
                 $lastResponse = $outcome['response'] ?? $lastResponse;
             }
         }
 
         return [
             'success' => true,
-            'message' => $this->registrationSummaryMessage($registered, $skipped),
+            'message' => $this->registrationSummaryMessage($registered, $skipped, $skippedProducts),
             'registered_count' => $registered,
             'skipped_count' => $skipped,
+            'skipped_products' => $skippedProducts,
             'product_count' => count($items),
             'response' => $lastResponse,
         ];
@@ -301,30 +308,25 @@ class KraDeviceService
             ];
         }
 
+        if ($this->isDeviceLevelPluFailure($result)) {
+            return count($chunk) === 1
+                ? $this->annotatePluFailureWithProduct($result, $chunk[0])
+                : $result;
+        }
+
         if ($this->isAlreadyRegisteredPluResult($result)) {
-            // Batch failed because at least one name already exists — retry one-by-one and skip duplicates.
             if (count($chunk) === 1) {
-                return [
-                    'success' => true,
-                    'registered_count' => 0,
-                    'skipped_count' => 1,
-                    'response' => $result['response'] ?? null,
-                ];
+                return $this->skippedPluProduct($chunk[0], $result, 'already_registered');
             }
 
             return $this->retryPluChunkIndividually($chunk, $path, $batch, 'upload');
         }
 
-        // E034 / invalid PLU data — isolate which product the device rejected.
-        if ($this->isInvalidPluUploadResult($result) && count($chunk) > 1) {
+        if (count($chunk) > 1) {
             return $this->retryPluChunkIndividually($chunk, $path, $batch, 'upload');
         }
 
-        if (count($chunk) === 1) {
-            return $this->annotatePluFailureWithProduct($result, $chunk[0]);
-        }
-
-        return $result;
+        return $this->skippedPluProduct($chunk[0], $result, 'rejected');
     }
 
     /**
@@ -349,32 +351,29 @@ class KraDeviceService
             ];
         }
 
+        if ($this->isDeviceLevelPluFailure($result)) {
+            return count($chunk) === 1
+                ? $this->annotatePluFailureWithProduct($result, $chunk[0])
+                : $result;
+        }
+
         if ($this->isAlreadyRegisteredPluResult($result)) {
             if (count($chunk) === 1) {
-                return [
-                    'success' => true,
-                    'registered_count' => 0,
-                    'skipped_count' => 1,
-                    'response' => $result['response'] ?? null,
-                ];
+                return $this->skippedPluProduct($chunk[0], $result, 'already_registered');
             }
 
             return $this->retryPluChunkIndividually($chunk, $path, $batch, 'register');
         }
 
-        if ($this->isInvalidPluUploadResult($result) && count($chunk) > 1) {
+        if (count($chunk) > 1) {
             return $this->retryPluChunkIndividually($chunk, $path, $batch, 'register');
         }
 
-        if (count($chunk) === 1) {
-            return $this->annotatePluFailureWithProduct($result, $chunk[0]);
-        }
-
-        return $result;
+        return $this->skippedPluProduct($chunk[0], $result, 'rejected');
     }
 
     /**
-     * Retry each product alone so a batch E034/E353 names the failing SKU.
+     * Retry each product alone. A rejected item is skipped; a device failure stops the batch.
      *
      * @param  list<object>  $chunk
      * @param  'upload'|'register'  $mode
@@ -384,6 +383,7 @@ class KraDeviceService
     {
         $registered = 0;
         $skipped = 0;
+        $skippedProducts = [];
         $lastResponse = null;
 
         foreach ($chunk as $product) {
@@ -391,10 +391,15 @@ class KraDeviceService
                 ? $this->uploadPluChunk([$product], $path, $batch)
                 : $this->registerPluChunk([$product], $path, $batch);
             if (! ($one['success'] ?? false)) {
-                return $one;
+                return array_merge($one, [
+                    'registered_count' => $registered + (int) ($one['registered_count'] ?? 0),
+                    'skipped_count' => $skipped + (int) ($one['skipped_count'] ?? 0),
+                    'skipped_products' => array_merge($skippedProducts, $one['skipped_products'] ?? []),
+                ]);
             }
             $registered += (int) ($one['registered_count'] ?? 0);
             $skipped += (int) ($one['skipped_count'] ?? 0);
+            $skippedProducts = array_merge($skippedProducts, $one['skipped_products'] ?? []);
             $lastResponse = $one['response'] ?? $lastResponse;
         }
 
@@ -402,7 +407,34 @@ class KraDeviceService
             'success' => true,
             'registered_count' => $registered,
             'skipped_count' => $skipped,
+            'skipped_products' => $skippedProducts,
             'response' => $lastResponse,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $result
+     * @param  'already_registered'|'rejected'  $reason
+     * @return array{success: bool, registered_count: int, skipped_count: int, skipped_products: list<array<string, string>>, response: mixed}
+     */
+    protected function skippedPluProduct(object $product, array $result, string $reason): array
+    {
+        $name = trim((string) ($product->product_name ?? ''));
+        $code = trim((string) ($product->product_code ?? ''));
+        $message = trim((string) ($result['message'] ?? ''));
+        $message = trim(preg_replace('/\.?\s*Rejected product:\s*.+$/i', '', $message) ?? $message);
+
+        return [
+            'success' => true,
+            'registered_count' => 0,
+            'skipped_count' => 1,
+            'skipped_products' => [[
+                'product_code' => $code,
+                'product_name' => $name,
+                'reason' => $reason,
+                'message' => $message,
+            ]],
+            'response' => $result['response'] ?? null,
         ];
     }
 
@@ -428,6 +460,43 @@ class KraDeviceService
         $result['product_name'] = $name;
 
         return $result;
+    }
+
+    /**
+     * The device or the link to it failed. Retrying the next product would fail the same way.
+     *
+     * @param  array<string, mixed>  $result
+     */
+    public static function isDeviceLevelPluFailure(array $result): bool
+    {
+        $code = (string) ($result['error_code'] ?? '');
+        if (in_array($code, ['901', '902', '903', '96', '90', '519', '518', '520', '40', '99'], true)) {
+            return true;
+        }
+
+        $raw = $result['technical_message'] ?? $result['message'] ?? $result['response'] ?? '';
+        $haystack = strtolower(trim((string) ($result['message'] ?? '')).' '.trim(is_string($raw) ? $raw : (json_encode($raw) ?: '')));
+
+        foreach ([
+            'device not initialized',
+            'not initialized',
+            'could not reach',
+            'connection refused',
+            'timed out',
+            'did not respond',
+            'not communicating',
+            'disconnected',
+            'kra agent',
+            'comstore',
+            'has not checked in',
+            'has never checked in',
+        ] as $needle) {
+            if (str_contains($haystack, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** @param  array<string, mixed>  $result */
@@ -487,19 +556,52 @@ class KraDeviceService
             || str_contains($haystack, 'ALREADY ON THE KRA DEVICE');
     }
 
-    protected function registrationSummaryMessage(int $registered, int $skipped): string
+    /**
+     * @param  list<array<string, string>>  $skippedProducts
+     */
+    protected function registrationSummaryMessage(int $registered, int $skipped, array $skippedProducts = []): string
     {
-        if ($registered === 0 && $skipped > 0) {
+        $rejected = array_values(array_filter(
+            $skippedProducts,
+            fn (array $row) => ($row['reason'] ?? '') !== 'already_registered',
+        ));
+        $already = max(0, $skipped - count($rejected));
+
+        if ($registered === 0 && $rejected === [] && $skipped > 0) {
             return $skipped === 1
                 ? '1 product was already on the KRA device (skipped).'
                 : "{$skipped} products were already on the KRA device (skipped).";
         }
 
-        if ($skipped > 0) {
-            return "Registered {$registered} product(s) on KRA device; {$skipped} already on device (skipped).";
+        $parts = [];
+        if ($registered > 0 || $rejected === []) {
+            $parts[] = "Registered {$registered} product(s) on KRA device.";
+        }
+        if ($already > 0) {
+            $parts[] = $already === 1
+                ? '1 already on device (skipped).'
+                : "{$already} already on device (skipped).";
+        }
+        if ($rejected !== []) {
+            $labels = [];
+            foreach (array_slice($rejected, 0, 8) as $row) {
+                $name = trim((string) ($row['product_name'] ?? ''));
+                $code = trim((string) ($row['product_code'] ?? ''));
+                $label = $code !== ''
+                    ? ($name !== '' ? "{$name} ({$code})" : $code)
+                    : ($name !== '' ? $name : 'a product');
+                $reason = trim((string) ($row['message'] ?? ''));
+                $labels[] = $reason !== '' ? "{$label} — {$reason}" : $label;
+            }
+            $more = count($rejected) - count($labels);
+            $list = implode('; ', $labels);
+            if ($more > 0) {
+                $list .= "; and {$more} more";
+            }
+            $parts[] = 'Skipped '.count($rejected).' with errors: '.$list.'.';
         }
 
-        return "Registered {$registered} product(s) on KRA device.";
+        return implode(' ', $parts);
     }
 
     public function generateInvoiceNumber(): string

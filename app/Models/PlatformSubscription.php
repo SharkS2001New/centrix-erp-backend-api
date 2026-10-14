@@ -10,7 +10,7 @@ class PlatformSubscription extends Model
     protected $fillable = [
         'organization_id', 'plan_id', 'status', 'seat_count',
         'current_period_start', 'current_period_end', 'is_trial', 'trial_ends_at',
-        'first_payment_price', 'renewal_price', 'amount', 'currency',
+        'first_payment_price', 'renewal_price', 'amount', 'currency', 'billing_cycle',
         'license_basis', 'workspace_keys', 'module_keys', 'contract_id', 'invoice_id', 'initial_invoice_id', 'reminder_log',
     ];
 

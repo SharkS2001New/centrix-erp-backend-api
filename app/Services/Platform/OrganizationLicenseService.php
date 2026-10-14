@@ -87,6 +87,9 @@ class OrganizationLicenseService
             'days_remaining' => $daysRemaining,
             'warning_days' => self::WARNING_DAYS,
             'plan_name' => $sub->plan?->name,
+            'plan_id' => $sub->plan_id,
+            'billing_cycle' => $this->billingCycle($sub),
+            'renewal_amount' => $this->renewalAmount($sub),
             'subscription_id' => $sub->id,
             'token_balance' => $this->tokenBalanceFor($org),
             'sale_tokens' => app(BillingPolicy::class)->saleCost(),
@@ -447,6 +450,10 @@ class OrganizationLicenseService
             'contract_id' => $payload['contract_id'] ?? null,
         ];
 
+        if (Schema::hasColumn('platform_subscriptions', 'billing_cycle')) {
+            $attrs['billing_cycle'] = $payload['billing_cycle'] ?? $this->billingCycleForInterval($plan?->interval);
+        }
+
         if (array_key_exists('invoice_id', $payload)) {
             $attrs['invoice_id'] = $payload['invoice_id'];
         }
@@ -465,6 +472,47 @@ class OrganizationLicenseService
             ['organization_id' => $org->id],
             $attrs,
         )->load($with);
+    }
+
+    public function billingCycle(?PlatformSubscription $subscription): string
+    {
+        if (! $subscription) {
+            return 'monthly';
+        }
+
+        $stored = strtolower(trim((string) ($subscription->billing_cycle ?? '')));
+        if (in_array($stored, ['yearly', 'monthly'], true)) {
+            return $stored;
+        }
+
+        return $this->billingCycleForInterval($subscription->plan?->interval);
+    }
+
+    public function billingCycleForInterval(?string $interval): string
+    {
+        $interval = strtolower(trim((string) $interval));
+
+        return in_array($interval, ['annual', 'yearly', 'year'], true) ? 'yearly' : 'monthly';
+    }
+
+    public function renewalAmount(?PlatformSubscription $subscription): ?float
+    {
+        if (! $subscription) {
+            return null;
+        }
+
+        $saved = (float) ($subscription->renewal_price ?? 0);
+        if ($saved > 0) {
+            return round($saved, 2);
+        }
+
+        if ($this->billingCycle($subscription) !== 'yearly') {
+            return null;
+        }
+
+        $yearly = (float) ($subscription->plan?->yearly_price ?? 0);
+
+        return $yearly > 0 ? round($yearly, 2) : null;
     }
 
     /** Next period end from start + plan interval (yearly/annual → +1 calendar year). */

@@ -20,6 +20,7 @@ use App\Services\WhatsApp\WhatsAppSettingsResolver;
 use App\Support\PhoneNumber;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\Rule;
 
 class PlatformPaybillController extends Controller
 {
@@ -173,7 +174,21 @@ class PlatformPaybillController extends Controller
             return response()->json(['message' => 'No organisation on this login.'], 422);
         }
 
-        $billing = $request->input('billing') === 'yearly' ? 'yearly' : ($request->input('billing') === 'token' ? 'token' : 'monthly');
+        $billing = $request->input('billing') === 'yearly' ? 'yearly' : ($request->input('billing') === 'renew' ? 'renew' : ($request->input('billing') === 'token' ? 'token' : 'monthly'));
+        if ($billing === 'renew') {
+            $checkout = $this->paybill->startRenewalCheckout($org);
+            $instructions = $this->paybill->instructionsFor($org, null);
+            $sent = $this->notifyAdmin($org, $checkout->plan_id ? PlatformPlan::query()->find($checkout->plan_id) : null, $checkout, $instructions);
+
+            return response()->json([
+                'message' => $sent
+                    ? 'Centrix has been notified on WhatsApp. Pay the Paybill with your organisation code as the account number.'
+                    : 'WhatsApp could not be sent. Pay the Paybill with your organisation code, then enter the M-Pesa code and check now.',
+                'whatsapp_sent' => $sent,
+                'checkout' => $this->checkoutPayload($checkout),
+                'paybill' => $instructions,
+            ]);
+        }
         if ($billing === 'token') {
             if ($off = $this->tokensTurnedOff()) {
                 return $off;
@@ -224,11 +239,12 @@ class PlatformPaybillController extends Controller
             return response()->json(['message' => 'No organisation on this login.'], 422);
         }
 
+        $needsPlan = ! in_array($request->input('billing'), ['token', 'renew'], true);
         $data = $request->validate([
-            'plan_id' => 'required_unless:billing,token|integer',
-            'months' => 'required_unless:billing,token|integer|min:1|max:36',
+            'plan_id' => [Rule::requiredIf($needsPlan), 'nullable', 'integer'],
+            'months' => [Rule::requiredIf($needsPlan), 'nullable', 'integer', 'min:1', 'max:36'],
             'phone' => 'required|string|max:20',
-            'billing' => 'sometimes|in:monthly,yearly,token',
+            'billing' => 'sometimes|in:monthly,yearly,token,renew',
         ]);
 
         $phone = PhoneNumber::normalize($data['phone']);
@@ -236,8 +252,15 @@ class PlatformPaybillController extends Controller
             return response()->json(['message' => 'Enter a valid M-Pesa phone number.'], 422);
         }
 
-        $billing = ($data['billing'] ?? 'monthly') === 'yearly' ? 'yearly' : (($data['billing'] ?? 'monthly') === 'token' ? 'token' : 'monthly');
-        if ($billing === 'token') {
+        $billing = match ($data['billing'] ?? 'monthly') {
+            'yearly' => 'yearly',
+            'token' => 'token',
+            'renew' => 'renew',
+            default => 'monthly',
+        };
+        if ($billing === 'renew') {
+            $checkout = $this->paybill->startRenewalCheckout($org, $phone);
+        } elseif ($billing === 'token') {
             if ($off = $this->tokensTurnedOff()) {
                 return $off;
             }
@@ -336,11 +359,18 @@ class PlatformPaybillController extends Controller
             'mpesa_code' => 'nullable|string|max:20',
             'plan_id' => 'nullable|integer',
             'months' => 'nullable|integer|min:1|max:36',
-            'billing' => 'nullable|in:monthly,yearly,token',
+            'billing' => 'nullable|in:monthly,yearly,token,renew',
         ]);
 
-        $billing = ($data['billing'] ?? 'monthly') === 'yearly' ? 'yearly' : (($data['billing'] ?? '') === 'token' ? 'token' : 'monthly');
-        if ($billing === 'token') {
+        $billing = match ($data['billing'] ?? 'monthly') {
+            'yearly' => 'yearly',
+            'token' => 'token',
+            'renew' => 'renew',
+            default => 'monthly',
+        };
+        if ($billing === 'renew') {
+            $this->paybill->startRenewalCheckout($org);
+        } elseif ($billing === 'token') {
             if ($off = $this->tokensTurnedOff()) {
                 return $off;
             }
