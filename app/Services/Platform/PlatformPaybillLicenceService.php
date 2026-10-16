@@ -1089,11 +1089,17 @@ class PlatformPaybillLicenceService
             ->whereIn('id', $orgIds)
             ->get()
             ->each(function (Organization $org) use ($plan): void {
-                if ($this->isPlatform($org)) {
-                    return;
-                }
-                $this->applyPlanEntitlements($org, $plan);
+                $this->applyPlanToOrganization($org, $plan);
             });
+    }
+
+    /** Apply a payment package (paid or trial) onto what the organisation can open. */
+    public function applyPlanToOrganization(Organization $org, PlatformPlan $plan): void
+    {
+        if ($this->isPlatform($org)) {
+            return;
+        }
+        $this->applyPlanEntitlements($org, $plan);
     }
 
     protected function applyPlanEntitlements(Organization $org, PlatformPlan $plan): void

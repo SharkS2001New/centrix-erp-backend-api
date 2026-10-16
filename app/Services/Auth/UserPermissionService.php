@@ -583,8 +583,8 @@ class UserPermissionService
     }
 
     /**
-     * A paid package limits features from the organisation record.
-     * Package 1 limits them from the free-plan card while access is free.
+     * Package 1 limits features while access is free.
+     * A paid or trial package limits features from that plan.
      *
      * @param  array<string, bool>  $map
      * @return array<string, bool>
@@ -594,7 +594,7 @@ class UserPermissionService
         $catalog = app(\App\Services\Platform\PackageFeatureCatalog::class);
         $licenses = app(\App\Services\Platform\OrganizationLicenseService::class);
         $mode = $this->packageCeilingMode($licenses, $org);
-        if (in_array($mode, ['free', 'trial'], true)) {
+        if ($mode === 'free') {
             $industry = app(\App\Services\Platform\FreePlanAccess::class)->industryFor($org);
             $features = app(\App\Services\Platform\FreePlanAccess::class)->stored()[$industry]['feature_keys'] ?? [];
             $allowed = [];

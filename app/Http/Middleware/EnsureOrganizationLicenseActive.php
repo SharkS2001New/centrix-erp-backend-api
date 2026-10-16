@@ -40,6 +40,18 @@ class EnsureOrganizationLicenseActive
 
         $license = $this->licenses->resolveForOrganization($org);
         $mode = $this->licenses->accessMode($license);
+
+        if ($this->licenses->blocksUnpaidAccess($license)) {
+            $missing = ! $license || ($license['status'] ?? '') === 'missing';
+            throw new HttpResponseException(response()->json([
+                'message' => $missing
+                    ? 'This organization does not have an active Centrix subscription. Contact your Centrix administrator to activate a plan.'
+                    : 'This organization’s Centrix licence has expired. Contact your Centrix administrator to renew or extend.',
+                'code' => $missing ? 'organization_subscription_required' : 'organization_license_expired',
+                'license' => $license,
+            ], 403));
+        }
+
         $onPackageOne = $this->licenses->usesPackageOne($license);
 
         $allowed = $onPackageOne

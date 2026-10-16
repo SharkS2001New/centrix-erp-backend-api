@@ -15,6 +15,8 @@ class BillingPolicy
     {
         return [
             'tokens_enabled' => true,
+            // When payment is missing or expired: sign in on Package 1 (true), or refuse login (false).
+            'allow_unpaid_login' => true,
             'token_value_kes' => 1,
             'token_pack_tokens' => 500,
             'token_pack_price_kes' => 500,
@@ -60,6 +62,18 @@ class BillingPolicy
         return ($policy['tokens_enabled'] ?? true) === true;
     }
 
+    /** Unpaid organisations may sign in and use Package 1. */
+    public function allowsUnpaidLogin(): bool
+    {
+        return $this->allowsUnpaidLoginFrom($this->current());
+    }
+
+    /** @param  array<string, mixed>  $policy */
+    public function allowsUnpaidLoginFrom(array $policy): bool
+    {
+        return ($policy['allow_unpaid_login'] ?? true) === true;
+    }
+
     /** Tokens spent once, when a completed sale is saved online or an offline order syncs. */
     public function saleCost(): int
     {
@@ -92,6 +106,9 @@ class BillingPolicy
             'tokens_enabled' => array_key_exists('tokens_enabled', $incoming)
                 ? filter_var($incoming['tokens_enabled'], FILTER_VALIDATE_BOOLEAN)
                 : (bool) $defaults['tokens_enabled'],
+            'allow_unpaid_login' => array_key_exists('allow_unpaid_login', $incoming)
+                ? filter_var($incoming['allow_unpaid_login'], FILTER_VALIDATE_BOOLEAN)
+                : (bool) $defaults['allow_unpaid_login'],
             'token_value_kes' => max(1, (int) ($incoming['token_value_kes'] ?? $defaults['token_value_kes'])),
             'token_pack_tokens' => max(1, (int) ($incoming['token_pack_tokens'] ?? $defaults['token_pack_tokens'])),
             'token_pack_price_kes' => max(0, (int) ($incoming['token_pack_price_kes'] ?? $defaults['token_pack_price_kes'])),

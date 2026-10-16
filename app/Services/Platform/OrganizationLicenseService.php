@@ -137,7 +137,9 @@ class OrganizationLicenseService
      */
     protected function stampAccess(array $license): array
     {
-        $license['tokens_enabled'] = app(BillingPolicy::class)->tokensEnabled();
+        $policy = app(BillingPolicy::class);
+        $license['tokens_enabled'] = $policy->tokensEnabled();
+        $license['allow_unpaid_login'] = $policy->allowsUnpaidLogin();
         $license['access'] = $this->accessMode($license);
 
         return $license;
@@ -155,7 +157,7 @@ class OrganizationLicenseService
     }
 
     /**
-     * trial = free trial still inside its dates — Package 1 pages only.
+     * trial = free trial of a payment package — that package's modules only.
      * full = paid monthly or yearly. token = shilling balance.
      * free = no subscription — Package 1 pages only.
      * expired = trial or paid period ended — products, customers, suppliers, sales reports.
@@ -292,10 +294,23 @@ class OrganizationLicenseService
         return in_array($this->accessMode($license), ['free', 'expired'], true);
     }
 
-    /** Package 1 (free plan card) while unpaid or still on the free trial. */
+    /** Package 1 (free plan card) when the organisation has no paid or trial package. */
     public function usesPackageOne(?array $license): bool
     {
-        return in_array($this->accessMode($license), ['free', 'trial'], true);
+        return $this->accessMode($license) === 'free';
+    }
+
+    /**
+     * Refuse sign-in and API access when payment is missing or expired
+     * and the platform admin turned unpaid login off.
+     */
+    public function blocksUnpaidAccess(?array $license): bool
+    {
+        if (! $this->needsPayment($license)) {
+            return false;
+        }
+
+        return ! app(BillingPolicy::class)->allowsUnpaidLogin();
     }
 
     /**
@@ -383,7 +398,7 @@ class OrganizationLicenseService
         }
 
         $license = $this->resolveForOrganization($org);
-        if (! $this->isExpired($license)) {
+        if (! $this->blocksUnpaidAccess($license)) {
             return;
         }
 
@@ -474,10 +489,16 @@ class OrganizationLicenseService
             $with[] = 'initialInvoice';
         }
 
-        return PlatformSubscription::query()->updateOrCreate(
+        $subscription = PlatformSubscription::query()->updateOrCreate(
             ['organization_id' => $org->id],
             $attrs,
         )->load($with);
+
+        if ($plan) {
+            app(PlatformPaybillLicenceService::class)->applyPlanToOrganization($org, $plan);
+        }
+
+        return $subscription;
     }
 
     public function billingCycle(?PlatformSubscription $subscription): string

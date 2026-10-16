@@ -550,6 +550,7 @@ class CapabilityGate
 
         $licenses = app(\App\Services\Platform\OrganizationLicenseService::class);
         $license = $licenses->resolveForOrganization($this->organization);
+        $mode = $licenses->accessMode($license);
         if ($licenses->usesPackageOne($license)) {
             $free = app(\App\Services\Platform\FreePlanAccess::class);
             $industry = $free->industryFor($this->organization);
@@ -562,12 +563,13 @@ class CapabilityGate
             ];
         }
 
-        if (! in_array($licenses->accessMode($license), ['full', 'token'], true)) {
-            return $this->packageCache = null;
+        // Paid and trial packages use the assigned plan's modules and features.
+        if (in_array($mode, ['full', 'trial', 'token'], true)) {
+            return $this->packageCache = app(\App\Services\Platform\PackageFeatureCatalog::class)
+                ->packageFor($this->organization);
         }
 
-        return $this->packageCache = app(\App\Services\Platform\PackageFeatureCatalog::class)
-            ->packageFor($this->organization);
+        return $this->packageCache = null;
     }
 
     /**

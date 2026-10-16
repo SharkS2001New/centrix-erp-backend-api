@@ -36,7 +36,7 @@ trait RespondsWithAuthSession
 
                 if ($licenses->isPlatformOrganization($org instanceof \App\Models\Organization ? $org : null)) {
                     // Platform tenant users are not subscription-gated.
-                } elseif ($licenses->isExpired($license)) {
+                } elseif ($licenses->blocksUnpaidAccess($license)) {
                     if ($org instanceof \App\Models\Organization) {
                         $licenses->revokeOrganizationSessions($org);
                     }

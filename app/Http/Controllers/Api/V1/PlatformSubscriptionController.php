@@ -66,7 +66,12 @@ class PlatformSubscriptionController extends Controller
         $org = Organization::query()->findOrFail($data['organization_id']);
         $sub = $this->licenses->createOrUpdateForOrganization($org, $data);
 
-        return response()->json(['data' => $sub, 'message' => 'Subscription assigned.'], 201);
+        return response()->json([
+            'data' => $sub,
+            'message' => ! empty($data['is_trial']) || ($data['status'] ?? '') === 'trialing'
+                ? 'Free trial started. The organisation opens the modules on that package.'
+                : 'Subscription assigned.',
+        ], 201);
     }
 
     public function update(Request $request, PlatformSubscription $platform_subscription)
@@ -135,6 +140,15 @@ class PlatformSubscriptionController extends Controller
         }
 
         $platform_subscription->update($data);
+        $fresh = $platform_subscription->fresh();
+        $plan = $fresh?->plan;
+        if ($plan && ($planIdChanging || array_key_exists('plan_id', $data))) {
+            $org = $fresh->organization ?? Organization::query()->find($fresh->organization_id);
+            if ($org) {
+                app(\App\Services\Platform\PlatformPaybillLicenceService::class)
+                    ->applyPlanToOrganization($org, $plan);
+            }
+        }
 
         $with = ['organization', 'plan', 'invoice'];
         if (Schema::hasColumn('platform_subscriptions', 'initial_invoice_id')) {
@@ -142,7 +156,7 @@ class PlatformSubscriptionController extends Controller
         }
 
         return response()->json([
-            'data' => $platform_subscription->fresh()->load($with),
+            'data' => $fresh->load($with),
             'message' => $planIdChanging ? 'Subscription package updated.' : 'Subscription updated.',
         ]);
     }
