@@ -151,7 +151,18 @@ class OrganizationLicenseService
     protected function finishLicense(Organization $org, array $license): array
     {
         $license = $this->stampAccess($license);
-        $license['free_plan'] = app(FreePlanAccess::class)->publicGrant($org);
+        $free = app(FreePlanAccess::class);
+        $license['free_plan'] = $free->publicGrant($org);
+
+        // After a trial or paid period ends, the organisation is on Package 1 until they pay again.
+        if ($this->usesPackageOne($license)) {
+            $grant = $free->grantFor($free->industryFor($org), $free->stored()[$free->industryFor($org)] ?? []);
+            $license['modules'] = array_values($grant['workspace_keys'] ?? []);
+            $license['current_package'] = $free->name();
+            $license['is_trial'] = false;
+        } else {
+            $license['current_package'] = $license['plan_name'] ?? null;
+        }
 
         return $license;
     }
@@ -160,7 +171,7 @@ class OrganizationLicenseService
      * trial = free trial of a payment package — that package's modules only.
      * full = paid monthly or yearly. token = shilling balance.
      * free = no subscription — Package 1 pages only.
-     * expired = trial or paid period ended — products, customers, suppliers, sales reports.
+     * expired = trial or paid period ended — Package 1 pages only until they pay again.
      */
     public function accessMode(?array $license): string
     {
@@ -294,10 +305,10 @@ class OrganizationLicenseService
         return in_array($this->accessMode($license), ['free', 'expired'], true);
     }
 
-    /** Package 1 (free plan card) when the organisation has no paid or trial package. */
+    /** Package 1 when there is no paid or trial package, or after that package ended. */
     public function usesPackageOne(?array $license): bool
     {
-        return $this->accessMode($license) === 'free';
+        return in_array($this->accessMode($license), ['free', 'expired'], true);
     }
 
     /**
@@ -453,17 +464,19 @@ class OrganizationLicenseService
             true,
         );
 
+        $fromPlan = $plan ? $this->commercialTermsFromPlan($plan) : [];
+
         $attrs = [
             'plan_id' => $plan?->id,
             'status' => $status,
-            'seat_count' => (int) ($payload['seat_count'] ?? $plan?->seat_limit ?? 1),
+            'seat_count' => (int) ($payload['seat_count'] ?? $fromPlan['seat_count'] ?? 1),
             'current_period_start' => $start,
             'current_period_end' => $end,
             'is_trial' => $isTrial,
             'trial_ends_at' => $isTrial ? $end : null,
-            'first_payment_price' => $payload['first_payment_price'] ?? $plan?->first_payment_price ?? $plan?->price,
-            'renewal_price' => $payload['renewal_price'] ?? $plan?->renewal_price ?? $plan?->price,
-            'amount' => $payload['amount'] ?? $payload['renewal_price'] ?? $plan?->renewal_price ?? $plan?->price,
+            'first_payment_price' => $payload['first_payment_price'] ?? $fromPlan['first_payment_price'] ?? null,
+            'renewal_price' => $payload['renewal_price'] ?? $fromPlan['renewal_price'] ?? null,
+            'amount' => $payload['amount'] ?? $payload['renewal_price'] ?? $fromPlan['amount'] ?? null,
             'currency' => $payload['currency'] ?? $plan?->currency ?? 'KES',
             'license_basis' => $payload['license_basis'] ?? $plan?->license_basis ?? 'org',
             'workspace_keys' => $payload['workspace_keys'] ?? $plan?->workspace_keys,
@@ -472,7 +485,9 @@ class OrganizationLicenseService
         ];
 
         if (Schema::hasColumn('platform_subscriptions', 'billing_cycle')) {
-            $attrs['billing_cycle'] = $payload['billing_cycle'] ?? $this->billingCycleForInterval($plan?->interval);
+            $attrs['billing_cycle'] = $payload['billing_cycle']
+                ?? $fromPlan['billing_cycle']
+                ?? $this->billingCycleForInterval($plan?->interval);
         }
 
         if (array_key_exists('invoice_id', $payload)) {
@@ -499,6 +514,52 @@ class OrganizationLicenseService
         }
 
         return $subscription;
+    }
+
+    /**
+     * Seats and money terms taken from a payment package.
+     * Monthly and yearly subscriptions use the package amount as the renewal amount.
+     * Yearly one-time uses the package yearly price now and the agreed renewal amount later.
+     *
+     * @return array{billing_cycle: string, first_payment_price: float, renewal_price: float, amount: float, seat_count: int}
+     */
+    public function commercialTermsFromPlan(\App\Models\PlatformPlan $plan): array
+    {
+        $seats = max(1, (int) ($plan->seat_limit ?? 1));
+        $yearly = in_array(strtolower((string) $plan->interval), ['annual', 'yearly'], true);
+        if (! $yearly) {
+            $amount = (float) ($plan->monthly_price ?? $plan->renewal_price ?? $plan->price ?? 0);
+
+            return [
+                'billing_cycle' => 'monthly',
+                'first_payment_price' => $amount,
+                'renewal_price' => $amount,
+                'amount' => $amount,
+                'seat_count' => $seats,
+            ];
+        }
+
+        $yearAmount = (float) ($plan->yearly_price ?? $plan->price ?? 0);
+        $mode = strtolower((string) ($plan->yearly_billing ?? 'one_time'));
+        if ($mode === 'subscription') {
+            return [
+                'billing_cycle' => 'yearly',
+                'first_payment_price' => $yearAmount,
+                'renewal_price' => $yearAmount,
+                'amount' => $yearAmount,
+                'seat_count' => $seats,
+            ];
+        }
+
+        $renewal = (float) ($plan->renewal_price ?? $yearAmount);
+
+        return [
+            'billing_cycle' => 'yearly',
+            'first_payment_price' => $yearAmount,
+            'renewal_price' => $renewal,
+            'amount' => $yearAmount,
+            'seat_count' => $seats,
+        ];
     }
 
     public function billingCycle(?PlatformSubscription $subscription): string

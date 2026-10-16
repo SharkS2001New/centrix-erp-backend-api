@@ -120,22 +120,26 @@ class PlatformSubscriptionController extends Controller
         $planIdChanging = array_key_exists('plan_id', $data)
             && (int) ($data['plan_id'] ?? 0) !== (int) ($platform_subscription->plan_id ?? 0);
 
-        // Changing package: pull commercial terms from the new plan unless overridden.
+        // Changing package: pull seats and money terms from the new plan unless overridden.
         if ($planIdChanging && $syncFromPlan) {
             $plan = $data['plan_id']
                 ? \App\Models\PlatformPlan::query()->find($data['plan_id'])
                 : null;
             if ($plan) {
-                $data['first_payment_price'] ??= $plan->first_payment_price ?? $plan->price;
-                $data['renewal_price'] ??= $plan->renewal_price ?? $plan->price;
+                $terms = $this->licenses->commercialTermsFromPlan($plan);
+                $data['first_payment_price'] ??= $terms['first_payment_price'];
+                $data['renewal_price'] ??= $terms['renewal_price'];
+                $data['amount'] = $data['renewal_price'] ?? $terms['amount'];
                 $data['currency'] ??= $plan->currency ?? $platform_subscription->currency;
                 $data['license_basis'] ??= $plan->license_basis ?? $platform_subscription->license_basis;
                 $data['workspace_keys'] ??= $plan->workspace_keys;
                 $data['module_keys'] ??= $plan->module_keys;
-                if (! array_key_exists('seat_count', $data) && $plan->seat_limit) {
-                    $data['seat_count'] = (int) $plan->seat_limit;
+                if (! array_key_exists('seat_count', $data)) {
+                    $data['seat_count'] = $terms['seat_count'];
                 }
-                $data['amount'] = $data['renewal_price'] ?? $plan->renewal_price ?? $plan->price;
+                if (\Illuminate\Support\Facades\Schema::hasColumn('platform_subscriptions', 'billing_cycle')) {
+                    $data['billing_cycle'] ??= $terms['billing_cycle'];
+                }
             }
         }
 

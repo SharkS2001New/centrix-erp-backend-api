@@ -145,6 +145,7 @@ class PlatformPlanController extends Controller
             'industry' => 'sometimes|in:commerce,hospitality,spa,driving',
             'description' => 'nullable|string',
             'interval' => 'sometimes|in:monthly,annual',
+            'yearly_billing' => 'nullable|in:one_time,subscription',
             'license_basis' => 'sometimes|in:org,user',
             'price' => 'sometimes|numeric|min:0',
             'first_payment_price' => 'nullable|numeric|min:0',
@@ -199,6 +200,18 @@ class PlatformPlanController extends Controller
             $sections = $catalog->backofficeSections($data['feature_keys']);
             if ($sections !== null) {
                 $data['section_keys'] = $sections;
+            }
+        }
+
+        $interval = strtolower((string) ($data['interval'] ?? ''));
+        if ($interval === 'monthly') {
+            $data['yearly_billing'] = null;
+        } elseif (in_array($interval, ['annual', 'yearly'], true)) {
+            $mode = strtolower((string) ($data['yearly_billing'] ?? 'one_time'));
+            $data['yearly_billing'] = $mode === 'subscription' ? 'subscription' : 'one_time';
+            if ($data['yearly_billing'] === 'subscription' && array_key_exists('yearly_price', $data)) {
+                $data['renewal_price'] = $data['yearly_price'];
+                $data['first_payment_price'] = $data['yearly_price'];
             }
         }
 

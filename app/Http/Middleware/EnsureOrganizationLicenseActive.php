@@ -58,12 +58,17 @@ class EnsureOrganizationLicenseActive
             ? app(FreePlanAccess::class)->allowsRoute($org, $path)
             : $this->licenses->allowsLimitedRoute($path);
         if (($onPackageOne || $this->licenses->needsPayment($license)) && ! $allowed) {
+            $planName = trim((string) ($license['plan_name'] ?? ''));
+            $freeName = trim((string) (($license['current_package'] ?? null) ?: ($license['free_plan']['name'] ?? null) ?: app(FreePlanAccess::class)->name()));
+            $expiredMessage = $planName !== ''
+                ? "Your trial or paid period for {$planName} has ended. This organisation is now on {$freeName}, the free plan. Pay on the Centrix Paybill to open that package again."
+                : "Your trial or paid period has ended. This organisation is now on {$freeName}, the free plan. Pay on the Centrix Paybill to open a bigger plan again.";
             throw new HttpResponseException(response()->json([
                 'message' => ($license['status'] ?? '') === 'scheduled'
                     ? 'This Centrix licence opens at '.($license['starts_at'] ?? 'the scheduled time').'.'
                     : ($mode === 'expired'
-                        ? 'This Centrix licence has expired. Pay on the Centrix Paybill to restore the rest of the system. Products, customers, suppliers, and sales reports stay available.'
-                        : 'This organisation is on Package 1. Open a bigger plan to use the rest of Centrix.'),
+                        ? $expiredMessage
+                        : "This organisation is on {$freeName}, the free plan. Open a bigger plan to use the rest of Centrix."),
                 'code' => 'organization_license_upgrade_required',
                 'license' => $license,
             ], 403));

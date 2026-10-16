@@ -583,7 +583,7 @@ class UserPermissionService
     }
 
     /**
-     * Package 1 limits features while access is free.
+     * Package 1 limits features while access is free or expired.
      * A paid or trial package limits features from that plan.
      *
      * @param  array<string, bool>  $map
@@ -594,7 +594,7 @@ class UserPermissionService
         $catalog = app(\App\Services\Platform\PackageFeatureCatalog::class);
         $licenses = app(\App\Services\Platform\OrganizationLicenseService::class);
         $mode = $this->packageCeilingMode($licenses, $org);
-        if ($mode === 'free') {
+        if (in_array($mode, ['free', 'expired'], true)) {
             $industry = app(\App\Services\Platform\FreePlanAccess::class)->industryFor($org);
             $features = app(\App\Services\Platform\FreePlanAccess::class)->stored()[$industry]['feature_keys'] ?? [];
             $allowed = [];

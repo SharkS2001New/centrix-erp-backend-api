@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\Schema;
 class PlatformPlan extends Model
 {
     protected $fillable = [
-        'name', 'code', 'industry', 'description', 'interval', 'license_basis',
+        'name', 'code', 'industry', 'description', 'interval', 'yearly_billing', 'license_basis',
         'price', 'first_payment_price', 'renewal_price',
         'monthly_price', 'yearly_price', 'token_pack_price', 'token_pack_days',
         'currency',

@@ -65,22 +65,46 @@ class FreePlanAccess
         return $out;
     }
 
-    /** @return array<string, array{page_keys: list<string>}> */
+    /**
+     * @return array<string, mixed>
+     */
     public function stored(): array
     {
         if (! Schema::hasTable('platform_billing_settings') || ! Schema::hasColumn('platform_billing_settings', 'free_plan_access')) {
-            return $this->normalize([]);
+            $out = $this->normalize([]);
+            $out['name'] = $this->name([]);
+
+            return $out;
         }
 
         $raw = PlatformBillingSetting::current()?->free_plan_access;
+        $raw = is_array($raw) ? $raw : [];
+        $out = $this->normalize($raw);
+        $out['name'] = $this->name($raw);
 
-        return $this->normalize(is_array($raw) ? $raw : []);
+        return $out;
+    }
+
+    /** Display name for the free plan card. Defaults to Package 1. */
+    public function name(?array $raw = null): string
+    {
+        if ($raw === null) {
+            if (! Schema::hasTable('platform_billing_settings') || ! Schema::hasColumn('platform_billing_settings', 'free_plan_access')) {
+                return (string) config('free_plan_access.name', 'Package 1');
+            }
+            $raw = PlatformBillingSetting::current()?->free_plan_access;
+            $raw = is_array($raw) ? $raw : [];
+        }
+        $name = trim((string) ($raw['name'] ?? ''));
+
+        return $name !== '' ? $name : (string) config('free_plan_access.name', 'Package 1');
     }
 
     /** @param  array<string, mixed>  $incoming */
     public function persist(PlatformBillingSetting $settings, array $incoming): array
     {
         $normalized = $this->normalize($incoming);
+        $normalized['name'] = $this->name($incoming);
         if (Schema::hasColumn('platform_billing_settings', 'free_plan_access')) {
             $settings->free_plan_access = $normalized;
             $settings->save();
@@ -173,7 +197,7 @@ class FreePlanAccess
         $grant = $this->grantFor($industry, $this->stored()[$industry] ?? []);
 
         return [
-            'name' => (string) config('free_plan_access.name', 'Package 1'),
+            'name' => $this->name(),
             'industry' => $grant['industry'],
             'page_keys' => $grant['page_keys'],
             'pages' => $grant['pages'],
