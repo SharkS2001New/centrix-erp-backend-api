@@ -155,10 +155,10 @@ class OrganizationLicenseService
     }
 
     /**
-     * trial = free trial still inside its dates, full system.
+     * trial = free trial still inside its dates — Package 1 pages only.
      * full = paid monthly or yearly. token = shilling balance.
-     * free = no subscription. expired = trial or paid period ended.
-     * Free and expired users stay signed in with a limited set of pages.
+     * free = no subscription — Package 1 pages only.
+     * expired = trial or paid period ended — products, customers, suppliers, sales reports.
      */
     public function accessMode(?array $license): string
     {
@@ -290,6 +290,12 @@ class OrganizationLicenseService
     public function needsPayment(?array $license): bool
     {
         return in_array($this->accessMode($license), ['free', 'expired'], true);
+    }
+
+    /** Package 1 (free plan card) while unpaid or still on the free trial. */
+    public function usesPackageOne(?array $license): bool
+    {
+        return in_array($this->accessMode($license), ['free', 'trial'], true);
     }
 
     /**

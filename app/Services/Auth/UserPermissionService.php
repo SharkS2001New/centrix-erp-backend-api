@@ -593,7 +593,8 @@ class UserPermissionService
     {
         $catalog = app(\App\Services\Platform\PackageFeatureCatalog::class);
         $licenses = app(\App\Services\Platform\OrganizationLicenseService::class);
-        if ($this->packageCeilingMode($licenses, $org) === 'free') {
+        $mode = $this->packageCeilingMode($licenses, $org);
+        if (in_array($mode, ['free', 'trial'], true)) {
             $industry = app(\App\Services\Platform\FreePlanAccess::class)->industryFor($org);
             $features = app(\App\Services\Platform\FreePlanAccess::class)->stored()[$industry]['feature_keys'] ?? [];
             $allowed = [];

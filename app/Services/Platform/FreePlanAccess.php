@@ -244,19 +244,33 @@ class FreePlanAccess
         $payload['modules'] = app(ApplicationProvisioner::class)
             ->enabledModulesFromApplications($applications, false);
 
+        $settings = is_array($payload['module_settings'] ?? null) ? $payload['module_settings'] : [];
+        $sales = is_array($settings['sales'] ?? null) ? $settings['sales'] : [];
+        $sales['enable_mobile_orders'] = in_array('mobile', $grant['workspace_keys'], true);
+        $sales['enable_manager_app'] = in_array('manager', $grant['workspace_keys'], true);
+
         if ($grant['industry'] === 'commerce') {
             $sections = array_fill_keys(BackofficeSections::SECTION_KEYS, false);
-            foreach ($grant['sections'] as $section) {
+            $fromFeatures = app(PackageFeatureCatalog::class)->backofficeSections($grant['feature_keys'] ?? []);
+            $sectionIds = $fromFeatures !== null ? $fromFeatures : $grant['sections'];
+            foreach ($sectionIds as $section) {
                 if (array_key_exists($section, $sections)) {
                     $sections[$section] = true;
                 }
             }
-            $settings = is_array($payload['module_settings'] ?? null) ? $payload['module_settings'] : [];
-            $sales = is_array($settings['sales'] ?? null) ? $settings['sales'] : [];
             $sales['backoffice_sections'] = $sections;
-            $settings['sales'] = $sales;
-            $payload['module_settings'] = $settings;
         }
+
+        $settings['sales'] = $sales;
+        $settings['licence'] = [
+            'plan_id' => null,
+            'modules' => $grant['workspace_keys'],
+            'features' => $grant['feature_keys'] ?? [],
+        ];
+        $this->applyFlagModule($settings, 'spa', $grant['feature_keys'] ?? [], 'spa');
+        $this->applyFlagModule($settings, 'driving', $grant['feature_keys'] ?? [], 'driving');
+        $payload['module_settings'] = $settings;
+        $payload['mobile_orders_enabled'] = $sales['enable_mobile_orders'];
 
         if (isset($payload['workspaces']) && is_array($payload['workspaces'])) {
             $allowed = $grant['workspace_keys'];
@@ -269,7 +283,81 @@ class FreePlanAccess
             }
         }
 
+        $channels = [];
+        if (
+            in_array('backoffice', $grant['workspace_keys'], true)
+            || in_array('hospitality_backoffice', $grant['workspace_keys'], true)
+            || in_array('spa', $grant['workspace_keys'], true)
+            || in_array('driving', $grant['workspace_keys'], true)
+            || in_array('admin', $grant['workspace_keys'], true)
+            || in_array('accounting', $grant['workspace_keys'], true)
+            || in_array('hr', $grant['workspace_keys'], true)
+        ) {
+            $channels[] = 'backoffice';
+        }
+        if (in_array('pos', $grant['workspace_keys'], true) || in_array('hotel_bar_pos', $grant['workspace_keys'], true)) {
+            $channels[] = 'pos';
+        }
+        if (in_array('mobile', $grant['workspace_keys'], true)) {
+            $channels[] = 'mobile';
+        }
+        if (in_array('manager', $grant['workspace_keys'], true)) {
+            $channels[] = 'manager';
+        }
+        $payload['allowed_login_channels'] = $channels !== [] ? $channels : ['backoffice'];
+        $payload['channels'] = array_values(array_filter([
+            in_array('pos', $grant['workspace_keys'], true) ? 'pos' : null,
+            in_array('mobile', $grant['workspace_keys'], true) ? 'mobile' : null,
+            in_array('backoffice', $grant['workspace_keys'], true) ? 'backend' : null,
+        ]));
+
         return $payload;
+    }
+
+    /**
+     * @param  array<string, mixed>  $settings
+     * @param  array<string, list<string>>  $featureKeys
+     */
+    protected function applyFlagModule(array &$settings, string $moduleId, array $featureKeys, string $industry): void
+    {
+        if (! array_key_exists($moduleId, $featureKeys)) {
+            $section = is_array($settings[$moduleId] ?? null) ? $settings[$moduleId] : [];
+            $section['features'] = [];
+            foreach (app(PackageFeatureCatalog::class)->forIndustry($industry) as $module) {
+                if (($module['id'] ?? '') !== $moduleId) {
+                    continue;
+                }
+                foreach ($module['features'] ?? [] as $feature) {
+                    $flag = (string) ($feature['flag'] ?? '');
+                    if ($flag !== '') {
+                        $section['features'][$flag] = false;
+                    }
+                }
+            }
+            if (($section['features'] ?? []) !== []) {
+                $settings[$moduleId] = $section;
+            }
+
+            return;
+        }
+
+        $selected = array_flip(array_map('strval', $featureKeys[$moduleId]));
+        $flags = [];
+        foreach (app(PackageFeatureCatalog::class)->forIndustry($industry) as $module) {
+            if (($module['id'] ?? '') !== $moduleId) {
+                continue;
+            }
+            foreach ($module['features'] ?? [] as $feature) {
+                $flag = (string) ($feature['flag'] ?? '');
+                if ($flag === '') {
+                    continue;
+                }
+                $flags[$flag] = isset($selected[(string) $feature['id']]);
+            }
+        }
+        $section = is_array($settings[$moduleId] ?? null) ? $settings[$moduleId] : [];
+        $section['features'] = $flags;
+        $settings[$moduleId] = $section;
     }
 
     public function industryFor(Organization $org): string

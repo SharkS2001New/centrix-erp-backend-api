@@ -155,7 +155,11 @@ class ErpCapabilitiesController extends Controller
             && config('erp.allow_org_provisioning');
         $payload['password_expiry'] = app(PasswordExpiryService::class)->statusForUser($user);
         $payload['license'] = app(OrganizationLicenseService::class)->resolveForOrganization($org);
-        if ($org && ! $user->is_super_admin && ($payload['license']['access'] ?? '') === 'free') {
+        if (
+            $org
+            && ! $user->is_super_admin
+            && app(\App\Services\Platform\OrganizationLicenseService::class)->usesPackageOne($payload['license'] ?? null)
+        ) {
             $payload = app(FreePlanAccess::class)->maskCapabilities($org, $payload);
         }
 

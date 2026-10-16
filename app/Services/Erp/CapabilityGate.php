@@ -544,10 +544,30 @@ class CapabilityGate
         }
 
         $this->packageResolved = true;
-        $this->packageCache = app(\App\Services\Platform\PackageFeatureCatalog::class)
-            ->packageFor($this->organization);
+        if (! $this->organization) {
+            return $this->packageCache = null;
+        }
 
-        return $this->packageCache;
+        $licenses = app(\App\Services\Platform\OrganizationLicenseService::class);
+        $license = $licenses->resolveForOrganization($this->organization);
+        if ($licenses->usesPackageOne($license)) {
+            $free = app(\App\Services\Platform\FreePlanAccess::class);
+            $industry = $free->industryFor($this->organization);
+            $features = $free->stored()[$industry]['feature_keys'] ?? [];
+            $features = is_array($features) ? $features : [];
+
+            return $this->packageCache = [
+                'modules' => array_values(array_map('strval', array_keys($features))),
+                'features' => $features,
+            ];
+        }
+
+        if (! in_array($licenses->accessMode($license), ['full', 'token'], true)) {
+            return $this->packageCache = null;
+        }
+
+        return $this->packageCache = app(\App\Services\Platform\PackageFeatureCatalog::class)
+            ->packageFor($this->organization);
     }
 
     /**

@@ -40,11 +40,12 @@ class EnsureOrganizationLicenseActive
 
         $license = $this->licenses->resolveForOrganization($org);
         $mode = $this->licenses->accessMode($license);
+        $onPackageOne = $this->licenses->usesPackageOne($license);
 
-        $allowed = $mode === 'free'
+        $allowed = $onPackageOne
             ? app(FreePlanAccess::class)->allowsRoute($org, $path)
             : $this->licenses->allowsLimitedRoute($path);
-        if ($this->licenses->needsPayment($license) && ! $allowed) {
+        if (($onPackageOne || $this->licenses->needsPayment($license)) && ! $allowed) {
             throw new HttpResponseException(response()->json([
                 'message' => ($license['status'] ?? '') === 'scheduled'
                     ? 'This Centrix licence opens at '.($license['starts_at'] ?? 'the scheduled time').'.'

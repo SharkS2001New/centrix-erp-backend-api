@@ -43,6 +43,19 @@ class OrganizationLicenseAccessTest extends TestCase
             'is_trial' => true,
             'days_remaining' => 5,
         ]));
+        $this->assertTrue($licenses->usesPackageOne([
+            'status' => 'trialing',
+            'is_trial' => true,
+            'days_remaining' => 5,
+        ]));
+        $this->assertTrue($licenses->usesPackageOne([
+            'status' => 'missing',
+        ]));
+        $this->assertFalse($licenses->usesPackageOne([
+            'status' => 'active',
+            'days_remaining' => 20,
+            'is_trial' => false,
+        ]));
         $this->assertTrue($licenses->needsPayment([
             'status' => 'expired',
             'is_trial' => true,
