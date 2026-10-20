@@ -77,6 +77,14 @@ return [
             'max_attempts' => (int) env('RATE_LIMIT_AUTH_ORG_PREVIEW', 60),
             'decay_minutes' => (int) env('RATE_LIMIT_AUTH_ORG_PREVIEW_DECAY', 1),
         ],
+        'public_free_signup' => [
+            'max_attempts' => (int) env('RATE_LIMIT_PUBLIC_FREE_SIGNUP', 8),
+            'decay_minutes' => (int) env('RATE_LIMIT_PUBLIC_FREE_SIGNUP_DECAY', 15),
+        ],
+        'public_catalogue' => [
+            'max_attempts' => (int) env('RATE_LIMIT_PUBLIC_CATALOGUE', 120),
+            'decay_minutes' => (int) env('RATE_LIMIT_PUBLIC_CATALOGUE_DECAY', 1),
+        ],
         'company_mobile_attendance' => [
             'max_attempts' => (int) env('RATE_LIMIT_COMPANY_MOBILE_ATTENDANCE', 120),
             'decay_minutes' => (int) env('RATE_LIMIT_COMPANY_MOBILE_ATTENDANCE_DECAY', 1),

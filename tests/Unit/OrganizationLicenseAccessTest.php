@@ -150,4 +150,16 @@ class OrganizationLicenseAccessTest extends TestCase
         $this->assertSame(48000.0, $licenses->renewalAmount($catalog));
         $this->assertSame('monthly', $licenses->billingCycleForInterval('monthly'));
     }
+
+    public function test_trial_days_are_capped_by_package_maximum(): void
+    {
+        $licenses = app(OrganizationLicenseService::class);
+        $plan = new \App\Models\PlatformPlan(['trial_days' => 10]);
+
+        $this->assertSame(10, $licenses->trialDaysForPlan($plan, null));
+        $this->assertSame(7, $licenses->trialDaysForPlan($plan, 7));
+        $this->assertSame(10, $licenses->trialDaysForPlan($plan, 30));
+        $this->assertSame(14, $licenses->trialDaysForPlan(null, null));
+        $this->assertSame(21, $licenses->trialDaysForPlan(null, 21));
+    }
 }

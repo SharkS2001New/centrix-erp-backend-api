@@ -154,6 +154,22 @@ class AppServiceProvider extends ServiceProvider
             )->by($request->ip());
         });
 
+        $freeSignup = config('security.rate_limits.public_free_signup');
+        RateLimiter::for('public-free-signup', function (Request $request) use ($freeSignup) {
+            return Limit::perMinutes(
+                max(1, (int) ($freeSignup['decay_minutes'] ?? 15)),
+                max(1, (int) ($freeSignup['max_attempts'] ?? 8)),
+            )->by($request->ip());
+        });
+
+        $catalogue = config('security.rate_limits.public_catalogue');
+        RateLimiter::for('public-catalogue', function (Request $request) use ($catalogue) {
+            return Limit::perMinutes(
+                max(1, (int) ($catalogue['decay_minutes'] ?? 1)),
+                max(1, (int) ($catalogue['max_attempts'] ?? 120)),
+            )->by($request->ip());
+        });
+
         $preview = config('security.rate_limits.auth_org_preview');
         RateLimiter::for('auth-org-preview', function (Request $request) use ($preview) {
             $decay = max(1, (int) ($preview['decay_minutes'] ?? 1));

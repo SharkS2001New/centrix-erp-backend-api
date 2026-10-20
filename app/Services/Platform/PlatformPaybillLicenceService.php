@@ -529,6 +529,9 @@ class PlatformPaybillLicenceService
                     'section_keys' => array_values($plan->section_keys ?? []),
                     'industry' => $plan->industry ?: 'commerce',
                     'workspace_keys' => array_values($plan->workspace_keys ?? []),
+                    'trial_days' => Schema::hasColumn('platform_plans', 'trial_days') && $plan->trial_days !== null
+                        ? (int) $plan->trial_days
+                        : null,
                     'is_recommended' => Schema::hasColumn('platform_plans', 'is_recommended') && (bool) $plan->is_recommended,
                     'discount_percent' => $discount['percent'],
                     'discount_min_months' => $discount['min_months'],

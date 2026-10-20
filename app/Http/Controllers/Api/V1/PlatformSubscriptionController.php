@@ -41,7 +41,7 @@ class PlatformSubscriptionController extends Controller
             'current_period_start' => 'nullable|date',
             'current_period_end' => 'nullable|date',
             'is_trial' => 'sometimes|boolean',
-            'trial_days' => 'nullable|integer|min:1',
+            'trial_days' => 'nullable|integer|min:1|max:365',
             'trial_ends_at' => 'nullable|date',
             'first_payment_price' => 'nullable|numeric|min:0',
             'renewal_price' => 'nullable|numeric|min:0',

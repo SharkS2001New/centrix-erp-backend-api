@@ -154,6 +154,7 @@ use App\Http\Controllers\Api\V1\PlatformWhatsAppController;
 use App\Http\Controllers\Api\V1\PlatformWhatsAppTrainingController;
 use App\Http\Controllers\Api\V1\PlatformFcmPushController;
 use App\Http\Controllers\Api\V1\WorkShiftController;
+use App\Http\Controllers\Api\V1\PublicFreeSignupController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Broadcast;
 use Illuminate\Support\Facades\Route; 
@@ -170,6 +171,14 @@ Route::prefix('v1')->group(function () {
     Route::get('health', [AuthController::class, 'health']);
     Route::get('marketing-portfolios/shared/{token}', [PlatformMarketingPortfolioController::class, 'shared'])
         ->where('token', '[A-Za-z0-9]{20,64}');
+    Route::prefix('public')->group(function () {
+        Route::get('free-signup', [PublicFreeSignupController::class, 'options'])
+            ->middleware('throttle:public-free-signup');
+        Route::post('free-signup', [PublicFreeSignupController::class, 'store'])
+            ->middleware('throttle:public-free-signup');
+        Route::get('self-serve-plans', [\App\Http\Controllers\Api\V1\PublicSelfServePlansController::class, 'index'])
+            ->middleware('throttle:public-catalogue');
+    });
     Route::get('auth/organization-preview', [AuthController::class, 'organizationPreview'])
         ->middleware('throttle:auth-org-preview');
     Route::prefix('company-mobile-attendance')->group(function () {
