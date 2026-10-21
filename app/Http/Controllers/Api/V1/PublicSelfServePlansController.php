@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\PlatformPlan;
+use App\Services\Platform\PlatformPaybillLicenceService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
 
@@ -54,7 +55,11 @@ class PublicSelfServePlansController extends Controller
         }
         $query->orderBy('monthly_price')->orderBy('name');
 
-        $plans = $query->get()->map(fn (PlatformPlan $plan) => $this->serialize($plan))->values()->all();
+        $discount = app(PlatformPaybillLicenceService::class)->durationDiscount();
+        $plans = $query->get()
+            ->map(fn (PlatformPlan $plan) => $this->serialize($plan, $discount))
+            ->values()
+            ->all();
 
         $starting = null;
         foreach ($plans as $plan) {
@@ -73,13 +78,19 @@ class PublicSelfServePlansController extends Controller
             'starting' => $starting,
             'currency' => 'KES',
             'source' => 'platform_plans',
+            /** Same duration discount platform admins set under Paybill — used for 12-month annual quotes. */
+            'duration_discount' => [
+                'percent' => $discount['percent'],
+                'min_months' => $discount['min_months'],
+            ],
         ]);
     }
 
     /**
+     * @param  array{percent: float, min_months: int}  $discount
      * @return array<string, mixed>
      */
-    protected function serialize(PlatformPlan $plan): array
+    protected function serialize(PlatformPlan $plan, array $discount): array
     {
         $highlights = [];
         foreach (is_array($plan->feature_details) ? $plan->feature_details : [] as $row) {
@@ -108,19 +119,43 @@ class PublicSelfServePlansController extends Controller
             $industry = 'commerce';
         }
 
+        $interval = in_array(strtolower((string) $plan->interval), ['annual', 'yearly', 'year'], true)
+            ? 'yearly'
+            : 'monthly';
+
+        $monthly = $plan->monthly_price !== null ? round((float) $plan->monthly_price, 2) : null;
+        $yearly = $plan->yearly_price !== null ? round((float) $plan->yearly_price, 2) : null;
+
+        // Annual toggle on marketing site: 12 × monthly minus duration discount (same as ERP prepaid).
+        $annualQuote = null;
+        if ($monthly !== null && $monthly > 0) {
+            $annualQuote = PlatformPaybillLicenceService::quoteMonths(
+                $monthly,
+                12,
+                (int) $discount['min_months'],
+                (float) $discount['percent'],
+            );
+        }
+
         return [
             'id' => (int) $plan->id,
             'name' => (string) $plan->name,
             'description' => (string) ($plan->description ?? ''),
             'currency' => (string) ($plan->currency ?: 'KES'),
-            'monthly_price' => $plan->monthly_price !== null ? round((float) $plan->monthly_price, 2) : null,
-            'yearly_price' => $plan->yearly_price !== null ? round((float) $plan->yearly_price, 2) : null,
+            'interval' => $interval,
+            'monthly_price' => $monthly,
+            'yearly_price' => $yearly,
+            'annual_price' => $annualQuote !== null ? $annualQuote['amount'] : $yearly,
+            'annual_gross' => $annualQuote !== null ? $annualQuote['gross'] : $yearly,
+            'annual_discount' => $annualQuote !== null ? $annualQuote['discount'] : 0,
             'industry' => $industry,
             'recommended' => Schema::hasColumn('platform_plans', 'is_recommended') && (bool) $plan->is_recommended,
             'highlights' => array_values($highlights),
             'trial_days' => Schema::hasColumn('platform_plans', 'trial_days') && $plan->trial_days !== null
                 ? (int) $plan->trial_days
                 : null,
+            'discount_percent' => (float) $discount['percent'],
+            'discount_min_months' => (int) $discount['min_months'],
         ];
     }
 }
