@@ -85,7 +85,9 @@ use App\Http\Controllers\Api\V1\PermissionController;
 use App\Http\Controllers\Api\V1\PlatformActiveSessionsController;
 use App\Http\Controllers\Api\V1\PlatformAiTrainingController;
 use App\Http\Controllers\Api\V1\PlatformContractController;
+use App\Http\Controllers\Api\V1\PlatformMarketingBlogController;
 use App\Http\Controllers\Api\V1\PlatformMarketingPortfolioController;
+use App\Http\Controllers\Api\V1\PublicMarketingBlogController;
 use App\Http\Controllers\Api\V1\PlatformMailController;
 use App\Http\Controllers\Api\V1\PlatformPlanController;
 use App\Http\Controllers\Api\V1\PlatformPaybillController;
@@ -177,6 +179,11 @@ Route::prefix('v1')->group(function () {
         Route::post('free-signup', [PublicFreeSignupController::class, 'store'])
             ->middleware('throttle:public-free-signup');
         Route::get('self-serve-plans', [\App\Http\Controllers\Api\V1\PublicSelfServePlansController::class, 'index'])
+            ->middleware('throttle:public-catalogue');
+        Route::get('marketing-blogs', [PublicMarketingBlogController::class, 'index'])
+            ->middleware('throttle:public-catalogue');
+        Route::get('marketing-blogs/{slug}', [PublicMarketingBlogController::class, 'show'])
+            ->where('slug', '[A-Za-z0-9\-]+')
             ->middleware('throttle:public-catalogue');
     });
     Route::get('auth/organization-preview', [AuthController::class, 'organizationPreview'])
@@ -499,6 +506,26 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::delete('admin/whats-new/{id}', [PlatformWhatsNewController::class, 'destroy'])
             ->middleware(['erp.super_admin']);
+
+        Route::get('admin/marketing-blogs', [PlatformMarketingBlogController::class, 'index'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/marketing-blogs', [PlatformMarketingBlogController::class, 'store'])
+            ->middleware(['erp.super_admin']);
+        Route::get('admin/marketing-blogs/{id}', [PlatformMarketingBlogController::class, 'show'])
+            ->middleware(['erp.super_admin'])
+            ->whereNumber('id');
+        Route::patch('admin/marketing-blogs/{id}', [PlatformMarketingBlogController::class, 'update'])
+            ->middleware(['erp.super_admin'])
+            ->whereNumber('id');
+        Route::post('admin/marketing-blogs/{id}/publish', [PlatformMarketingBlogController::class, 'publish'])
+            ->middleware(['erp.super_admin'])
+            ->whereNumber('id');
+        Route::post('admin/marketing-blogs/{id}/unpublish', [PlatformMarketingBlogController::class, 'unpublish'])
+            ->middleware(['erp.super_admin'])
+            ->whereNumber('id');
+        Route::delete('admin/marketing-blogs/{id}', [PlatformMarketingBlogController::class, 'destroy'])
+            ->middleware(['erp.super_admin'])
+            ->whereNumber('id');
         Route::get('admin/platform-theme', [\App\Http\Controllers\Api\V1\PlatformThemeController::class, 'show'])
             ->middleware(['erp.super_admin']);
         Route::patch('admin/platform-theme', [\App\Http\Controllers\Api\V1\PlatformThemeController::class, 'update'])
