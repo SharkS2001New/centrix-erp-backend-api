@@ -181,6 +181,85 @@ class HrApprovalWorkflowTest extends TestCase
         );
     }
 
+    public function test_deleting_pending_cash_advance_withdraws_its_approval_request(): void
+    {
+        $hrClerk = $this->userWithPermissions(['hr.manage']);
+        $employee = Employee::query()->firstOrFail();
+
+        Sanctum::actingAs($hrClerk);
+
+        $advance = $this->postJson('/api/v1/employee-cash-advances', [
+            'employee_id' => $employee->id,
+            'advance_date' => now()->toDateString(),
+            'amount' => 750,
+            'notes' => 'Delete pending advance test',
+        ])->assertCreated()->json();
+
+        $actionRequestId = DB::table('action_requests')
+            ->where('type', 'cash_advance')
+            ->where('reference_type', 'employee_cash_advance')
+            ->where('reference_id', $advance['id'])
+            ->value('id');
+
+        $this->deleteJson("/api/v1/employee-cash-advances/{$advance['id']}")
+            ->assertNoContent();
+
+        $this->assertDatabaseHas('action_requests', [
+            'id' => $actionRequestId,
+            'status' => 'cancelled',
+        ]);
+        $this->assertDatabaseMissing('employee_cash_advances', ['id' => $advance['id']]);
+        $this->assertDatabaseHas('in_app_notifications', [
+            'action_request_id' => $actionRequestId,
+            'is_read' => true,
+        ]);
+    }
+
+    public function test_notification_feed_cleans_up_legacy_orphaned_cash_advance_approvals(): void
+    {
+        $approver = $this->userWithPermissions(['hr.cash_advances.approve']);
+        $requestId = DB::table('action_requests')->insertGetId([
+            'organization_id' => $approver->organization_id,
+            'type' => 'cash_advance',
+            'module' => 'hr_payroll',
+            'reference_type' => 'employee_cash_advance',
+            'reference_id' => 99999999,
+            'requested_by' => $approver->id,
+            'status' => 'pending',
+            'title' => 'Legacy cash advance approval',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('in_app_notifications')->insert([
+            'organization_id' => $approver->organization_id,
+            'user_id' => $approver->id,
+            'action_request_id' => $requestId,
+            'type' => 'approval',
+            'severity' => 'warning',
+            'title' => 'Legacy cash advance approval',
+            'message' => 'This approval references an advance that no longer exists.',
+            'action_url' => '/hr/cash-advances?advance_id=99999999',
+            'is_read' => false,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        Sanctum::actingAs($approver);
+
+        $this->getJson('/api/v1/notifications')
+            ->assertOk()
+            ->assertJsonMissing(['action_url' => '/hr/cash-advances?advance_id=99999999']);
+
+        $this->assertDatabaseHas('action_requests', [
+            'id' => $requestId,
+            'status' => 'cancelled',
+        ]);
+        $this->assertDatabaseHas('in_app_notifications', [
+            'action_request_id' => $requestId,
+            'is_read' => true,
+        ]);
+    }
+
     public function test_open_cash_advance_can_be_marked_repaid_manually(): void
     {
         $hrClerk = $this->userWithPermissions(['hr.manage']);

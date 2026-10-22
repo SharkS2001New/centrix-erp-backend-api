@@ -148,14 +148,14 @@ class PlatformSpeedController extends Controller
             $actions[] = 'Check database connectivity and Platform → Infrastructure health.';
         } elseif ((int) $dbMs >= 200) {
             $findings[] = "Database SELECT 1 took {$dbMs} ms (slow). Contended locks or overloaded MySQL are likely.";
-            $actions[] = 'Open Slow queries and Data retention — prune audit_logs / agent junk, then OPTIMIZE heavy tables.';
+            $actions[] = 'Open Platform Speed → Database and Data retention; prune audit_logs / agent junk, then OPTIMIZE heavy tables.';
         } else {
             $findings[] = "Database probe is healthy ({$dbMs} ms).";
         }
 
         if ($p95 !== null && (int) $p95 >= 800) {
             $findings[] = "API p95 is {$p95} ms — users will feel lag on busy endpoints.";
-            $actions[] = 'Review Slowest endpoints on ERP Speed and ask Centrix AI on the worst SQL digests.';
+            $actions[] = 'Review Slowest endpoints on Platform Speed → API and inspect the worst SQL digests on Platform Speed → Database.';
         }
 
         if (($summary['slow_issues']['active'] ?? 0) > 0) {

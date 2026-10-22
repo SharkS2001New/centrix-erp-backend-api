@@ -108,6 +108,25 @@ class EmployeeCashAdvanceController extends HrOrgResourceController
         return response()->json($this->advanceWithMeta($advance->fresh('employee'), $request->user()), 201);
     }
 
+    public function destroy(string $id)
+    {
+        $advance = $this->findScoped($id);
+        $user = request()->user();
+
+        if ($user) {
+            app(ActionRequestService::class)->cancelAllPendingForDomainReference(
+                $user,
+                'employee_cash_advance',
+                (int) $advance->id,
+                'Cash advance was deleted.',
+            );
+        }
+
+        $advance->delete();
+
+        return response()->json(null, 204);
+    }
+
     protected function advanceWithMeta(EmployeeCashAdvance $advance, ?User $viewer): EmployeeCashAdvance
     {
         $advance->setAttribute('next_deduction_amount', $advance->payrollDeductionAmount());

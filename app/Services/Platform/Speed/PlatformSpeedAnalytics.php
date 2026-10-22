@@ -251,8 +251,8 @@ class PlatformSpeedAnalytics
             $out[] = [
                 'severity' => 'warning',
                 'title' => 'Slow MySQL digest detected',
-                'detail' => 'Top digest avg '.$digestAvg.'s. Open Slow queries for advise.',
-                'href' => '/platform/slow-queries',
+                'detail' => 'Top digest avg '.$digestAvg.'s. Review the digest on Platform Speed → Database.',
+                'href' => '/platform/speed?tab=database',
             ];
         }
         $pending = $infra['queue']['pending'] ?? null;

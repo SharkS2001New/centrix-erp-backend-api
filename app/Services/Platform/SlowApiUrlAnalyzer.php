@@ -390,7 +390,7 @@ class SlowApiUrlAnalyzer
         }
 
         if ($fast === []) {
-            $fast[] = 'Capture digests on Platform → Slow queries while reproducing this API, then Ask Centrix AI on the top digest.';
+            $fast[] = 'Capture digests on Platform Speed → Database while reproducing this API, then ask Centrix AI about the top digest.';
             $permanent[] = 'Profile the controller with X-Response-Time / Server-Timing headers and EXPLAIN the heaviest query.';
         }
 

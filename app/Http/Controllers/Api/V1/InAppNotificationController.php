@@ -19,6 +19,7 @@ class InAppNotificationController extends Controller
     public function unreadCount(Request $request)
     {
         $user = $request->user();
+        $this->actionRequests->cancelOrphanedCashAdvanceApprovals($user);
         $workspace = $request->input('workspace');
 
         return response()->json([
@@ -30,6 +31,7 @@ class InAppNotificationController extends Controller
 
     public function index(Request $request)
     {
+        $this->actionRequests->cancelOrphanedCashAdvanceApprovals($request->user());
         $limit = min(max((int) $request->input('limit', 20), 1), 50);
 
         return response()->json([
@@ -39,6 +41,7 @@ class InAppNotificationController extends Controller
 
     public function all(Request $request)
     {
+        $this->actionRequests->cancelOrphanedCashAdvanceApprovals($request->user());
         $filters = $request->only(['bucket', 'per_page', 'workspace']);
         $page = $this->notifications->paginate($request->user(), $filters);
 

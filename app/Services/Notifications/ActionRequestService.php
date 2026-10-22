@@ -221,6 +221,35 @@ class ActionRequestService
         });
     }
 
+    public function cancelOrphanedCashAdvanceApprovals(User $user): void
+    {
+        $requestIds = ActionRequest::query()
+            ->where('organization_id', (int) $user->organization_id)
+            ->where('type', 'cash_advance')
+            ->where('reference_type', 'employee_cash_advance')
+            ->where('status', 'pending')
+            ->whereNotExists(function ($query) {
+                $query->selectRaw('1')
+                    ->from('employee_cash_advances')
+                    ->whereColumn('employee_cash_advances.id', 'action_requests.reference_id');
+            })
+            ->get();
+
+        if ($requestIds->isEmpty()) {
+            return;
+        }
+
+        ActionRequest::query()->whereIn('id', $requestIds->pluck('id'))->update([
+            'status' => 'cancelled',
+            'resolved_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        foreach ($requestIds as $request) {
+            $this->notifications->resolveForActionRequest($request);
+        }
+    }
+
     /** Withdraw pending approval requests when the referenced sale is cancelled. */
     public function cancelAllPendingForSale(Sale $sale, User $actor, ?string $comment = null): void
     {

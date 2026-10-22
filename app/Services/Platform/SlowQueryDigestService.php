@@ -187,7 +187,7 @@ class SlowQueryDigestService
     }
 
     /**
-     * Clear statement digest summary so the Slow queries page starts fresh.
+    * Clear statement digest summary so the Platform Speed database view starts fresh.
      *
      * @return array{ok: bool, message: string}
      */
