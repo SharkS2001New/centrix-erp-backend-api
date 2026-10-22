@@ -51,7 +51,7 @@ class PlatformMarketingBlogController extends Controller
                 ->map(fn (PlatformMarketingBlog $blog) => $this->service->presentListItem($blog))
                 ->values()
                 ->all(),
-            'categories' => PlatformMarketingBlog::CATEGORIES,
+            'categories' => PlatformMarketingBlog::categoryOptions(),
         ]);
     }
 
@@ -63,7 +63,7 @@ class PlatformMarketingBlogController extends Controller
 
         return response()->json([
             'data' => $this->service->present($blog),
-            'categories' => PlatformMarketingBlog::CATEGORIES,
+            'categories' => PlatformMarketingBlog::categoryOptions(),
         ]);
     }
 
@@ -166,7 +166,7 @@ class PlatformMarketingBlogController extends Controller
             'excerpt' => ['sometimes', 'nullable', 'string', 'max:500'],
             'body' => [$required, 'string', 'max:500000'],
             'cover_image_url' => ['sometimes', 'nullable', 'string', 'max:1000'],
-            'category' => ['sometimes', 'string', Rule::in(PlatformMarketingBlog::CATEGORIES)],
+            'category' => ['sometimes', 'string', Rule::in(PlatformMarketingBlog::allowedCategorySlugs())],
             'author_name' => ['sometimes', 'nullable', 'string', 'max:120'],
             'seo_title' => ['sometimes', 'nullable', 'string', 'max:200'],
             'seo_description' => ['sometimes', 'nullable', 'string', 'max:320'],

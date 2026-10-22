@@ -85,9 +85,7 @@ use App\Http\Controllers\Api\V1\PermissionController;
 use App\Http\Controllers\Api\V1\PlatformActiveSessionsController;
 use App\Http\Controllers\Api\V1\PlatformAiTrainingController;
 use App\Http\Controllers\Api\V1\PlatformContractController;
-use App\Http\Controllers\Api\V1\PlatformMarketingBlogController;
 use App\Http\Controllers\Api\V1\PlatformMarketingPortfolioController;
-use App\Http\Controllers\Api\V1\PublicMarketingBlogController;
 use App\Http\Controllers\Api\V1\PlatformMailController;
 use App\Http\Controllers\Api\V1\PlatformPlanController;
 use App\Http\Controllers\Api\V1\PlatformPaybillController;
@@ -156,7 +154,6 @@ use App\Http\Controllers\Api\V1\PlatformWhatsAppController;
 use App\Http\Controllers\Api\V1\PlatformWhatsAppTrainingController;
 use App\Http\Controllers\Api\V1\PlatformFcmPushController;
 use App\Http\Controllers\Api\V1\WorkShiftController;
-use App\Http\Controllers\Api\V1\PublicFreeSignupController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Broadcast;
 use Illuminate\Support\Facades\Route; 
@@ -173,19 +170,6 @@ Route::prefix('v1')->group(function () {
     Route::get('health', [AuthController::class, 'health']);
     Route::get('marketing-portfolios/shared/{token}', [PlatformMarketingPortfolioController::class, 'shared'])
         ->where('token', '[A-Za-z0-9]{20,64}');
-    Route::prefix('public')->group(function () {
-        Route::get('free-signup', [PublicFreeSignupController::class, 'options'])
-            ->middleware('throttle:public-free-signup');
-        Route::post('free-signup', [PublicFreeSignupController::class, 'store'])
-            ->middleware('throttle:public-free-signup');
-        Route::get('self-serve-plans', [\App\Http\Controllers\Api\V1\PublicSelfServePlansController::class, 'index'])
-            ->middleware('throttle:public-catalogue');
-        Route::get('marketing-blogs', [PublicMarketingBlogController::class, 'index'])
-            ->middleware('throttle:public-catalogue');
-        Route::get('marketing-blogs/{slug}', [PublicMarketingBlogController::class, 'show'])
-            ->where('slug', '[A-Za-z0-9\-]+')
-            ->middleware('throttle:public-catalogue');
-    });
     Route::get('auth/organization-preview', [AuthController::class, 'organizationPreview'])
         ->middleware('throttle:auth-org-preview');
     Route::prefix('company-mobile-attendance')->group(function () {
@@ -239,6 +223,12 @@ Route::prefix('v1')->group(function () {
     Route::prefix('webhooks')->middleware('throttle:api')->group(function () {
         Route::get('whatsapp', [WhatsAppWebhookController::class, 'verify']);
         Route::post('whatsapp', [WhatsAppWebhookController::class, 'handle']);
+    });
+
+    Route::prefix('public/marketing-blogs')->middleware('throttle:api')->group(function () {
+        Route::get('/', [\App\Http\Controllers\Api\V1\PublicMarketingBlogController::class, 'index']);
+        Route::get('{slug}', [\App\Http\Controllers\Api\V1\PublicMarketingBlogController::class, 'show'])
+            ->where('slug', '[A-Za-z0-9\-]+');
     });
 
     Route::middleware(['auth:sanctum', 'erp.tenant', 'erp.session_idle', 'erp.password_expiry', 'throttle:api'])->group(function () {
@@ -488,24 +478,6 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::get('admin/platform-speed', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'show'])
             ->middleware(['erp.super_admin']);
-        Route::get('admin/platform-speed/api', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'api'])
-            ->middleware(['erp.super_admin']);
-        Route::get('admin/platform-speed/database', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'database'])
-            ->middleware(['erp.super_admin']);
-        Route::get('admin/platform-speed/infrastructure', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'infrastructure'])
-            ->middleware(['erp.super_admin']);
-        Route::get('admin/platform-speed/queues', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'queues'])
-            ->middleware(['erp.super_admin']);
-        Route::get('admin/platform-speed/frontend', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'frontend'])
-            ->middleware(['erp.super_admin']);
-        Route::get('admin/platform-speed/synthetic', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'synthetic'])
-            ->middleware(['erp.super_admin']);
-        Route::post('admin/platform-speed/synthetic', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'storeSyntheticCheck'])
-            ->middleware(['erp.super_admin']);
-        Route::post('admin/platform-speed/synthetic/run', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'runSynthetic'])
-            ->middleware(['erp.super_admin']);
-        Route::get('admin/platform-speed/diagnostics', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'diagnostics'])
-            ->middleware(['erp.super_admin']);
 
         Route::get('admin/whats-new', [PlatformWhatsNewController::class, 'index'])
             ->middleware(['erp.super_admin']);
@@ -525,27 +497,31 @@ Route::prefix('v1')->group(function () {
         Route::delete('admin/whats-new/{id}', [PlatformWhatsNewController::class, 'destroy'])
             ->middleware(['erp.super_admin']);
 
-        Route::get('admin/marketing-blogs', [PlatformMarketingBlogController::class, 'index'])
+        Route::get('admin/marketing-blog-categories', [\App\Http\Controllers\Api\V1\PlatformMarketingBlogCategoryController::class, 'index'])
             ->middleware(['erp.super_admin']);
-        Route::post('admin/marketing-blogs', [PlatformMarketingBlogController::class, 'store'])
+        Route::post('admin/marketing-blog-categories', [\App\Http\Controllers\Api\V1\PlatformMarketingBlogCategoryController::class, 'store'])
             ->middleware(['erp.super_admin']);
-        Route::post('admin/marketing-blogs/upload-image', [PlatformMarketingBlogController::class, 'uploadImage'])
+        Route::get('admin/marketing-blogs', [\App\Http\Controllers\Api\V1\PlatformMarketingBlogController::class, 'index'])
             ->middleware(['erp.super_admin']);
-        Route::post('admin/marketing-blogs/purge-cache', [PlatformMarketingBlogController::class, 'purgeCache'])
+        Route::post('admin/marketing-blogs', [\App\Http\Controllers\Api\V1\PlatformMarketingBlogController::class, 'store'])
             ->middleware(['erp.super_admin']);
-        Route::get('admin/marketing-blogs/{id}', [PlatformMarketingBlogController::class, 'show'])
+        Route::post('admin/marketing-blogs/upload-image', [\App\Http\Controllers\Api\V1\PlatformMarketingBlogController::class, 'uploadImage'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/marketing-blogs/purge-cache', [\App\Http\Controllers\Api\V1\PlatformMarketingBlogController::class, 'purgeCache'])
+            ->middleware(['erp.super_admin']);
+        Route::get('admin/marketing-blogs/{id}', [\App\Http\Controllers\Api\V1\PlatformMarketingBlogController::class, 'show'])
             ->middleware(['erp.super_admin'])
             ->whereNumber('id');
-        Route::patch('admin/marketing-blogs/{id}', [PlatformMarketingBlogController::class, 'update'])
+        Route::patch('admin/marketing-blogs/{id}', [\App\Http\Controllers\Api\V1\PlatformMarketingBlogController::class, 'update'])
             ->middleware(['erp.super_admin'])
             ->whereNumber('id');
-        Route::post('admin/marketing-blogs/{id}/publish', [PlatformMarketingBlogController::class, 'publish'])
+        Route::post('admin/marketing-blogs/{id}/publish', [\App\Http\Controllers\Api\V1\PlatformMarketingBlogController::class, 'publish'])
             ->middleware(['erp.super_admin'])
             ->whereNumber('id');
-        Route::post('admin/marketing-blogs/{id}/unpublish', [PlatformMarketingBlogController::class, 'unpublish'])
+        Route::post('admin/marketing-blogs/{id}/unpublish', [\App\Http\Controllers\Api\V1\PlatformMarketingBlogController::class, 'unpublish'])
             ->middleware(['erp.super_admin'])
             ->whereNumber('id');
-        Route::delete('admin/marketing-blogs/{id}', [PlatformMarketingBlogController::class, 'destroy'])
+        Route::delete('admin/marketing-blogs/{id}', [\App\Http\Controllers\Api\V1\PlatformMarketingBlogController::class, 'destroy'])
             ->middleware(['erp.super_admin'])
             ->whereNumber('id');
         Route::get('admin/platform-theme', [\App\Http\Controllers\Api\V1\PlatformThemeController::class, 'show'])
@@ -561,11 +537,7 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::post('admin/database-backups', [PlatformDatabaseBackupController::class, 'store'])
             ->middleware(['erp.super_admin']);
-        Route::post('admin/database-backups/restore-upload', [PlatformDatabaseBackupController::class, 'restoreUpload'])
-            ->middleware(['erp.super_admin']);
         Route::get('admin/database-backups/{filename}/download', [PlatformDatabaseBackupController::class, 'download'])
-            ->middleware(['erp.super_admin']);
-        Route::post('admin/database-backups/{filename}/restore', [PlatformDatabaseBackupController::class, 'restoreFromBackup'])
             ->middleware(['erp.super_admin']);
         Route::get('admin/database-backup-settings', [PlatformDatabaseBackupController::class, 'showSettings'])
             ->middleware(['erp.super_admin']);

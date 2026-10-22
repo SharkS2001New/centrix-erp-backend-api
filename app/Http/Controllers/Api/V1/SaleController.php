@@ -158,13 +158,13 @@ class SaleController extends BaseResourceController
             && ! $hasPaymentStatusFilterEarly
             && ! $isStageQueueBrowseRequest
         ) {
-        SalesOrderQueuePermissions::applyIndexScope(
-            $query,
-            $request->user(),
-            $gate,
-            app(UserPermissionService::class),
-            $channel,
-        );
+            SalesOrderQueuePermissions::applyIndexScope(
+                $query,
+                $request->user(),
+                $gate,
+                app(UserPermissionService::class),
+                $channel,
+            );
         }
 
         if ($isStageQueueBrowseRequest && ! $isExactOrderLookup && ! $forPosOrderEdit) {

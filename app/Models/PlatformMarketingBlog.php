@@ -4,6 +4,8 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 
 class PlatformMarketingBlog extends Model
 {
@@ -18,6 +20,35 @@ class PlatformMarketingBlog extends Model
         'announcements',
         'industry',
     ];
+
+    /** @return list<string> */
+    public static function allowedCategorySlugs(): array
+    {
+        if (Schema::hasTable('platform_marketing_blog_categories')) {
+            $slugs = PlatformMarketingBlogCategory::slugs();
+            if ($slugs !== []) {
+                return $slugs;
+            }
+        }
+
+        return self::CATEGORIES;
+    }
+
+    /** @return list<array{id: string, label: string}> */
+    public static function categoryOptions(): array
+    {
+        if (Schema::hasTable('platform_marketing_blog_categories')) {
+            $options = PlatformMarketingBlogCategory::options();
+            if ($options !== []) {
+                return $options;
+            }
+        }
+
+        return array_map(
+            fn (string $id) => ['id' => $id, 'label' => Str::title(str_replace('_', ' ', $id))],
+            self::CATEGORIES,
+        );
+    }
 
     protected $fillable = [
         'title',

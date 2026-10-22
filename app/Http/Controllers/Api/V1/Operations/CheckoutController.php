@@ -820,7 +820,7 @@ class CheckoutController extends Controller
                 $payNow = $cashDue;
                 $amountPaid = $appendPriorPaid + $payNow + $voucherPayment + $pointsPayment + $mpesaOnCart;
             } else {
-            $payNow = min($payNow, $cashDue);
+                $payNow = min($payNow, $cashDue);
                 $amountPaid = $appendPriorPaid + $payNow + $voucherPayment + $pointsPayment + $mpesaOnCart;
             }
             if (! $customerNum && $loyaltyCardId) {
@@ -982,25 +982,25 @@ class CheckoutController extends Controller
                 ($customerNum === null || $customerNameOverride === '')
                 && $priorSale
             ) {
-                if ($customerNum === null && $priorSale->customer_num) {
-                    $customerNum = (int) $priorSale->customer_num;
-                    $customer = app(UserMobileOrderScopeService::class)->findCheckoutCustomer(
-                        $user,
-                        (int) $customerNum,
-                        (string) $cart->channel,
-                    );
-                    if ($customer) {
-                $customerNameOverride = trim((string) ($customer->customer_name ?? ''));
+                    if ($customerNum === null && $priorSale->customer_num) {
+                        $customerNum = (int) $priorSale->customer_num;
+                        $customer = app(UserMobileOrderScopeService::class)->findCheckoutCustomer(
+                            $user,
+                            (int) $customerNum,
+                            (string) $cart->channel,
+                        );
+                        if ($customer) {
+                            $customerNameOverride = trim((string) ($customer->customer_name ?? ''));
+                        }
                     }
-                }
-                if ($customerNameOverride === '') {
-                    $fromPrior = trim((string) ($priorSale->customer_name_override ?? ''));
-                    if ($fromPrior === '') {
-                        $priorSale->loadMissing('customer:customer_num,customer_name,organization_id');
-                        $fromPrior = trim((string) ($priorSale->customer?->customer_name ?? ''));
-                    }
-                    if ($fromPrior !== '') {
-                        $customerNameOverride = $fromPrior;
+                    if ($customerNameOverride === '') {
+                        $fromPrior = trim((string) ($priorSale->customer_name_override ?? ''));
+                        if ($fromPrior === '') {
+                            $priorSale->loadMissing('customer:customer_num,customer_name,organization_id');
+                            $fromPrior = trim((string) ($priorSale->customer?->customer_name ?? ''));
+                        }
+                        if ($fromPrior !== '') {
+                            $customerNameOverride = $fromPrior;
                     }
                 }
             }
@@ -1086,13 +1086,13 @@ class CheckoutController extends Controller
                         'completed_at' => $clientCompleted,
                     ])->save();
                 } else {
-                $sale->update(['completed_at' => now()]);
+                    $sale->update(['completed_at' => now()]);
                     // Keep the original sale day on the rep's mobile dashboard after an edit.
                     if ($priorSale?->created_at) {
                         $sale->forceFill([
                             'created_at' => $priorSale->created_at,
                         ])->save();
-                    }
+                }
                 }
             } elseif ($priorSale?->created_at) {
                 $sale->forceFill([
@@ -1281,11 +1281,11 @@ class CheckoutController extends Controller
                             );
                             $splitTotal = round(array_sum(array_column($splits, 'amount')), 2);
                         }
-                        if (
-                            abs($splitTotal - $expectedSplitTotal) > 0.02
-                            && abs($splitTotal - $payNow) > 0.02
-                        ) {
-                            throw new InvalidArgumentException('Payment splits must add up to the amount paid now.');
+                    if (
+                        abs($splitTotal - $expectedSplitTotal) > 0.02
+                        && abs($splitTotal - $payNow) > 0.02
+                    ) {
+                        throw new InvalidArgumentException('Payment splits must add up to the amount paid now.');
                         }
                     }
                     foreach ($splits as $split) {
@@ -1315,16 +1315,16 @@ class CheckoutController extends Controller
                         (int) $sale->organization_id,
                         (string) $sale->payment_method_code,
                     );
-                if ($method) {
-                    SalePayment::create([
-                        'sale_id' => $sale->id,
-                        'float_session_id' => $floatSessionId,
-                        'payment_method_id' => $method->id,
-                        'amount' => $payNow,
-                        'reference_number' => $input['payment_reference'] ?? null,
-                        'paid_at' => $input['payment_date'] ?? now(),
-                    ]);
-                }
+                    if ($method) {
+                        SalePayment::create([
+                            'sale_id' => $sale->id,
+                            'float_session_id' => $floatSessionId,
+                            'payment_method_id' => $method->id,
+                            'amount' => $payNow,
+                            'reference_number' => $input['payment_reference'] ?? null,
+                            'paid_at' => $input['payment_date'] ?? now(),
+                        ]);
+                    }
                     $mpesaRecordedInSplits = strtoupper((string) $paymentMethodCode) === 'MPESA';
                 }
 
@@ -1469,10 +1469,10 @@ class CheckoutController extends Controller
                 && ! $offlineOrderUpload;
             $submitKra = $eligibleForKra
                 && KraFiscalPolicy::shouldFiscalizeSale(
-                $finance,
-                (float) $sale->order_total,
-                $explicitSubmit,
-            );
+                    $finance,
+                    (float) $sale->order_total,
+                    $explicitSubmit,
+                );
 
             $kraResponse = null;
             $pendingKra = false;
@@ -1565,20 +1565,20 @@ class CheckoutController extends Controller
         // Cash Sales # is sequential within the float session (or cashier/day without float).
         // Local-first POS: claim the printed ticket when it is still free (online or offline).
         if ($clientPos > 0 && $clientDate !== '') {
-            $claimed = $allocator->claimPrintedTicketForCheckout(
-                (int) $user->organization_id,
-                (int) $user->id,
-                $clientPos,
-                $clientDate,
+                $claimed = $allocator->claimPrintedTicketForCheckout(
+                    (int) $user->organization_id,
+                    (int) $user->id,
+                    $clientPos,
+                    $clientDate,
                 $floatSessionId,
-            );
-            if ($claimed) {
-                return [
-                    'pos_order_num' => $clientPos,
-                    'pos_order_date' => $clientDate,
-                    '__lock_pos_ticket' => true,
-                ];
-            }
+                );
+                if ($claimed) {
+                    return [
+                        'pos_order_num' => $clientPos,
+                        'pos_order_date' => $clientDate,
+                        '__lock_pos_ticket' => true,
+                    ];
+                }
             // Ticket already taken — fall through and allocate the next free Cash Sales #.
             if ($offlineOrder) {
                 // Offline sync replay: upload under the next free # (reprint note in UI).
@@ -1654,17 +1654,17 @@ class CheckoutController extends Controller
             $heldOrderNum,
             $user,
         ): int {
-            $existing = Sale::query()
-                ->where('organization_id', $orgId)
-                ->where('order_num', $requested)
+        $existing = Sale::query()
+            ->where('organization_id', $orgId)
+            ->where('order_num', $requested)
                 ->lockForUpdate()
-                ->first();
+            ->first();
 
-            if (! $existing) {
-                $allocator->reserveSpecificForOrganization($orgId, $requested);
+        if (! $existing) {
+            $allocator->reserveSpecificForOrganization($orgId, $requested);
 
-                return $requested;
-            }
+            return $requested;
+        }
 
             // Only free the exact sale this cart is superseding — never steal another
             // cancelled/held row's number (that caused cross-order collisions).
@@ -1761,7 +1761,7 @@ class CheckoutController extends Controller
                 }
                 if (
                     (
-                        str_contains($message, 'uq_pos_daily_order_num')
+                    str_contains($message, 'uq_pos_daily_order_num')
                         || str_contains($message, 'uq_pos_ticket_scope_num')
                     )
                     && ! empty($attributes['cashier_id'])
@@ -2243,12 +2243,12 @@ class CheckoutController extends Controller
             $reference = trim((string) ($row['reference_number'] ?? ''));
             $referenceNumber = $reference !== '' ? $reference : null;
             foreach ($this->expandCompositePaymentMethodRows($methodCode, $amount) as $part) {
-                $normalized[] = [
+            $normalized[] = [
                     'method_code' => $part['method_code'],
                     'amount' => $part['amount'],
-                    'adjustment_type' => $type,
+                'adjustment_type' => $type,
                     'reference_number' => $referenceNumber,
-                ];
+            ];
             }
         }
 
@@ -2377,8 +2377,8 @@ class CheckoutController extends Controller
                 $expanded[] = [
                     'method_code' => $part['method_code'],
                     'amount' => $part['amount'],
-                    'adjustment_type' => $type,
-                    'reference_number' => null,
+                'adjustment_type' => $type,
+                'reference_number' => null,
                 ];
             }
 
@@ -2482,7 +2482,7 @@ class CheckoutController extends Controller
         if ($forceFullyPaid) {
             $targetPaid = max(0, round($newTotal, 2));
         } else {
-            $targetPaid = max(0, round($targetPaid, 2));
+        $targetPaid = max(0, round($targetPaid, 2));
         }
         // Unpaid prior (and no adjustments): keep empty tenders — never invent CASH.
         // Forced full-pay still needs a tender map so amount_paid matches the bill.
@@ -2683,7 +2683,7 @@ class CheckoutController extends Controller
                 'reference_number' => $payment->reference_number,
                 'paid_at' => $payment->paid_at ?? now(),
             ]);
-        }
+            }
         // Tender columns rebuilt once via syncSaleTenderColumnsFromPayments.
     }
 

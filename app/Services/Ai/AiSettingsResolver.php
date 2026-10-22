@@ -526,8 +526,8 @@ class AiSettingsResolver
             'talk_gemini_api_key',
             'talk_gemini_model',
         ] as $key) {
-            $out[$key] = trim((string) ($out[$key] ?? ''));
-        }
+                $out[$key] = trim((string) ($out[$key] ?? ''));
+            }
         unset($out['ollama_base_url'], $out['ollama_model'], $out['ollama_api_key']);
         unset($out['use_platform_key']);
         $out['insights'] = self::normalizeInsights(
@@ -799,13 +799,13 @@ class AiSettingsResolver
             $model = self::normalizeGeminiModel($model);
         if ($baseUrl === '') {
                 $baseUrl = (string) config('ai.gemini.base_url');
-            }
+        }
 
-            return [
-                'enabled' => true,
+        return [
+            'enabled' => true,
                 'provider' => 'gemini',
-                'api_key' => $apiKey,
-                'model' => $model,
+            'api_key' => $apiKey,
+            'model' => $model,
                 'base_url' => rtrim($baseUrl, '/'),
             ];
         }
@@ -1018,8 +1018,8 @@ class AiSettingsResolver
                     ? $settings['model']
                     : (
                         ($runtime['provider'] ?? $settings['provider'] ?? '') === 'gemini' || ($prefersPlatform && $freeProvider === 'gemini')
-                            ? config('ai.gemini.model')
-                            : config('ai.defaults.model')
+                    ? config('ai.gemini.model')
+                    : config('ai.defaults.model')
                     )
             ),
             'provider' => $runtime['provider'] ?? ($settings['provider'] ?? config('ai.provider', 'openai')),

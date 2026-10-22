@@ -719,7 +719,7 @@ class ReportController extends Controller
         string $toDate,
     ) {
             $legacy = CentrixSalesScope::legacyExcludeSql('s');
-        $statuses = CentrixSalesScope::reportPipelineStatuses();
+            $statuses = CentrixSalesScope::reportPipelineStatuses();
         $saleDate = CentrixSalesScope::reportSaleDateSql('s');
         $unpaidSql = SalePaymentStatus::isUnpaidSql('s.');
         $outstandingSql = 'GREATEST(COALESCE(s.order_total, 0) - COALESCE(s.amount_paid, 0), 0)';
@@ -732,7 +732,7 @@ class ReportController extends Controller
             })
             ->leftJoin('routes as r', 'r.id', '=', 'c.route_id')
                     ->where('s.organization_id', $orgId)
-            ->whereIn('s.status', $statuses)
+                    ->whereIn('s.status', $statuses)
                     ->where('s.archived', 0)
             ->whereRaw($legacy)
             ->whereRaw("{$saleDate} >= ?", [$fromDate])
@@ -3095,7 +3095,7 @@ class ReportController extends Controller
                                 $inner->{$method.'Raw'}("CAST(`{$escaped}` AS CHAR) LIKE ?", ['%'.$search.'%']);
                             }
                         } else {
-                        $inner->{$method}($col, 'like', "%{$search}%");
+                            $inner->{$method}($col, 'like', "%{$search}%");
                         }
                     }
                 });
@@ -3133,7 +3133,7 @@ class ReportController extends Controller
         if (is_array($leanSummary)) {
             $summary = $this->aggregateLeanReportSummary(clone $q, $leanSummary);
         } else {
-            $summary = $this->aggregateFilteredReportSummary(clone $q, $view);
+        $summary = $this->aggregateFilteredReportSummary(clone $q, $view);
         }
 
         if ($orderBy) {

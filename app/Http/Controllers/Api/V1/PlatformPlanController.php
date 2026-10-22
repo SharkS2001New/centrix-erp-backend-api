@@ -156,7 +156,6 @@ class PlatformPlanController extends Controller
             'token_pack_days' => 'nullable|integer|min:1',
             'currency' => 'sometimes|string|max:8',
             'seat_limit' => 'nullable|integer|min:1',
-            'trial_days' => 'nullable|integer|min:1|max:365',
             'workspace_keys' => 'sometimes|array',
             'module_keys' => 'sometimes|array',
             'section_keys' => 'sometimes|array',

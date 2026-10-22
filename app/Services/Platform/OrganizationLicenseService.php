@@ -455,12 +455,11 @@ class OrganizationLicenseService
         $isTrial = (bool) ($payload['is_trial'] ?? (($payload['status'] ?? '') === 'trialing'));
         $status = $payload['status'] ?? ($isTrial ? 'trialing' : 'active');
         $start = $this->normalizePeriodInstant($payload['current_period_start'] ?? now(), false);
-        $trialDays = $this->trialDaysForPlan($plan, $payload['trial_days'] ?? null);
         $end = $this->normalizePeriodInstant(
             $payload['current_period_end']
-                ?? $payload['trial_ends_at']
-                ?? ($isTrial
-                    ? now()->addDays($trialDays)
+            ?? $payload['trial_ends_at']
+            ?? ($isTrial
+                    ? now()->addDays((int) ($payload['trial_days'] ?? 14))
                     : $this->periodEndForPlanInterval($start, $plan?->interval)),
             true,
         );
@@ -647,31 +646,6 @@ class OrganizationLicenseService
         $moment = $this->licenceMoment($value, $isEnd);
 
         return $moment?->format('Y-m-d H:i:s');
-    }
-
-    /**
-     * Trial length comes from the package. The package trial_days is the maximum.
-     * Without a package max, default is 14 days.
-     */
-    public function trialDaysForPlan(?\App\Models\PlatformPlan $plan, mixed $requested = null): int
-    {
-        $packageMax = null;
-        if ($plan !== null) {
-            $raw = $plan->getAttributes()['trial_days'] ?? null;
-            if ($raw === null && Schema::hasColumn('platform_plans', 'trial_days')) {
-                $raw = $plan->trial_days;
-            }
-            if ($raw !== null && $raw !== '') {
-                $packageMax = max(1, (int) $raw);
-            }
-        }
-
-        $asked = $requested !== null && $requested !== '' ? max(1, (int) $requested) : null;
-        if ($packageMax !== null) {
-            return $asked !== null ? min($asked, $packageMax) : $packageMax;
-        }
-
-        return $asked ?? 14;
     }
 
     /**

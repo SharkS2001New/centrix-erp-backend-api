@@ -1331,10 +1331,10 @@ class CartOperationsController extends Controller
         }
 
         $cartAttributes = [
-            'organization_id' => (int) (
-                $user->organization_id
-                ?? \App\Support\OrganizationIdResolver::forBranch($branchId)
-            ),
+                'organization_id' => (int) (
+                    $user->organization_id
+                    ?? \App\Support\OrganizationIdResolver::forBranch($branchId)
+                ),
                 'branch_id' => $branchId,
                 'order_source' => $orderSource,
                 'till_id' => $input['till_id'] ?? null,
@@ -2005,14 +2005,14 @@ class CartOperationsController extends Controller
                 $expiresAt,
             ): void {
                 $this->releaseLineReservation($lineId);
-            $this->reserveStock(
+                $this->reserveStock(
                     $branchId,
                     $reserveProductCode,
                     $reserveQty,
                     $reserveLocation,
                     $userId,
                     $cartId,
-                $allowBelowStock,
+                    $allowBelowStock,
                     $lineId,
                     $expiresAt,
                 );
@@ -2228,14 +2228,14 @@ class CartOperationsController extends Controller
         );
 
         try {
-            $sale->update([
-                'order_num' => $originalOrderNum,
-                'status' => $originalStatus,
-                'cancelled_at' => null,
-                'cancelled_by' => null,
-                'archived' => 0,
-                'fulfillment_meta' => $meta === [] ? null : $meta,
-            ]);
+        $sale->update([
+            'order_num' => $originalOrderNum,
+            'status' => $originalStatus,
+            'cancelled_at' => null,
+            'cancelled_by' => null,
+            'archived' => 0,
+            'fulfillment_meta' => $meta === [] ? null : $meta,
+        ]);
         } catch (\Illuminate\Database\UniqueConstraintViolationException) {
             // Race: another sale claimed the number between check and update — leave tombstone.
             $meta['edit_checkout_completed'] = true;
@@ -2399,8 +2399,8 @@ class CartOperationsController extends Controller
             return [$unitPrice, round(max(0.0, $computedAmount), 2)];
         }
 
-        $product->loadMissing('unit');
-        $factor = max(1.0, (float) ($product->unit?->conversion_factor ?? 1));
+            $product->loadMissing('unit');
+            $factor = max(1.0, (float) ($product->unit?->conversion_factor ?? 1));
         $finalAmount = $this->resolveClientCartLineAmount($line, $computedAmount, $factor);
         $clientAmount = round(max(0.0, (float) $line['amount']), 2);
 
@@ -2413,9 +2413,9 @@ class CartOperationsController extends Controller
             if ($clientUnit !== null && $clientUnit > 0) {
                 $unitPrice = round($clientUnit, 4);
             } elseif (abs($finalAmount - round($computedAmount, 2)) > 0.01) {
-                $entryQty = $factor > 1 && ! $isRetail ? $qty / $factor : $qty;
-                if ($entryQty > 0) {
-                    $unitPrice = round($finalAmount / $entryQty, 4);
+            $entryQty = $factor > 1 && ! $isRetail ? $qty / $factor : $qty;
+            if ($entryQty > 0) {
+                $unitPrice = round($finalAmount / $entryQty, 4);
                 }
             }
         }

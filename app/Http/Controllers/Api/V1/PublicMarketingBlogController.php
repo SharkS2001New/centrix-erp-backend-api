@@ -26,12 +26,12 @@ class PublicMarketingBlogController extends Controller
             return response()->json([
                 'data' => [],
                 'meta' => ['total' => 0, 'page' => 1, 'per_page' => 12],
-                'categories' => PlatformMarketingBlog::CATEGORIES,
+                'categories' => PlatformMarketingBlog::categoryOptions(),
             ]);
         }
 
         $category = trim((string) $request->query('category', ''));
-        if ($category !== '' && ! in_array($category, PlatformMarketingBlog::CATEGORIES, true)) {
+        if ($category !== '' && ! in_array($category, PlatformMarketingBlog::allowedCategorySlugs(), true)) {
             $category = '';
         }
         $perPage = min(50, max(1, (int) $request->query('per_page', 12)));
@@ -59,7 +59,7 @@ class PublicMarketingBlogController extends Controller
                     'page' => $page,
                     'per_page' => $perPage,
                 ],
-                'categories' => PlatformMarketingBlog::CATEGORIES,
+                'categories' => PlatformMarketingBlog::categoryOptions(),
                 'source' => 'platform_marketing_blogs',
             ];
         });

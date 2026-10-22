@@ -138,12 +138,12 @@ class PayrollDeductionTypeController extends HrOrgResourceController
 
         $assigned = 0;
         try {
-            $model = DB::transaction(function () use ($request, $data, $employeeIds, &$assigned) {
-                $type = PayrollDeductionType::create($data);
+        $model = DB::transaction(function () use ($request, $data, $employeeIds, &$assigned) {
+            $type = PayrollDeductionType::create($data);
                 $assigned = $this->syncAssignees($request, $type, $employeeIds, replace: true);
 
-                return $type;
-            });
+            return $type;
+        });
         } catch (UniqueConstraintViolationException $e) {
             throw ValidationException::withMessages([
                 'deduction_code' => ['This deduction code is already used in your organization.'],
@@ -186,9 +186,9 @@ class PayrollDeductionTypeController extends HrOrgResourceController
 
         $assigned = 0;
         try {
-            DB::transaction(function () use ($request, $model, $data, $employeeIds, &$assigned) {
-                $model->update($data);
-                if (is_array($employeeIds)) {
+        DB::transaction(function () use ($request, $model, $data, $employeeIds, &$assigned) {
+            $model->update($data);
+            if (is_array($employeeIds)) {
                     $assigned = $this->syncAssignees($request, $model->fresh(), $employeeIds, replace: true);
                 }
             });

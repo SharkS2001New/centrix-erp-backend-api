@@ -79,4 +79,29 @@ class PlatformMarketingBlogTest extends TestCase
         ])->assertOk()
             ->assertJsonPath('data.slug', 'second-title');
     }
+
+    public function test_super_admin_can_create_blog_category_and_use_it(): void
+    {
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $createCategory = $this->postJson('/api/v1/admin/marketing-blog-categories', [
+            'label' => 'Case studies',
+        ]);
+        $createCategory->assertCreated()
+            ->assertJsonPath('data.label', 'Case studies');
+        $slug = $createCategory->json('data.id');
+        $this->assertNotEmpty($slug);
+
+        $this->postJson('/api/v1/admin/marketing-blogs', [
+            'title' => 'Retail rollout',
+            'body' => '<p>A case study.</p>',
+            'category' => $slug,
+        ])->assertCreated()
+            ->assertJsonPath('data.category', $slug);
+
+        $this->getJson('/api/v1/admin/marketing-blog-categories')
+            ->assertOk()
+            ->assertJsonFragment(['id' => $slug, 'label' => 'Case studies']);
+    }
 }

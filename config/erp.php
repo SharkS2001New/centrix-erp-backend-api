@@ -19,9 +19,6 @@ return [
 /** When true, super admins can register new tenant organizations via POST /admin/organizations/provision. */
     'allow_org_provisioning' => filter_var(env('APP_ALLOW_ORG_PROVISIONING', true), FILTER_VALIDATE_BOOL),
 
-    /** When true, the marketing site can create Package 1 (free) organisations via POST /public/free-signup. */
-    'allow_public_free_signup' => filter_var(env('APP_ALLOW_PUBLIC_FREE_SIGNUP', true), FILTER_VALIDATE_BOOL),
-
     /** Company code for the platform super-admin organization (login target). */
     'platform_company_code' => strtoupper(env('APP_PLATFORM_COMPANY_CODE', 'PLATFORM')),
 

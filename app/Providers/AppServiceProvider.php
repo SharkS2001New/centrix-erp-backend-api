@@ -9,9 +9,7 @@ use App\Observers\SaleObserver;
 use App\Services\Ai\AiSettingsResolver;
 use App\Services\Audit\AuditLogger;
 use App\Services\Audit\ModelChangeAuditor;
-use App\Services\Platform\Speed\PlatformSpeedQueryTracker;
 use Illuminate\Cache\RateLimiting\Limit;
-use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Http\Request;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Database\Eloquent\Model;
@@ -27,20 +25,11 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->singleton(AuditLogger::class);
-        $this->app->singleton(\App\Services\Platform\Speed\PlatformSpeedMetricsRecorder::class);
-        $this->app->singleton(PlatformSpeedQueryTracker::class);
     }
 
     public function boot(): void
     {
         Sanctum::usePersonalAccessTokenModel(PersonalAccessToken::class);
-
-        Event::listen(QueryExecuted::class, function (QueryExecuted $event): void {
-            if (! config('platform_speed.db_listen')) {
-                return;
-            }
-            app(PlatformSpeedQueryTracker::class)->handle($event);
-        });
 
         // CentrixAttendanceAgent tokens must never die from the global Sanctum
         // created_at TTL (browser sessions). Only an explicit expires_at (or revoke) ends them.
@@ -58,9 +47,7 @@ class AppServiceProvider extends ServiceProvider
 
         Organization::observe(OrganizationObserver::class);
         Sale::observe(SaleObserver::class);
-        if (config('audit.model_events', false)) {
-            $this->auditModelChanges();
-        }
+        $this->auditModelChanges();
 
         $this->configureRateLimiting();
         $this->configureCorsFromRuntimeEnv();
@@ -164,22 +151,6 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perMinutes(
                 max(1, (int) ($password['decay_minutes'] ?? 15)),
                 max(1, (int) ($password['max_attempts'] ?? 5)),
-            )->by($request->ip());
-        });
-
-        $freeSignup = config('security.rate_limits.public_free_signup');
-        RateLimiter::for('public-free-signup', function (Request $request) use ($freeSignup) {
-            return Limit::perMinutes(
-                max(1, (int) ($freeSignup['decay_minutes'] ?? 15)),
-                max(1, (int) ($freeSignup['max_attempts'] ?? 8)),
-            )->by($request->ip());
-        });
-
-        $catalogue = config('security.rate_limits.public_catalogue');
-        RateLimiter::for('public-catalogue', function (Request $request) use ($catalogue) {
-            return Limit::perMinutes(
-                max(1, (int) ($catalogue['decay_minutes'] ?? 1)),
-                max(1, (int) ($catalogue['max_attempts'] ?? 120)),
             )->by($request->ip());
         });
 

@@ -669,7 +669,7 @@ class OrganizationProvisionController extends Controller
                 'subscription.current_period_start' => 'nullable|date',
                 'subscription.current_period_end' => 'nullable|date',
                 'subscription.is_trial' => 'nullable|boolean',
-                'subscription.trial_days' => 'nullable|integer|min:1|max:365',
+                'subscription.trial_days' => 'nullable|integer|min:1',
                 'subscription.trial_ends_at' => 'nullable|date',
                 'subscription.first_payment_price' => 'nullable|numeric|min:0',
                 'subscription.renewal_price' => 'nullable|numeric|min:0',

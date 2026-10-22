@@ -52,8 +52,8 @@ class GeminiProvider implements AiProviderInterface
             ];
         } else {
             $modelParts = $this->rebuildModelPartsFromToolCalls($request['prior_tool_calls'] ?? []);
-            if ($modelParts !== []) {
-                $contents[] = ['role' => 'model', 'parts' => $modelParts];
+        if ($modelParts !== []) {
+            $contents[] = ['role' => 'model', 'parts' => $modelParts];
             }
         }
 

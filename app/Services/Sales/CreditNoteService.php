@@ -176,7 +176,7 @@ class CreditNoteService
 
         $finance = (new CapabilityGate($organization))->moduleSettings('finance') ?? [];
         if (empty($finance['enable_kra_device'])) {
-            return $creditNote;
+        return $creditNote;
         }
 
         $updated = $this->submitToKra($creditNote, $return, $finance);
