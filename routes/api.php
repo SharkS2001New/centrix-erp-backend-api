@@ -511,6 +511,10 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::post('admin/marketing-blogs', [PlatformMarketingBlogController::class, 'store'])
             ->middleware(['erp.super_admin']);
+        Route::post('admin/marketing-blogs/upload-image', [PlatformMarketingBlogController::class, 'uploadImage'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/marketing-blogs/purge-cache', [PlatformMarketingBlogController::class, 'purgeCache'])
+            ->middleware(['erp.super_admin']);
         Route::get('admin/marketing-blogs/{id}', [PlatformMarketingBlogController::class, 'show'])
             ->middleware(['erp.super_admin'])
             ->whereNumber('id');
@@ -539,7 +543,11 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::post('admin/database-backups', [PlatformDatabaseBackupController::class, 'store'])
             ->middleware(['erp.super_admin']);
+        Route::post('admin/database-backups/restore-upload', [PlatformDatabaseBackupController::class, 'restoreUpload'])
+            ->middleware(['erp.super_admin']);
         Route::get('admin/database-backups/{filename}/download', [PlatformDatabaseBackupController::class, 'download'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/database-backups/{filename}/restore', [PlatformDatabaseBackupController::class, 'restoreFromBackup'])
             ->middleware(['erp.super_admin']);
         Route::get('admin/database-backup-settings', [PlatformDatabaseBackupController::class, 'showSettings'])
             ->middleware(['erp.super_admin']);

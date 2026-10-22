@@ -28,6 +28,7 @@ class PlatformMarketingBlog extends Model
         'category',
         'status',
         'author_name',
+        'read_time',
         'seo_title',
         'seo_description',
         'published_at',
@@ -40,6 +41,7 @@ class PlatformMarketingBlog extends Model
     {
         return [
             'published_at' => 'datetime',
+            'read_time' => 'integer',
         ];
     }
 
@@ -61,6 +63,11 @@ class PlatformMarketingBlog extends Model
     public function isPublished(): bool
     {
         return $this->status === self::STATUS_PUBLISHED;
+    }
+
+    public function isDraft(): bool
+    {
+        return $this->status === self::STATUS_DRAFT;
     }
 
     public function scopePublished($query)

@@ -28,12 +28,18 @@ class OperationalDataPruneService
     public const TARGETS = [
         'hikvision_agent_commands',
         'hikvision_access_events',
-        'employee_attendance',
         'kra_agent_commands',
         'stock_reservations',
         'audit_logs',
         'cancelled_sales',
         'expired_sales',
+    ];
+
+    /** Never pruned — restore from backup if rows were removed by mistake. */
+    public const PROTECTED_TARGETS = [
+        'employee_attendance',
+        'employee_clock_sessions',
+        'attendance',
     ];
 
     /** Remaining row budget for this prune run (null = unlimited). */
@@ -195,41 +201,6 @@ class OperationalDataPruneService
             ]);
         }
 
-        if (in_array('employee_attendance', $selected, true)) {
-            $attendanceDays = max(7, $overrideDays ?? $this->attendanceDays());
-            $this->emitProgress($onProgress, [
-                'event' => 'step',
-                'key' => 'employee_clock_sessions',
-                'message' => "Scanning employee_clock_sessions older than {$attendanceDays} day(s)…",
-                'phase' => 'start',
-            ]);
-            $sessionCount = $this->pruneOldEmployeeClockSessions($dryRun, $attendanceDays);
-            $results['employee_clock_sessions'] = $sessionCount;
-            $this->emitProgress($onProgress, [
-                'event' => 'step',
-                'key' => 'employee_clock_sessions',
-                'message' => "{$verb} {$sessionCount} employee_clock_sessions",
-                'phase' => 'done',
-                'count' => $sessionCount,
-            ]);
-
-            $this->emitProgress($onProgress, [
-                'event' => 'step',
-                'key' => 'employee_attendance',
-                'message' => "Scanning employee_attendance older than {$attendanceDays} day(s)…",
-                'phase' => 'start',
-            ]);
-            $attendanceCount = $this->pruneOldEmployeeAttendance($dryRun, $attendanceDays);
-            $results['employee_attendance'] = $attendanceCount;
-            $this->emitProgress($onProgress, [
-                'event' => 'step',
-                'key' => 'employee_attendance',
-                'message' => "{$verb} {$attendanceCount} employee_attendance",
-                'phase' => 'done',
-                'count' => $attendanceCount,
-            ]);
-        }
-
         if (in_array('audit_logs', $selected, true)) {
             $daysUsed = $overrideDays ?? $this->auditLogsDays();
             $this->emitProgress($onProgress, [
@@ -363,8 +334,6 @@ class OperationalDataPruneService
 
         $aliases = [
             'released_stock_reservations' => 'stock_reservations',
-            'attendance' => 'employee_attendance',
-            'employee_clock_sessions' => 'employee_attendance',
             'forgotten_clock_out_alerts' => 'hikvision_access_events',
         ];
 
@@ -375,6 +344,11 @@ class OperationalDataPruneService
                 return self::TARGETS;
             }
             $key = $aliases[$key] ?? $key;
+            if (in_array($key, self::PROTECTED_TARGETS, true)) {
+                throw new InvalidArgumentException(
+                    'Employee attendance is never pruned. Restore missing rows from a database backup instead.'
+                );
+            }
             if (! in_array($key, self::TARGETS, true)) {
                 throw new InvalidArgumentException(
                     'Unknown prune target "'.$raw.'". Allowed: '.implode(', ', self::TARGETS)
@@ -826,6 +800,7 @@ class OperationalDataPruneService
                 'MB / row counts from information_schema are estimates and often lag until ANALYZE/OPTIMIZE.',
                 'OPTIMIZE only reclaims disk after rows were deleted. Empty or already-compact tables show little/no MB change.',
                 'stock_reservations prune never deletes active (unreleased) cart/sale holds.',
+                'employee_attendance and employee_clock_sessions are never pruned — restore from Database backups if rows are missing.',
                 'Watch Live prune log for exact “Deleted N …” counts — that proves the run, not the MB column alone.',
                 'Nightly automation is erp:prune-operational-data at the saved prune time (app timezone). Last run proves it fired.',
             ],

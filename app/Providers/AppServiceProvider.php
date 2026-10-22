@@ -47,7 +47,9 @@ class AppServiceProvider extends ServiceProvider
 
         Organization::observe(OrganizationObserver::class);
         Sale::observe(SaleObserver::class);
-        $this->auditModelChanges();
+        if (config('audit.model_events', false)) {
+            $this->auditModelChanges();
+        }
 
         $this->configureRateLimiting();
         $this->configureCorsFromRuntimeEnv();

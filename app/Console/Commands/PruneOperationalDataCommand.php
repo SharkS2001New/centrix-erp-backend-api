@@ -12,7 +12,7 @@ class PruneOperationalDataCommand extends Command
                             {--dry-run : Count matching rows without deleting}
                             {--days= : Delete rows older than this many days (overrides saved retention timers for this run)}
                             {--limit= : Max rows to delete this run (across selected targets)}
-                            {--only=* : Limit to table aliases (hikvision_agent_commands, hikvision_access_events, employee_attendance, kra_agent_commands, stock_reservations, audit_logs, cancelled_sales, expired_sales)}
+                            {--only=* : Limit to table aliases (hikvision_agent_commands, hikvision_access_events, kra_agent_commands, stock_reservations, audit_logs, cancelled_sales, expired_sales). Attendance is never pruned.}
                             {--optimize : Run OPTIMIZE TABLE on pruned retention tables afterward}
                             {--source=cli : Who triggered this run (schedule|cli|manual)}';
 
@@ -79,15 +79,6 @@ class PruneOperationalDataCommand extends Command
         $optimized = [];
         if (! $dryRun && (bool) $this->option('optimize')) {
             $tables = $only === [] ? null : $only;
-            if ($tables !== null) {
-                $tables = array_values(array_unique(array_map(
-                    static fn (string $t) => $t === 'employee_attendance' ? 'employee_attendance' : $t,
-                    $tables,
-                )));
-                if (in_array('employee_attendance', $tables, true)) {
-                    $tables[] = 'employee_clock_sessions';
-                }
-            }
             $optimizeResults = $pruner->optimizeRetentionTables(
                 $tables,
                 function (array $payload): void {

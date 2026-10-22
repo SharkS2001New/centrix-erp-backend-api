@@ -190,7 +190,7 @@ class OperationalDataPruneTest extends TestCase
         $this->assertNotNull(\App\Models\HikvisionAgentCommand::query()->find($recentId));
     }
 
-    public function test_prune_deletes_attendance_older_than_two_months(): void
+    public function test_prune_never_deletes_employee_attendance(): void
     {
         if (! \Illuminate\Support\Facades\Schema::hasTable('employee_attendance')) {
             $this->markTestSkipped('employee_attendance missing');
@@ -235,11 +235,16 @@ class OperationalDataPruneTest extends TestCase
 
         Artisan::call('erp:prune-operational-data');
 
-        $this->assertNull(\App\Models\EmployeeAttendance::query()->find($old->id));
+        $this->assertNotNull(\App\Models\EmployeeAttendance::query()->find($old->id));
         $this->assertNotNull(\App\Models\EmployeeAttendance::query()->find($recent->id));
         if ($oldSession) {
-            $this->assertNull(\App\Models\EmployeeClockSession::query()->find($oldSession->id));
+            $this->assertNotNull(\App\Models\EmployeeClockSession::query()->find($oldSession->id));
         }
+
+        $exit = Artisan::call('erp:prune-operational-data', ['--only' => ['employee_attendance']]);
+        $this->assertSame(1, $exit);
+        $this->assertStringContainsString('never pruned', Artisan::output());
+        $this->assertNotNull(\App\Models\EmployeeAttendance::query()->find($old->id));
     }
 
     public function test_slow_queries_endpoint_requires_super_admin_shape(): void

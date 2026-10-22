@@ -78,8 +78,10 @@ class AuditLoggerTest extends TestCase
         $this->assertSame('Soap', $logger->rows[0]['new']['product_name']);
     }
 
-    public function test_model_events_reach_the_audit_log_for_the_signed_in_user(): void
+    public function test_global_model_events_are_off_by_default(): void
     {
+        $this->assertFalse((bool) config('audit.model_events'));
+
         $logger = new RecordingAuditLogger;
         $this->app->instance(AuditLogger::class, $logger);
         $this->actingAs($this->actor());
@@ -98,11 +100,9 @@ class AuditLoggerTest extends TestCase
         $model->customer_name = 'Amina';
         $model->syncChanges();
 
-        Event::dispatch('eloquent.updated: '.$model::class, $model);
+        Event::dispatch('eloquent.updated: '.$model::class, [$model]);
 
-        $this->assertCount(1, $logger->rows);
-        $this->assertSame('customers', $logger->rows[0]['table']);
-        $this->assertSame('Amina', $logger->rows[0]['new']['customer_name']);
+        $this->assertCount(0, $logger->rows);
     }
 
     private function actor(): User

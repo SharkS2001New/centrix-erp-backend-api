@@ -4,13 +4,19 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\PlatformMarketingBlog;
+use App\Services\Platform\MarketingBlogCacheService;
+use App\Services\Platform\MarketingBlogImageCompressor;
 use App\Services\Platform\PlatformMarketingBlogService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
 class PlatformMarketingBlogController extends Controller
 {
-    public function __construct(protected PlatformMarketingBlogService $service) {}
+    public function __construct(
+        protected PlatformMarketingBlogService $service,
+        protected MarketingBlogImageCompressor $images,
+        protected MarketingBlogCacheService $cache,
+    ) {}
 
     public function index(Request $request)
     {
@@ -38,7 +44,7 @@ class PlatformMarketingBlogController extends Controller
             })
             ->orderByDesc('id')
             ->limit(200)
-            ->get();
+            ->get(['id', 'title', 'slug', 'excerpt', 'cover_image_url', 'category', 'status', 'author_name', 'read_time', 'seo_title', 'seo_description', 'published_at', 'created_at', 'updated_at', 'created_by', 'published_by', 'updated_by']);
 
         return response()->json([
             'data' => $blogs
@@ -111,9 +117,40 @@ class PlatformMarketingBlogController extends Controller
     public function destroy(int $id)
     {
         $blog = PlatformMarketingBlog::query()->findOrFail($id);
-        $blog->delete();
+        $this->service->delete($blog);
 
         return response()->json(['message' => 'Deleted.']);
+    }
+
+    /**
+     * Upload + compress an image for the blog editor (Pitch Predictions style).
+     * Returns { url } for insertion into the HTML body or cover field.
+     */
+    public function uploadImage(Request $request)
+    {
+        $request->validate([
+            'image' => 'required|image|max:12288',
+        ]);
+
+        $path = $this->images->compressUploadedFile($request->file('image'));
+        $url = $this->images->publicUrl($path);
+
+        return response()->json([
+            'url' => $url,
+            'path' => $path,
+        ], 201);
+    }
+
+    public function purgeCache(Request $request)
+    {
+        $slug = trim((string) $request->input('slug', ''));
+        $this->cache->forgetLocal($slug !== '' ? $slug : null);
+        $remote = $this->cache->purgeWebsite($slug !== '' ? $slug : null);
+
+        return response()->json([
+            'message' => 'Blog caches cleared.',
+            'website' => $remote,
+        ]);
     }
 
     /**
@@ -127,7 +164,7 @@ class PlatformMarketingBlogController extends Controller
             'title' => [$required, 'string', 'max:200'],
             'slug' => ['sometimes', 'nullable', 'string', 'max:220'],
             'excerpt' => ['sometimes', 'nullable', 'string', 'max:500'],
-            'body' => [$required, 'string', 'max:200000'],
+            'body' => [$required, 'string', 'max:500000'],
             'cover_image_url' => ['sometimes', 'nullable', 'string', 'max:1000'],
             'category' => ['sometimes', 'string', Rule::in(PlatformMarketingBlog::CATEGORIES)],
             'author_name' => ['sometimes', 'nullable', 'string', 'max:120'],

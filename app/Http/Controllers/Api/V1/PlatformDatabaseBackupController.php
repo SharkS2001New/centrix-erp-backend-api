@@ -10,6 +10,9 @@ use App\Services\Backup\BackupScheduleSettingsResolver;
 use App\Services\Backup\CloudflareR2BackupUploader;
 use App\Services\Backup\DatabaseBackupException;
 use App\Services\Backup\DatabaseBackupService;
+use App\Services\Backup\DatabaseRestoreException;
+use App\Services\Backup\DatabaseRestoreService;
+use App\Services\Backup\RestoreDatasetCatalog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
@@ -20,6 +23,8 @@ class PlatformDatabaseBackupController extends Controller
 {
     public function __construct(
         protected DatabaseBackupService $backups,
+        protected DatabaseRestoreService $restores,
+        protected RestoreDatasetCatalog $restoreDatasets,
         protected BackgroundTaskService $tasks,
     ) {}
 
@@ -36,6 +41,7 @@ class PlatformDatabaseBackupController extends Controller
                 'r2' => $r2,
                 'r2_settings' => BackupR2SettingsResolver::describe(),
                 'schedule' => BackupScheduleSettingsResolver::describe(),
+                'restore_datasets' => $this->restoreDatasets->datasets(),
             ]);
         } catch (\Throwable $e) {
             report($e);
@@ -245,14 +251,209 @@ class PlatformDatabaseBackupController extends Controller
         }
     }
 
+    /**
+     * POST /api/v1/admin/database-backups/{filename}/restore
+     * Restore selected tables (or full dump) from an existing backup file.
+     */
+    public function restoreFromBackup(Request $request, string $filename)
+    {
+        try {
+            $validated = $request->validate([
+                'mode' => ['required', 'in:merge,replace'],
+                'dataset' => ['nullable', 'string', 'max:64'],
+                'tables' => ['nullable', 'array'],
+                'tables.*' => ['string', 'max:64'],
+                'confirm_full' => ['sometimes', 'boolean'],
+            ]);
+
+            $tables = $this->resolveRestoreTables(
+                $validated['dataset'] ?? null,
+                $validated['tables'] ?? null,
+            );
+
+            @set_time_limit(0);
+
+            $result = $this->restores->restoreFromStoredBackup(
+                $filename,
+                (string) $validated['mode'],
+                $tables,
+                (bool) ($validated['confirm_full'] ?? false),
+            );
+            $result['dataset'] = $validated['dataset'] ?? null;
+
+            Log::warning('Platform database restore from stored backup', [
+                'filename' => $filename,
+                'user_id' => $request->user()?->id,
+                'ip' => $request->ip(),
+                'mode' => $result['mode'],
+                'dataset' => $validated['dataset'] ?? null,
+                'tables' => $result['tables'],
+            ]);
+
+            return response()->json([
+                'message' => $this->restoreSuccessMessage($result),
+                'data' => $result,
+            ]);
+        } catch (\Throwable $e) {
+            report($e);
+
+            return $this->backupErrorResponse($e, 'Database restore failed.', 422);
+        }
+    }
+
+    /**
+     * POST /api/v1/admin/database-backups/restore-upload
+     * Upload a .sql / .sql.gz dump and restore (table-scoped or full).
+     */
+    public function restoreUpload(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'file' => ['required', 'file', 'max:524288'], // KB → ~512 MB
+                'mode' => ['required', 'in:merge,replace'],
+                'dataset' => ['nullable', 'string', 'max:64'],
+                'tables' => ['nullable'],
+                'confirm_full' => ['sometimes', 'boolean'],
+            ]);
+
+            $tablesRaw = $validated['tables'] ?? null;
+            $extraTables = null;
+            if (is_string($tablesRaw) && trim($tablesRaw) !== '') {
+                $decoded = json_decode($tablesRaw, true);
+                if (is_array($decoded)) {
+                    $extraTables = $decoded;
+                } else {
+                    $extraTables = array_values(array_filter(array_map('trim', explode(',', $tablesRaw))));
+                }
+            } elseif (is_array($tablesRaw)) {
+                $extraTables = $tablesRaw;
+            }
+
+            $tables = $this->resolveRestoreTables(
+                $validated['dataset'] ?? null,
+                $extraTables,
+            );
+
+            $upload = $request->file('file');
+            $original = (string) $upload->getClientOriginalName();
+            $ext = strtolower((string) $upload->getClientOriginalExtension());
+            if (! in_array($ext, ['sql', 'gz'], true)
+                && ! str_ends_with(strtolower($original), '.sql.gz')
+                && ! str_ends_with(strtolower($original), '.sql')) {
+                return response()->json([
+                    'message' => 'Upload a .sql or .sql.gz dump.',
+                    'code' => 'invalid_file_type',
+                ], 422);
+            }
+
+            $tempPath = $upload->getRealPath();
+            if (! is_string($tempPath) || $tempPath === '' || ! is_file($tempPath)) {
+                return response()->json([
+                    'message' => 'Uploaded file could not be read.',
+                    'code' => 'file_unreadable',
+                ], 422);
+            }
+
+            // Persist upload to a stable temp path (PHP may clean the upload tmp after the request).
+            $stable = tempnam(sys_get_temp_dir(), 'erp_restore_up_');
+            if ($stable === false) {
+                return response()->json([
+                    'message' => 'Could not stage uploaded dump.',
+                    'code' => 'temp_failed',
+                ], 500);
+            }
+            $suffix = str_ends_with(strtolower($original), '.sql.gz') || $ext === 'gz' ? '.sql.gz' : '.sql';
+            $staged = $stable.$suffix;
+            @unlink($stable);
+            if (! @copy($tempPath, $staged)) {
+                return response()->json([
+                    'message' => 'Could not stage uploaded dump.',
+                    'code' => 'temp_failed',
+                ], 500);
+            }
+
+            @set_time_limit(0);
+
+            try {
+                $result = $this->restores->restoreFromAbsolutePath(
+                    $staged,
+                    (string) $validated['mode'],
+                    $tables,
+                    str_ends_with(strtolower($staged), '.gz'),
+                    (bool) ($validated['confirm_full'] ?? false),
+                    $original,
+                );
+            } finally {
+                @unlink($staged);
+            }
+
+            Log::warning('Platform database restore from upload', [
+                'filename' => $original,
+                'user_id' => $request->user()?->id,
+                'ip' => $request->ip(),
+                'mode' => $result['mode'],
+                'tables' => $result['tables'],
+            ]);
+
+            $result['dataset'] = $validated['dataset'] ?? null;
+
+            return response()->json([
+                'message' => $this->restoreSuccessMessage($result),
+                'data' => $result,
+            ]);
+        } catch (\Throwable $e) {
+            report($e);
+
+            return $this->backupErrorResponse($e, 'Database restore failed.', 422);
+        }
+    }
+
+    /**
+     * Explicit table list wins. Otherwise expand a named dataset pack.
+     *
+     * @param  list<string>|null  $tables
+     * @return list<string>|null
+     */
+    protected function resolveRestoreTables(?string $dataset, ?array $tables): ?array
+    {
+        if (is_array($tables) && $tables !== []) {
+            return $this->restores->normalizeTables($tables);
+        }
+
+        if ($dataset !== null && trim($dataset) !== '') {
+            return $this->restoreDatasets->resolveTables($dataset);
+        }
+
+        return null;
+    }
+
+    /** @param  array{mode: string, tables: list<string>|null, statements_executed: int, truncated: list<string>}  $result */
+    protected function restoreSuccessMessage(array $result): string
+    {
+        $scope = $result['tables'] === null || $result['tables'] === []
+            ? 'full dump'
+            : ('table(s) '.implode(', ', $result['tables']));
+        $mode = $result['mode'] === 'replace' ? 'replace (truncate then load)' : 'merge (insert ignore)';
+
+        return sprintf(
+            'Restore completed (%s, %s): %d statement(s) executed.',
+            $scope,
+            $mode,
+            (int) $result['statements_executed'],
+        );
+    }
+
     protected function backupErrorResponse(\Throwable $e, string $message, int $status)
     {
         $code = 'backup_failed';
         $detail = null;
 
-        if ($e instanceof DatabaseBackupException) {
+        if ($e instanceof DatabaseBackupException || $e instanceof DatabaseRestoreException) {
             $code = $e->codeKey;
             $detail = $e->getMessage();
+            if ($e instanceof DatabaseRestoreException && $e->codeKey === 'confirm_full_required') {
+                $status = 422;
+            }
         } elseif (config('app.debug')) {
             $detail = $e->getMessage();
         } elseif (config('backup.expose_error_detail', true)) {

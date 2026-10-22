@@ -9,28 +9,44 @@ use Illuminate\Validation\ValidationException;
 
 class PlatformMarketingBlogService
 {
+    public function __construct(
+        protected MarketingBlogImageCompressor $images,
+        protected MarketingBlogCacheService $cache,
+    ) {}
+
     public function create(User $actor, array $data): PlatformMarketingBlog
     {
         $slug = $this->uniqueSlug($data['slug'] ?? $data['title']);
+        $body = $this->prepareBody((string) ($data['body'] ?? ''));
 
-        return PlatformMarketingBlog::query()->create([
+        $blog = PlatformMarketingBlog::query()->create([
             'title' => $data['title'],
             'slug' => $slug,
             'excerpt' => $data['excerpt'] ?? null,
-            'body' => $data['body'],
+            'body' => $body,
             'cover_image_url' => $data['cover_image_url'] ?? null,
             'category' => $data['category'] ?? 'general',
             'status' => PlatformMarketingBlog::STATUS_DRAFT,
             'author_name' => $data['author_name'] ?? null,
+            'read_time' => MarketingBlogHtml::estimateReadMinutes(
+                $body,
+                (int) config('marketing_blog.read_words_per_minute', 200),
+            ),
             'seo_title' => $data['seo_title'] ?? null,
             'seo_description' => $data['seo_description'] ?? null,
             'created_by' => $actor->id,
             'updated_by' => $actor->id,
         ]);
+
+        $this->cache->forgetLocal($blog->slug);
+
+        return $blog;
     }
 
     public function update(PlatformMarketingBlog $blog, User $actor, array $data): PlatformMarketingBlog
     {
+        $previousSlug = $blog->slug;
+
         if (array_key_exists('title', $data)) {
             $blog->title = $data['title'];
         }
@@ -39,20 +55,32 @@ class PlatformMarketingBlogService
         } elseif (array_key_exists('title', $data) && $blog->isDraft()) {
             $blog->slug = $this->uniqueSlug($data['title'], $blog->id);
         }
-        foreach (['excerpt', 'body', 'cover_image_url', 'category', 'author_name', 'seo_title', 'seo_description'] as $key) {
+        foreach (['excerpt', 'cover_image_url', 'category', 'author_name', 'seo_title', 'seo_description'] as $key) {
             if (array_key_exists($key, $data)) {
                 $blog->{$key} = $data[$key];
             }
         }
+        if (array_key_exists('body', $data)) {
+            $blog->body = $this->prepareBody((string) $data['body']);
+            $blog->read_time = MarketingBlogHtml::estimateReadMinutes(
+                (string) $blog->body,
+                (int) config('marketing_blog.read_words_per_minute', 200),
+            );
+        }
         $blog->updated_by = $actor->id;
         $blog->save();
+
+        $this->cache->purgeAfterChange($previousSlug);
+        if ($blog->slug !== $previousSlug) {
+            $this->cache->purgeAfterChange($blog->slug);
+        }
 
         return $blog->fresh();
     }
 
     public function publish(PlatformMarketingBlog $blog, User $actor): PlatformMarketingBlog
     {
-        if (! trim((string) $blog->title) || ! trim((string) $blog->body)) {
+        if (! trim((string) $blog->title) || ! trim(MarketingBlogHtml::plainText((string) $blog->body))) {
             throw ValidationException::withMessages([
                 'body' => ['Title and body are required before publishing.'],
             ]);
@@ -62,7 +90,15 @@ class PlatformMarketingBlogService
         $blog->published_at = $blog->published_at ?? now();
         $blog->published_by = $actor->id;
         $blog->updated_by = $actor->id;
+        if (! $blog->read_time) {
+            $blog->read_time = MarketingBlogHtml::estimateReadMinutes(
+                (string) $blog->body,
+                (int) config('marketing_blog.read_words_per_minute', 200),
+            );
+        }
         $blog->save();
+
+        $this->cache->purgeAfterChange($blog->slug);
 
         return $blog->fresh();
     }
@@ -73,7 +109,16 @@ class PlatformMarketingBlogService
         $blog->updated_by = $actor->id;
         $blog->save();
 
+        $this->cache->purgeAfterChange($blog->slug);
+
         return $blog->fresh();
+    }
+
+    public function delete(PlatformMarketingBlog $blog): void
+    {
+        $slug = $blog->slug;
+        $blog->delete();
+        $this->cache->purgeAfterChange($slug);
     }
 
     /**
@@ -81,15 +126,18 @@ class PlatformMarketingBlogService
      */
     public function present(PlatformMarketingBlog $blog, bool $public = false): array
     {
+        $body = (string) $blog->body;
         $payload = [
             'id' => $blog->id,
             'title' => $blog->title,
             'slug' => $blog->slug,
             'excerpt' => $blog->excerpt,
-            'body' => $blog->body,
+            'body' => $body,
+            'body_is_html' => MarketingBlogHtml::isHtml($body),
             'cover_image_url' => $blog->cover_image_url,
             'category' => $blog->category,
             'author_name' => $blog->author_name ?: 'CentrixERP',
+            'read_time' => $blog->read_time,
             'seo_title' => $blog->seo_title,
             'seo_description' => $blog->seo_description,
             'status' => $blog->status,
@@ -104,6 +152,7 @@ class PlatformMarketingBlogService
             $payload['updated_by'] = $blog->updated_by;
             $payload['creator_name'] = $blog->creator?->full_name;
             $payload['publisher_name'] = $blog->publisher?->full_name;
+            $payload['body_bytes'] = strlen($body);
         }
 
         return $payload;
@@ -115,7 +164,7 @@ class PlatformMarketingBlogService
     public function presentListItem(PlatformMarketingBlog $blog, bool $public = false): array
     {
         $full = $this->present($blog, $public);
-        unset($full['body']);
+        unset($full['body'], $full['body_is_html']);
 
         return $full;
     }
@@ -136,5 +185,12 @@ class PlatformMarketingBlogService
         }
 
         return $slug;
+    }
+
+    protected function prepareBody(string $body): string
+    {
+        $body = $this->images->compressImagesInHtml($body);
+
+        return MarketingBlogHtml::sanitize($body);
     }
 }
