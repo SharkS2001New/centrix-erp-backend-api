@@ -156,18 +156,24 @@ class TripAutoCloseService
      * After a customer return adjusts the sale total: cancel the order when fully
      * returned (order total ~ 0). If an approved return is undone and the total
      * comes back, restore a completed status so the order is active again.
+     *
+     * Do not clamp amount_paid down to the netted order_total. Credit/account
+     * returns shrink goods value while cash collected stays; clamping made the
+     * restored gross AR invoice look Partial (cash below invoice; a return is not a payment).
      */
     public function markReturnedSaleCompleteIfBalanced(Sale $sale, User $user): Sale
     {
         $sale->refresh();
         $orderTotal = round((float) $sale->order_total, 2);
-        $amountPaid = min($orderTotal, round((float) $sale->amount_paid, 2));
+        $amountPaid = max(0, round((float) $sale->amount_paid, 2));
         $paymentStatus = $this->paymentStatusForAmounts($orderTotal, $amountPaid);
 
         $updates = [
-            'amount_paid' => $amountPaid,
             'payment_status' => $paymentStatus,
         ];
+        if (abs((float) $sale->amount_paid - $amountPaid) > 0.001) {
+            $updates['amount_paid'] = $amountPaid;
+        }
 
         $status = (string) $sale->status;
         if ($orderTotal <= 0.01 && ! in_array($status, ['cancelled', 'held'], true)) {

@@ -576,15 +576,11 @@ class OperationalDataPruneService
             return $toDelete;
         }
 
-        if ($toDelete >= $count) {
-            $query->delete();
-
-            return $count;
-        }
-
+        // Always delete in id batches — a single unbounded DELETE on audit_logs
+        // (hundreds of thousands of rows) locks the table and times out.
         $deleted = 0;
         while ($deleted < $toDelete) {
-            $chunk = min(5000, $toDelete - $deleted);
+            $chunk = min(2000, $toDelete - $deleted);
             $ids = (clone $query)->orderBy('id')->limit($chunk)->pluck('id');
             if ($ids->isEmpty()) {
                 break;

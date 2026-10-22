@@ -33,21 +33,32 @@ class CustomerInvoiceService
             return null;
         }
 
-        $total = round((float) ($invoiceTotal ?? $sale->order_total), 2);
-        if ($total <= 0.01) {
+        $netSale = round((float) ($invoiceTotal ?? $sale->order_total), 2);
+        if ($netSale <= 0.01) {
             // Net total wiped (full return) — never leave a live AR row as "Paid".
             $this->voidForCancelledSale($sale, $user);
 
             return null;
         }
 
-        $paid = round((float) ($amountPaid ?? $sale->amount_paid), 2);
-        $paymentStatus = $this->paymentStatus($total, $paid);
-
         $existing = CustomerInvoice::query()
             ->where('sale_id', $sale->id)
             ->whereNull('deleted_at')
             ->first();
+
+        // Customer returns shrink sale.order_total; keep AR at original gross when
+        // credit notes exist so statements show Invoice + Credit separately and
+        // payment_status is not recomputed as Partial against a netted total.
+        $credits = $this->statementCreditTotalForSale((int) $sale->id);
+        $total = $credits > 0.01
+            ? round(max(
+                $netSale + $credits,
+                $existing ? (float) $existing->invoice_total : 0.0,
+            ), 2)
+            : $netSale;
+
+        $paid = round((float) ($amountPaid ?? $sale->amount_paid), 2);
+        $paymentStatus = $this->paymentStatus($total, $paid + $credits);
 
         if ($existing) {
             $oldCustomerNum = (int) ($existing->customer_num ?? 0);
@@ -253,8 +264,23 @@ class CustomerInvoiceService
     {
         $paid = self::cashCollectedSql($invoiceAlias);
         $credits = self::creditsForInvoiceSaleSql($invoiceAlias);
+        // Use gross (never netted invoice − credits). Netted invoice_total + credit
+        // notes double-counts the return and can zero a still-open balance.
+        $gross = self::grossInvoiceTotalSql($invoiceAlias, $credits);
 
-        return "GREATEST(0, ROUND({$invoiceAlias}.invoice_total - {$paid} - {$credits}, 2))";
+        return "GREATEST(0, ROUND({$gross} - {$paid} - {$credits}, 2))";
+    }
+
+    /**
+     * Gross AR amount for SQL filters: max(stored invoice_total, sale net + credits).
+     */
+    public static function grossInvoiceTotalSql(string $invoiceAlias = 'ci', ?string $creditsSql = null): string
+    {
+        $credits = $creditsSql ?? self::creditsForInvoiceSaleSql($invoiceAlias);
+        $netSale = "(SELECT COALESCE(s.order_total, {$invoiceAlias}.invoice_total) FROM sales s "
+            ."WHERE s.id = {$invoiceAlias}.sale_id LIMIT 1)";
+
+        return "GREATEST({$invoiceAlias}.invoice_total, COALESCE({$netSale}, {$invoiceAlias}.invoice_total) + {$credits})";
     }
 
     public function creditTotalForInvoice(CustomerInvoice $invoice): float
@@ -266,12 +292,36 @@ class CustomerInvoiceService
         return $this->statementCreditTotalForSale((int) $invoice->sale_id);
     }
 
+    /**
+     * Original invoice debit (gross). If a return already shrank invoice_total and a
+     * credit note exists, reconstruct gross so credits are not deducted twice.
+     */
+    public function grossInvoiceTotal(
+        CustomerInvoice $invoice,
+        float $credits = 0.0,
+        ?float $netSaleTotal = null,
+    ): float {
+        $stored = round((float) $invoice->invoice_total, 2);
+        if ($credits <= 0.01 && $netSaleTotal === null) {
+            return $stored;
+        }
+
+        $net = $netSaleTotal;
+        if ($net === null && $invoice->sale_id) {
+            $net = Sale::query()->where('id', $invoice->sale_id)->value('order_total');
+        }
+        $net = round((float) ($net ?? $stored), 2);
+
+        return round(max($stored, $net + $credits), 2);
+    }
+
     public function balanceDueFromPayments(CustomerInvoice $invoice): float
     {
         $paid = $this->cashCollectedForInvoice($invoice);
         $credits = $this->creditTotalForInvoice($invoice);
+        $gross = $this->grossInvoiceTotal($invoice, $credits);
 
-        return round(max(0, (float) $invoice->invoice_total - $paid - $credits), 2);
+        return round(max(0, $gross - $paid - $credits), 2);
     }
 
     protected function cashCollectedFromPreloaded(CustomerInvoice $invoice): float
@@ -397,7 +447,7 @@ class CustomerInvoiceService
                     'balance_due' => $balances['balance_due'],
                     'payment_status' => SalePaymentStatus::resolve(
                         (string) ($sale->status ?? ''),
-                        (float) ($invoice->invoice_total ?? $sale->order_total),
+                        (float) ($balances['invoice_total'] ?? $invoice->invoice_total ?? $sale->order_total),
                         (float) $balances['amount_paid'] + (float) $balances['return_credit_total'],
                     ),
                 ];
@@ -426,7 +476,7 @@ class CustomerInvoiceService
 
     /**
      * @param  array<int, float>|null  $creditsBySale  Optional preloaded map sale_id => credit total
-     * @return array{amount_paid: float, return_credit_total: float, balance_due: float, payment_status: int}
+     * @return array{amount_paid: float, return_credit_total: float, balance_due: float, payment_status: int, invoice_total: float}
      */
     public function presentInvoiceBalances(CustomerInvoice $invoice, ?array $creditsBySale = null): array
     {
@@ -435,27 +485,40 @@ class CustomerInvoiceService
             : $this->cashCollectedForInvoice($invoice);
 
         $credits = 0.0;
+        $netSale = null;
         if ($invoice->sale_id) {
             $saleId = (int) $invoice->sale_id;
             $credits = $creditsBySale !== null
                 ? round((float) ($creditsBySale[$saleId] ?? 0), 2)
                 : $this->statementCreditTotalForSale($saleId);
+            $netSale = Sale::query()->where('id', $saleId)->value('order_total');
         }
 
-        $invoiceTotal = round((float) $invoice->invoice_total, 2);
+        // Heal netted invoice_total when credit notes exist — otherwise
+        // balance = net − cash − credits double-counts the return.
+        $invoiceTotal = $this->grossInvoiceTotal(
+            $invoice,
+            $credits,
+            $netSale !== null ? (float) $netSale : null,
+        );
         $balanceDue = round(max(0, $invoiceTotal - $amountPaid - $credits), 2);
         $paymentStatus = $this->paymentStatus($invoiceTotal, $amountPaid + $credits);
 
-        if (
-            (int) $invoice->payment_status !== $paymentStatus
-            || abs(round((float) $invoice->amount_paid, 2) - $amountPaid) > 0.001
-        ) {
-            CustomerInvoice::query()->where('id', $invoice->id)->update([
-                'amount_paid' => $amountPaid,
-                'payment_status' => $paymentStatus,
-            ]);
+        $updates = [];
+        if (abs(round((float) $invoice->invoice_total, 2) - $invoiceTotal) > 0.001) {
+            $updates['invoice_total'] = $invoiceTotal;
+            $invoice->invoice_total = $invoiceTotal;
+        }
+        if (abs(round((float) $invoice->amount_paid, 2) - $amountPaid) > 0.001) {
+            $updates['amount_paid'] = $amountPaid;
             $invoice->amount_paid = $amountPaid;
+        }
+        if ((int) $invoice->payment_status !== $paymentStatus) {
+            $updates['payment_status'] = $paymentStatus;
             $invoice->payment_status = $paymentStatus;
+        }
+        if ($updates !== []) {
+            CustomerInvoice::query()->where('id', $invoice->id)->update($updates);
         }
 
         return [
@@ -463,6 +526,7 @@ class CustomerInvoiceService
             'return_credit_total' => $credits,
             'balance_due' => $balanceDue,
             'payment_status' => $paymentStatus,
+            'invoice_total' => $invoiceTotal,
         ];
     }
 

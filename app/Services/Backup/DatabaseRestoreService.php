@@ -8,6 +8,12 @@ use Illuminate\Support\Facades\Schema;
 
 class DatabaseRestoreService
 {
+    /** Max rows per INSERT statement after chunking (mysqldump extended inserts). */
+    public const INSERT_CHUNK_ROWS = 250;
+
+    /** Soft byte cap per INSERT chunk (~0.75 MiB) to stay under typical max_allowed_packet. */
+    public const INSERT_CHUNK_BYTES = 786432;
+
     public function __construct(protected DatabaseBackupService $backups) {}
 
     /**
@@ -134,6 +140,13 @@ class DatabaseRestoreService
             );
         }
 
+        if ($tables !== null && $tables === []) {
+            throw new DatabaseRestoreException(
+                'No matching tables to restore (requested tables are missing on this database).',
+                'no_tables',
+            );
+        }
+
         $truncated = [];
         if ($mode === 'replace' && $tables !== null) {
             $truncated = $this->truncateTables($tables, $driver);
@@ -146,45 +159,63 @@ class DatabaseRestoreService
             throw new DatabaseRestoreException('Could not open SQL dump for reading.', 'file_unreadable');
         }
 
+        $generatedByTable = $this->generatedColumnsByTable($tables);
+
         try {
             DB::connection()->disableQueryLog();
             if ($driver === 'mysql' || $driver === 'mariadb') {
                 DB::statement('SET FOREIGN_KEY_CHECKS=0');
-                DB::statement("SET SESSION sql_mode=(SELECT REPLACE(@@sql_mode,'NO_ZERO_DATE',''))");
+                DB::statement('SET UNIQUE_CHECKS=0');
+                try {
+                    // Prefer a larger packet size for extended inserts (best-effort).
+                    DB::statement('SET SESSION max_allowed_packet=67108864');
+                } catch (\Throwable) {
+                    // Host may forbid changing max_allowed_packet.
+                }
+                DB::statement("SET SESSION sql_mode=(SELECT REPLACE(REPLACE(@@sql_mode,'NO_ZERO_DATE',''),'NO_ZERO_IN_DATE',''))");
             }
 
             foreach ($this->iterateStatements($handle) as $statement) {
-                $prepared = $this->prepareStatement($statement, $mode, $tables, $driver);
+                $prepared = $this->prepareStatement($statement, $mode, $tables, $driver, $generatedByTable);
                 if ($prepared === null) {
                     $skipped++;
                     continue;
                 }
 
-                try {
-                    DB::unprepared($prepared);
-                    $executed++;
-                } catch (\Throwable $e) {
-                    // Merge: ignore duplicate-key / already-exists noise when possible.
-                    if ($mode === 'merge' && $this->isIgnorableMergeError($e)) {
-                        $skipped++;
-                        continue;
+                foreach ($this->expandExecutableStatements($prepared, $driver) as $chunkSql) {
+                    try {
+                        DB::unprepared($chunkSql);
+                        $executed++;
+                    } catch (\Throwable $e) {
+                        if ($mode === 'merge' && $this->isIgnorableMergeError($e)) {
+                            $skipped++;
+                            continue;
+                        }
+                        throw new DatabaseRestoreException(
+                            'SQL restore failed: '.$e->getMessage(),
+                            'sql_failed',
+                            $e,
+                        );
                     }
-                    throw new DatabaseRestoreException(
-                        'SQL restore failed: '.$e->getMessage(),
-                        'sql_failed',
-                        $e,
-                    );
                 }
             }
         } finally {
             fclose($handle);
             if ($driver === 'mysql' || $driver === 'mariadb') {
                 try {
+                    DB::statement('SET UNIQUE_CHECKS=1');
                     DB::statement('SET FOREIGN_KEY_CHECKS=1');
                 } catch (\Throwable) {
                     // best-effort
                 }
             }
+        }
+
+        if ($tables !== null && $executed === 0) {
+            throw new DatabaseRestoreException(
+                'Restore finished with 0 statements executed for the selected tables. The dump may not contain those tables, or all rows were skipped.',
+                'nothing_restored',
+            );
         }
 
         Log::warning('Platform database restore completed', [
@@ -229,6 +260,133 @@ class DatabaseRestoreService
     }
 
     /**
+     * Split oversized INSERT … VALUES (…),(…) into smaller statements.
+     *
+     * @return list<string>
+     */
+    public function expandExecutableStatements(string $sql, string $driver = 'mysql'): array
+    {
+        if (! preg_match('/^(INSERT(?:\s+OR\s+IGNORE|\s+IGNORE)?|REPLACE)\s+INTO\b/i', $sql)) {
+            return [$sql];
+        }
+
+        if (! preg_match('/^(.*?\bVALUES)\s*(.+)$/is', $sql, $m)) {
+            return [$sql];
+        }
+
+        $prefix = rtrim($m[1]);
+        $valuesBlob = trim($m[2]);
+        $valuesBlob = rtrim($valuesBlob, "; \t\n\r");
+
+        $tuples = $this->splitValueTuples($valuesBlob);
+        if (count($tuples) <= 1) {
+            return [$sql];
+        }
+
+        $chunks = [];
+        $batch = [];
+        $batchBytes = 0;
+        foreach ($tuples as $tuple) {
+            $tupleBytes = strlen($tuple);
+            $wouldExceedRows = count($batch) >= self::INSERT_CHUNK_ROWS;
+            $wouldExceedBytes = $batch !== [] && ($batchBytes + $tupleBytes + 1) > self::INSERT_CHUNK_BYTES;
+            if ($wouldExceedRows || $wouldExceedBytes) {
+                $chunks[] = $prefix.' '.implode(',', $batch);
+                $batch = [];
+                $batchBytes = 0;
+            }
+            $batch[] = $tuple;
+            $batchBytes += $tupleBytes + 1;
+        }
+        if ($batch !== []) {
+            $chunks[] = $prefix.' '.implode(',', $batch);
+        }
+
+        if ($driver === 'sqlite') {
+            return array_map(static fn (string $s) => str_replace('`', '"', $s), $chunks);
+        }
+
+        return $chunks;
+    }
+
+    /**
+     * Split a VALUES blob into "(…)" tuples, respecting quotes and nested parentheses.
+     *
+     * @return list<string>
+     */
+    public function splitValueTuples(string $valuesBlob): array
+    {
+        $tuples = [];
+        $len = strlen($valuesBlob);
+        $depth = 0;
+        $inSingle = false;
+        $inDouble = false;
+        $start = null;
+
+        for ($i = 0; $i < $len; $i++) {
+            $ch = $valuesBlob[$i];
+            $next = $i + 1 < $len ? $valuesBlob[$i + 1] : '';
+
+            if ($inSingle) {
+                if ($ch === '\\' && $next !== '') {
+                    $i++;
+                    continue;
+                }
+                if ($ch === "'" && $next === "'") {
+                    $i++;
+                    continue;
+                }
+                if ($ch === "'") {
+                    $inSingle = false;
+                }
+                continue;
+            }
+
+            if ($inDouble) {
+                if ($ch === '\\' && $next !== '') {
+                    $i++;
+                    continue;
+                }
+                if ($ch === '"' && $next === '"') {
+                    $i++;
+                    continue;
+                }
+                if ($ch === '"') {
+                    $inDouble = false;
+                }
+                continue;
+            }
+
+            if ($ch === "'") {
+                $inSingle = true;
+                continue;
+            }
+            if ($ch === '"') {
+                $inDouble = true;
+                continue;
+            }
+
+            if ($ch === '(') {
+                if ($depth === 0) {
+                    $start = $i;
+                }
+                $depth++;
+                continue;
+            }
+
+            if ($ch === ')') {
+                $depth--;
+                if ($depth === 0 && $start !== null) {
+                    $tuples[] = substr($valuesBlob, $start, $i - $start + 1);
+                    $start = null;
+                }
+            }
+        }
+
+        return $tuples;
+    }
+
+    /**
      * @param  resource  $handle
      * @return \Generator<int, string>
      */
@@ -240,6 +398,7 @@ class DatabaseRestoreService
         $inBacktick = false;
         $inLineComment = false;
         $inBlockComment = false;
+        $pendingEscape = false;
 
         while (! feof($handle)) {
             $chunk = fread($handle, 65536);
@@ -251,6 +410,12 @@ class DatabaseRestoreService
             for ($i = 0; $i < $len; $i++) {
                 $ch = $chunk[$i];
                 $next = $i + 1 < $len ? $chunk[$i + 1] : '';
+
+                if ($pendingEscape && ($inSingle || $inDouble)) {
+                    $buffer .= $ch;
+                    $pendingEscape = false;
+                    continue;
+                }
 
                 if ($inLineComment) {
                     $buffer .= $ch;
@@ -323,6 +488,8 @@ class DatabaseRestoreService
                     if ($next !== '') {
                         $buffer .= $next;
                         $i++;
+                    } else {
+                        $pendingEscape = true;
                     }
                     continue;
                 }
@@ -348,15 +515,20 @@ class DatabaseRestoreService
 
     /**
      * @param  list<string>|null  $tables
+     * @param  array<string, list<string>>  $generatedByTable
      */
-    protected function prepareStatement(string $statement, string $mode, ?array $tables, string $driver = 'mysql'): ?string
-    {
+    protected function prepareStatement(
+        string $statement,
+        string $mode,
+        ?array $tables,
+        string $driver = 'mysql',
+        array $generatedByTable = [],
+    ): ?string {
         $trimmed = ltrim($statement);
         if ($trimmed === '' || str_starts_with($trimmed, '--') || str_starts_with($trimmed, '#')) {
             return null;
         }
 
-        // Strip leading /* ... */ comment blocks for classification.
         while (preg_match('/^\/\*.*?\*\/\s*/s', $trimmed) === 1) {
             $trimmed = preg_replace('/^\/\*.*?\*\/\s*/s', '', $trimmed, 1) ?? $trimmed;
         }
@@ -378,8 +550,7 @@ class DatabaseRestoreService
             return null;
         }
 
-        // Always allow session toggles we may emit ourselves (MySQL).
-        if (preg_match('/^SET\s+(FOREIGN_KEY_CHECKS|SQL_MODE|UNIQUE_CHECKS|AUTOCOMMIT)\b/i', $trimmed) === 1) {
+        if (preg_match('/^SET\s+(FOREIGN_KEY_CHECKS|SQL_MODE|UNIQUE_CHECKS|AUTOCOMMIT|MAX_ALLOWED_PACKET)\b/i', $trimmed) === 1) {
             return $driver === 'sqlite' ? null : $trimmed;
         }
 
@@ -394,7 +565,6 @@ class DatabaseRestoreService
 
         if ($mode === 'merge') {
             if (preg_match('/^(DROP|TRUNCATE|DELETE|ALTER|CREATE|RENAME|REPLACE)\b/i', $trimmed) === 1) {
-                // REPLACE INTO is upsert-like; convert to INSERT IGNORE below if INSERT-style.
                 if (! preg_match('/^REPLACE\s+INTO\b/i', $trimmed)) {
                     return null;
                 }
@@ -402,26 +572,29 @@ class DatabaseRestoreService
 
             if (preg_match('/^INSERT\s+(?:OR\s+IGNORE\s+|IGNORE\s+)?INTO\b/i', $trimmed) === 1) {
                 $out = preg_replace('/^INSERT\s+(?:OR\s+IGNORE\s+|IGNORE\s+)?INTO\b/i', $ignoreInto, $trimmed, 1) ?? $trimmed;
+                $out = $this->stripGeneratedColumnsFromInsert($out, $table, $generatedByTable);
 
                 return $driver === 'sqlite' ? str_replace('`', '"', $out) : $out;
             }
             if (preg_match('/^REPLACE\s+INTO\b/i', $trimmed) === 1) {
                 $out = preg_replace('/^REPLACE\s+INTO\b/i', $ignoreInto, $trimmed, 1) ?? $trimmed;
+                $out = $this->stripGeneratedColumnsFromInsert($out, $table, $generatedByTable);
 
                 return $driver === 'sqlite' ? str_replace('`', '"', $out) : $out;
             }
 
-            // Skip other DML/DDL in merge mode.
             return null;
         }
 
-        // replace mode: skip DROP DATABASE-style already handled; allow table DDL + DML
         if (preg_match('/^DROP\s+TABLE\b/i', $trimmed) === 1 && $tables !== null) {
-            // Table-scoped replace already truncated; skip dump DROP to avoid cascade surprises.
             return null;
         }
 
-        // SQLite dumps / MySQL dumps may use backticks — strip for sqlite.
+        if (preg_match('/^INSERT\s+(?:OR\s+IGNORE\s+|IGNORE\s+)?INTO\b/i', $trimmed) === 1
+            || preg_match('/^REPLACE\s+INTO\b/i', $trimmed) === 1) {
+            $trimmed = $this->stripGeneratedColumnsFromInsert($trimmed, $table, $generatedByTable);
+        }
+
         if ($driver === 'sqlite') {
             $trimmed = str_replace('`', '"', $trimmed);
         }
@@ -429,10 +602,196 @@ class DatabaseRestoreService
         return $trimmed;
     }
 
+    /**
+     * Remove GENERATED ALWAYS columns from INSERT column lists + matching VALUES
+     * so merge into live tables does not hit ERROR 3105.
+     *
+     * @param  array<string, list<string>>  $generatedByTable
+     */
+    public function stripGeneratedColumnsFromInsert(string $sql, ?string $table, array $generatedByTable): string
+    {
+        if ($table === null) {
+            return $sql;
+        }
+        $gen = $generatedByTable[strtolower($table)] ?? [];
+        if ($gen === []) {
+            return $sql;
+        }
+
+        if (! preg_match(
+            '/^(INSERT(?:\s+OR\s+IGNORE|\s+IGNORE)?|REPLACE)\s+INTO\s+[`]?'.preg_quote($table, '/').'[`]?\s*\(([^)]+)\)\s*VALUES\s*(.+)$/is',
+            $sql,
+            $m,
+        )) {
+            // INSERT without column list — cannot safely strip; leave as-is.
+            return $sql;
+        }
+
+        $verb = $m[1];
+        $colsRaw = $m[2];
+        $valuesBlob = rtrim(trim($m[3]), ';');
+        $cols = array_map(
+            static fn (string $c) => strtolower(trim(str_replace(['`', '"'], '', $c))),
+            explode(',', $colsRaw),
+        );
+        $dropIndexes = [];
+        foreach ($cols as $i => $col) {
+            if (in_array($col, $gen, true)) {
+                $dropIndexes[$i] = true;
+            }
+        }
+        if ($dropIndexes === []) {
+            return $sql;
+        }
+
+        $keepCols = [];
+        foreach ($cols as $i => $col) {
+            if (! isset($dropIndexes[$i])) {
+                $keepCols[] = '`'.$col.'`';
+            }
+        }
+
+        $tuples = $this->splitValueTuples($valuesBlob);
+        $newTuples = [];
+        foreach ($tuples as $tuple) {
+            $inner = substr($tuple, 1, -1);
+            $parts = $this->splitCsvRespectingQuotes($inner);
+            if (count($parts) !== count($cols)) {
+                // Mismatch — skip stripping for this statement.
+                return $sql;
+            }
+            $kept = [];
+            foreach ($parts as $i => $part) {
+                if (! isset($dropIndexes[$i])) {
+                    $kept[] = $part;
+                }
+            }
+            $newTuples[] = '('.implode(',', $kept).')';
+        }
+
+        return $verb.' INTO `'.$table.'` ('.implode(',', $keepCols).') VALUES '.implode(',', $newTuples);
+    }
+
+    /**
+     * @return list<string>
+     */
+    protected function splitCsvRespectingQuotes(string $inner): array
+    {
+        $parts = [];
+        $len = strlen($inner);
+        $depth = 0;
+        $inSingle = false;
+        $inDouble = false;
+        $start = 0;
+
+        for ($i = 0; $i < $len; $i++) {
+            $ch = $inner[$i];
+            $next = $i + 1 < $len ? $inner[$i + 1] : '';
+
+            if ($inSingle) {
+                if ($ch === '\\' && $next !== '') {
+                    $i++;
+                    continue;
+                }
+                if ($ch === "'" && $next === "'") {
+                    $i++;
+                    continue;
+                }
+                if ($ch === "'") {
+                    $inSingle = false;
+                }
+                continue;
+            }
+            if ($inDouble) {
+                if ($ch === '\\' && $next !== '') {
+                    $i++;
+                    continue;
+                }
+                if ($ch === '"' && $next === '"') {
+                    $i++;
+                    continue;
+                }
+                if ($ch === '"') {
+                    $inDouble = false;
+                }
+                continue;
+            }
+            if ($ch === "'") {
+                $inSingle = true;
+                continue;
+            }
+            if ($ch === '"') {
+                $inDouble = true;
+                continue;
+            }
+            if ($ch === '(') {
+                $depth++;
+                continue;
+            }
+            if ($ch === ')') {
+                $depth = max(0, $depth - 1);
+                continue;
+            }
+            if ($ch === ',' && $depth === 0) {
+                $parts[] = trim(substr($inner, $start, $i - $start));
+                $start = $i + 1;
+            }
+        }
+        $parts[] = trim(substr($inner, $start));
+
+        return $parts;
+    }
+
+    /**
+     * @param  list<string>|null  $tables
+     * @return array<string, list<string>>
+     */
+    protected function generatedColumnsByTable(?array $tables): array
+    {
+        $map = [];
+        foreach (MysqlDumpGeneratedColumnSanitizer::KNOWN_COLUMNS as $table => $cols) {
+            if ($tables !== null && ! in_array($table, $tables, true)) {
+                continue;
+            }
+            $map[$table] = array_map(static fn (array $c) => strtolower((string) $c['name']), $cols);
+        }
+
+        if (! in_array(DB::connection()->getDriverName(), ['mysql', 'mariadb'], true)) {
+            return $map;
+        }
+
+        try {
+            $rows = DB::select(
+                "SELECT TABLE_NAME, COLUMN_NAME
+                 FROM information_schema.COLUMNS
+                 WHERE TABLE_SCHEMA = DATABASE()
+                   AND EXTRA LIKE '%GENERATED%'"
+            );
+            foreach ($rows as $row) {
+                $table = strtolower((string) ($row->TABLE_NAME ?? ''));
+                $col = strtolower((string) ($row->COLUMN_NAME ?? ''));
+                if ($table === '' || $col === '') {
+                    continue;
+                }
+                if ($tables !== null && ! in_array($table, $tables, true)) {
+                    continue;
+                }
+                $map[$table] ??= [];
+                if (! in_array($col, $map[$table], true)) {
+                    $map[$table][] = $col;
+                }
+            }
+        } catch (\Throwable) {
+            // Keep known defaults.
+        }
+
+        return $map;
+    }
+
     protected function extractTableName(string $statement): ?string
     {
         if (preg_match(
-            '/^(?:INSERT(?:\s+IGNORE)?|REPLACE)\s+INTO\s+[`]?([a-zA-Z0-9_]+)[`]?/i',
+            '/^(?:INSERT(?:\s+(?:OR\s+IGNORE|IGNORE))?|REPLACE)\s+INTO\s+[`]?([a-zA-Z0-9_]+)[`]?/i',
             $statement,
             $m,
         ) === 1) {

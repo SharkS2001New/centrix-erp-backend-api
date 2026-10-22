@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\CustomerInvoice;
 use App\Models\CustomerReturn;
 use App\Models\Organization;
 use App\Models\PlatformSubscription;
@@ -9,6 +10,7 @@ use App\Models\Product;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\User;
+use App\Services\Accounting\CustomerInvoiceService;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
@@ -582,5 +584,156 @@ class CustomerReturnTest extends TestCase
         $this->assertArrayNotHasKey('sale_id', $row);
         $this->assertArrayNotHasKey('return_type', $row);
         $this->assertSame($this->user->username, $row['returned_by']);
+    }
+
+    public function test_credit_return_does_not_treat_return_as_payment_or_flip_invoice_to_partial(): void
+    {
+        $product = Product::firstOrFail();
+        $sale = Sale::query()->where('status', 'completed')->whereNotNull('customer_num')->first()
+            ?? Sale::query()->whereNotNull('customer_num')->firstOrFail();
+
+        SaleItem::query()->updateOrInsert(
+            ['sale_id' => $sale->id, 'product_code' => $product->product_code],
+            [
+                'line_no' => 1,
+                'quantity' => 10,
+                'selling_price' => 100,
+                'amount' => 1000,
+                'product_vat' => 0,
+                'discount_given' => 0,
+            ],
+        );
+        SaleItem::query()
+            ->where('sale_id', $sale->id)
+            ->where('product_code', '!=', $product->product_code)
+            ->delete();
+        $sale->update([
+            'status' => 'completed',
+            'order_total' => 1000,
+            'amount_paid' => 1000,
+            'payment_status' => 'paid',
+        ]);
+
+        $invoice = app(CustomerInvoiceService::class)->ensureForSale($sale->fresh(), $this->user);
+        $this->assertNotNull($invoice);
+        $this->assertSame(1000.0, (float) $invoice->invoice_total);
+        $this->assertSame(2, (int) $invoice->payment_status);
+
+        $created = $this->postJson('/api/v1/customer-returns', [
+            'sale_id' => $sale->id,
+            'return_date' => now()->toDateString(),
+            'refund_method' => 'CREDIT',
+            'reason' => 'Credit return — not a cash refund',
+            'lines' => [
+                [
+                    'product_code' => $product->product_code,
+                    'product_name' => $product->product_name,
+                    'quantity_sold' => 10,
+                    'return_qty' => 2,
+                    'unit_price' => 100,
+                    'amount' => 200,
+                ],
+            ],
+        ])->assertCreated();
+
+        $this->postJson('/api/v1/customer-returns/'.$created->json('id').'/approve')->assertOk();
+
+        $sale->refresh();
+        $this->assertSame(800.0, (float) $sale->order_total);
+        // Credit return must not unwind cash collected — that made AR look Partial.
+        $this->assertSame(1000.0, (float) $sale->amount_paid);
+        $this->assertSame('paid', $sale->payment_status);
+
+        $invoice = CustomerInvoice::query()->where('sale_id', $sale->id)->whereNull('deleted_at')->firstOrFail();
+        $balances = app(CustomerInvoiceService::class)->presentInvoiceBalances($invoice);
+        $this->assertGreaterThanOrEqual(1000.0, (float) $balances['amount_paid']);
+        $this->assertEqualsWithDelta(200.0, (float) $balances['return_credit_total'], 0.01);
+        $this->assertEqualsWithDelta(0.0, (float) $balances['balance_due'], 0.01);
+        $this->assertSame(2, (int) $balances['payment_status'], 'Credit return must leave invoice Paid, not Partial');
+        $this->assertEqualsWithDelta(1000.0, (float) $invoice->fresh()->invoice_total, 0.01);
+    }
+
+    public function test_netted_invoice_plus_return_credit_does_not_double_deduct(): void
+    {
+        $product = Product::firstOrFail();
+        $sale = Sale::query()->where('status', 'completed')->whereNotNull('customer_num')->first()
+            ?? Sale::query()->whereNotNull('customer_num')->firstOrFail();
+
+        SaleItem::query()->updateOrInsert(
+            ['sale_id' => $sale->id, 'product_code' => $product->product_code],
+            [
+                'line_no' => 1,
+                'quantity' => 10,
+                'selling_price' => 100,
+                'amount' => 1000,
+                'product_vat' => 0,
+                'discount_given' => 0,
+            ],
+        );
+        SaleItem::query()
+            ->where('sale_id', $sale->id)
+            ->where('product_code', '!=', $product->product_code)
+            ->delete();
+
+        // Legacy corruption: sale + invoice already netted, credit note still on file.
+        $sale->update([
+            'status' => 'completed',
+            'order_total' => 800,
+            'amount_paid' => 700,
+            'payment_status' => 'partial',
+        ]);
+
+        $invoice = app(CustomerInvoiceService::class)->ensureForSale($sale->fresh(), $this->user);
+        $this->assertNotNull($invoice);
+        $invoice->update([
+            'invoice_total' => 800,
+            'amount_paid' => 700,
+            'payment_status' => 1,
+        ]);
+
+        $returnId = \Illuminate\Support\Facades\DB::table('customer_returns')->insertGetId([
+            'return_no' => 'RTN-DOUBLE-'.$sale->id,
+            'return_seq' => (int) $sale->id + 900000,
+            'organization_id' => $this->user->organization_id,
+            'branch_id' => $this->user->branch_id,
+            'sale_id' => $sale->id,
+            'customer_num' => $sale->customer_num,
+            'return_date' => now()->toDateString(),
+            'refund_method' => 'CREDIT',
+            'reason' => 'Return already netted into invoice_total',
+            'status' => 'approved',
+            'total_amount' => 200,
+            'returned_by' => $this->user->id,
+            'approved_by' => $this->user->id,
+            'approved_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        \Illuminate\Support\Facades\DB::table('credit_notes')->insert([
+            'credit_note_no' => 'CN-DOUBLE-'.$sale->id,
+            'customer_return_id' => $returnId,
+            'organization_id' => $this->user->organization_id,
+            'branch_id' => $this->user->branch_id,
+            'sale_id' => $sale->id,
+            'customer_num' => $sale->customer_num,
+            'credit_date' => now()->toDateString(),
+            'total_amount' => 200,
+            'refund_method' => 'CREDIT',
+            'reason' => 'Return already netted into invoice_total',
+            'kra_status' => 'skipped',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $balances = app(CustomerInvoiceService::class)->presentInvoiceBalances($invoice->fresh());
+
+        // Gross must be restored: 800 net + 200 credit = 1000 (not left at 800).
+        $this->assertEqualsWithDelta(1000.0, (float) $balances['invoice_total'], 0.01);
+        $this->assertEqualsWithDelta(200.0, (float) $balances['return_credit_total'], 0.01);
+        // Single deduction: 1000 − 700 − 200 = 100 (NOT 800 − 700 − 200 = 0).
+        $this->assertEqualsWithDelta(100.0, (float) $balances['balance_due'], 0.01);
+        $this->assertSame(1, (int) $balances['payment_status']);
+        $this->assertEqualsWithDelta(1000.0, (float) $invoice->fresh()->invoice_total, 0.01);
     }
 }

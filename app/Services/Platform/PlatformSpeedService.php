@@ -157,6 +157,198 @@ class PlatformSpeedService
     }
 
     /**
+     * Live step-by-step probe for the ERP Speed log popup (SSE).
+     *
+     * @param  (callable(array{event: string, phase?: string, message: string, key?: string, ms?: int|null, ok?: bool|null}): void)|null  $onProgress
+     * @return array<string, mixed>
+     */
+    public function liveProbe(?callable $onProgress = null, string $range = '1h'): array
+    {
+        $emit = function (array $payload) use ($onProgress): void {
+            if ($onProgress !== null) {
+                $onProgress($payload);
+            }
+        };
+
+        $emit([
+            'event' => 'status',
+            'phase' => 'start',
+            'message' => 'Starting ERP Speed live probe…',
+        ]);
+
+        $steps = [];
+
+        $emit(['event' => 'step', 'key' => 'db', 'phase' => 'start', 'message' => 'Probing database (SELECT 1)…']);
+        $t0 = hrtime(true);
+        $dbMs = null;
+        $dbOk = false;
+        try {
+            DB::select('select 1');
+            $dbMs = max(0, (int) round((hrtime(true) - $t0) / 1_000_000));
+            $dbOk = true;
+            $emit([
+                'event' => 'step',
+                'key' => 'db',
+                'phase' => 'done',
+                'ok' => true,
+                'ms' => $dbMs,
+                'message' => "Database OK — {$dbMs} ms",
+            ]);
+        } catch (\Throwable $e) {
+            $emit([
+                'event' => 'step',
+                'key' => 'db',
+                'phase' => 'done',
+                'ok' => false,
+                'ms' => null,
+                'message' => 'Database failed: '.$e->getMessage(),
+            ]);
+        }
+        $steps[] = ['key' => 'db', 'ok' => $dbOk, 'ms' => $dbMs];
+
+        $redisSkipped = config('cache.default') !== 'redis' && config('queue.default') !== 'redis';
+        $redisMs = null;
+        $redisOk = $redisSkipped ? null : false;
+        if ($redisSkipped) {
+            $emit([
+                'event' => 'step',
+                'key' => 'redis',
+                'phase' => 'done',
+                'ok' => null,
+                'message' => 'Redis skipped (not the default cache/queue store)',
+            ]);
+        } else {
+            $emit(['event' => 'step', 'key' => 'redis', 'phase' => 'start', 'message' => 'Probing Redis…']);
+            try {
+                $t0 = hrtime(true);
+                Cache::store('redis')->put('platform:speed:ping', '1', 5);
+                $ok = Cache::store('redis')->get('platform:speed:ping') === '1';
+                $redisMs = $ok ? max(0, (int) round((hrtime(true) - $t0) / 1_000_000)) : null;
+                $redisOk = $ok;
+                $emit([
+                    'event' => 'step',
+                    'key' => 'redis',
+                    'phase' => 'done',
+                    'ok' => $ok,
+                    'ms' => $redisMs,
+                    'message' => $ok ? "Redis OK — {$redisMs} ms" : 'Redis probe returned unexpected value',
+                ]);
+            } catch (\Throwable $e) {
+                $emit([
+                    'event' => 'step',
+                    'key' => 'redis',
+                    'phase' => 'done',
+                    'ok' => false,
+                    'message' => 'Redis failed: '.$e->getMessage(),
+                ]);
+            }
+        }
+        $steps[] = ['key' => 'redis', 'ok' => $redisOk, 'ms' => $redisMs, 'skipped' => $redisSkipped];
+
+        $emit(['event' => 'step', 'key' => 'health', 'phase' => 'start', 'message' => 'Running infrastructure health checks…']);
+        $t0 = hrtime(true);
+        $health = $this->health->run(liveQueueProbe: false);
+        $healthMs = max(0, (int) round((hrtime(true) - $t0) / 1_000_000));
+        foreach ($health['checks'] ?? [] as $check) {
+            $ok = $check['ok'] ?? null;
+            $label = (string) ($check['label'] ?? $check['id'] ?? 'check');
+            $detail = (string) ($check['detail'] ?? '');
+            $tone = $ok === false ? 'failed' : ($ok === null ? 'skipped' : 'OK');
+            $emit([
+                'event' => 'step',
+                'key' => 'health_'.($check['id'] ?? 'x'),
+                'phase' => 'done',
+                'ok' => $ok,
+                'message' => "{$label}: {$tone}".($detail !== '' ? " — {$detail}" : ''),
+            ]);
+        }
+        $emit([
+            'event' => 'step',
+            'key' => 'health',
+            'phase' => 'done',
+            'ok' => (bool) ($health['ok'] ?? false),
+            'ms' => $healthMs,
+            'message' => 'Infrastructure checks finished in '.$healthMs.' ms',
+        ]);
+
+        $emit(['event' => 'step', 'key' => 'slow_queries', 'phase' => 'start', 'message' => 'Reading MySQL slow digests…']);
+        $slowQueries = $this->slowQueries->topQueries(5);
+        $digestCount = count($slowQueries['queries'] ?? []);
+        $topAvg = 0.0;
+        foreach ($slowQueries['queries'] ?? [] as $i => $query) {
+            $avg = (float) ($query['avg_sec'] ?? 0);
+            $topAvg = max($topAvg, $avg);
+            $sql = (string) ($query['sql'] ?? '');
+            $short = strlen($sql) > 120 ? substr($sql, 0, 117).'…' : $sql;
+            $emit([
+                'event' => 'step',
+                'key' => 'slow_q_'.$i,
+                'phase' => 'done',
+                'ok' => $avg < 1.0,
+                'message' => sprintf('Digest #%d · avg %.2fs · %s', $i + 1, $avg, $short),
+            ]);
+        }
+        $emit([
+            'event' => 'step',
+            'key' => 'slow_queries',
+            'phase' => 'done',
+            'ok' => $topAvg < 1.0,
+            'message' => $digestCount === 0
+                ? 'No slow query digests available'
+                : "Top digest avg {$topAvg}s across {$digestCount} sample(s)",
+        ]);
+
+        $emit(['event' => 'step', 'key' => 'api', 'phase' => 'start', 'message' => "Loading API aggregates ({$range})…"]);
+        $api = $this->analytics->apiSummary($range);
+        $emit([
+            'event' => 'step',
+            'key' => 'api',
+            'phase' => 'done',
+            'ok' => true,
+            'message' => sprintf(
+                'API p50=%sms p95=%sms · %s requests',
+                $api['p50'] ?? '—',
+                $api['p95'] ?? '—',
+                $api['request_count'] ?? 0,
+            ),
+        ]);
+
+        $latencyProbe = [
+            'db_ms' => $dbMs,
+            'redis_ms' => $redisMs,
+            'redis_skipped' => $redisSkipped,
+        ];
+        $slowIssues = $this->slowIssuesSummary();
+        $status = $this->overallStatus($health, $latencyProbe, $slowQueries, $slowIssues, $api);
+
+        $summary = [
+            'status' => $status,
+            'latency_probe' => $latencyProbe,
+            'health' => $health,
+            'slow_queries' => $slowQueries,
+            'slow_issues' => $slowIssues,
+            'api' => [
+                'p50' => $api['p50'] ?? null,
+                'p95' => $api['p95'] ?? null,
+                'p99' => $api['p99'] ?? null,
+                'request_count' => $api['request_count'] ?? 0,
+                'error_rate_percent' => $api['error_rate_percent'] ?? null,
+            ],
+            'steps' => $steps,
+            'checked_at' => now()->toIso8601String(),
+            'range' => $range,
+        ];
+
+        $emit([
+            'event' => 'status',
+            'phase' => 'done',
+            'message' => 'Live probe complete — overall status: '.strtoupper($status),
+        ]);
+
+        return $summary;
+    }
+
+    /**
      * @return array{db_ms: int|null, redis_ms: int|null, redis_skipped: bool}
      */
     protected function latencyProbe(): array

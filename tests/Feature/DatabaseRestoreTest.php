@@ -123,6 +123,37 @@ SQL;
         }
     }
 
+    public function test_extended_insert_is_chunked_into_smaller_statements(): void
+    {
+        $service = app(DatabaseRestoreService::class);
+        $values = [];
+        for ($i = 1; $i <= 600; $i++) {
+            $values[] = "({$i},'row-{$i}')";
+        }
+        $sql = 'INSERT IGNORE INTO `restore_demo` (`id`, `name`) VALUES '.implode(',', $values);
+        $chunks = $service->expandExecutableStatements($sql, 'sqlite');
+
+        $this->assertGreaterThan(1, count($chunks));
+        $this->assertLessThanOrEqual(
+            (int) ceil(600 / DatabaseRestoreService::INSERT_CHUNK_ROWS),
+            count($chunks),
+        );
+    }
+
+    public function test_generated_columns_are_stripped_from_insert_column_list(): void
+    {
+        $service = app(DatabaseRestoreService::class);
+        $sql = "INSERT IGNORE INTO `customer_invoices` (`id`,`invoice_total`,`amount_paid`,`balance_due`) VALUES (1,100,40,60),(2,50,10,40)";
+        $out = $service->stripGeneratedColumnsFromInsert($sql, 'customer_invoices', [
+            'customer_invoices' => ['balance_due'],
+        ]);
+
+        $this->assertStringNotContainsString('balance_due', $out);
+        $this->assertStringContainsString('`invoice_total`', $out);
+        $this->assertStringContainsString('(1,100,40)', $out);
+        $this->assertStringContainsString('(2,50,10)', $out);
+    }
+
     protected function writeSql(string $sql): string
     {
         $path = storage_path('framework/testing-restore-dump-'.uniqid('', true).'.sql');

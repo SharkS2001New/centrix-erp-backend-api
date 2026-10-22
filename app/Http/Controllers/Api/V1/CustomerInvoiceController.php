@@ -48,6 +48,7 @@ class CustomerInvoiceController extends BaseResourceController
 
         $payload = $invoice->toArray();
         $payload['customer_name'] = $invoice->customer?->customer_name;
+        $payload['invoice_total'] = $balances['invoice_total'] ?? $payload['invoice_total'];
         $payload['amount_paid'] = $balances['amount_paid'];
         $payload['return_credit_total'] = $balances['return_credit_total'];
         $payload['balance_due'] = $balances['balance_due'];

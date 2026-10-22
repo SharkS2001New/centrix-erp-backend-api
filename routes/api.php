@@ -478,6 +478,28 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::get('admin/platform-speed', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'show'])
             ->middleware(['erp.super_admin']);
+        Route::get('admin/platform-speed/api', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'api'])
+            ->middleware(['erp.super_admin']);
+        Route::get('admin/platform-speed/database', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'database'])
+            ->middleware(['erp.super_admin']);
+        Route::get('admin/platform-speed/infrastructure', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'infrastructure'])
+            ->middleware(['erp.super_admin']);
+        Route::get('admin/platform-speed/queues', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'queues'])
+            ->middleware(['erp.super_admin']);
+        Route::get('admin/platform-speed/frontend', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'frontend'])
+            ->middleware(['erp.super_admin']);
+        Route::get('admin/platform-speed/synthetic', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'synthetic'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/platform-speed/synthetic', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'storeSyntheticCheck'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/platform-speed/synthetic/run', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'runSynthetic'])
+            ->middleware(['erp.super_admin']);
+        Route::get('admin/platform-speed/diagnostics', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'diagnostics'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/platform-speed/probe-stream', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'probeStream'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/platform-speed/advise', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'advise'])
+            ->middleware(['erp.super_admin']);
 
         Route::get('admin/whats-new', [PlatformWhatsNewController::class, 'index'])
             ->middleware(['erp.super_admin']);

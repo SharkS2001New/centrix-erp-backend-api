@@ -744,7 +744,11 @@ class CustomerReturnService
             'order_discount' => max(0, round((float) ($sale->order_discount ?? 0) - $totalDiscountReduction, 2)),
         ]);
 
-        $this->syncSalePaymentAfterReturn($sale->fresh(), $totalReturnAmount);
+        $this->syncSalePaymentAfterReturn(
+            $sale->fresh(),
+            $totalReturnAmount,
+            (string) ($return->refund_method ?? ''),
+        );
     }
 
     protected function applyCreditNoteToSale(CustomerReturn $return): void
@@ -766,7 +770,11 @@ class CustomerReturnService
                 'order_total' => max(0, round((float) $sale->order_total - $totalCredit, 2)),
             ]);
 
-            $this->syncSalePaymentAfterReturn($sale->fresh(), $totalCredit);
+            $this->syncSalePaymentAfterReturn(
+                $sale->fresh(),
+                $totalCredit,
+                (string) ($return->refund_method ?? 'ACCOUNT'),
+            );
 
             return;
         }
@@ -812,7 +820,11 @@ class CustomerReturnService
             'order_discount' => max(0, round((float) ($sale->order_discount ?? 0) - $totalDiscountReduction, 2)),
         ]);
 
-        $this->syncSalePaymentAfterReturn($sale->fresh(), $totalCredit);
+        $this->syncSalePaymentAfterReturn(
+            $sale->fresh(),
+            $totalCredit,
+            (string) ($return->refund_method ?? 'ACCOUNT'),
+        );
     }
 
     /** Remaining invoice balance available for an amount-only credit note. */
@@ -872,7 +884,11 @@ class CustomerReturnService
             'order_discount' => round((float) ($sale->order_discount ?? 0) + $totalDiscountReduction, 2),
         ]);
 
-        $this->syncSalePaymentAfterReturnReversal($sale->fresh(), $totalReturnAmount);
+        $this->syncSalePaymentAfterReturnReversal(
+            $sale->fresh(),
+            $totalReturnAmount,
+            (string) ($return->refund_method ?? ''),
+        );
     }
 
     protected function reverseCreditNoteFromSale(CustomerReturn $return): void
@@ -924,7 +940,11 @@ class CustomerReturnService
             'order_discount' => round((float) ($sale->order_discount ?? 0) + $totalDiscountReduction, 2),
         ]);
 
-        $this->syncSalePaymentAfterReturnReversal($sale->fresh(), $totalCredit);
+        $this->syncSalePaymentAfterReturnReversal(
+            $sale->fresh(),
+            $totalCredit,
+            (string) ($return->refund_method ?? 'ACCOUNT'),
+        );
     }
 
     protected function findSaleItemForReturnLine(Sale $sale, CustomerReturnLine $line): ?SaleItem
@@ -948,35 +968,62 @@ class CustomerReturnService
         return round($total * ($part / $of), 2);
     }
 
-    protected function syncSalePaymentAfterReturn(Sale $sale, float $returnAmount): void
-    {
+    /**
+     * Cash/mobile refunds reduce amount_paid (money left the till).
+     * Credit / account returns are NOT payments — keep cash collected; the credit
+     * note settles AR. Rewriting amount_paid downward made fully-paid invoices
+     * flip to Partial against the restored gross AR total.
+     */
+    protected function syncSalePaymentAfterReturn(
+        Sale $sale,
+        float $returnAmount,
+        string $refundMethod = '',
+    ): void {
         if ($returnAmount <= 0) {
             return;
         }
 
         $orderTotal = (float) $sale->order_total;
         $amountPaid = (float) ($sale->amount_paid ?? 0);
-        $newAmountPaid = max(0, round($amountPaid - $returnAmount, 2));
 
-        $sale->update([
-            'amount_paid' => $newAmountPaid,
-            'payment_status' => $this->paymentStatusForAmounts($orderTotal, $newAmountPaid, $sale->payment_status),
-        ]);
-    }
-
-    protected function syncSalePaymentAfterReturnReversal(Sale $sale, float $returnAmount): void
-    {
-        if ($returnAmount <= 0) {
-            return;
+        if ($this->refundMethodReducesCashCollected($refundMethod)) {
+            $amountPaid = max(0, round($amountPaid - $returnAmount, 2));
         }
-
-        $orderTotal = (float) $sale->order_total;
-        $amountPaid = min($orderTotal, round((float) ($sale->amount_paid ?? 0) + $returnAmount, 2));
 
         $sale->update([
             'amount_paid' => $amountPaid,
             'payment_status' => $this->paymentStatusForAmounts($orderTotal, $amountPaid, $sale->payment_status),
         ]);
+    }
+
+    protected function syncSalePaymentAfterReturnReversal(
+        Sale $sale,
+        float $returnAmount,
+        string $refundMethod = '',
+    ): void {
+        if ($returnAmount <= 0) {
+            return;
+        }
+
+        $orderTotal = (float) $sale->order_total;
+        $amountPaid = (float) ($sale->amount_paid ?? 0);
+
+        if ($this->refundMethodReducesCashCollected($refundMethod)) {
+            $amountPaid = min($orderTotal, round($amountPaid + $returnAmount, 2));
+        }
+
+        $sale->update([
+            'amount_paid' => $amountPaid,
+            'payment_status' => $this->paymentStatusForAmounts($orderTotal, $amountPaid, $sale->payment_status),
+        ]);
+    }
+
+    /** True when the refund actually returned cash/tender (not a credit note / on-account). */
+    protected function refundMethodReducesCashCollected(string $refundMethod): bool
+    {
+        $method = strtoupper(trim($refundMethod));
+
+        return in_array($method, ['CASH', 'MPESA', 'CARD', 'BANK', 'CHEQUE', 'MOBILE'], true);
     }
 
     protected function paymentStatusForAmounts(float $orderTotal, float $amountPaid, ?string $current): string

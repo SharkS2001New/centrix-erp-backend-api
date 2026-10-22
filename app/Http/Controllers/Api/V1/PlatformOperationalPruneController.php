@@ -65,7 +65,8 @@ class PlatformOperationalPruneController extends Controller
         $targets = $data['targets'] ?? null;
 
         if (function_exists('set_time_limit')) {
-            @set_time_limit($optimize ? 600 : 300);
+            // Large audit_logs batches + OPTIMIZE need headroom beyond default PHP limits.
+            @set_time_limit($optimize ? 1200 : 600);
         }
 
         try {
@@ -126,7 +127,7 @@ class PlatformOperationalPruneController extends Controller
         $optimizeTables = $data['tables'] ?? $targets;
 
         if (function_exists('set_time_limit')) {
-            @set_time_limit($optimize || $optimizeOnly ? 900 : 600);
+            @set_time_limit($optimize || $optimizeOnly ? 1200 : 600);
         }
 
         return response()->stream(function () use (
