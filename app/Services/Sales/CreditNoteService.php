@@ -282,6 +282,7 @@ class CreditNoteService
                         'quantity' => max(0.001, $qty),
                         'amount' => $amount,
                         'product_vat' => $productVat,
+                        'vat_rate' => $vatRate,
                     ];
                 })
                 ->values()
@@ -403,7 +404,15 @@ class CreditNoteService
                 'kra_serial_number' => $mapped['serial_number'] ?? null,
                 'kra_timestamp' => $mapped['timestamp'] ?? null,
                 'kra_request_payload' => $result['payload'] ?? null,
-                'kra_response_payload' => $mapped,
+                'kra_response_payload' => array_merge($mapped, [
+                    'document_type' => 'credit_note',
+                    'online_upload_status' => $mapped['online_upload_status']
+                        ?? ((is_string($mapped['transmit_status'] ?? null)
+                            && str_contains(strtolower($mapped['transmit_status']), 'transmitted to etims'))
+                            && ! str_contains(strtolower($mapped['transmit_status']), 'not yet')
+                            ? 'transmitted'
+                            : 'pending'),
+                ]),
                 'kra_error_message' => null,
             ]);
 
@@ -416,6 +425,12 @@ class CreditNoteService
                 'request_payload' => $result['payload'] ?? null,
                 'response_payload' => array_merge($mapped, [
                     'document_type' => 'credit_note',
+                    'online_upload_status' => $mapped['online_upload_status']
+                        ?? ((is_string($mapped['transmit_status'] ?? null)
+                            && str_contains(strtolower($mapped['transmit_status']), 'transmitted to etims'))
+                            && ! str_contains(strtolower($mapped['transmit_status']), 'not yet')
+                            ? 'transmitted'
+                            : 'pending'),
                     'relevant_invoice_number' => $relevantInvoice,
                     'customer_return_id' => $return->id,
                     'credit_note_id' => $creditNote->id,
@@ -859,18 +874,22 @@ class CreditNoteService
     }
 
     /**
-     * Receipt the control unit indexed for the original sale.
-     *
-     * On 28 Sept 2026 this always sent cu_inv_no with leading zeros removed.
-     * Comstore code 314 (receiptNo is error) rejects that long CU invoice:
-     * wrong format, or not a receipt this credit note can cite. KRA credits
-     * the original trader invoice (TraderSystemInvoiceNumber, the RECEIPT
-     * NUMBER on that sale). The device invoice number and the eTIMS QR
-     * receipt are used only when that trader receipt was not stored. The
-     * long CU is used only when no short receipt was stored.
+    * Return the original eTIMS control-unit receipt used by Comstore for credit notes.
+    * The Comstore 3.6.3 contract explicitly requires cu-inv-no without leading zeros.
      */
     protected function relevantInvoiceNumberFromKraResponse(KraResponse $kra): string
     {
+        $payload = is_array($kra->response_payload) ? $kra->response_payload : [];
+        $cuInv = trim((string) ($payload['cu_inv_no'] ?? $payload['cu-inv-no'] ?? ''));
+        if ($cuInv !== '') {
+            if (str_contains($cuInv, '/')) {
+                $cuInv = trim(substr($cuInv, (int) strrpos($cuInv, '/') + 1));
+            }
+            $trimmed = ltrim($cuInv, '0');
+
+            return $trimmed !== '' ? $trimmed : $cuInv;
+        }
+
         $request = is_array($kra->request_payload) ? $kra->request_payload : [];
         $sign = is_array($request['sign_structure'] ?? null) ? $request['sign_structure'] : [];
         $trader = $this->shortReceiptReference((string) ($sign['TraderSystemInvoiceNumber'] ?? ''));
@@ -883,7 +902,6 @@ class CreditNoteService
             return $column;
         }
 
-        $payload = is_array($kra->response_payload) ? $kra->response_payload : [];
         $responseInvoice = $this->shortReceiptReference((string) ($payload['invoice_number'] ?? ''));
         if ($responseInvoice !== null) {
             return $responseInvoice;
@@ -892,19 +910,6 @@ class CreditNoteService
         $fromQr = $this->receiptNumberFromEtimsPayload($kra);
         if ($fromQr !== '') {
             return $fromQr;
-        }
-
-        $cuInv = trim((string) ($payload['cu_inv_no'] ?? $payload['cu-inv-no'] ?? ''));
-        if ($cuInv !== '') {
-            if (str_contains($cuInv, '/')) {
-                $tail = $this->shortReceiptReference(trim(substr($cuInv, (int) strrpos($cuInv, '/') + 1)));
-                if ($tail !== null) {
-                    return $tail;
-                }
-            }
-            $trimmed = ltrim($cuInv, '0');
-
-            return $trimmed !== '' ? $trimmed : $cuInv;
         }
 
         return '';

@@ -126,4 +126,46 @@ class KraDeviceHealthTest extends TestCase
             'kra_device_ip' => '',
         ])->assertOk()->assertJsonPath('url', 'http://localhost:4000/api/health');
     }
+
+    public function test_admin_can_queue_pending_device_invoices_for_etims_upload(): void
+    {
+        config(['testing.kra_agent_command_handler' => function (string $path): array {
+            $this->assertSame('/api/invoices/manually-upload/DEJA02220240050', $path);
+
+            return [
+                'success' => true,
+                'body' => [
+                    'Success' => true,
+                    'Message' => 'Invoices queued for manual upload to ETIMS successfully',
+                ],
+            ];
+        }]);
+
+        $this->postJson('/api/v1/kra/device-upload')
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('message', 'Comstore queued pending invoices on this device for eTIMS upload.');
+    }
+
+    public function test_pending_invoice_upload_is_blocked_in_test_mode(): void
+    {
+        $this->postJson('/api/v1/kra/device-upload', [
+            'kra_device_test_mode' => true,
+        ])
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'Turn off device test mode before uploading invoices to KRA.');
+
+        $this->assertDatabaseMissing('kra_agent_commands', [
+            'path' => '/api/invoices/manually-upload/DEJA02220240050',
+        ]);
+    }
+
+    public function test_pending_invoice_upload_requires_serial_number(): void
+    {
+        $this->postJson('/api/v1/kra/device-upload', [
+            'kra_serial_number' => '',
+        ])
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'Enter the device serial number before uploading pending invoices.');
+    }
 }

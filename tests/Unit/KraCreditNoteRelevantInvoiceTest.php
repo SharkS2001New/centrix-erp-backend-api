@@ -8,7 +8,7 @@ use Tests\TestCase;
 
 class KraCreditNoteRelevantInvoiceTest extends TestCase
 {
-    public function test_credit_note_cites_the_original_receipt_not_the_long_cu_invoice(): void
+    public function test_credit_note_uses_unpadded_comstore_cu_invoice_number(): void
     {
         $kra = KraResponse::make([
             'invoice_number' => '1760123456',
@@ -26,7 +26,7 @@ class KraCreditNoteRelevantInvoiceTest extends TestCase
             ],
         ]);
 
-        $this->assertSame('1760123456', (new CreditNoteService())->relevantInvoiceFromKraResponse($kra));
+        $this->assertSame('19058765400000123', (new CreditNoteService())->relevantInvoiceFromKraResponse($kra));
     }
 
     public function test_etims_qr_receipt_is_used_only_when_the_sale_has_no_trader_receipt(): void
@@ -40,7 +40,7 @@ class KraCreditNoteRelevantInvoiceTest extends TestCase
             ],
         ]);
 
-        $this->assertSame('314', (new CreditNoteService())->relevantInvoiceFromKraResponse($kra));
+        $this->assertSame('19058765400000123', (new CreditNoteService())->relevantInvoiceFromKraResponse($kra));
     }
 
     public function test_a_short_cu_number_is_used_when_the_sale_has_no_trader_receipt(): void
@@ -56,7 +56,7 @@ class KraCreditNoteRelevantInvoiceTest extends TestCase
         $this->assertSame('5678', (new CreditNoteService())->relevantInvoiceFromKraResponse($kra));
     }
 
-    public function test_a_long_cu_number_is_still_sent_when_the_sale_has_no_trader_receipt(): void
+    public function test_a_long_cu_number_is_unpadded_when_sale_has_no_trader_receipt(): void
     {
         $kra = KraResponse::make([
             'invoice_number' => 'POS-S12',

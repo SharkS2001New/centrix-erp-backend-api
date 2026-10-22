@@ -31,7 +31,7 @@ class CheckoutKraSubmissionService
             return $sale->kraResponse()->where('status', 'success')->latest('id')->first();
         }
 
-        $sale->loadMissing(['items.product']);
+        $sale->loadMissing(['items.product.vat']);
         $lines = $sale->items;
         if ($lines->isEmpty()) {
             return null;
@@ -43,8 +43,29 @@ class CheckoutKraSubmissionService
             'quantity' => (float) $line->quantity,
             'amount' => (float) $line->amount,
             'product_vat' => (float) ($line->product_vat ?? 0),
+            'vat_rate' => \App\Services\Kra\SalesVatCalculator::vatRateFromProduct($line->product),
         ])->all();
-
+        $sale->loadMissing('payments.paymentMethod');
+        $tenders = ['cash' => 0.0, 'check' => 0.0, 'card' => 0.0];
+        foreach ($sale->payments as $payment) {
+            $code = strtoupper(trim((string) ($payment->paymentMethod?->method_code ?? '')));
+            if (in_array($code, ['CHEQUE', 'CHECK'], true)) {
+                $tenders['check'] += (float) $payment->amount;
+            } elseif (in_array($code, ['CASH'], true)) {
+                $tenders['cash'] += (float) $payment->amount;
+            } else {
+                $tenders['card'] += (float) $payment->amount;
+            }
+        }
+        if ($sale->payments->isEmpty()) {
+            $tenders = [
+                'cash' => (float) ($sale->cash ?? 0),
+                'check' => 0.0,
+                'card' => (float) ($sale->mpesa_amount ?? 0)
+                    + (float) ($sale->equity_amount ?? 0)
+                    + (float) ($sale->kcb_amount ?? 0),
+            ];
+        }
         // Sale-scoped placeholder — never POS-{order_num}. Order edits reuse the
         // customer-facing order # while the superseded sale keeps its kra_responses row;
         // that collision is Duplicate entry 'org-POS-16423' on uq_org_kra_invoice_number.
@@ -61,7 +82,7 @@ class CheckoutKraSubmissionService
                 return max(1, (int) floor($maxSeconds - (microtime(true) - $startedAt)));
             };
 
-            $checkoutContext = static function () use ($remaining): array {
+            $checkoutContext = static function () use ($remaining, $tenders): array {
                 $left = $remaining();
 
                 return [
@@ -72,6 +93,7 @@ class CheckoutKraSubmissionService
                     ),
                     'http_timeout_seconds' => min(20, $left),
                     'http_connect_timeout_seconds' => 2,
+                    'tenders' => $tenders,
                 ];
             };
 
@@ -163,6 +185,7 @@ class CheckoutKraSubmissionService
                     [
                         'document_type' => 'sale',
                         'soft_failed' => true,
+                        'online_upload_status' => 'not_signed',
                         // Keep raw device text so the failure dialog can highlight the exact PLU.
                         'technical_message' => $result['technical_message'] ?? null,
                         'error_code' => $result['error_code'] ?? null,
@@ -185,6 +208,13 @@ class CheckoutKraSubmissionService
             'request_payload' => $result['payload'] ?? null,
             'response_payload' => array_merge(is_array($mapped) ? $mapped : [], [
                 'document_type' => 'sale',
+                    'transmit_status' => $mapped['transmit_status'] ?? null,
+                'online_upload_status' => $mapped['online_upload_status']
+                    ?? ((is_string($mapped['transmit_status'] ?? null)
+                        && str_contains(strtolower($mapped['transmit_status']), 'transmitted to etims'))
+                        && ! str_contains(strtolower($mapped['transmit_status']), 'not yet')
+                        ? 'transmitted'
+                        : 'pending'),
             ]),
             'status' => 'success',
             'error_message' => null,

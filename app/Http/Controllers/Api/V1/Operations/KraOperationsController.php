@@ -119,6 +119,50 @@ class KraOperationsController extends Controller
         ]));
     }
 
+    public function deviceUploadPendingInvoices(Request $request)
+    {
+        $gate = $this->erp->gateForRequest($request);
+        $finance = $gate->moduleSettings('finance');
+        $orgId = $gate->organization()?->id ? (int) $gate->organization()->id : null;
+        $draft = $this->validateKraDeviceDraft($request);
+        $testFinance = array_merge($finance, $draft, [
+            'enable_kra_device' => true,
+            'enable_kra_agent' => true,
+        ]);
+
+        if (trim((string) ($testFinance['kra_serial_number'] ?? '')) === '') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Enter the device serial number before uploading pending invoices.',
+            ], 422);
+        }
+
+        if (! empty($testFinance['kra_device_test_mode'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Turn off device test mode before uploading invoices to KRA.',
+            ], 422);
+        }
+
+        try {
+            $result = KraDeviceService::fromSettings($testFinance, $orgId)->uploadPendingInvoices();
+        } catch (\Throwable $e) {
+            report($e);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Could not queue pending invoices for KRA upload.',
+                'detail' => $e->getMessage(),
+            ], 502);
+        }
+
+        $result['message'] = ($result['success'] ?? false)
+            ? 'Comstore queued pending invoices on this device for eTIMS upload.'
+            : (string) ($result['message'] ?? 'Comstore could not queue pending invoices for eTIMS upload.');
+
+        return response()->json($result, ($result['success'] ?? false) ? 200 : 502);
+    }
+
     public function deviceInit(Request $request)
     {
         $gate = $this->erp->gateForRequest($request);
@@ -224,7 +268,7 @@ class KraOperationsController extends Controller
             return response()->json(['message' => 'Receipt already succeeded.'], 422);
         }
 
-        $sale = Sale::with(['items.product', 'customer'])->find($row->sale_id);
+        $sale = Sale::with(['items.product.vat', 'customer', 'payments.paymentMethod'])->find($row->sale_id);
         if (! $sale) {
             return response()->json(['message' => 'Linked sale not found.'], 422);
         }
@@ -253,16 +297,38 @@ class KraOperationsController extends Controller
             'quantity' => (float) $line->quantity,
             'amount' => (float) $line->amount,
             'product_vat' => (float) ($line->product_vat ?? 0),
+            'vat_rate' => \App\Services\Kra\SalesVatCalculator::vatRateFromProduct($line->product),
         ])->all();
 
         $buyerPin = trim((string) ($sale->customer?->kra_pin ?? ''));
         $buyerPin = $buyerPin !== '' ? $buyerPin : null;
+        $tenders = ['cash' => 0.0, 'check' => 0.0, 'card' => 0.0];
+        foreach ($sale->payments as $payment) {
+            $method = strtoupper(trim((string) ($payment->paymentMethod?->method_code ?? '')));
+            if (in_array($method, ['CHEQUE', 'CHECK'], true)) {
+                $tenders['check'] += (float) $payment->amount;
+            } elseif ($method === 'CASH') {
+                $tenders['cash'] += (float) $payment->amount;
+            } else {
+                $tenders['card'] += (float) $payment->amount;
+            }
+        }
+        if ($sale->payments->isEmpty()) {
+            $tenders = [
+                'cash' => (float) ($sale->cash ?? 0),
+                'check' => 0.0,
+                'card' => (float) ($sale->mpesa_amount ?? 0)
+                    + (float) ($sale->equity_amount ?? 0)
+                    + (float) ($sale->kcb_amount ?? 0),
+            ];
+        }
 
         $result = $service->sendSale(
             $orderItems,
             (float) $sale->order_total,
             $invoiceNumber,
             $buyerPin,
+            ['tenders' => $tenders],
         );
 
         if (! ($result['success'] ?? false)) {

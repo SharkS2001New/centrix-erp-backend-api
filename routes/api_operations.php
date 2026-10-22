@@ -395,6 +395,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::middleware('erp.permission:admin.manage')->group(function () {
         Route::post('kra/device-health', [KraOperationsController::class, 'deviceHealth']);
+        Route::post('kra/device-upload', [KraOperationsController::class, 'deviceUploadPendingInvoices']);
         Route::post('kra/device-init', [KraOperationsController::class, 'deviceInit']);
         Route::post('kra/device-restart', [KraOperationsController::class, 'deviceRestart']);
         Route::post('kra/agent-package', [\App\Http\Controllers\Api\V1\KraAgentController::class, 'issueAgentPackage']);

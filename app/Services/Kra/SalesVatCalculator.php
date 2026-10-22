@@ -51,13 +51,15 @@ class SalesVatCalculator
      * Split line totals into KRA VAT buckets (16% vs exempt).
      *
      * @param  iterable<int, array{amount: float, product_vat?: float, quantity?: float, product_name?: string}>  $items
-     * @return array{vat16_net: float, vat16_value: float, exempt_net: float}
+        * @return array{vat16_net: float, vat16_value: float, vat8_net: float, vat8_value: float, exempt_net: float}
      */
     public static function summarizeForKra(iterable $items): array
     {
         $vat16Net = 0.0;
         $vat16Value = 0.0;
         $vatExemptNet = 0.0;
+        $vat8Net = 0.0;
+        $vat8Value = 0.0;
 
         foreach ($items as $item) {
             $amount = (float) ($item['amount'] ?? 0);
@@ -101,12 +103,14 @@ class SalesVatCalculator
      * VAT split aligned with LightStores SendToKraAsync (product_vat > 0 => 16% bucket).
      *
      * @param  iterable<int, array{amount: float, product_vat?: float, quantity?: float, product_name?: string}>  $items
-     * @return array{vat16_net: float, vat16_value: float, exempt_net: float}
+    * @return array{vat16_net: float, vat16_value: float, vat8_net: float, vat8_value: float, exempt_net: float}
      */
     public static function summarizeForLightStoresWorkflow(iterable $items): array
     {
         $vat16Net = 0.0;
         $vat16Value = 0.0;
+        $vat8Net = 0.0;
+        $vat8Value = 0.0;
         $vatExemptNet = 0.0;
 
         foreach ($items as $item) {
@@ -117,7 +121,18 @@ class SalesVatCalculator
 
             $productVat = (float) ($item['product_vat'] ?? 0);
 
-            if ($productVat > 0) {
+            $rate = (float) ($item['vat_rate'] ?? 0);
+            if ($rate <= 0 && $productVat > 0 && $amount > $productVat) {
+                $inferredRate = ($productVat / ($amount - $productVat)) * 100;
+                $rate = abs($inferredRate - 8) < 1 ? 8 : 16;
+            } elseif ($rate <= 0 && $productVat > 0) {
+                $rate = 16;
+            }
+            if (abs($rate - 8) < 0.01) {
+                $net = $amount / 1.08;
+                $vat8Net += $net;
+                $vat8Value += $amount - $net;
+            } elseif ($rate > 0) {
                 $net = $amount / 1.16;
                 $vat16Net += $net;
                 $vat16Value += $amount - $net;
@@ -129,6 +144,8 @@ class SalesVatCalculator
         return [
             'vat16_net' => round($vat16Net, 2),
             'vat16_value' => round($vat16Value, 2),
+            'vat8_net' => round($vat8Net, 2),
+            'vat8_value' => round($vat8Value, 2),
             'exempt_net' => round($vatExemptNet, 2),
         ];
     }

@@ -934,6 +934,7 @@ Route::prefix('v1')->group(function () {
                 Route::apiResource('kra-responses', KraResponseController::class)->only(['index', 'show']);
                 Route::get('kra/device-status', [KraOperationsController::class, 'deviceStatus']);
                 Route::post('kra/device-health', [KraOperationsController::class, 'deviceHealth']);
+                Route::post('kra/device-upload', [KraOperationsController::class, 'deviceUploadPendingInvoices']);
                 Route::post('kra/device-init', [KraOperationsController::class, 'deviceInit']);
                 Route::post('kra/device-restart', [KraOperationsController::class, 'deviceRestart']);
                 Route::post('kra/agent-package', [KraAgentController::class, 'issueAgentPackage']);

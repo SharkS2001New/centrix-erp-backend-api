@@ -177,3 +177,9 @@ Schedule::command('erp:retry-pending-kra-credit-notes')
     ->timezone(config('app.timezone', 'Africa/Nairobi'))
     ->withoutOverlapping(50)
     ->appendOutputTo(storage_path('logs/retry-pending-kra-credit-notes.log'));
+
+Schedule::command('erp:retry-pending-kra-invoice-uploads')
+    ->everyFiveMinutes()
+    ->timezone(config('app.timezone', 'Africa/Nairobi'))
+    ->withoutOverlapping(10)
+    ->appendOutputTo(storage_path('logs/retry-pending-kra-invoice-uploads.log'));

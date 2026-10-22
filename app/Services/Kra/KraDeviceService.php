@@ -140,6 +140,8 @@ class KraDeviceService
         array $context = [],
     ): array {
         $this->assertDeviceConfigured();
+        $tenders = $context['tenders'] ?? null;
+        unset($context['tenders']);
 
         $payload = $this->buildWorkflowPayload(
             $orderItems,
@@ -149,12 +151,15 @@ class KraDeviceService
             '',
             '',
             $buyerPin,
+            is_array($tenders) ? $tenders : null,
         );
 
-        return $this->postToDevice('/api/complete-workflow', $payload, array_merge([
+        $result = $this->postToDevice('/api/complete-workflow', $payload, array_merge([
             'invoice' => $invoiceNumber,
             'document_type' => 'sale',
         ], $context));
+
+        return $this->queueOnlineTransmission($result, $context);
     }
 
     /**
@@ -185,13 +190,78 @@ class KraDeviceService
             $relevantInvoiceNumber,
             $refundReasonCode,
             $buyerPin,
+            $this->refundTenders($refundMethod, $totalAmount),
         );
 
-        return $this->postToDevice('/api/complete-workflow', $payload, array_merge([
+        $result = $this->postToDevice('/api/complete-workflow', $payload, array_merge([
             'invoice' => $invoiceNumber,
             'document_type' => 'credit_note',
             'relevant_invoice' => $relevantInvoiceNumber,
         ], $context));
+
+        return $this->queueOnlineTransmission($result, $context);
+    }
+
+    /** Queue Comstore's documented upload of signed invoices to eTIMS. */
+    public function uploadPendingInvoices(array $context = []): array
+    {
+        $this->assertDeviceConfigured();
+
+        return $this->postToDevice(
+            '/api/invoices/manually-upload/'.rawurlencode($this->serialNumber),
+            null,
+            $context,
+        );
+    }
+
+    /** @param array<string, mixed> $result @param array<string, mixed> $context @return array<string, mixed> */
+    protected function queueOnlineTransmission(array $result, array $context): array
+    {
+        if (! ($result['success'] ?? false) || $this->isTest) {
+            return $result;
+        }
+
+        $response = is_array($result['response'] ?? null) ? $result['response'] : [];
+        $deviceStatus = strtolower(trim((string) ($response['transmit_status'] ?? '')));
+        if ($deviceStatus !== ''
+            && str_contains($deviceStatus, 'transmitted to etims')
+            && ! str_contains($deviceStatus, 'not yet')) {
+            $response['online_upload_status'] = 'transmitted';
+            $result['response'] = $response;
+
+            return $result;
+        }
+
+        $uploadContext = $context;
+        unset($uploadContext['tenders']);
+        $uploadContext['agent_wait_seconds'] = min(
+            8,
+            max(2, (int) ($uploadContext['agent_wait_seconds'] ?? KraAgentBridge::COMMAND_WAIT_SECONDS)),
+        );
+        $upload = $this->uploadPendingInvoices($uploadContext);
+        $response['online_upload_status'] = ($upload['success'] ?? false) ? 'queued' : 'pending';
+        $response['online_upload_response'] = $upload['response'] ?? null;
+        $response['online_upload_error'] = ($upload['success'] ?? false)
+            ? null
+            : (string) ($upload['message'] ?? 'Could not queue invoice for eTIMS upload.');
+        if ($response['online_upload_status'] === 'queued') {
+            $response['transmit_status'] = 'Invoices queued for manual upload to eTIMS.';
+        }
+        $result['response'] = $response;
+
+        return $result;
+    }
+
+    /** @return array{cash: float, check: float, card: float} */
+    protected function refundTenders(?string $refundMethod, float $amount): array
+    {
+        $method = strtoupper(trim((string) $refundMethod));
+
+        return match (true) {
+            in_array($method, ['CHEQUE', 'CHECK'], true) => ['cash' => 0.0, 'check' => $amount, 'card' => 0.0],
+            in_array($method, ['CARD', 'MPESA', 'MOBILE', 'BANK', 'EQUITY', 'KCB', 'AIRTEL'], true) => ['cash' => 0.0, 'check' => 0.0, 'card' => $amount],
+            default => ['cash' => $amount, 'check' => 0.0, 'card' => 0.0],
+        };
     }
 
     /**
@@ -910,12 +980,18 @@ class KraDeviceService
             return false;
         }
 
+        foreach (['data', 'result', 'response', 'Response'] as $key) {
+            if (is_array($responseData[$key] ?? null)) {
+                $responseData = array_merge($responseData[$key], $responseData);
+            }
+        }
+
         if ($this->usesUploadPluDataPayload($path)) {
             if (! is_array($responseData)) {
                 return false;
             }
 
-            return (bool) ($responseData['success'] ?? false);
+            return filter_var($responseData['success'] ?? $responseData['Success'] ?? false, FILTER_VALIDATE_BOOLEAN);
         }
 
         $normalizedPath = strtolower($path);
@@ -924,14 +1000,14 @@ class KraDeviceService
                 return false;
             }
 
-            if (array_key_exists('success', $responseData)) {
-                return (bool) $responseData['success'];
+            if (array_key_exists('success', $responseData) || array_key_exists('Success', $responseData)) {
+                return filter_var($responseData['success'] ?? $responseData['Success'], FILTER_VALIDATE_BOOLEAN);
             }
 
             return strtoupper((string) ($responseData['status'] ?? '')) === 'OK';
         }
 
-        return (bool) ($responseData['success'] ?? false);
+        return filter_var($responseData['success'] ?? $responseData['Success'] ?? false, FILTER_VALIDATE_BOOLEAN);
     }
 
     /** @return array<string, string> */
@@ -977,12 +1053,20 @@ class KraDeviceService
         string $relevantInvoiceNumber,
         string $refundReasonCode,
         ?string $buyerPin,
+        ?array $tenders = null,
     ): array {
         $normalizedItems = array_map(function (array $item): array {
             $amount = round(max(0.0, (float) ($item['amount'] ?? 0)), 2);
             $productVat = (float) ($item['product_vat'] ?? 0);
-            if ($productVat > 0.0001 && $amount > 0) {
-                $productVat = round($amount - ($amount / 1.16), 2);
+            $vatRate = (float) ($item['vat_rate'] ?? 0);
+            if ($vatRate <= 0 && $productVat > 0.0001 && $amount > $productVat) {
+                $inferredRate = ($productVat / ($amount - $productVat)) * 100;
+                $vatRate = abs($inferredRate - 8) < 1 ? 8 : 16;
+            } elseif ($vatRate <= 0 && $productVat > 0.0001) {
+                $vatRate = 16;
+            }
+            if ($vatRate > 0 && $amount > 0) {
+                $productVat = round($amount - ($amount / (1 + ($vatRate / 100))), 2);
             } else {
                 $productVat = 0.0;
             }
@@ -990,12 +1074,15 @@ class KraDeviceService
             return array_merge($item, [
                 'amount' => $amount,
                 'product_vat' => $productVat,
+                'vat_rate' => $vatRate,
             ]);
         }, $orderItems);
 
         $summary = SalesVatCalculator::summarizeForLightStoresWorkflow($normalizedItems);
         $vat16NetTotal = $summary['vat16_net'];
         $vat16ValueTotal = $summary['vat16_value'];
+        $vat8NetTotal = $summary['vat8_net'];
+        $vat8ValueTotal = $summary['vat8_value'];
         $vatExemptNetTotal = $summary['exempt_net'];
 
         $pluData = array_map(
@@ -1008,9 +1095,11 @@ class KraDeviceService
             $pluLineTotal += (float) ($line['SaleAmount'] ?? 0);
         }
         $pluLineTotal = round($pluLineTotal, 2);
-        $cashAmt = round($totalAmount, 2);
+        $cashAmt = round((float) ($tenders['cash'] ?? $totalAmount), 2);
+        $checkAmt = round((float) ($tenders['check'] ?? 0), 2);
+        $cardAmt = round((float) ($tenders['card'] ?? 0), 2);
         // KRA validates sum(plu SaleAmount) against CashAmt — prefer line sum when they diverge.
-        if (abs($pluLineTotal - $cashAmt) > 0.009) {
+        if ($tenders === null && abs($pluLineTotal - $cashAmt) > 0.009) {
             $cashAmt = $pluLineTotal;
         }
 
@@ -1020,8 +1109,8 @@ class KraDeviceService
             'SignType' => $this->isTest ? '0' : '1',
             'DiscAmt' => '0',
             'CashAmt' => number_format($cashAmt, 2, '.', ''),
-            'CheckAmt' => '0',
-            'CardAmt' => '0',
+            'CheckAmt' => number_format($checkAmt, 2, '.', ''),
+            'CardAmt' => number_format($cardAmt, 2, '.', ''),
             'InvoiceType' => $invoiceType,
             'relevantInvoiceNumber' => $isCreditNote ? $relevantInvoiceNumber : '',
             'pinOfBuyer' => $buyerPin ?? '',
@@ -1036,8 +1125,8 @@ class KraDeviceService
             'Vat C(0%) value' => '0',
             'Vat D(Non-VAT) net' => '0',
             'Vat D(Non-VAT) value' => '0',
-            'Vat E(8%) net' => '',
-            'Vat E(8%) value' => '',
+            'Vat E(8%) net' => number_format($vat8NetTotal, 2, '.', ''),
+            'Vat E(8%) value' => number_format($vat8ValueTotal, 2, '.', ''),
             'Schg F(10.00%) net' => '',
             'Schg F(10.00%) value' => '',
             'Levy G(2.00%) net' => '',
@@ -1383,7 +1472,7 @@ class KraDeviceService
     }
 
     /** @param  array<string, mixed>  $context */
-    protected function postToDevice(string $path, array $payload, array $context = []): array
+    protected function postToDevice(string $path, ?array $payload, array $context = []): array
     {
         $url = $this->deviceBaseUrl . $path;
         $checkout = ! empty($context['checkout']);
@@ -1459,7 +1548,7 @@ class KraDeviceService
 
             // Connect fast-fail: a flapping device IP must not pin PHP workers.
             // Checkout uses a tighter budget (~30s total including health).
-            $response = Http::connectTimeout($httpConnect)
+            $request = Http::connectTimeout($httpConnect)
                 ->timeout($httpTimeout)
                 ->retry(1, 250, function ($exception) {
                     // Never retry connection refused / timeout / aborted — device is down.
@@ -1468,8 +1557,10 @@ class KraDeviceService
                 ->withHeaders([
                     'Content-Type' => 'application/json',
                     'Accept' => 'application/json',
-                ])
-                ->post($url, $payload);
+                ]);
+            $response = $payload === null
+                ? $request->post($url)
+                : $request->post($url, $payload);
 
             $responseData = $response->json();
             $successful = $this->deviceResponseSuccessful(
@@ -1519,10 +1610,11 @@ class KraDeviceService
     /** @return array<string, mixed> */
     protected function deviceFailureResult(
         string $rawMessage,
-        array $payload,
+        ?array $payload,
         ?array $response = null,
         string $path = '',
     ): array {
+        $payload ??= [];
         $translated = KraDeviceErrorTranslator::translate($rawMessage);
         $message = (string) ($translated['message'] ?? '');
         $technical = (string) ($translated['technical_message'] ?? $rawMessage);
@@ -1715,7 +1807,7 @@ class KraDeviceService
         }
 
         return [
-            'success' => $responseData['success'] ?? false,
+            'success' => $responseData['success'] ?? $responseData['Success'] ?? false,
             'message' => $responseData['message'] ?? '',
             'signature' => $responseData['signature'] ?? null,
             'serial_number' => $responseData['serial_number'] ?? null,
@@ -1728,6 +1820,9 @@ class KraDeviceService
             'receipt_signature' => $receiptSignature,
             'signature_link' => $signatureLink,
             'version' => $responseData['version'] ?? null,
+            'transmit_status' => $responseData['transmit_status'] ?? $responseData['transmitStatus'] ?? null,
+            'error_code' => $responseData['error_code'] ?? $responseData['ErrorCode'] ?? null,
+            'error_message' => $responseData['error_message'] ?? $responseData['ErrorMessage'] ?? null,
         ];
     }
 

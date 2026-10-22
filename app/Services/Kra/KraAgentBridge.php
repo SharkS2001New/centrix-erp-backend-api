@@ -80,6 +80,8 @@ class KraAgentBridge
     private const ALLOWED_PATH_PREFIXES = [
         '/api/health',
         '/api/complete-workflow',
+        '/api/invoices/manually-upload',
+        '/api/invoices/status',
         '/api/init',
         '/api/restart-device',
         '/api/upload-plu-data',
@@ -298,7 +300,9 @@ class KraAgentBridge
                 || str_starts_with($path, '/api/register')
                 || $path === '/api/init'
                 || $path === '/api/restart-device'
+                || str_starts_with($path, '/api/invoices/manually-upload/')
             ))
+            || (strtoupper($method) === 'GET' && str_starts_with($path, '/api/invoices/status/'))
         )) {
             $requestBody = $body;
             $resultStatus = 200;

@@ -16,6 +16,7 @@ class KraCreditNotePayloadTest extends TestCase
         string $invoiceType,
         string $relevantInvoiceNumber,
         string $refundReasonCode,
+        ?array $tenders = null,
     ): array {
         $service = KraDeviceService::fromSettings([
             'kra_device_ip' => 'http://127.0.0.1:4000',
@@ -36,6 +37,7 @@ class KraCreditNotePayloadTest extends TestCase
             $relevantInvoiceNumber,
             $refundReasonCode,
             null,
+            $tenders,
         );
     }
 
@@ -64,7 +66,7 @@ class KraCreditNotePayloadTest extends TestCase
         $this->assertSame('', $sign['relevantInvoiceNumber']);
         $this->assertSame('', $sign['rfdRsnCd']);
         $this->assertSame('116.00', $sign['CashAmt']);
-        $this->assertSame('0', $sign['CardAmt']);
+        $this->assertSame('0.00', $sign['CardAmt']);
         $this->assertSame('', $plu['Barcode']);
     }
 
@@ -96,5 +98,39 @@ class KraCreditNotePayloadTest extends TestCase
         foreach (['CashAmt', 'CardAmt', 'CheckAmt', 'SignType', 'Vat B(16.00%) net', 'Vat B(16.00%) value'] as $field) {
             $this->assertSame($saleSign[$field], $creditSign[$field], "Field {$field} should match sale");
         }
+    }
+
+    public function test_credit_note_payload_uses_the_actual_refund_tender(): void
+    {
+        $payload = $this->buildWorkflowPayload(
+            [['product_name' => 'Orange', 'quantity' => 1, 'amount' => 116, 'product_vat' => 16]],
+            116,
+            '1000000002',
+            'credit',
+            '82729',
+            '06',
+            ['cash' => 0, 'check' => 0, 'card' => 116],
+        );
+
+        $this->assertSame('0.00', $payload['sign_structure']['CashAmt']);
+        $this->assertSame('0.00', $payload['sign_structure']['CheckAmt']);
+        $this->assertSame('116.00', $payload['sign_structure']['CardAmt']);
+    }
+
+    public function test_eight_percent_vat_uses_the_comstore_vat_e_bucket(): void
+    {
+        $payload = $this->buildWorkflowPayload(
+            [['product_name' => 'Item', 'quantity' => 1, 'amount' => 108, 'product_vat' => 8, 'vat_rate' => 8]],
+            108,
+            '1000000003',
+            'original',
+            '',
+            '',
+        );
+
+        $sign = $payload['sign_structure'];
+        $this->assertSame('0.00', $sign['Vat B(16.00%) net']);
+        $this->assertSame('100.00', $sign['Vat E(8%) net']);
+        $this->assertSame('8.00', $sign['Vat E(8%) value']);
     }
 }
