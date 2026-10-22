@@ -561,6 +561,12 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::get('admin/database-backups/{filename}/download', [PlatformDatabaseBackupController::class, 'download'])
             ->middleware(['erp.super_admin']);
+        // Register restore-upload before {filename}/restore so "restore-upload" is not captured as a filename.
+        Route::post('admin/database-backups/restore-upload', [PlatformDatabaseBackupController::class, 'restoreUpload'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/database-backups/{filename}/restore', [PlatformDatabaseBackupController::class, 'restoreFromBackup'])
+            ->middleware(['erp.super_admin'])
+            ->where('filename', '.+');
         Route::get('admin/database-backup-settings', [PlatformDatabaseBackupController::class, 'showSettings'])
             ->middleware(['erp.super_admin']);
         Route::put('admin/database-backup-settings', [PlatformDatabaseBackupController::class, 'updateSettings'])
