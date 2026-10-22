@@ -9,7 +9,9 @@ use App\Observers\SaleObserver;
 use App\Services\Ai\AiSettingsResolver;
 use App\Services\Audit\AuditLogger;
 use App\Services\Audit\ModelChangeAuditor;
+use App\Services\Platform\Speed\PlatformSpeedQueryTracker;
 use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Http\Request;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Database\Eloquent\Model;
@@ -25,11 +27,20 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->singleton(AuditLogger::class);
+        $this->app->singleton(\App\Services\Platform\Speed\PlatformSpeedMetricsRecorder::class);
+        $this->app->singleton(PlatformSpeedQueryTracker::class);
     }
 
     public function boot(): void
     {
         Sanctum::usePersonalAccessTokenModel(PersonalAccessToken::class);
+
+        Event::listen(QueryExecuted::class, function (QueryExecuted $event): void {
+            if (! config('platform_speed.db_listen')) {
+                return;
+            }
+            app(PlatformSpeedQueryTracker::class)->handle($event);
+        });
 
         // CentrixAttendanceAgent tokens must never die from the global Sanctum
         // created_at TTL (browser sessions). Only an explicit expires_at (or revoke) ends them.

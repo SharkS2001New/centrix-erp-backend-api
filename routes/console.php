@@ -148,6 +148,23 @@ Schedule::call(function () {
     );
 })->everyMinute()->name('platform-scheduler-heartbeat');
 
+Schedule::command('erp:flush-speed-metrics')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->when(fn () => (bool) config('platform_speed.enabled', true))
+    ->appendOutputTo(storage_path('logs/flush-speed-metrics.log'));
+
+Schedule::command('erp:run-speed-synthetic')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->when(fn () => (bool) config('platform_speed.synthetic.enabled', true))
+    ->appendOutputTo(storage_path('logs/run-speed-synthetic.log'));
+
+Schedule::command('erp:prune-speed-metrics')
+    ->dailyAt('03:55')
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/prune-speed-metrics.log'));
+
 Schedule::command('erp:monitor-attendance-agents')
     ->everyMinute()
     ->withoutOverlapping()
