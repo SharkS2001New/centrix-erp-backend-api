@@ -9,6 +9,7 @@ use App\Models\Product;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\User;
+use App\Services\Kra\KraAgentBridge;
 use Illuminate\Support\Facades\Http;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
@@ -370,6 +371,118 @@ class CreditNoteReturnTest extends TestCase
         ]);
 
         Http::assertNothingSent();
+    }
+
+    public function test_fiscal_only_credit_agent_timeout_is_queued_instead_of_returned_as_error(): void
+    {
+        $org = Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['finance'] = array_merge($settings['finance'] ?? [], [
+            'enable_kra_device' => true,
+            'enable_kra_agent' => true,
+            'kra_device_ip' => 'http://192.168.1.50:8010',
+            'kra_serial_number' => 'DEJA02220240050',
+            'kra_pin_number' => 'P052177271G',
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        $product = Product::firstOrFail();
+        $sale = Sale::query()->firstOrFail();
+        $sale->update(['status' => 'completed', 'order_total' => 200, 'amount_paid' => 200, 'payment_status' => 'paid']);
+        SaleItem::query()->updateOrInsert(
+            ['sale_id' => $sale->id, 'product_code' => $product->product_code],
+            [
+                'line_no' => 1,
+                'quantity' => 2,
+                'selling_price' => 100,
+                'amount' => 200,
+                'product_vat' => 0,
+                'discount_given' => 0,
+            ],
+        );
+        $source = KraResponse::query()->create([
+            'sale_id' => $sale->id,
+            'organization_id' => (int) $sale->organization_id,
+            'order_no' => $sale->order_num ?? 90001,
+            'invoice_number' => 'CU-ORIG-TIMEOUT',
+            'status' => 'success',
+            'request_payload' => ['sign_structure' => ['TraderSystemInvoiceNumber' => '1234567890']],
+            'response_payload' => ['document_type' => 'sale', 'cu_inv_no' => '00005678'],
+        ]);
+        $bridge = app(KraAgentBridge::class);
+        $agent = $bridge->resolveOrCreateForOrganization((int) $org->id, $settings['finance']);
+        $bridge->touchAgent($agent, 'test', true, '');
+        config(['testing.kra_agent_command_handler' => fn () => [
+            'status' => 504,
+            'body' => [
+                'success' => false,
+                'message' => 'Could not reach Comstore via Centrix KRA Agent. Confirm CentrixKraAgent is online and Comstore is started, then try again.',
+            ],
+        ]]);
+
+        $response = $this->postJson("/api/v1/kra-responses/{$source->id}/credit", [
+            'refund_reason_code' => '06',
+        ]);
+
+        $response->assertStatus(202)
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('queued', true);
+        $credit = KraResponse::query()
+            ->where('sale_id', $sale->id)
+            ->where('response_payload->source', 'kra_invoice_credit')
+            ->firstOrFail();
+        $this->assertSame('pending', $credit->status);
+        $traderInvoice = data_get($credit->request_payload, 'sign_structure.TraderSystemInvoiceNumber');
+        $this->assertMatchesRegularExpression('/^\d{1,10}$/', (string) $traderInvoice);
+
+        $this->postJson("/api/v1/kra-responses/{$source->id}/credit", [
+            'refund_reason_code' => '06',
+        ])->assertStatus(202)->assertJsonPath('queued', true);
+
+        $this->assertSame(1, KraResponse::query()
+            ->where('sale_id', $sale->id)
+            ->where('response_payload->source', 'kra_invoice_credit')
+            ->count());
+        $this->assertSame(
+            $traderInvoice,
+            data_get(KraResponse::query()
+                ->where('sale_id', $sale->id)
+                ->where('response_payload->source', 'kra_invoice_credit')
+                ->firstOrFail()
+                ->request_payload, 'sign_structure.TraderSystemInvoiceNumber'),
+        );
+
+        config(['testing.kra_agent_command_handler' => function (string $path): array {
+            return [
+                'success' => true,
+                'body' => $path === '/api/complete-workflow'
+                    ? [
+                        'success' => true,
+                        'message' => 'Credit note signed',
+                        'invoice_number' => 'CU-CREDIT-RETRIED',
+                        'cu-inv-no' => '00009901',
+                        'Receipt Signature' => 'SIG-CREDIT-RETRIED',
+                        'signature_link' => 'https://example.test/credit-retried',
+                        'serial_number' => 'DEJA02220240050',
+                        'timestamp' => now()->toIso8601String(),
+                        'transmit_status' => 'Invoice has been transmitted to eTIMS.',
+                    ]
+                    : [
+                        'Success' => true,
+                        'Message' => 'Invoices queued for manual upload to ETIMS successfully',
+                    ],
+            ];
+        }]);
+
+        $stats = app(\App\Services\Sales\CreditNoteService::class)
+            ->retryPendingKraCredits(10, (int) $sale->organization_id);
+        $this->assertSame(1, $stats['succeeded']);
+        $this->assertSame('success', $credit->fresh()->status);
+        $this->assertSame(
+            $traderInvoice,
+            data_get($credit->fresh()->request_payload, 'sign_structure.TraderSystemInvoiceNumber'),
+        );
+        $this->assertSame((int) $sale->id, (int) Sale::query()->findOrFail($sale->id)->id);
     }
 
     public function test_approve_return_soft_approves_when_kra_unavailable_and_queues_credit(): void

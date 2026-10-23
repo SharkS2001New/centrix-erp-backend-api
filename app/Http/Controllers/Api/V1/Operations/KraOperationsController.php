@@ -404,6 +404,15 @@ class KraOperationsController extends Controller
                 ]);
             }
 
+            if ((string) $updated->kra_status === 'pending') {
+                return response()->json([
+                    'success' => true,
+                    'queued' => true,
+                    'message' => 'KRA could not be reached immediately. The credit note is queued and will retry automatically.',
+                    'kra_response' => $fresh,
+                ], 202);
+            }
+
             return response()->json([
                 'message' => $updated->kra_error_message ?: 'KRA credit note failed.',
                 'kra_response' => $fresh,
@@ -424,12 +433,22 @@ class KraOperationsController extends Controller
                 $finance,
                 is_string($payload['refund_reason_code'] ?? null) ? $payload['refund_reason_code'] : null,
                 $source,
+                $row,
             );
         } catch (InvalidArgumentException $e) {
             return response()->json([
                 'message' => $e->getMessage(),
                 'kra_response' => $row->fresh(),
             ], 422);
+        }
+
+        if ($credited->status === 'pending') {
+            return response()->json([
+                'success' => true,
+                'queued' => true,
+                'message' => 'KRA could not be reached immediately. The credit note is queued and will retry automatically; the Centrix sale was not changed.',
+                'kra_response' => $credited,
+            ], 202);
         }
 
         return response()->json([
@@ -461,6 +480,15 @@ class KraOperationsController extends Controller
 
         $finance = $this->erp->gateForRequest($request)->moduleSettings('finance');
 
+        $pendingCredit = KraResponse::query()
+            ->where('sale_id', $sale->id)
+            ->whereIn('status', ['pending', 'failed'])
+            ->where('response_payload->document_type', 'credit_note')
+            ->where('response_payload->source', 'kra_invoice_credit')
+            ->where('response_payload->source_kra_response_id', $row->id)
+            ->orderByDesc('id')
+            ->first();
+
         try {
             $credited = app(CreditNoteService::class)->fiscalCreditSaleOnly(
                 $sale,
@@ -468,6 +496,7 @@ class KraOperationsController extends Controller
                 $finance,
                 $data['refund_reason_code'] ?? null,
                 $row,
+                $pendingCredit,
             );
         } catch (InvalidArgumentException $e) {
             throw ValidationException::withMessages([
@@ -479,6 +508,15 @@ class KraOperationsController extends Controller
             }
             // KraDeviceFailure aborts with HTTP exceptions — rethrow those.
             throw $e;
+        }
+
+        if ($credited->status === 'pending') {
+            return response()->json([
+                'success' => true,
+                'queued' => true,
+                'message' => 'KRA could not be reached immediately. The credit note is queued and will retry automatically; the Centrix sale was not changed.',
+                'kra_response' => $credited,
+            ], 202);
         }
 
         return response()->json([

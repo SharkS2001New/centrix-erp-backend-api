@@ -231,6 +231,72 @@ class CreditNoteService
             }
         }
 
+        $fiscalCredits = KraResponse::query()
+            ->whereIn('status', ['pending', 'failed'])
+            ->where('response_payload->document_type', 'credit_note')
+            ->where('response_payload->source', 'kra_invoice_credit')
+            ->where('response_payload->soft_failed', true)
+            ->when($organizationId, fn ($query) => $query->where('organization_id', $organizationId))
+            ->orderBy('id')
+            ->limit(max(1, $limit))
+            ->get();
+
+        foreach ($fiscalCredits as $attemptRow) {
+            $attemptPayload = is_array($attemptRow->response_payload) ? $attemptRow->response_payload : [];
+            $failure = $attemptPayload['technical_message'] ?? $attemptRow->error_message;
+            if ($attemptRow->status === 'failed'
+                && ! KraDeviceErrorTranslator::isTransientConnectivityFailure($failure)) {
+                $stats['skipped']++;
+                continue;
+            }
+
+            $sale = Sale::query()
+                ->with(['items.product.vat', 'customer'])
+                ->find((int) $attemptRow->sale_id);
+            $sourceId = (int) ($attemptPayload['source_kra_response_id'] ?? 0);
+            $source = $sourceId > 0 ? KraResponse::query()->find($sourceId) : null;
+            $organization = $sale ? Organization::query()->find((int) $sale->organization_id) : null;
+            if (! $sale || ! $source || ! $organization) {
+                $stats['skipped']++;
+                continue;
+            }
+
+            $finance = (new CapabilityGate($organization))->moduleSettings('finance') ?? [];
+            if (empty($finance['enable_kra_device']) || ! empty($finance['kra_device_test_mode'])) {
+                $stats['skipped']++;
+                continue;
+            }
+
+            $stats['attempted']++;
+            try {
+                $updated = $this->fiscalCreditSaleOnly(
+                    $sale,
+                    null,
+                    $finance,
+                    is_string($attemptPayload['refund_reason_code'] ?? null)
+                        ? $attemptPayload['refund_reason_code']
+                        : null,
+                    $source,
+                    $attemptRow,
+                );
+                if ($updated->status === 'success') {
+                    $stats['succeeded']++;
+                } elseif ($updated->status === 'pending') {
+                    $stats['still_pending']++;
+                } else {
+                    $stats['skipped']++;
+                }
+            } catch (\Throwable $e) {
+                $stats['still_pending']++;
+                Log::warning('KRA fiscal-only credit retry failed', [
+                    'kra_response_id' => $attemptRow->id,
+                    'sale_id' => $sale->id,
+                    'organization_id' => $sale->organization_id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
         return $stats;
     }
 
@@ -257,7 +323,7 @@ class CreditNoteService
         }
 
         $startedAt = microtime(true);
-        $maxSeconds = \App\Services\Kra\KraAgentBridge::CHECKOUT_MAX_SECONDS;
+        $maxSeconds = \App\Services\Kra\KraAgentBridge::COMMAND_WAIT_SECONDS + 10;
 
         try {
             $service = KraDeviceService::fromSettings(
@@ -314,17 +380,11 @@ class CreditNoteService
             $remaining = static function () use ($startedAt, $maxSeconds): int {
                 return max(1, (int) floor($maxSeconds - (microtime(true) - $startedAt)));
             };
-            $deviceContext = static function () use ($remaining): array {
-                $left = $remaining();
-
+            $deviceContext = static function (): array {
                 return [
-                    'checkout' => true,
-                    'agent_wait_seconds' => min(
-                        \App\Services\Kra\KraAgentBridge::CHECKOUT_COMMAND_WAIT_SECONDS,
-                        $left,
-                    ),
-                    'http_timeout_seconds' => min(20, $left),
-                    'http_connect_timeout_seconds' => 2,
+                    'agent_wait_seconds' => \App\Services\Kra\KraAgentBridge::COMMAND_WAIT_SECONDS,
+                    'http_timeout_seconds' => 50,
+                    'http_connect_timeout_seconds' => 3,
                 ];
             };
 
@@ -580,10 +640,11 @@ class CreditNoteService
      */
     public function fiscalCreditSaleOnly(
         Sale $sale,
-        User $user,
+        ?User $user,
         array $financeSettings,
         ?string $refundReasonCode = null,
         ?KraResponse $sourceResponse = null,
+        ?KraResponse $attemptRow = null,
     ): KraResponse {
         if (empty($financeSettings['enable_kra_device'])) {
             throw new InvalidArgumentException('Enable KRA device in Finance settings first.');
@@ -604,6 +665,13 @@ class CreditNoteService
         if ($source && $source->status !== 'success') {
             throw new InvalidArgumentException('Only successful KRA invoices can be credited.');
         }
+        if ($attemptRow && ((int) $attemptRow->sale_id !== (int) $sale->id
+            || ! $this->kraResponseIsCreditNoteDocument($attemptRow))) {
+            throw new InvalidArgumentException('KRA credit attempt does not belong to this sale.');
+        }
+        if ($attemptRow?->status === 'success') {
+            throw new InvalidArgumentException('This KRA credit note has already succeeded.');
+        }
 
         $relevantInvoice = $source
             ? $this->relevantInvoiceNumberFromKraResponse($source)
@@ -622,12 +690,16 @@ class CreditNoteService
         $reasonCode = KraRefundReasonMapper::normalizeCode($refundReasonCode)
             ?? KraRefundReasonMapper::fromReturnReason(null);
 
+        $existingPayload = is_array($attemptRow?->request_payload) ? $attemptRow->request_payload : [];
+        $existingTraderNumber = trim((string) data_get($existingPayload, 'sign_structure.TraderSystemInvoiceNumber', ''));
+
         $service = KraDeviceService::fromSettings(
             $financeSettings,
             (int) ($sale->organization_id ?? 0) ?: null,
         );
-        $invoiceNumber = app(KraTraderInvoiceAllocator::class)
-            ->forOrganization((int) $sale->organization_id);
+        $invoiceNumber = $existingTraderNumber !== ''
+            ? $existingTraderNumber
+            : app(KraTraderInvoiceAllocator::class)->forOrganization((int) $sale->organization_id);
 
         $orderItems = $sale->items->map(fn ($line) => [
             'product_name' => $line->resolvedProductName(),
@@ -651,7 +723,11 @@ class CreditNoteService
         );
 
         if (! ($result['success'] ?? false)) {
-            $failed = KraResponse::create([
+            $errorMessage = (string) ($result['message'] ?? 'KRA device rejected the credit note.');
+            $pending = KraDeviceErrorTranslator::isTransientConnectivityFailure(
+                $result['technical_message'] ?? $errorMessage,
+            );
+            $attributes = [
                 'sale_id' => $sale->id,
                 'organization_id' => (int) $sale->organization_id,
                 'order_no' => $this->displayOrderNoForSale($sale),
@@ -664,18 +740,31 @@ class CreditNoteService
                         'source' => 'kra_invoice_credit',
                         'relevant_invoice_number' => $relevantInvoice,
                         'source_kra_response_id' => $source?->id,
+                        'refund_reason_code' => $reasonCode,
+                        'soft_failed' => $pending,
+                        'technical_message' => $result['technical_message'] ?? $errorMessage,
+                        'error_code' => $result['error_code'] ?? null,
                     ],
                 ),
-                'status' => 'failed',
-                'error_message' => $result['message'] ?? 'KRA device rejected the credit note.',
-            ]);
+                'status' => $pending ? 'pending' : 'failed',
+                'error_message' => $pending
+                    ? 'Credit note is queued for automatic retry: '.$errorMessage
+                    : $errorMessage,
+            ];
+            $failed = $attemptRow ?? new KraResponse;
+            $failed->fill($attributes);
+            $failed->save();
+
+            if ($pending) {
+                return $failed->fresh() ?? $failed;
+            }
 
             KraDeviceFailure::abort((string) ($failed->error_message ?: 'KRA device rejected the credit note.'));
         }
 
         $mapped = $result['response'] ?? [];
 
-        return KraResponse::create([
+        $attributes = [
             'sale_id' => $sale->id,
             'organization_id' => (int) $sale->organization_id,
             'order_no' => $this->displayOrderNoForSale($sale),
@@ -693,7 +782,13 @@ class CreditNoteService
                 'refund_reason_code' => $reasonCode,
             ]),
             'status' => 'success',
-        ]);
+            'error_message' => null,
+        ];
+        $creditResponse = $attemptRow ?? new KraResponse;
+        $creditResponse->fill($attributes);
+        $creditResponse->save();
+
+        return $creditResponse->fresh() ?? $creditResponse;
     }
 
     protected function resolveOriginalInvoiceNumberForSale(Sale $sale): string
