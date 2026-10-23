@@ -3,10 +3,13 @@
 return [
     'paths' => ['api/*', 'sanctum/csrf-cookie'],
     'allowed_methods' => ['*'],
-    'allowed_origins' => array_values(array_filter(array_map(
+    'allowed_origins' => array_values(array_unique(array_filter(array_map(
         'trim',
-        explode(',', (string) config('security.cors_allowed_origins', 'http://localhost:3000')),
-    ))),
+        array_merge(
+            explode(',', (string) config('security.cors_allowed_origins', 'http://localhost:3000')),
+            ['https://centrixerpwebsite.alpacke-tech.workers.dev'],
+        ),
+    )))),
     'allowed_origins_patterns' => [
         // Flutter web dev server (random localhost / 127.0.0.1 ports).
         '#^https?://localhost(:\d+)?$#',
