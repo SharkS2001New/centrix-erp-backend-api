@@ -4,6 +4,7 @@ namespace App\Services\Audit;
 
 use App\Models\AuditLog;
 use App\Models\User;
+use Illuminate\Database\QueryException;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 
@@ -132,7 +133,7 @@ class AuditLogger
         ?array $newValues,
         ?Request $request,
     ): void {
-        AuditLog::create([
+        $attributes = [
             'user_id' => $user->id,
             'organization_id' => $user->organization_id,
             'branch_id' => $user->branch_id,
@@ -143,7 +144,51 @@ class AuditLogger
             'new_values' => $this->redactValues($newValues),
             'ip_address' => $request?->ip(),
             'user_agent' => $request?->userAgent(),
-        ]);
+        ];
+
+        try {
+            $this->persistAuditLog($attributes);
+        } catch (QueryException $e) {
+            if (! $this->isTransientLockConflict($e)) {
+                throw $e;
+            }
+
+            $diagnostic = [
+                'event' => 'audit_log_lock_conflict',
+                'connection' => $e->connectionName,
+                'organization_id' => $user->organization_id,
+                'action' => $action,
+                'table_name' => $tableName,
+                'record_id' => (string) $recordId,
+                'sql_state' => $e->errorInfo[0] ?? $e->getCode(),
+                'driver_error_code' => $e->errorInfo[1] ?? null,
+            ];
+
+            try {
+                error_log(json_encode($diagnostic, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE));
+            } catch (\Throwable) {
+                // Audit logging is best-effort; do not route lock conflicts through alerting/log mail.
+            }
+        }
+    }
+
+    /** @param array<string, mixed> $attributes */
+    protected function persistAuditLog(array $attributes): void
+    {
+        AuditLog::create($attributes);
+    }
+
+    protected function isTransientLockConflict(QueryException $exception): bool
+    {
+        $driverCode = (int) ($exception->errorInfo[1] ?? 0);
+        if (in_array($driverCode, [1205, 1213], true) || $exception->getCode() === '40001') {
+            return true;
+        }
+
+        $message = strtolower($exception->getMessage());
+
+        return str_contains($message, 'lock wait timeout exceeded')
+            || str_contains($message, 'deadlock found when trying to get lock');
     }
 
     private function fingerprint(User $user, string $action, string $tableName, string|int $recordId): string

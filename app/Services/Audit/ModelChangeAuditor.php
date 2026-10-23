@@ -10,6 +10,12 @@ use Illuminate\Support\Facades\Auth;
 class ModelChangeAuditor
 {
     /** @var list<string> */
+    private const HEARTBEAT_TABLES = [
+        'attendance_clock_devices',
+        'kra_agents',
+    ];
+
+    /** @var list<string> */
     private const SKIP_TABLES = [
         'audit_logs',
         'personal_access_tokens',
@@ -31,6 +37,7 @@ class ModelChangeAuditor
         'last_login',
         'last_login_at',
         'last_seen_at',
+        'agent_last_seen_at',
         'remember_token',
         'deleted_at',
     ];
@@ -44,7 +51,12 @@ class ModelChangeAuditor
 
     public function updated(Model $model): void
     {
-        $changes = $this->withoutNoise($model->getChanges());
+        $rawChanges = $model->getChanges();
+        if ($this->heartbeatOnlyChange($model, $rawChanges)) {
+            return;
+        }
+
+        $changes = $this->withoutNoise($rawChanges);
         if ($changes === []) {
             return;
         }
@@ -55,6 +67,13 @@ class ModelChangeAuditor
         }
 
         $this->record('update', $model, $previous, $changes);
+    }
+
+    /** @param array<string, mixed> $changes */
+    private function heartbeatOnlyChange(Model $model, array $changes): bool
+    {
+        return in_array($model->getTable(), self::HEARTBEAT_TABLES, true)
+            && array_keys($changes) === ['agent_last_seen_at'];
     }
 
     public function deleted(Model $model): void

@@ -5,8 +5,10 @@ namespace Tests\Unit;
 use App\Models\User;
 use App\Services\Audit\AuditLogger;
 use App\Services\Audit\ModelChangeAuditor;
+use Illuminate\Database\QueryException;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Event;
+use RuntimeException;
 use Tests\TestCase;
 
 class AuditLoggerTest extends TestCase
@@ -44,6 +46,45 @@ class AuditLoggerTest extends TestCase
         $this->assertSame('delete', $logger->rows[1]['action']);
     }
 
+    public function test_audit_lock_wait_timeout_does_not_escape_to_business_request(): void
+    {
+        $logger = new class extends AuditLogger
+        {
+            protected function persistAuditLog(array $attributes): void
+            {
+                throw new QueryException(
+                    'mysql',
+                    'insert into `audit_logs` values (?)',
+                    [],
+                    new RuntimeException('SQLSTATE[HY000]: General error: 1205 Lock wait timeout exceeded.'),
+                );
+            }
+        };
+
+        $logger->logAutomatic($this->actor(), 'update', 'customers', 12, [], ['customer_name' => 'Amina']);
+
+        $this->assertTrue(true);
+    }
+
+    public function test_non_lock_audit_query_errors_still_propagate(): void
+    {
+        $logger = new class extends AuditLogger
+        {
+            protected function persistAuditLog(array $attributes): void
+            {
+                throw new QueryException(
+                    'mysql',
+                    'insert into `audit_logs` values (?)',
+                    [],
+                    new RuntimeException('SQLSTATE[42S02]: Base table or view not found.'),
+                );
+            }
+        };
+
+        $this->expectException(QueryException::class);
+        $logger->logAutomatic($this->actor(), 'update', 'customers', 12, [], ['customer_name' => 'Amina']);
+    }
+
     public function test_signed_in_updates_are_recorded_and_sign_in_timestamps_are_not(): void
     {
         $logger = new RecordingAuditLogger;
@@ -76,6 +117,66 @@ class AuditLoggerTest extends TestCase
         $this->assertSame('update', $logger->rows[0]['action']);
         $this->assertSame('products', $logger->rows[0]['table']);
         $this->assertSame('Soap', $logger->rows[0]['new']['product_name']);
+    }
+
+    public function test_agent_heartbeat_timestamps_are_not_written_to_audit_log(): void
+    {
+        foreach (['kra_agents', 'attendance_clock_devices'] as $table) {
+            $logger = new RecordingAuditLogger;
+            $this->app->instance(AuditLogger::class, $logger);
+            $this->actingAs($this->actor());
+
+            $model = new class extends Model
+            {
+                protected $table;
+
+                protected $guarded = [];
+
+                public $timestamps = false;
+
+                public function useTable(string $table): void
+                {
+                    $this->table = $table;
+                }
+            };
+            $model->useTable($table);
+            $model->id = 7;
+            $model->exists = true;
+            $model->syncOriginal();
+            $model->agent_last_seen_at = now();
+            $model->syncChanges();
+
+            $this->app->make(ModelChangeAuditor::class)->updated($model);
+
+            $this->assertCount(0, $logger->rows, "Heartbeat update for {$table} should not be audited.");
+        }
+    }
+
+    public function test_real_agent_status_changes_remain_audited(): void
+    {
+        $logger = new RecordingAuditLogger;
+        $this->app->instance(AuditLogger::class, $logger);
+        $this->actingAs($this->actor());
+
+        $model = new class extends Model
+        {
+            protected $table = 'kra_agents';
+
+            protected $guarded = [];
+
+            public $timestamps = false;
+        };
+        $model->id = 7;
+        $model->exists = true;
+        $model->syncOriginal();
+        $model->agent_last_seen_at = now();
+        $model->comstore_reachable = false;
+        $model->syncChanges();
+
+        $this->app->make(ModelChangeAuditor::class)->updated($model);
+
+        $this->assertCount(1, $logger->rows);
+        $this->assertSame(['comstore_reachable' => false], $logger->rows[0]['new']);
     }
 
     public function test_model_events_reach_the_audit_log_for_the_signed_in_user(): void

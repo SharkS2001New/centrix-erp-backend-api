@@ -247,11 +247,17 @@ class HikvisionAgentBridge
 
     public function touchAgent(AttendanceClockDevice $device, ?string $version = null): void
     {
-        $device->agent_last_seen_at = AppTimezone::now();
-        if ($version !== null && $version !== '') {
+        $now = AppTimezone::now();
+        $lastSeen = AppTimezone::normalize($device->agent_last_seen_at);
+        if ($lastSeen === null || $lastSeen->lt($now->copy()->subSeconds(15))) {
+            $device->agent_last_seen_at = $now;
+        }
+        if ($version !== null && $version !== '' && $device->agent_version !== mb_substr($version, 0, 40)) {
             $device->agent_version = mb_substr($version, 0, 40);
         }
-        $device->save();
+        if ($device->isDirty()) {
+            $device->save();
+        }
     }
 
     public function isConnectionError(\Throwable $e): bool

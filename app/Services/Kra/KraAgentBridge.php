@@ -21,6 +21,8 @@ class KraAgentBridge
 
     public const RECENT_CHECKIN_GRACE_SECONDS = 7200;
 
+    public const HEARTBEAT_WRITE_INTERVAL_SECONDS = 15;
+
     /** Health probe via agent on checkout (keep short so POS never hangs). */
     public const HEALTH_WAIT_SECONDS = 8;
 
@@ -163,8 +165,12 @@ class KraAgentBridge
         ?string $deviceHardwareIp = null,
         ?string $deviceConnection = null,
     ): void {
-        $agent->agent_last_seen_at = AppTimezone::now();
-        if ($version !== null && $version !== '') {
+        $now = AppTimezone::now();
+        $lastSeen = AppTimezone::normalize($agent->agent_last_seen_at);
+        if ($lastSeen === null || $lastSeen->lt($now->copy()->subSeconds(self::HEARTBEAT_WRITE_INTERVAL_SECONDS))) {
+            $agent->agent_last_seen_at = $now;
+        }
+        if ($version !== null && $version !== '' && $agent->agent_version !== mb_substr($version, 0, 40)) {
             $agent->agent_version = mb_substr($version, 0, 40);
         }
         if ($comstoreReachable !== null) {
@@ -185,7 +191,9 @@ class KraAgentBridge
         if ($deviceConnection !== null) {
             $agent->device_connection = mb_substr(trim($deviceConnection), 0, 80) ?: null;
         }
-        $agent->save();
+        if ($agent->isDirty()) {
+            $agent->save();
+        }
     }
 
     /**

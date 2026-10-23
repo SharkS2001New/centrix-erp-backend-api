@@ -230,6 +230,12 @@ Route::prefix('v1')->group(function () {
         Route::get('{slug}', [\App\Http\Controllers\Api\V1\PublicMarketingBlogController::class, 'show'])
             ->where('slug', '[A-Za-z0-9\-]+');
     });
+    Route::get('public/self-serve-plans', [\App\Http\Controllers\Api\V1\PublicSelfServePlansController::class, 'index'])
+        ->middleware('throttle:api');
+    Route::get('public/free-signup', [\App\Http\Controllers\Api\V1\PublicFreeSignupController::class, 'options'])
+        ->middleware('throttle:api');
+    Route::post('public/free-signup', [\App\Http\Controllers\Api\V1\PublicFreeSignupController::class, 'store'])
+        ->middleware(['throttle:api', 'throttle:auth-login']);
 
     Route::middleware(['auth:sanctum', 'erp.tenant', 'erp.session_idle', 'erp.password_expiry', 'throttle:api'])->group(function () {
         Route::get('auth/me', [AuthController::class, 'me']);
