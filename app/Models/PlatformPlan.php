@@ -15,6 +15,7 @@ class PlatformPlan extends Model
         'currency',
         'seat_limit', 'workspace_keys', 'module_keys', 'section_keys', 'feature_keys', 'feature_details',
         'self_serve', 'is_active', 'is_recommended', 'sort_order',
+        'cta_action',
         'auto_invoice_template_id',
     ];
 

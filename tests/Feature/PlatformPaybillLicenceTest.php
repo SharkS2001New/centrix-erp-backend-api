@@ -3,10 +3,14 @@
 namespace Tests\Feature;
 
 use App\Models\Organization;
+use App\Models\EquityBankAccount;
+use App\Models\EquityIncomingPayment;
 use App\Models\PlatformLicencePayment;
 use App\Models\PlatformPlan;
 use App\Models\PlatformSubscription;
+use App\Models\Role;
 use App\Models\User;
+use Illuminate\Support\Facades\Hash;
 use App\Services\Platform\PlatformPaybillLicenceService;
 use Carbon\Carbon;
 use Laravel\Sanctum\Sanctum;
@@ -202,6 +206,129 @@ class PlatformPaybillLicenceTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.0.organization.company_code', $org->company_code)
             ->assertJsonPath('data.0.product', 'monthly');
+    }
+
+    public function test_public_plan_catalogue_returns_admin_configured_cta_action(): void
+    {
+        [, $plan] = $this->seedLicensedOrg('MOON', '0712000111', '2026-09-01');
+        $plan->update(['self_serve' => true]);
+        $admin = User::query()->where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $this->patchJson('/api/v1/admin/platform-plans/'.$plan->id, [
+            'cta_action' => 'start_now',
+        ])->assertOk()->assertJsonPath('data.cta_action', 'start_now');
+
+        $this->getJson('/api/v1/public/self-serve-plans')
+            ->assertOk()
+            ->assertJsonPath('data.0.cta_action', 'start_now');
+    }
+
+    public function test_equity_checkout_applies_verified_callback_and_is_idempotent(): void
+    {
+        [$org, $plan] = $this->seedLicensedOrg('MOON', '0712000111', '2026-09-01');
+        $platform = Organization::query()
+            ->whereRaw('UPPER(company_code) = ?', ['PLATFORM'])
+            ->firstOrFail();
+        EquityBankAccount::query()->where('organization_id', $platform->id)->update(['is_active' => false]);
+        $account = EquityBankAccount::query()->create([
+            'organization_id' => $platform->id,
+            'name' => 'Platform Equity',
+            'primary_account_number' => 'EQPLATFORM1',
+            'account_number' => 'EQPLATFORM1',
+            'paybill_number' => 'EQPLATFORM1',
+            'is_default' => true,
+            'is_active' => true,
+        ]);
+        $checkout = app(PlatformPaybillLicenceService::class)->startCheckout($org, $plan, 1);
+        $incoming = EquityIncomingPayment::query()->create([
+            'organization_id' => $platform->id,
+            'equity_bank_account_id' => $account->id,
+            'transaction_id' => 'EQPLANPAY001',
+            'phone_number' => '254711000111',
+            'bill_ref_number' => 'MOON',
+            'business_account_number' => 'EQPLATFORM1',
+            'amount' => 1500,
+            'source' => 'callback',
+            'status' => 'available',
+            'reconciliation_status' => 'unmatched',
+            'received_at' => now(),
+        ]);
+        $user = $this->userForOrg($org);
+        Sanctum::actingAs($user);
+
+        $this->postJson('/api/v1/erp/organization/licence/equity/verify', [
+            'checkout_id' => $checkout->id,
+            'transaction_id' => $incoming->transaction_id,
+        ])->assertOk()->assertJsonPath('confirmed', true);
+
+        $this->postJson('/api/v1/erp/organization/licence/equity/verify', [
+            'checkout_id' => $checkout->id,
+            'transaction_id' => $incoming->transaction_id,
+        ])->assertOk()->assertJsonPath('confirmed', true);
+
+        $this->assertSame('paid', $checkout->fresh()->status);
+        $this->assertSame('applied', $incoming->fresh()->status);
+        $this->assertSame(1, PlatformLicencePayment::query()->count());
+        $subscription = PlatformSubscription::query()->where('organization_id', $org->id)->firstOrFail();
+        $this->assertSame($plan->id, $subscription->plan_id);
+        $this->assertSame('active', $subscription->status);
+    }
+
+    public function test_equity_checkout_rejects_wrong_amount_and_reference(): void
+    {
+        [$org, $plan] = $this->seedLicensedOrg('MOON', '0712000111', '2026-09-01');
+        $platform = Organization::query()
+            ->whereRaw('UPPER(company_code) = ?', ['PLATFORM'])
+            ->firstOrFail();
+        EquityBankAccount::query()->where('organization_id', $platform->id)->update(['is_active' => false]);
+        $account = EquityBankAccount::query()->create([
+            'organization_id' => $platform->id,
+            'name' => 'Platform Equity',
+            'primary_account_number' => 'EQPLATFORM2',
+            'account_number' => 'EQPLATFORM2',
+            'paybill_number' => 'EQPLATFORM2',
+            'is_default' => true,
+            'is_active' => true,
+        ]);
+        $checkout = app(PlatformPaybillLicenceService::class)->startCheckout($org, $plan, 1);
+        EquityIncomingPayment::query()->create([
+            'organization_id' => $platform->id,
+            'equity_bank_account_id' => $account->id,
+            'transaction_id' => 'EQPLANPAY002',
+            'bill_ref_number' => 'OTHER',
+            'business_account_number' => 'EQPLATFORM2',
+            'amount' => 1200,
+            'source' => 'callback',
+            'status' => 'available',
+            'reconciliation_status' => 'unmatched',
+            'received_at' => now(),
+        ]);
+        $user = $this->userForOrg($org);
+        Sanctum::actingAs($user);
+
+        $this->postJson('/api/v1/erp/organization/licence/equity/verify', [
+            'checkout_id' => $checkout->id,
+            'transaction_id' => 'EQPLANPAY002',
+        ])->assertUnprocessable();
+
+        $this->assertSame('pending', $checkout->fresh()->status);
+        $this->assertSame('available', EquityIncomingPayment::query()->where('transaction_id', 'EQPLANPAY002')->firstOrFail()->status);
+        $this->assertSame(0, PlatformLicencePayment::query()->count());
+    }
+
+    protected function userForOrg(Organization $org): User
+    {
+        return User::query()->create([
+            'organization_id' => $org->id,
+            'role_id' => Role::query()->where('role_name', 'Administrator')->where('scope', 'org')->value('id'),
+            'username' => 'equity_user_'.uniqid(),
+            'password' => Hash::make('password'),
+            'full_name' => 'Equity Test User',
+            'is_admin' => true,
+            'access_scope' => 'org',
+            'is_active' => true,
+        ]);
     }
 
     /** @return array{0: Organization, 1: PlatformPlan} */

@@ -683,6 +683,8 @@ Route::prefix('v1')->group(function () {
         Route::get('admin/billing-overview', [\App\Http\Controllers\Api\V1\OrganizationBillingController::class, 'overview'])
             ->middleware(['erp.super_admin']);
         Route::post('erp/organization/licence/checkout', [PlatformPaybillController::class, 'checkout']);
+        Route::post('erp/organization/licence/equity/checkout', [PlatformPaybillController::class, 'equityCheckout']);
+        Route::post('erp/organization/licence/equity/verify', [PlatformPaybillController::class, 'verifyEquityCheckout']);
         Route::post('erp/organization/licence/notify', [PlatformPaybillController::class, 'notify']);
         Route::post('erp/organization/licence/stk', [PlatformPaybillController::class, 'stk']);
         Route::get('erp/organization/licence/status', [PlatformPaybillController::class, 'status']);

@@ -34,6 +34,7 @@ class OrganizationBillingController extends Controller
             'data' => [
                 'license' => $license,
                 'policy' => $policy->current(),
+                'equity' => app(\App\Services\Platform\PlatformPaybillLicenceService::class)->equityInstructionsFor($org),
                 'subscription' => $subscription ? [
                     'id' => $subscription->id,
                     'status' => $subscription->status,

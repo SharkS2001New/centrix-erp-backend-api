@@ -167,6 +167,75 @@ class PlatformPaybillController extends Controller
         ]);
     }
 
+    public function equityCheckout(Request $request)
+    {
+        $org = $request->user()?->organization;
+        if (! $org) {
+            return response()->json(['message' => 'No organisation on this login.'], 422);
+        }
+
+        $data = $request->validate([
+            'plan_id' => 'required|integer',
+            'months' => 'required|integer|min:1|max:36',
+            'billing' => 'sometimes|in:monthly,yearly',
+        ]);
+        $billing = $data['billing'] ?? 'monthly';
+        $plan = $this->findSelfServePlan((int) $data['plan_id']);
+        $price = $billing === 'yearly'
+            ? (float) ($plan?->yearly_price ?? 0)
+            : (float) ($plan?->monthly_price ?? 0);
+        if (! $plan || $price <= 0) {
+            return response()->json(['message' => 'This plan is not available for the selected billing period.'], 422);
+        }
+
+        $checkout = $this->paybill->startCheckout(
+            $org,
+            $plan,
+            $billing === 'yearly' ? 12 : (int) $data['months'],
+            null,
+            $billing,
+        );
+        $instructions = $this->paybill->equityInstructionsFor($org);
+        if (! $instructions) {
+            $checkout->delete();
+
+            return response()->json(['message' => 'Equity payments are not configured yet.'], 422);
+        }
+
+        return response()->json([
+            'checkout' => $this->checkoutPayload($checkout),
+            'equity' => $instructions,
+        ], 201);
+    }
+
+    public function verifyEquityCheckout(Request $request)
+    {
+        $org = $request->user()?->organization;
+        if (! $org) {
+            return response()->json(['message' => 'No organisation on this login.'], 422);
+        }
+
+        $data = $request->validate([
+            'checkout_id' => 'required|integer',
+            'transaction_id' => 'required|string|max:80',
+        ]);
+        $payment = $this->paybill->acceptEquityCheckout(
+            $org,
+            (int) $data['checkout_id'],
+            trim($data['transaction_id']),
+        );
+        $license = app(OrganizationLicenseService::class)->resolveForOrganization($org->fresh());
+
+        return response()->json([
+            'confirmed' => $payment->status === 'applied',
+            'payment_status' => $payment->status,
+            'message' => $payment->status === 'applied'
+                ? 'Equity payment confirmed. Your plan is active.'
+                : 'Equity payment has not been applied yet.',
+            'license' => $license,
+        ]);
+    }
+
     public function notify(Request $request)
     {
         $org = $request->user()?->organization;

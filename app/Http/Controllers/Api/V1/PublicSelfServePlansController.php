@@ -155,6 +155,9 @@ class PublicSelfServePlansController extends Controller
             'annual_discount' => $annualQuote !== null ? $annualQuote['discount'] : 0,
             'industry' => $industry,
             'recommended' => Schema::hasColumn('platform_plans', 'is_recommended') && (bool) $plan->is_recommended,
+            'cta_action' => in_array($plan->cta_action, ['buy_now', 'start_now', 'view_details', 'contact_sales'], true)
+                ? $plan->cta_action
+                : 'buy_now',
             'highlights' => array_values($highlights),
             'trial_days' => Schema::hasColumn('platform_plans', 'trial_days') && $plan->trial_days !== null
                 ? (int) $plan->trial_days

@@ -14,6 +14,8 @@ use App\Models\PlatformLicenceCheckout;
 use App\Models\PlatformLicencePayment;
 use App\Models\PlatformPlan;
 use App\Models\PlatformSubscription;
+use App\Models\EquityBankAccount;
+use App\Models\EquityIncomingPayment;
 use App\Support\PhoneNumber;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -154,6 +156,22 @@ class PlatformPaybillLicenceService
             'yearly_price' => isset($byProduct['yearly']) ? $byProduct['yearly']['price'] : null,
             'token_pack_price' => isset($byProduct['token']) ? $byProduct['token']['price'] : null,
             'token_pack_days' => isset($byProduct['token']) ? $byProduct['token']['days'] : null,
+        ];
+    }
+
+    /** @return array<string, string>|null */
+    public function equityInstructionsFor(Organization $customer): ?array
+    {
+        $account = $this->platformEquityAccount();
+        if (! $account) {
+            return null;
+        }
+
+        return [
+            'account_name' => (string) $account->name,
+            'paybill_number' => (string) ($account->paybill_number ?: $account->primary_account_number),
+            'account_number' => (string) ($account->account_number ?: $customer->company_code),
+            'reference' => (string) $customer->company_code,
         ];
     }
 
@@ -343,7 +361,7 @@ class PlatformPaybillLicenceService
         return ['organization' => null, 'method' => null, 'note' => 'unknown_account'];
     }
 
-    protected function applyCredit(PlatformLicencePayment $payment, Organization $org, float $amount): PlatformLicencePayment
+    protected function applyCredit(PlatformLicencePayment $payment, Organization $org, float $amount, ?int $checkoutId = null): PlatformLicencePayment
     {
         $balanceRow = PlatformLicenceBalance::query()->firstOrCreate(
             ['organization_id' => $org->id],
@@ -354,9 +372,14 @@ class PlatformPaybillLicenceService
             ->lockForUpdate()
             ->first();
 
-        $quoted = $this->applyPendingCheckout($payment, $org, $amount);
+        $quoted = $this->applyPendingCheckout($payment, $org, $amount, $checkoutId);
         if ($quoted) {
             return $quoted;
+        }
+        if ($checkoutId !== null) {
+            throw ValidationException::withMessages([
+                'checkout_id' => ['This Equity payment could not be matched to the selected plan checkout.'],
+            ]);
         }
 
         $balance = round((float) $balanceRow->balance + $amount, 2);
@@ -582,6 +605,29 @@ class PlatformPaybillLicenceService
         ]);
     }
 
+    protected function platformEquityAccount(): ?EquityBankAccount
+    {
+        if (! Schema::hasTable('equity_bank_accounts')) {
+            return null;
+        }
+
+        $platformCode = strtoupper((string) config('erp.platform_company_code', 'PLATFORM'));
+        $platformId = Organization::query()
+            ->whereRaw('UPPER(company_code) = ?', [$platformCode])
+            ->value('id');
+        if (! $platformId) {
+            return null;
+        }
+
+        return EquityBankAccount::query()
+            ->where('organization_id', $platformId)
+            ->where('is_active', true)
+            ->orderByDesc('is_default')
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->first();
+    }
+
     public function startCheckout(Organization $org, PlatformPlan $plan, int $months, ?string $phone = null, ?string $billing = null): PlatformLicenceCheckout
     {
         $this->assertPlanMatchesIndustry($org, $plan);
@@ -615,6 +661,113 @@ class PlatformPaybillLicenceService
             'phone_number' => $phone,
             'status' => 'pending',
         ]);
+    }
+
+    public function acceptEquityCheckout(Organization $org, int $checkoutId, string $transactionId): PlatformLicencePayment
+    {
+        return DB::transaction(function () use ($org, $checkoutId, $transactionId) {
+            $account = $this->platformEquityAccount();
+            if (! $account) {
+                throw ValidationException::withMessages([
+                    'payment_method' => ['Equity payments are not configured yet.'],
+                ]);
+            }
+
+            $referenceKey = 'EQ:'.substr(hash('sha256', $transactionId), 0, 32);
+            $checkoutNote = 'eq'.$checkoutId.':'.substr(hash('sha256', $transactionId), 0, 12);
+            $existing = PlatformLicencePayment::query()->where('mpesa_transaction_id', $referenceKey)->first();
+            if ($existing) {
+                if ((int) $existing->organization_id === (int) $org->id
+                    && $existing->status === 'applied'
+                    && $existing->note === $checkoutNote) {
+                    return $existing;
+                }
+                throw ValidationException::withMessages([
+                    'transaction_id' => ['This Equity payment has already been used.'],
+                ]);
+            }
+
+            $checkout = PlatformLicenceCheckout::query()
+                ->whereKey($checkoutId)
+                ->where('organization_id', $org->id)
+                ->where('status', 'pending')
+                ->lockForUpdate()
+                ->first();
+            if (! $checkout) {
+                throw ValidationException::withMessages([
+                    'checkout_id' => ['This payment request is no longer available. Start checkout again.'],
+                ]);
+            }
+
+            $incoming = EquityIncomingPayment::query()
+                ->where('organization_id', $account->organization_id)
+                ->where('equity_bank_account_id', $account->id)
+                ->where('transaction_id', $transactionId)
+                ->where('status', 'available')
+                ->where('reconciliation_status', 'unmatched')
+                ->lockForUpdate()
+                ->first();
+            if (! $incoming) {
+                throw ValidationException::withMessages([
+                    'transaction_id' => ['We could not find an unused Equity payment with that reference. Check the reference and try again.'],
+                ]);
+            }
+
+            $reference = Organization::normalizeCompanyCodeIdentifier((string) $incoming->bill_ref_number);
+            if ($reference !== Organization::normalizeCompanyCodeIdentifier((string) $org->company_code)) {
+                throw ValidationException::withMessages([
+                    'transaction_id' => ['That Equity payment does not use this organisation code as its reference.'],
+                ]);
+            }
+
+            $amount = round((float) $incoming->amount, 2);
+            if (abs($amount - (float) $checkout->amount) > 1) {
+                throw ValidationException::withMessages([
+                    'transaction_id' => ['The Equity payment amount does not match this plan checkout.'],
+                ]);
+            }
+
+            $payment = PlatformLicencePayment::query()->firstOrCreate(
+                ['mpesa_transaction_id' => $referenceKey],
+                [
+                    'organization_id' => $org->id,
+                    'phone_number' => $incoming->phone_number,
+                    'amount' => $amount,
+                    'bill_ref_number' => $incoming->bill_ref_number,
+                    'business_short_code' => $incoming->business_account_number,
+                    'account_reference' => $org->company_code,
+                    'status' => 'unmatched',
+                    'match_method' => 'equity_checkout',
+                    'note' => $checkoutNote,
+                ],
+            );
+
+            if ((int) $payment->organization_id !== (int) $org->id) {
+                throw ValidationException::withMessages([
+                    'transaction_id' => ['This Equity payment belongs to a different organisation.'],
+                ]);
+            }
+            if ($payment->status === 'unmatched') {
+                $payment = $this->applyCredit($payment, $org, $amount, $checkoutId);
+            }
+            if ($payment->status !== 'applied') {
+                throw ValidationException::withMessages([
+                    'transaction_id' => ['This Equity payment could not be applied to the selected plan. Contact Centrix support.'],
+                ]);
+            }
+
+            $incoming->fill([
+                'status' => 'applied',
+                'applied_amount' => (int) round($amount),
+                'match_method' => 'platform_licence',
+                'reconciliation_status' => 'matched',
+                'reconciliation_notes' => 'Applied to platform licence checkout #'.$checkoutId,
+                'applied_at' => now(),
+                'matched_at' => now(),
+            ])->save();
+
+            return $payment->fresh();
+        });
     }
 
     /** Renew a yearly organisation at the amount saved on that organisation. */
@@ -942,7 +1095,7 @@ class PlatformPaybillLicenceService
         };
     }
 
-    protected function applyPendingCheckout(PlatformLicencePayment $payment, Organization $org, float $amount): ?PlatformLicencePayment
+    protected function applyPendingCheckout(PlatformLicencePayment $payment, Organization $org, float $amount, ?int $checkoutId = null): ?PlatformLicencePayment
     {
         if (! \Illuminate\Support\Facades\Schema::hasTable('platform_licence_checkouts')) {
             return null;
@@ -951,6 +1104,7 @@ class PlatformPaybillLicenceService
         $checkout = PlatformLicenceCheckout::query()
             ->where('organization_id', $org->id)
             ->where('status', 'pending')
+            ->when($checkoutId, fn ($query) => $query->whereKey($checkoutId))
             ->whereBetween('amount', [$amount - 1, $amount + 1])
             ->orderByDesc('id')
             ->lockForUpdate()
@@ -1024,7 +1178,7 @@ class PlatformPaybillLicenceService
             'amount_applied' => $amount,
             'balance_after' => 0,
             'period_end_after' => $subscription->fresh()?->current_period_end?->toDateString(),
-            'note' => 'plan_checkout',
+            'note' => $payment->match_method === 'equity_checkout' ? $payment->note : 'plan_checkout',
         ])->save();
 
         return $payment->fresh();

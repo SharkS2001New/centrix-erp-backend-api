@@ -101,7 +101,9 @@ class EquityPaymentController extends Controller
             'received_at' => now(),
         ]);
 
-        if (EquitySettingsResolver::isPaybillReconciliationEnabledForOrganization($organization)) {
+        $platformCode = strtoupper((string) config('erp.platform_company_code', 'PLATFORM'));
+        $isPlatformCollection = strtoupper((string) $organization->company_code) === $platformCode;
+        if (! $isPlatformCollection && EquitySettingsResolver::isPaybillReconciliationEnabledForOrganization($organization)) {
             ProcessEquityIncomingMatchJob::dispatch((int) $payment->id);
         }
 

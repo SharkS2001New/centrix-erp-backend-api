@@ -167,6 +167,7 @@ class PlatformPlanController extends Controller
             'self_serve' => 'sometimes|boolean',
             'is_active' => 'sometimes|boolean',
             'is_recommended' => 'sometimes|boolean',
+            'cta_action' => 'sometimes|in:buy_now,start_now,view_details,contact_sales',
             'auto_invoice_template_id' => 'nullable|integer',
         ]);
 
