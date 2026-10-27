@@ -102,7 +102,7 @@ class RegisterKraProductsJob implements ShouldQueue
                     'success' => true,
                     'message' => 'Products were already on the KRA device (skipped).',
                     'registered_count' => 0,
-                    'skipped_count' => (int) ($task->payload['product_codes'] ?? []) !== []
+                    'skipped_count' => ! empty($task->payload['product_codes'])
                         ? count((array) $task->payload['product_codes'])
                         : 1,
                 ]);

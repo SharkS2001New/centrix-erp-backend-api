@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\PlatformPlan;
+use App\Services\Platform\FreePlanAccess;
 use App\Services\Platform\PlatformPaybillLicenceService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
@@ -16,11 +17,14 @@ class PublicSelfServePlansController extends Controller
 {
     public function index(Request $request)
     {
+        $freePlanName = app(FreePlanAccess::class)->name();
+
         if (! Schema::hasTable('platform_plans')) {
             return response()->json([
                 'data' => [],
                 'industries' => ['commerce', 'hospitality', 'spa', 'driving'],
                 'starting' => null,
+                'free_plan_name' => $freePlanName,
             ]);
         }
 
@@ -78,6 +82,7 @@ class PublicSelfServePlansController extends Controller
             'starting' => $starting,
             'currency' => 'KES',
             'source' => 'platform_plans',
+            'free_plan_name' => $freePlanName,
             /** Same duration discount platform admins set under Paybill — used for 12-month annual quotes. */
             'duration_discount' => [
                 'percent' => $discount['percent'],
