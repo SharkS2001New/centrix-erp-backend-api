@@ -7,8 +7,11 @@ use App\Models\KraResponse;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\User;
+use App\Jobs\ReFiscalizeKraInvoicesLiveJob;
+use App\Services\Background\BackgroundTaskService;
 use App\Services\Kra\KraDeviceService;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
@@ -331,5 +334,87 @@ class KraDeviceOperationsTest extends TestCase
             ->assertJsonPath('total', 1)
             ->assertJsonPath('data.0.kra_response_id', $testRow->id)
             ->assertJsonPath('data.0.sale_date', $saleDate);
+    }
+
+    public function test_live_replay_date_range_runs_as_a_background_task(): void
+    {
+        config([
+            'testing.kra_agent_workflow_response' => [
+                'success' => true,
+                'message' => 'Invoice submitted.',
+                'invoice_number' => 'CU-BACKGROUND-90005',
+                'Receipt Signature' => 'LIVE-SIGNATURE',
+            ],
+        ]);
+        $org = Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['finance'] = array_merge($settings['finance'] ?? [], [
+            'enable_kra_device' => true,
+            'enable_kra_agent' => false,
+            'kra_device_ip' => 'https://kramoonstores.example.test',
+            'kra_serial_number' => 'DEJA02220240050',
+            'kra_pin_number' => 'P052177271G',
+            'kra_comstore_api_key' => 'test-comstore-api-key',
+            'kra_device_test_mode' => false,
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        $saleDate = now()->toDateString();
+        $sale = Sale::create([
+            'order_num' => 90005,
+            'branch_id' => $this->user->branch_id,
+            'organization_id' => $org->id,
+            'channel' => 'pos',
+            'cashier_id' => $this->user->id,
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => 1500,
+            'total_vat' => 0,
+            'completed_at' => $saleDate.' 12:00:00',
+        ]);
+        SaleItem::create([
+            'sale_id' => $sale->id,
+            'product_code' => 'BACKGROUND-REPLAY-ITEM',
+            'product_name' => 'Background replay item',
+            'quantity' => 1,
+            'selling_price' => 1500,
+            'amount' => 1500,
+            'product_vat' => 0,
+        ]);
+        $row = KraResponse::create([
+            'sale_id' => $sale->id,
+            'organization_id' => $org->id,
+            'order_no' => 90005,
+            'invoice_number' => '9000000005',
+            'status' => 'success',
+            'request_payload' => [
+                'is_test' => true,
+                'sign_structure' => ['SignType' => '0', 'InvoiceType' => 'original'],
+            ],
+            'response_payload' => ['document_type' => 'sale'],
+        ]);
+
+        Queue::fake();
+        $queued = $this->postJson('/api/v1/kra/live-replay-tasks', [
+            'from_date' => $saleDate,
+            'to_date' => $saleDate,
+        ])
+            ->assertStatus(202)
+            ->assertJsonPath('queued', true)
+            ->assertJsonPath('total', 1);
+
+        $taskId = $queued->json('task_id');
+        $task = \App\Models\BackgroundTask::query()->findOrFail($taskId);
+        Queue::assertPushed(ReFiscalizeKraInvoicesLiveJob::class);
+
+        (new ReFiscalizeKraInvoicesLiveJob($taskId))->handle(app(BackgroundTaskService::class));
+
+        $this->assertSame('completed', $task->fresh()->status);
+        $this->assertSame(1, $task->fresh()->result['succeeded'] ?? null);
+        $this->assertSame(0, $task->fresh()->result['failed'] ?? null);
+        $this->assertSame(
+            '9000000005',
+            $row->fresh()->response_payload['replaced_test_attempt']['invoice_number'] ?? null,
+        );
     }
 }

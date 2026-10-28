@@ -948,6 +948,8 @@ Route::prefix('v1')->group(function () {
                 Route::post('kra/agent-package', [KraAgentController::class, 'issueAgentPackage']);
                 Route::get('kra/agent/status', [KraAgentController::class, 'status']);
                 Route::post('kra-responses/{kraResponse}/retry', [KraOperationsController::class, 'retry']);
+                Route::post('kra/live-replay-tasks', [KraOperationsController::class, 'queueLiveReplay'])
+                    ->middleware(['erp.permission:pricing_tax.kra_invoices.credit|admin.manage']);
                 Route::post(
                     'kra-responses/{kraResponse}/re-fiscalize-live',
                     [KraOperationsController::class, 'reFiscalizeLive']

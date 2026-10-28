@@ -3,9 +3,11 @@
 namespace App\Http\Controllers\Api\V1\Operations;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\ReFiscalizeKraInvoicesLiveJob;
 use App\Models\CreditNote;
 use App\Models\KraResponse;
 use App\Models\Sale;
+use App\Services\Background\BackgroundTaskService;
 use App\Services\Cache\CompletedSalesCacheService;
 use App\Services\Erp\ErpContext;
 use App\Services\Auth\UserAccessService;
@@ -86,6 +88,66 @@ class KraOperationsController extends Controller
             'per_page' => 'nullable|integer|min:1|max:200',
             'page' => 'nullable|integer|min:1',
         ]);
+        $query = $this->liveReplayCandidateQuery($request, $filters);
+
+        return response()->json(
+            $query
+                ->select('kra_response_id', 'sale_id', 'order_no', 'sale_order_num', 'pos_order_num', 'sale_date')
+                ->orderBy('sale_date')
+                ->orderBy('kra_response_id')
+                ->paginate((int) ($filters['per_page'] ?? 200))
+        );
+    }
+
+    public function queueLiveReplay(Request $request, BackgroundTaskService $tasks)
+    {
+        $filters = $request->validate([
+            'from_date' => 'required|date',
+            'to_date' => 'required|date|after_or_equal:from_date',
+            'branch_id' => 'nullable|integer',
+            'channel' => 'nullable|in:pos,mobile,backend',
+            'q' => 'nullable|string|max:100',
+        ]);
+        $query = $this->liveReplayCandidateQuery($request, $filters);
+        $responseIds = $query->orderBy('sale_date')
+            ->orderBy('kra_response_id')
+            ->pluck('kra_response_id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        abort_if($responseIds === [], 422, 'No eligible test-mode invoices were found for the applied sale-date range.');
+
+        $user = $request->user();
+        abort_unless($user, 401);
+        $finance = $this->erp->gateForRequest($request)->moduleSettings('finance');
+        abort_if(empty($finance['enable_kra_device']), 422, 'Enable KRA device in Finance settings first.');
+        abort_if(
+            ! empty($finance['kra_device_test_mode']),
+            422,
+            'Turn off KRA device test mode in Finance settings before re-fiscalizing live.',
+        );
+        $organizationId = app(UserAccessService::class)->organizationId($user, $request);
+        $tasks->assertNoBlockingTask($user);
+        $task = $tasks->create('kra_live_replay', $user, [
+            'kra_response_ids' => $responseIds,
+            'target_organization_id' => $organizationId,
+        ]);
+        $tasks->dispatch(ReFiscalizeKraInvoicesLiveJob::class, $task);
+
+        return response()->json([
+            'message' => 'Live KRA re-fiscalization queued.',
+            'task_id' => $task->id,
+            'queued' => true,
+            'total' => count($responseIds),
+        ], 202);
+    }
+
+    /**
+     * @param  array<string, mixed>  $filters
+     * @return \Illuminate\Database\Query\Builder
+     */
+    protected function liveReplayCandidateQuery(Request $request, array $filters)
+    {
         $user = $request->user();
         abort_unless($user, 401);
 
@@ -137,13 +199,7 @@ class KraOperationsController extends Controller
             });
         }
 
-        return response()->json(
-            $query
-                ->select('kra_response_id', 'sale_id', 'order_no', 'sale_order_num', 'pos_order_num', 'sale_date')
-                ->orderBy('sale_date')
-                ->orderBy('kra_response_id')
-                ->paginate((int) ($filters['per_page'] ?? 200))
-        );
+        return $query;
     }
 
     public function deviceHealth(Request $request)
