@@ -3,6 +3,9 @@
 namespace Tests\Feature;
 
 use App\Models\Organization;
+use App\Models\KraAgentCommand;
+use App\Models\KraResponse;
+use App\Models\Sale;
 use App\Models\User;
 use App\Services\Kra\KraAgentBridge;
 use App\Services\Kra\KraDeviceService;
@@ -130,5 +133,76 @@ class KraInvoiceOnlineUploadTest extends TestCase
         $this->assertDatabaseMissing('kra_agent_commands', [
             'path' => '/api/invoices/manually-upload/DEJA02220240050',
         ]);
+    }
+
+    public function test_scheduled_retry_queues_pending_live_invoice_for_etims_upload(): void
+    {
+        $user = User::query()->where('username', 'admin')->firstOrFail();
+        $organization = Organization::query()->findOrFail($this->organizationId);
+        $settings = $organization->module_settings ?? [];
+        $settings['finance'] = array_merge($settings['finance'] ?? [], [
+            'enable_kra_device' => true,
+            'enable_kra_agent' => true,
+            'kra_device_ip' => 'http://localhost:4000',
+            'kra_serial_number' => 'DEJA02220240050',
+            'kra_pin_number' => 'P052177271G',
+            'kra_comstore_api_key' => 'scheduled-upload-test-key',
+            'kra_device_test_mode' => false,
+        ]);
+        $organization->update(['module_settings' => $settings]);
+
+        $sale = Sale::create([
+            'order_num' => 93001,
+            'branch_id' => $user->branch_id,
+            'organization_id' => $this->organizationId,
+            'channel' => 'pos',
+            'cashier_id' => $user->id,
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => 10,
+            'total_vat' => 0,
+        ]);
+        $response = KraResponse::create([
+            'sale_id' => $sale->id,
+            'organization_id' => $this->organizationId,
+            'order_no' => 93001,
+            'invoice_number' => 'CU-SCHEDULED-93001',
+            'status' => 'success',
+            'request_payload' => [
+                'is_test' => false,
+                'sign_structure' => ['SignType' => '1', 'InvoiceType' => 'original'],
+            ],
+            'response_payload' => [
+                'document_type' => 'sale',
+                'online_upload_status' => 'pending',
+            ],
+        ]);
+
+        config(['testing.kra_agent_command_handler' => function (string $path): array {
+            $this->assertSame('/api/invoices/manually-upload/DEJA02220240050', $path);
+
+            return [
+                'success' => true,
+                'body' => [
+                    'success' => true,
+                    'message' => 'Invoices queued for manual upload to eTIMS.',
+                ],
+            ];
+        }]);
+
+        $this->artisan('erp:retry-pending-kra-invoice-uploads', [
+            '--organization_id' => $this->organizationId,
+        ])
+            ->expectsOutput('KRA eTIMS upload retry: attempted=1 queued=1 still_pending=0 skipped=0')
+            ->assertSuccessful();
+
+        $this->assertSame('queued', $response->fresh()->response_payload['online_upload_status'] ?? null);
+        $this->assertSame(
+            'Invoices queued for manual upload to eTIMS.',
+            $response->fresh()->response_payload['online_upload_response']['message'] ?? null,
+        );
+        $this->assertSame(1, KraAgentCommand::query()
+            ->where('path', '/api/invoices/manually-upload/DEJA02220240050')
+            ->count());
     }
 }

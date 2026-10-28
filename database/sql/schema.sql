@@ -2461,6 +2461,7 @@ WHERE s.is_credit_sale = 1
   AND s.status NOT IN ('cancelled')
   AND s.archived = 0;
 
+DROP VIEW IF EXISTS v_kra_receipts_replay;
 DROP VIEW IF EXISTS v_kra_receipts;
 CREATE VIEW v_kra_receipts AS
 SELECT
@@ -2523,6 +2524,24 @@ LEFT JOIN branches b ON b.id = s.branch_id
 LEFT JOIN customers c ON c.customer_num = s.customer_num
     AND c.organization_id = s.organization_id
     AND c.deleted_at IS NULL;
+
+CREATE VIEW v_kra_receipts_replay AS
+SELECT
+    receipts.*,
+    DATE(COALESCE(sale.completed_at, sale.created_at)) AS sale_date,
+    CASE
+        WHEN LOWER(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(receipts.request_payload, '$.is_test')), '')) IN ('true', '1')
+          OR JSON_UNQUOTE(JSON_EXTRACT(receipts.request_payload, '$.sign_structure.SignType')) = '0'
+        THEN 1
+        ELSE 0
+    END AS is_test,
+    CASE
+        WHEN JSON_UNQUOTE(JSON_EXTRACT(receipts.response_payload, '$.live_replay_status')) = 'processing'
+        THEN 1
+        ELSE 0
+    END AS is_live_replay_in_progress
+FROM v_kra_receipts receipts
+INNER JOIN sales sale ON sale.id = receipts.sale_id;
 
 DROP VIEW IF EXISTS v_kra_compliance_summary;
 CREATE VIEW v_kra_compliance_summary AS

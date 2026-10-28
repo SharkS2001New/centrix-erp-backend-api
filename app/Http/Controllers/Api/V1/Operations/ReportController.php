@@ -2604,6 +2604,7 @@ class ReportController extends Controller
             'customer_name',
             'receipt_date',
             'receipt_at',
+            'sale_date',
             'invoice_number',
             'serial_number',
             'signature_link',
@@ -2611,6 +2612,8 @@ class ReportController extends Controller
             'status',
             'error_message',
             'document_type',
+            'is_test',
+            'is_live_replay_in_progress',
             'relevant_invoice_number',
             'cashier_id',
             'cashier_name',
@@ -2624,10 +2627,11 @@ class ReportController extends Controller
         ];
 
         return response()->json($this->reportFromView(
-            'v_kra_receipts',
+            'v_kra_receipts_replay',
             $this->filters($request),
             [
                 'receipt_date',
+                'sale_date',
                 'branch_id',
                 'channel',
                 'status',
@@ -3047,7 +3051,7 @@ class ReportController extends Controller
         $preferTimestamp = (string) ($options['prefer_timestamp_date_column'] ?? '');
         $useTimestampRange = $preferTimestamp !== ''
             && $this->viewColumnExists($view, $preferTimestamp)
-            && in_array((string) ($filters['date_column'] ?? ''), ['receipt_date', 'sale_date', ''], true);
+            && in_array((string) ($filters['date_column'] ?? ''), ['receipt_date', ''], true);
 
         if ($useTimestampRange) {
             if (! empty($filters['from_date'])) {

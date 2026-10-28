@@ -8,10 +8,14 @@ use App\Models\KraResponse;
 use App\Models\Sale;
 use App\Services\Cache\CompletedSalesCacheService;
 use App\Services\Erp\ErpContext;
+use App\Services\Auth\UserAccessService;
 use App\Services\Kra\KraDeviceService;
 use App\Services\Kra\KraFiscalPolicy;
+use App\Services\Kra\KraTraderInvoiceAllocator;
 use App\Services\Sales\CreditNoteService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 
@@ -69,6 +73,77 @@ class KraOperationsController extends Controller
         }
 
         return response()->json($status);
+    }
+
+    public function liveReplayCandidates(Request $request)
+    {
+        $filters = $request->validate([
+            'from_date' => 'required|date',
+            'to_date' => 'required|date|after_or_equal:from_date',
+            'branch_id' => 'nullable|integer',
+            'channel' => 'nullable|in:pos,mobile,backend',
+            'q' => 'nullable|string|max:100',
+            'per_page' => 'nullable|integer|min:1|max:200',
+            'page' => 'nullable|integer|min:1',
+        ]);
+        $user = $request->user();
+        abort_unless($user, 401);
+
+        $access = app(UserAccessService::class);
+        $orgId = $access->organizationId($user, $request);
+        abort_unless($orgId, 403);
+
+        $requestedBranchId = isset($filters['branch_id']) ? (int) $filters['branch_id'] : null;
+        $limitedBranchId = $access->branchId($user);
+        if ($limitedBranchId !== null && $requestedBranchId !== null && $requestedBranchId !== $limitedBranchId) {
+            abort(403, 'You can only re-fiscalize invoices for your assigned branch.');
+        }
+        $branchId = $limitedBranchId ?? $requestedBranchId;
+
+        $query = DB::table('v_kra_receipts_replay')
+            ->where('organization_id', $orgId)
+            ->whereBetween('sale_date', [$filters['from_date'], $filters['to_date']])
+            ->where('status', 'success')
+            ->where('document_type', 'sale')
+            ->where('is_test', 1)
+            ->where('is_live_replay_in_progress', 0)
+            ->when($branchId !== null, fn ($builder) => $builder->where('branch_id', $branchId))
+            ->when(isset($filters['channel']), fn ($builder) => $builder->where('channel', $filters['channel']))
+            ->whereNotExists(function ($subquery) {
+                $subquery->selectRaw('1')
+                    ->from('kra_responses as live')
+                    ->whereColumn('live.sale_id', 'v_kra_receipts_replay.sale_id')
+                    ->where('live.status', 'success')
+                    ->whereRaw(
+                        "NOT (
+                            LOWER(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(live.request_payload, '$.is_test')), '')) IN ('true', '1')
+                            OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(live.request_payload, '$.sign_structure.SignType')), '') = '0'
+                        )"
+                    )
+                    ->whereRaw(
+                        "LOWER(COALESCE(
+                            JSON_UNQUOTE(JSON_EXTRACT(live.response_payload, '$.document_type')),
+                            JSON_UNQUOTE(JSON_EXTRACT(live.request_payload, '$.sign_structure.InvoiceType')),
+                            'sale'
+                        )) NOT IN ('credit_note', 'credit', 'creditnote')"
+                    );
+            });
+
+        if ($search = trim((string) ($filters['q'] ?? ''))) {
+            $query->where(function ($inner) use ($search) {
+                $inner->where('order_no', 'like', "%{$search}%")
+                    ->orWhere('invoice_number', 'like', "%{$search}%")
+                    ->orWhere('sale_id', 'like', "%{$search}%");
+            });
+        }
+
+        return response()->json(
+            $query
+                ->select('kra_response_id', 'sale_id', 'order_no', 'sale_order_num', 'pos_order_num', 'sale_date')
+                ->orderBy('sale_date')
+                ->orderBy('kra_response_id')
+                ->paginate((int) ($filters['per_page'] ?? 200))
+        );
     }
 
     public function deviceHealth(Request $request)
@@ -373,6 +448,223 @@ class KraOperationsController extends Controller
             'message' => 'KRA receipt submitted successfully.',
             'kra_response' => $row->fresh(),
         ]);
+    }
+
+    public function reFiscalizeLive(Request $request, int $kraResponse)
+    {
+        $gate = $this->erp->gateForRequest($request);
+        $orgId = (int) $gate->organization()?->id;
+        $row = KraResponse::query()
+            ->whereHas('sale', fn ($query) => $query->where('organization_id', $orgId))
+            ->findOrFail($kraResponse);
+
+        if ($row->status !== 'success' || ! $this->isTestFiscalization($row)) {
+            return response()->json([
+                'message' => 'Only successfully signed test-mode invoices can be re-fiscalized live.',
+            ], 422);
+        }
+
+        $sale = Sale::with(['items.product.vat', 'customer', 'payments.paymentMethod'])
+            ->where('organization_id', $orgId)
+            ->find($row->sale_id);
+        if (! $sale) {
+            return response()->json(['message' => 'Linked sale not found.'], 422);
+        }
+
+        $credits = app(CreditNoteService::class);
+        if ($credits->isCreditNoteDocument($row)) {
+            return response()->json([
+                'message' => 'Credit notes cannot be re-fiscalized using the invoice replay action.',
+            ], 422);
+        }
+
+        $finance = $gate->moduleSettings('finance');
+        if (empty($finance['enable_kra_device'])) {
+            return response()->json(['message' => 'Enable KRA device in Finance settings first.'], 422);
+        }
+        if ((bool) ($finance['kra_device_test_mode'] ?? config('app.env') !== 'production')) {
+            return response()->json([
+                'message' => 'Turn off KRA device test mode in Finance settings before re-fiscalizing live.',
+            ], 422);
+        }
+        if ($sale->items->isEmpty()) {
+            return response()->json(['message' => 'Sale has no items to re-fiscalize.'], 422);
+        }
+
+        $claim = DB::transaction(function () use ($row, $sale, $credits, $request) {
+            Sale::query()
+                ->where('organization_id', $sale->organization_id)
+                ->lockForUpdate()
+                ->findOrFail($sale->id);
+
+            $responses = KraResponse::query()
+                ->where('sale_id', $sale->id)
+                ->lockForUpdate()
+                ->get();
+            $lockedRow = $responses->firstWhere('id', $row->id);
+            if (! $lockedRow || $lockedRow->status !== 'success' || ! $this->isTestFiscalization($lockedRow)) {
+                return ['error' => 'This test invoice is no longer eligible for live re-fiscalization.'];
+            }
+            $lockedPayload = is_array($lockedRow->response_payload) ? $lockedRow->response_payload : [];
+            if (($lockedPayload['live_replay_status'] ?? null) === 'processing') {
+                return ['error' => 'A live re-fiscalization is already in progress for this sale.'];
+            }
+
+            foreach ($responses as $candidate) {
+                if ($candidate->id === $lockedRow->id) {
+                    continue;
+                }
+                $candidatePayload = is_array($candidate->response_payload) ? $candidate->response_payload : [];
+                if (($candidatePayload['live_replay_status'] ?? null) === 'processing') {
+                    return ['error' => 'A live re-fiscalization is already in progress for this sale.'];
+                }
+                if (
+                    $candidate->status === 'success'
+                    && ! $credits->isCreditNoteDocument($candidate)
+                    && ! $this->isTestFiscalization($candidate)
+                ) {
+                    return ['error' => 'This sale already has a successful live KRA invoice.'];
+                }
+            }
+
+            $oldResponsePayload = is_array($lockedRow->response_payload) ? $lockedRow->response_payload : [];
+            $oldRequestPayload = $lockedRow->request_payload;
+            $oldErrorMessage = $lockedRow->error_message;
+            $markedResponsePayload = $oldResponsePayload;
+            $markedResponsePayload['live_replay_status'] = 'processing';
+            $lockedRow->update(['response_payload' => $markedResponsePayload]);
+
+            return [
+                'row' => $lockedRow,
+                'old_response_payload' => $oldResponsePayload,
+                'old_request_payload' => $oldRequestPayload,
+                'old_error_message' => $oldErrorMessage,
+            ];
+        });
+        if (isset($claim['error'])) {
+            return response()->json(['message' => $claim['error']], 422);
+        }
+        $row = $claim['row'];
+        try {
+            $service = KraDeviceService::fromSettings($finance, $orgId);
+            $invoiceNumber = app(KraTraderInvoiceAllocator::class)->forOrganization($orgId);
+            $orderItems = $sale->items->map(fn ($line) => [
+                'product_name' => $line->resolvedProductName(),
+                'product_code' => $line->product_code,
+                'quantity' => (float) $line->quantity,
+                'amount' => (float) $line->amount,
+                'product_vat' => (float) ($line->product_vat ?? 0),
+                'vat_rate' => \App\Services\Kra\SalesVatCalculator::vatRateFromProduct($line->product),
+            ])->all();
+
+            $buyerPin = trim((string) ($sale->customer?->kra_pin ?? ''));
+            $buyerPin = $buyerPin !== '' ? $buyerPin : null;
+            $tenders = ['cash' => 0.0, 'check' => 0.0, 'card' => 0.0];
+            foreach ($sale->payments as $payment) {
+                $method = strtoupper(trim((string) ($payment->paymentMethod?->method_code ?? '')));
+                if (in_array($method, ['CHEQUE', 'CHECK'], true)) {
+                    $tenders['check'] += (float) $payment->amount;
+                } elseif ($method === 'CASH') {
+                    $tenders['cash'] += (float) $payment->amount;
+                } else {
+                    $tenders['card'] += (float) $payment->amount;
+                }
+            }
+            if ($sale->payments->isEmpty()) {
+                $tenders = [
+                    'cash' => (float) ($sale->cash ?? 0),
+                    'check' => 0.0,
+                    'card' => (float) ($sale->mpesa_amount ?? 0)
+                        + (float) ($sale->equity_amount ?? 0)
+                        + (float) ($sale->kcb_amount ?? 0),
+                ];
+            }
+            $result = $service->sendSale(
+                $orderItems,
+                (float) $sale->order_total,
+                $invoiceNumber,
+                $buyerPin,
+                ['tenders' => $tenders],
+            );
+        } catch (\Throwable $e) {
+            $row->update([
+                'response_payload' => $claim['old_response_payload'],
+                'error_message' => $claim['old_error_message'],
+            ]);
+            report($e);
+            throw $e;
+        }
+        if (! ($result['success'] ?? false)) {
+            Log::warning('Live KRA re-fiscalization failed; preserving test receipt', [
+                'kra_response_id' => $row->id,
+                'sale_id' => $sale->id,
+                'user_id' => $request->user()?->id,
+                'message' => $result['message'] ?? 'KRA device submission failed.',
+            ]);
+            $row->update([
+                'response_payload' => $claim['old_response_payload'],
+                'error_message' => $claim['old_error_message'],
+            ]);
+
+            return response()->json([
+                'message' => $result['message'] ?? 'KRA device submission failed.',
+            ], 422);
+        }
+
+        $mapped = is_array($result['response'] ?? null) ? $result['response'] : [];
+        $mappedInvoiceNumber = trim((string) ($mapped['invoice_number'] ?? ''));
+        $invoiceNumberAlreadyUsed = $mappedInvoiceNumber !== ''
+            && KraResponse::query()
+                ->where('organization_id', $orgId)
+                ->where('invoice_number', $mappedInvoiceNumber)
+                ->where('id', '!=', $row->id)
+                ->exists();
+        $testHistory = [
+            'invoice_number' => $row->invoice_number,
+            'receipt_signature' => $row->receipt_signature,
+            'signature_link' => $row->signature_link,
+            'serial_number' => $row->serial_number,
+            'kra_timestamp' => $row->kra_timestamp,
+            'error_message' => $claim['old_error_message'],
+            'request_payload' => $claim['old_request_payload'],
+            'response_payload' => $claim['old_response_payload'],
+            'replaced_at' => now()->toIso8601String(),
+            'replaced_by' => $request->user()?->id,
+        ];
+        $row->update([
+            'invoice_number' => $invoiceNumberAlreadyUsed || $mappedInvoiceNumber === ''
+                ? $invoiceNumber
+                : $mappedInvoiceNumber,
+            'receipt_signature' => $mapped['receipt_signature'] ?? $mapped['signature'] ?? null,
+            'signature_link' => $mapped['signature_link'] ?? null,
+            'serial_number' => $mapped['serial_number'] ?? null,
+            'kra_timestamp' => $mapped['timestamp'] ?? null,
+            'request_payload' => $result['payload'] ?? null,
+            'response_payload' => array_merge($mapped, [
+                'document_type' => 'sale',
+                'device_invoice_number' => $mapped['invoice_number'] ?? null,
+                'replaced_test_attempt' => $testHistory,
+            ]),
+            'status' => 'success',
+            'error_message' => null,
+        ]);
+
+        app(CompletedSalesCacheService::class)->invalidateForSale($sale);
+
+        return response()->json([
+            'message' => 'Invoice re-fiscalized successfully in live mode.',
+            'kra_response' => $row->fresh(),
+        ]);
+    }
+
+    protected function isTestFiscalization(KraResponse $row): bool
+    {
+        $payload = is_array($row->request_payload) ? $row->request_payload : [];
+        $signType = $payload['sign_structure']['SignType'] ?? null;
+
+        return ($payload['is_test'] ?? false) === true
+            || in_array(strtolower((string) ($payload['is_test'] ?? '')), ['true', '1'], true)
+            || (string) $signType === '0';
     }
 
     /**

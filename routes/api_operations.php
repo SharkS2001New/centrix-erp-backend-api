@@ -390,6 +390,11 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     Route::middleware('erp.permission:pricing_tax.kra_invoices.credit|admin.manage')->group(function () {
+        Route::get('kra/live-replay-candidates', [KraOperationsController::class, 'liveReplayCandidates']);
+        Route::post(
+            'kra-responses/{kraResponse}/re-fiscalize-live',
+            [KraOperationsController::class, 'reFiscalizeLive']
+        );
         Route::post('kra-responses/{kraResponse}/credit', [KraOperationsController::class, 'credit']);
     });
 

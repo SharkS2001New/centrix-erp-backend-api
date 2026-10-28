@@ -95,6 +95,53 @@ class KraReceiptsReportTest extends TestCase
         $this->assertSame(1, (int) $res->json('current_page'));
     }
 
+    public function test_kra_invoice_date_filter_uses_sale_date_and_marks_test_rows(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $this->seedLicense($admin);
+        Sanctum::actingAs($admin);
+
+        $saleDate = now()->subDays(5)->toDateString();
+        $sale = Sale::create([
+            'order_num' => 90003,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'pos',
+            'cashier_id' => $admin->id,
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => 1500,
+            'total_vat' => 0,
+            'completed_at' => $saleDate.' 12:00:00',
+        ]);
+        DB::table('kra_responses')->insert([
+            'sale_id' => $sale->id,
+            'organization_id' => $admin->organization_id,
+            'order_no' => 90003,
+            'invoice_number' => 'CU-TEST-90003',
+            'status' => 'success',
+            'request_payload' => json_encode([
+                'is_test' => true,
+                'sign_structure' => [
+                    'SignType' => '0',
+                    'InvoiceType' => 'original',
+                ],
+            ]),
+            'response_payload' => json_encode(['document_type' => 'sale']),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $res = $this->getJson(
+            '/api/v1/reports/kra-receipts?from_date='.$saleDate.'&to_date='.$saleDate.'&date_column=sale_date&per_page=20&page=1'
+        )->assertOk();
+
+        $hit = collect($res->json('data') ?? [])->firstWhere('invoice_number', 'CU-TEST-90003');
+        $this->assertNotNull($hit, 'Expected the row to match its original sale date rather than response date');
+        $this->assertSame($saleDate, $hit['sale_date'] ?? null);
+        $this->assertSame(1, (int) ($hit['is_test'] ?? 0));
+    }
+
     public function test_kra_compliance_summary_and_unfiscalized_sales(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();
