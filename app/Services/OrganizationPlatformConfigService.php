@@ -975,6 +975,7 @@ class OrganizationPlatformConfigService
                 $data['kra_device_ip'],
                 $data['kra_direct_device_ip'],
                 $data['kra_agent_comstore_url'],
+                $data['kra_comstore_api_key'],
                 $data['kra_serial_number'],
                 $data['kra_pin_number'],
             );

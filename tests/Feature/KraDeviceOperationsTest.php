@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Organization;
 use App\Models\User;
+use App\Services\Kra\KraDeviceService;
 use Illuminate\Support\Facades\Http;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
@@ -60,6 +61,27 @@ class KraDeviceOperationsTest extends TestCase
             return ($body['sn'] ?? '') === 'DEJA02220240050'
                 && ($body['ip'] ?? '') === '192.168.1.39';
         });
+    }
+
+    public function test_direct_comstore_requests_include_the_api_key_header(): void
+    {
+        config(['kra.comstore_api_key' => 'test-comstore-api-key']);
+        Http::fake([
+            'kramoonstores.example.test/api/init' => Http::response([
+                'success' => true,
+                'message' => 'Device initialized.',
+            ], 200),
+        ]);
+
+        $device = KraDeviceService::fromSettings([
+            'kra_device_ip' => 'https://kramoonstores.example.test',
+            'kra_serial_number' => 'DEJA02220240050',
+            'kra_pin_number' => 'P052177271G',
+        ]);
+
+        $device->initializeDevice('192.168.1.39');
+
+        Http::assertSent(fn ($request) => $request->hasHeader('X-API-KEY', 'test-comstore-api-key'));
     }
 
     public function test_device_init_requires_hardware_ip_for_hostname_api_url(): void

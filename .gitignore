@@ -1,6 +1,5 @@
 /vendor
 /node_modules
-.env
 .env.*
 !.env.example
 !.env.production.example

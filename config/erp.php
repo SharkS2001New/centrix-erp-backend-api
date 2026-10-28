@@ -742,6 +742,8 @@ return [
             'kra_direct_device_ip' => '',
             /** Local Comstore URL used by Centrix KRA Agent. */
             'kra_agent_comstore_url' => '',
+            /** Comstore API key sent by Centrix KRA Agent on protected Comstore requests. */
+            'kra_comstore_api_key' => '',
             /** Smart VSCU hardware IP for POST /api/init and /api/restart-device (when API URL is a hostname). */
             'kra_device_hardware_ip' => '',
             'kra_serial_number' => '',

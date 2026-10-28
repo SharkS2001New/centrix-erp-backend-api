@@ -67,6 +67,7 @@ class KraAgentController extends Controller
                 'organizationId' => (int) $org->id,
                 'agentId' => (int) $agent->id,
                 'comstoreBaseUrl' => $agent->comstore_base_url,
+                'comstoreApiKey' => (string) ($finance['kra_comstore_api_key'] ?? ''),
                 'deviceHardwareIp' => trim((string) ($finance['kra_device_hardware_ip'] ?? '')),
                 'longPollMs' => 400,
                 // Fresher Comstore status in the background so checkout never needs /api/health.

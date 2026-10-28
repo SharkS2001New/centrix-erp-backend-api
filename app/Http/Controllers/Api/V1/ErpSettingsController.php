@@ -828,6 +828,7 @@ class ErpSettingsController extends Controller
             'kra_device_ip' => 'sometimes|nullable|string|max:250',
             'kra_direct_device_ip' => 'sometimes|nullable|string|max:250',
             'kra_agent_comstore_url' => 'sometimes|nullable|string|max:250',
+            'kra_comstore_api_key' => 'sometimes|nullable|string|max:512',
             'kra_device_hardware_ip' => 'sometimes|nullable|string|max:100',
             'kra_serial_number' => 'sometimes|nullable|string|max:100',
             'kra_pin_number' => 'sometimes|nullable|string|max:45',
@@ -877,6 +878,9 @@ class ErpSettingsController extends Controller
 
         if (array_key_exists('kra_pin_number', $data) && trim((string) $data['kra_pin_number']) === '********') {
             unset($data['kra_pin_number']);
+        }
+        if (array_key_exists('kra_comstore_api_key', $data) && trim((string) $data['kra_comstore_api_key']) === '********') {
+            unset($data['kra_comstore_api_key']);
         }
 
         if (! empty($data['enable_kra_device'])) {
@@ -1504,10 +1508,12 @@ class ErpSettingsController extends Controller
         if (! $gate->kraIntegrationPlatformEnabled()) {
             foreach ([
                 'enable_kra_device', 'enable_kra_agent', 'kra_device_ip', 'kra_direct_device_ip',
-                'kra_agent_comstore_url', 'kra_device_hardware_ip', 'kra_serial_number', 'kra_pin_number',
+                'kra_agent_comstore_url', 'kra_comstore_api_key', 'kra_device_hardware_ip', 'kra_serial_number', 'kra_pin_number',
                 'kra_device_test_mode', 'kra_plu_register_path', 'default_submit_kra', 'kra_bypass_above_amount',
             ] as $key) {
                 unset($finance[$key]);
+            } elseif (! empty($finance['kra_comstore_api_key'])) {
+                $finance['kra_comstore_api_key'] = '********';
             }
         }
 

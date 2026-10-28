@@ -16,6 +16,8 @@ class KraDeviceService
 
     protected string $hardwareIp = '';
 
+    protected string $comstoreApiKey = '';
+
     public function __construct(
         protected string $deviceBaseUrl,
         protected string $serialNumber,
@@ -46,6 +48,7 @@ class KraDeviceService
             (bool) ($financeSettings['kra_device_test_mode'] ?? config('app.env') !== 'production'),
         );
         $service->hardwareIp = trim((string) ($financeSettings['kra_device_hardware_ip'] ?? ''));
+        $service->comstoreApiKey = trim((string) ($financeSettings['kra_comstore_api_key'] ?? ''));
 
         $orgId = $organizationId
             ?? (int) ($financeSettings['_organization_id'] ?? 0);
@@ -1557,6 +1560,7 @@ class KraDeviceService
                 ->withHeaders([
                     'Content-Type' => 'application/json',
                     'Accept' => 'application/json',
+                    ...$this->comstoreApiHeaders(),
                 ]);
             $response = $payload === null
                 ? $request->post($url)
@@ -1605,6 +1609,12 @@ class KraDeviceService
 
             return $this->deviceFailureResult('Exception: ' . $e->getMessage(), $payload, null, $path);
         }
+    }
+
+    /** @return array<string, string> */
+    protected function comstoreApiHeaders(): array
+    {
+        return $this->comstoreApiKey !== '' ? ['X-API-KEY' => $this->comstoreApiKey] : [];
     }
 
     /** @return array<string, mixed> */
