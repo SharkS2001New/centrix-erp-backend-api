@@ -40,6 +40,12 @@ class KraAgentController extends Controller
             ], 422);
         }
 
+        if (trim((string) ($finance['kra_comstore_api_key'] ?? '')) === '') {
+            return response()->json([
+                'message' => 'Save the Comstore API key in Finance settings before downloading Centrix KRA Agent.',
+            ], 422);
+        }
+
         $agent = $this->bridge->resolveOrCreateForOrganization((int) $org->id, $finance);
         $tokenName = KraAgentToken::nameForOrganization((int) $org->id);
 

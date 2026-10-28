@@ -124,6 +124,27 @@ class KraAgentBridgeTest extends TestCase
             ]);
     }
 
+    public function test_agent_package_requires_saved_comstore_api_key(): void
+    {
+        $org = $this->admin->organization;
+        $settings = $org->module_settings ?? [];
+        $settings['finance'] = array_merge($settings['finance'] ?? [], [
+            'enable_kra_device' => true,
+            'kra_device_ip' => 'http://127.0.0.1:4000',
+            'kra_serial_number' => 'SN-TEST',
+            'kra_pin_number' => 'P123456789X',
+            'kra_comstore_api_key' => '',
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        $this->postJson('/api/v1/kra/agent-package')
+            ->assertStatus(422)
+            ->assertJsonPath(
+                'message',
+                'Save the Comstore API key in Finance settings before downloading Centrix KRA Agent.',
+            );
+    }
+
     public function test_agent_pending_long_poll_returns_when_command_queued(): void
     {
         $orgId = (int) $this->admin->organization_id;
