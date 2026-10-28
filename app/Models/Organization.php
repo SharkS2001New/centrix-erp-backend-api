@@ -10,6 +10,18 @@ class Organization extends Model
 {
     use HasFactory, SoftDeletes;
 
+    protected static function booted(): void
+    {
+        static::updated(function (self $organization): void {
+            if ($organization->wasChanged('module_settings')) {
+                \App\Services\Cache\OrganizationCache::forget(
+                    (int) $organization->getKey(),
+                    'kra.comstore_api_key',
+                );
+            }
+        });
+    }
+
     protected $table = 'organizations';
     protected $fillable = [
         'company_code', 'company_code_aliases', 'logo', 'primary_color', 'org_name', 'org_email', 'primary_tel',

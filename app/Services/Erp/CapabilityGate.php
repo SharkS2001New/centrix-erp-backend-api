@@ -520,6 +520,16 @@ class CapabilityGate
             $defaultMpesa = is_array($defaults['mpesa'] ?? null) ? $defaults['mpesa'] : [];
             $customMpesa = is_array($custom['mpesa'] ?? null) ? $custom['mpesa'] : [];
             $merged['mpesa'] = array_merge($defaultMpesa, $customMpesa);
+
+            if ($this->organization) {
+                $organizationId = (int) $this->organization->id;
+                $merged['kra_comstore_api_key'] = \App\Services\Cache\OrganizationCache::remember(
+                    $organizationId,
+                    'kra.comstore_api_key',
+                    300,
+                    fn (): string => trim((string) ($custom['kra_comstore_api_key'] ?? '')),
+                );
+            }
         }
 
         if ($section === 'sales') {

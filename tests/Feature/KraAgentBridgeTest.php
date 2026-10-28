@@ -26,13 +26,14 @@ class KraAgentBridgeTest extends TestCase
 
     public function test_agent_package_issues_token_and_config(): void
     {
-        config(['kra.comstore_api_key' => 'test-comstore-api-key']);
         $org = $this->admin->organization;
         $settings = $org->module_settings ?? [];
         $settings['finance'] = array_merge($settings['finance'] ?? [], [
+            'enable_kra_integration' => true,
             'enable_kra_device' => true,
             'enable_kra_agent' => true,
             'kra_device_ip' => 'http://127.0.0.1:4000',
+            'kra_comstore_api_key' => 'test-comstore-api-key',
             'kra_serial_number' => 'SN-TEST',
             'kra_pin_number' => 'P123456789X',
         ]);
@@ -67,6 +68,40 @@ class KraAgentBridgeTest extends TestCase
             'tokenable_id' => $this->admin->id,
             'name' => \App\Support\KraAgentToken::nameForOrganization((int) $org->id),
         ]);
+    }
+
+    public function test_finance_key_is_org_configurable_masked_and_used_in_agent_package(): void
+    {
+        $org = $this->admin->organization;
+        $settings = $org->module_settings ?? [];
+        $settings['finance'] = array_merge($settings['finance'] ?? [], [
+            'enable_kra_integration' => true,
+            'enable_kra_device' => true,
+            'enable_kra_agent' => true,
+            'kra_device_ip' => 'http://127.0.0.1:4000',
+            'kra_serial_number' => 'SN-TEST',
+            'kra_pin_number' => 'P123456789X',
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        app(\App\Services\Erp\CapabilityGate::class)
+            ->forOrganization($org->fresh())
+            ->moduleSettings('finance');
+
+        $this->patchJson('/api/v1/erp/settings/finance', [
+            'kra_comstore_api_key' => 'org-specific-comstore-key',
+        ])
+            ->assertOk()
+            ->assertJsonPath('finance.kra_comstore_api_key', '********');
+
+        $this->assertSame(
+            'org-specific-comstore-key',
+            $org->fresh()->module_settings['finance']['kra_comstore_api_key'],
+        );
+
+        $this->postJson('/api/v1/kra/agent-package')
+            ->assertOk()
+            ->assertJsonPath('config.comstoreApiKey', 'org-specific-comstore-key');
     }
 
     public function test_agent_package_requires_saved_serial_and_pin(): void

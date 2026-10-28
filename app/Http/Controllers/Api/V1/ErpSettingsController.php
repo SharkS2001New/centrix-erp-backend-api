@@ -972,6 +972,7 @@ class ErpSettingsController extends Controller
         $moduleSettings = $org->module_settings ?? [];
         $moduleSettings['finance'] = $nextFinance;
         $org->update(['module_settings' => $moduleSettings]);
+        $this->erp->forgetOrganizationCache((int) $org->id);
 
         if (array_key_exists('mpesa', $data) && is_array($nextFinance['mpesa'] ?? null)) {
             try {
@@ -1512,9 +1513,9 @@ class ErpSettingsController extends Controller
                 'kra_device_test_mode', 'kra_plu_register_path', 'default_submit_kra', 'kra_bypass_above_amount',
             ] as $key) {
                 unset($finance[$key]);
-            } elseif (! empty($finance['kra_comstore_api_key'])) {
-                $finance['kra_comstore_api_key'] = '********';
             }
+        } elseif (! empty($finance['kra_comstore_api_key'])) {
+            $finance['kra_comstore_api_key'] = '********';
         }
 
         if (! $gate->mpesaStkPlatformEnabled()) {

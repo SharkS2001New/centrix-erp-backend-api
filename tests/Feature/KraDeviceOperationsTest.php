@@ -65,7 +65,6 @@ class KraDeviceOperationsTest extends TestCase
 
     public function test_direct_comstore_requests_include_the_api_key_header(): void
     {
-        config(['kra.comstore_api_key' => 'test-comstore-api-key']);
         Http::fake([
             'kramoonstores.example.test/api/init' => Http::response([
                 'success' => true,
@@ -77,6 +76,7 @@ class KraDeviceOperationsTest extends TestCase
             'kra_device_ip' => 'https://kramoonstores.example.test',
             'kra_serial_number' => 'DEJA02220240050',
             'kra_pin_number' => 'P052177271G',
+            'kra_comstore_api_key' => 'test-comstore-api-key',
         ]);
 
         $device->initializeDevice('192.168.1.39');
