@@ -430,6 +430,7 @@ class KraAgentBridge
 
         KraAgentCommand::query()
             ->where('id', $commandId)
+            ->where('kra_agent_id', $agent->id)
             ->whereIn('status', ['pending', 'processing'])
             ->update(['status' => 'expired']);
 
@@ -457,21 +458,37 @@ class KraAgentBridge
 
         $limit = max(1, min(self::PULL_COMMAND_LIMIT, $limit));
         $now = AppTimezone::now()->format('Y-m-d H:i:s');
-        $ids = KraAgentCommand::query()
-            ->where('kra_agent_id', $agent->id)
-            ->where('status', 'pending')
-            ->where('expires_at', '>', $now)
-            ->orderBy('created_at')
-            ->limit($limit)
-            ->pluck('id');
+        $ids = collect();
+        $maxAttempts = $limit * 10;
+
+        for ($attempt = 0; $attempt < $maxAttempts && $ids->count() < $limit; $attempt++) {
+            $candidateId = KraAgentCommand::query()
+                ->where('kra_agent_id', $agent->id)
+                ->where('status', 'pending')
+                ->where('expires_at', '>', $now)
+                ->orderBy('created_at')
+                ->orderBy('id')
+                ->value('id');
+
+            if ($candidateId === null) {
+                break;
+            }
+
+            $claimed = KraAgentCommand::query()
+                ->where('id', $candidateId)
+                ->where('kra_agent_id', $agent->id)
+                ->where('status', 'pending')
+                ->where('expires_at', '>', $now)
+                ->update(['status' => 'processing']);
+
+            if ($claimed === 1) {
+                $ids->push($candidateId);
+            }
+        }
 
         if ($ids->isEmpty()) {
             return [];
         }
-
-        KraAgentCommand::query()
-            ->whereIn('id', $ids)
-            ->update(['status' => 'processing']);
 
         return KraAgentCommand::query()
             ->whereIn('id', $ids)
@@ -546,17 +563,30 @@ class KraAgentBridge
         }
 
         $success = (bool) ($payload['success'] ?? false);
-        $command->status = $success ? 'completed' : 'failed';
-        $command->response_status = isset($payload['status']) ? (int) $payload['status'] : null;
-        $command->response_body = isset($payload['body']) ? (string) $payload['body'] : null;
-        $command->response_headers = is_array($payload['headers'] ?? null) ? $payload['headers'] : null;
+        $status = $success ? 'completed' : 'failed';
+        $responseStatus = isset($payload['status']) ? (int) $payload['status'] : null;
+        $responseBody = isset($payload['body']) ? (string) $payload['body'] : null;
+        $responseHeaders = is_array($payload['headers'] ?? null) ? $payload['headers'] : null;
         $error = $success ? null : trim((string) ($payload['error'] ?? 'Agent command failed'));
         if (! $success) {
-            $error = self::enrichAgentErrorMessage($error, (string) ($command->response_body ?? ''));
+            $error = self::enrichAgentErrorMessage($error, (string) ($responseBody ?? ''));
         }
-        $command->error_message = $success ? null : mb_substr($error !== '' ? $error : 'Agent command failed', 0, 500);
-        $command->completed_at = AppTimezone::now()->format('Y-m-d H:i:s');
-        $command->save();
+        KraAgentCommand::query()
+            ->whereKey($command->id)
+            ->where('kra_agent_id', $agent->id)
+            ->whereIn('status', ['pending', 'processing'])
+            ->update([
+                'status' => $status,
+                'response_status' => $responseStatus,
+                'response_body' => $responseBody,
+                'response_headers' => $responseHeaders === null
+                    ? null
+                    : json_encode($responseHeaders, JSON_THROW_ON_ERROR),
+                'error_message' => $success
+                    ? null
+                    : mb_substr($error !== '' ? $error : 'Agent command failed', 0, 500),
+                'completed_at' => AppTimezone::now()->format('Y-m-d H:i:s'),
+            ]);
     }
 
     /**

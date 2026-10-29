@@ -17,6 +17,10 @@ class SalesCheckoutSettings
             return ! empty($sales['allow_pos_edit_unit_price']);
         }
 
+        if ($source === 'mobile') {
+            return false;
+        }
+
         return ! empty($sales['allow_edit_unit_price']);
     }
 

@@ -339,16 +339,18 @@ class MobileSalesService
 
         $perPage = min(max((int) ($filters['per_page'] ?? 25), 1), 200);
         $dateScoped = ! $isExactOrderLookup && ($hasExplicitDates || $workflowStatus === null);
+        $summaryQuery = clone $query;
+        $page = $query->paginate($perPage);
         $listSummary = $this->buildOrderListSummary(
-            clone $query,
+            $summaryQuery,
             $search,
             (int) ($user->organization_id ?? 0),
             $user,
             $from,
             $to,
             $dateScoped && $search === '',
+            (int) $page->total(),
         );
-        $page = $query->paginate($perPage);
         $gate = $this->erp->gateForUser($user);
         $presentation = app(SaleOrderPresentationService::class);
         $cancelCaps = $this->cancellationCapabilitiesTemplate($user, $gate);
@@ -424,8 +426,8 @@ class MobileSalesService
         Carbon $from,
         Carbon $to,
         bool $deductExpenses,
+        int $orderCount,
     ): array {
-        $orderCount = (int) (clone $query)->toBase()->getCountForPagination();
         $grossTotal = round((float) (clone $query)->sum('sales.order_total'), 2);
         $expenseTotal = $deductExpenses
             ? $this->routeExpenses()->approvedTotalForUserBetween($user, $from, $to)

@@ -1147,6 +1147,7 @@ class PlatformMailboxService
                     'to' => $to,
                     'subject' => mb_substr($subject, 0, 180),
                     'exception_class' => $exception ? $exception::class : null,
+                    'exception_message' => mb_substr($message, 0, 500),
                 ],
                 apiPath: '/platform/mail/send',
                 httpMethod: 'POST',

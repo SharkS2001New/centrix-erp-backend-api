@@ -241,25 +241,28 @@ class CartOperationsController extends Controller
 
         // Lock the cart so concurrent POS adds (qty Enter / F12 convert races) cannot
         // create two TemporaryCart rows for the same SKU + retail/wholesale mode.
-        DB::transaction(function () use ($cart, $request, $user, $gate) {
+        [$updatedCart, $line] = DB::transaction(function () use ($cart, $request, $user, $gate) {
             $locked = TemporaryCart::query()->whereKey($cart->id)->lockForUpdate()->first();
             if (! $locked) {
                 throw new InvalidArgumentException('Cart not found.');
             }
-            $this->addCartLine($locked, $request->validated(), $user, $gate);
+
+            $line = $this->addCartLine($locked, $request->validated(), $user, $gate);
+
+            return [$locked, $line];
         }, 5);
 
-        $fresh = $this->freshOwnedCart($cart);
-
-        // Mobile app ignores the POST body and refetches the cart when needed — skip
-        // presentCart (order-num peek, product joins, discount meta) on the hot path.
-        if ($this->isMobileChannelCart($fresh)) {
+        // The mobile app needs only the new line reference; avoid reloading and
+        // presenting the full cart on this hot path.
+        if ($this->isMobileChannelCart($cart)) {
             return response()->json([
-                'id' => (int) $fresh->id,
-                'update_no' => (int) $fresh->update_no,
+                'id' => (int) $updatedCart->id,
+                'update_no' => (int) $updatedCart->update_no,
+                'update_code' => (string) $line->update_code,
             ], 201);
         }
 
+        $fresh = $this->freshOwnedCart($cart);
         return $this->cartResponse(
             $fresh,
             $user,
@@ -1633,11 +1636,14 @@ class CartOperationsController extends Controller
                 $isRetail,
                 $unitPrice,
                 $amount,
+                ! $this->isMobileChannelCart($cart),
             );
             $amount = $this->applyCashRoundingIfNeeded($cart, $gate, $salesSettings, $line, $amount);
 
             $grossForVat = max(0, $amount);
-            $productVat = array_key_exists('product_vat', $line) && $line['product_vat'] !== null
+            $productVat = ! $this->isMobileChannelCart($cart)
+                && array_key_exists('product_vat', $line)
+                && $line['product_vat'] !== null
                 ? max(0, (float) $line['product_vat'])
                 : SalesVatCalculator::vatFromInclusiveGross(
                     $grossForVat,
@@ -1765,6 +1771,7 @@ class CartOperationsController extends Controller
             $isRetail,
             $unitPrice,
             $amount,
+            ! $this->isMobileChannelCart($cart),
         );
         $amount = $this->applyCashRoundingIfNeeded($cart, $gate, $salesSettings, $line, $amount);
 
@@ -1813,7 +1820,9 @@ class CartOperationsController extends Controller
 
         $product->loadMissing('vat');
         $grossForVat = max(0, $amount);
-        $productVat = array_key_exists('product_vat', $line) && $line['product_vat'] !== null
+        $productVat = ! $this->isMobileChannelCart($cart)
+            && array_key_exists('product_vat', $line)
+            && $line['product_vat'] !== null
             ? max(0, (float) $line['product_vat'])
             : SalesVatCalculator::vatFromInclusiveGross(
                 $grossForVat,
@@ -1970,6 +1979,7 @@ class CartOperationsController extends Controller
             $isRetail,
             $unitPrice,
             $amount,
+            ! $this->isMobileChannelCart($cart),
         );
         $amount = $this->applyCashRoundingIfNeeded($cart, $gate, $salesSettings, $input, $amount);
 
@@ -2028,7 +2038,9 @@ class CartOperationsController extends Controller
 
         $grossForVat = max(0, $amount);
         $product->loadMissing('vat');
-        $productVat = array_key_exists('product_vat', $input) && $input['product_vat'] !== null
+        $productVat = ! $this->isMobileChannelCart($cart)
+            && array_key_exists('product_vat', $input)
+            && $input['product_vat'] !== null
             ? max(0, (float) $input['product_vat'])
             : SalesVatCalculator::vatFromInclusiveGross(
                 $grossForVat,
@@ -2394,8 +2406,14 @@ class CartOperationsController extends Controller
         bool $isRetail,
         float $unitPrice,
         float $computedAmount,
+        bool $allowClientAmount = true,
     ): array {
-        if (! array_key_exists('amount', $line) || $line['amount'] === null || $line['amount'] === '') {
+        if (
+            ! $allowClientAmount
+            || ! array_key_exists('amount', $line)
+            || $line['amount'] === null
+            || $line['amount'] === ''
+        ) {
             return [$unitPrice, round(max(0.0, $computedAmount), 2)];
         }
 

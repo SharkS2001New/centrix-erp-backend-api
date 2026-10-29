@@ -213,9 +213,8 @@ class MobileSalesController extends Controller
     /** GET /mobile/routes — active routes available to the signed-in mobile rep. */
     public function indexRoutes(Request $request)
     {
-        $routes = $this->mobileScope->listRoutesForUser($request->user());
-
         $assignedRouteIds = $this->mobileScope->assignedRouteIds($request->user());
+        $routes = $this->mobileScope->listRoutesForUser($request->user(), $assignedRouteIds);
 
         return response()->json([
             'data' => $routes->map(static fn ($route) => [
@@ -224,7 +223,7 @@ class MobileSalesController extends Controller
                 'branch_id' => $route->branch_id !== null ? (int) $route->branch_id : null,
                 'route_markup_price' => $route->route_markup_price,
             ])->values(),
-            'route_selection_locked' => $this->mobileScope->isRouteSelectionLocked($request->user()),
+            'route_selection_locked' => $assignedRouteIds !== [],
             'assigned_route_id' => $assignedRouteIds[0] ?? null,
             'assigned_route_ids' => $assignedRouteIds,
         ]);

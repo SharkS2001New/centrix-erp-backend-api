@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Customer;
+use App\Models\KraAgent;
 use App\Models\KraAgentCommand;
 use App\Models\KraResponse;
 use App\Models\Organization;
@@ -14,6 +15,7 @@ use App\Models\Vat;
 use App\Services\Kra\KraAgentBridge;
 use App\Services\Sales\CheckoutKraSubmissionService;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Str;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
@@ -53,6 +55,62 @@ class KraDeviceCheckoutTest extends TestCase
         config([
             'testing.kra_agent_workflow_response' => $workflowBody,
             'testing.kra_agent_workflow_status' => $workflowStatus,
+        ]);
+    }
+
+    public function test_kra_agent_reclaims_expired_and_stale_processing_commands(): void
+    {
+        $agent = KraAgent::query()
+            ->where('organization_id', $this->user->organization_id)
+            ->firstOrFail();
+
+        $expiredId = (string) Str::uuid();
+        KraAgentCommand::query()->create([
+            'id' => $expiredId,
+            'kra_agent_id' => $agent->id,
+            'method' => 'POST',
+            'path' => '/api/complete-workflow',
+            'status' => 'processing',
+            'created_at' => now()->subMinutes(3),
+            'expires_at' => now()->subMinute(),
+        ]);
+
+        $staleId = (string) Str::uuid();
+        KraAgentCommand::query()->create([
+            'id' => $staleId,
+            'kra_agent_id' => $agent->id,
+            'method' => 'POST',
+            'path' => '/api/complete-workflow',
+            'status' => 'processing',
+            'created_at' => now()->subMinutes(3),
+            'expires_at' => now()->addMinutes(1),
+        ]);
+
+        $bridge = app(KraAgentBridge::class);
+        $this->assertSame(2, $bridge->reclaimStaleProcessingCommands($agent));
+        $this->assertDatabaseHas('kra_agent_commands', [
+            'id' => $expiredId,
+            'status' => 'expired',
+        ]);
+        $this->assertDatabaseHas('kra_agent_commands', [
+            'id' => $staleId,
+            'status' => 'pending',
+        ]);
+
+        $claimed = $bridge->pullPendingCommands(
+            $agent,
+            touch: false,
+            reclaim: false,
+        );
+        $this->assertSame($staleId, $claimed[0]['id'] ?? null);
+        $this->assertSame([], $bridge->pullPendingCommands(
+            $agent,
+            touch: false,
+            reclaim: false,
+        ));
+        $this->assertDatabaseHas('kra_agent_commands', [
+            'id' => $staleId,
+            'status' => 'processing',
         ]);
     }
 
@@ -105,7 +163,7 @@ class KraDeviceCheckoutTest extends TestCase
         Http::assertNothingSent();
     }
 
-    public function test_mobile_checkout_fiscalizes_via_centrix_kra_agent(): void
+    public function test_mobile_unpaid_checkout_schedules_kra_fiscalization_after_checkout(): void
     {
         $this->fakeKraDeviceHttp([
             'success' => true,
@@ -140,6 +198,8 @@ class KraDeviceCheckoutTest extends TestCase
         $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
             'product_code' => $product->product_code,
             'quantity' => 0.333,
+            'unit_price' => (float) $product->unit_price + 500,
+            'amount' => ((float) $product->unit_price + 500) * 0.333,
         ])->assertCreated();
 
         $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
@@ -166,12 +226,53 @@ class KraDeviceCheckoutTest extends TestCase
         $pluLine = $command->body_json['plu_data'][0] ?? [];
         $this->assertSame('Maziwa - 1L', $pluLine['item_Name'] ?? null);
         $this->assertSame('0.333', $pluLine['SaleQty'] ?? null);
+        $this->assertNotEquals((float) $product->unit_price + 500, (float) $saleItem->unit_price);
         $this->assertEqualsWithDelta(
             (float) $saleItem->amount,
             (float) ($pluLine['SalePrice'] ?? 0) * (float) ($pluLine['SaleQty'] ?? 0),
             0.0001,
         );
         Http::assertNothingSent();
+    }
+
+    public function test_mobile_cart_uses_server_pricing_instead_of_client_computed_unit_price(): void
+    {
+        $product = Product::with('vat')->firstOrFail();
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'mobile',
+            'branch_id' => $this->user->branch_id,
+        ])->assertCreated()->json('id');
+
+        $clientUnitPrice = (float) $product->unit_price + 500;
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $product->product_code,
+            'quantity' => 1,
+            'unit_price' => $clientUnitPrice,
+            'amount' => $clientUnitPrice,
+            'product_vat' => $clientUnitPrice,
+        ])->assertCreated();
+
+        $line = $this->getJson("/api/v1/sales/carts/{$cartId}")
+            ->assertOk()
+            ->json('lines.0');
+
+        $this->assertNotEquals($clientUnitPrice, (float) $line['unit_price']);
+        $this->assertNotEquals($clientUnitPrice, (float) $line['amount']);
+        $this->assertNotEquals($clientUnitPrice, (float) $line['product_vat']);
+
+        $this->patchJson("/api/v1/sales/carts/{$cartId}/lines/{$line['update_code']}", [
+            'quantity' => 1,
+            'unit_price' => $clientUnitPrice,
+            'amount' => $clientUnitPrice,
+            'product_vat' => $clientUnitPrice,
+        ])->assertOk();
+
+        $updatedLine = $this->getJson("/api/v1/sales/carts/{$cartId}")
+            ->assertOk()
+            ->json('lines.0');
+        $this->assertNotEquals($clientUnitPrice, (float) $updatedLine['unit_price']);
+        $this->assertNotEquals($clientUnitPrice, (float) $updatedLine['amount']);
+        $this->assertNotEquals($clientUnitPrice, (float) $updatedLine['product_vat']);
     }
 
     public function test_checkout_skips_kra_when_device_disabled(): void

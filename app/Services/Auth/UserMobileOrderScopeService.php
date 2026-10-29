@@ -191,7 +191,7 @@ class UserMobileOrderScopeService
     }
 
     /** @return Collection<int, RouteModel> */
-    public function listRoutesForUser(User $user): Collection
+    public function listRoutesForUser(User $user, ?array $assignedRouteIds = null): Collection
     {
         $query = RouteModel::query()
             ->where('is_active', true)
@@ -199,9 +199,9 @@ class UserMobileOrderScopeService
 
         $this->routes->scopeForUser($query, $user);
 
-        $assigned = $this->assignedRouteIds($user);
-        if ($assigned !== []) {
-            $query->whereIn('id', $assigned);
+        $assignedRouteIds ??= $this->assignedRouteIds($user);
+        if ($assignedRouteIds !== []) {
+            $query->whereIn('id', $assignedRouteIds);
         }
 
         return $query->get();

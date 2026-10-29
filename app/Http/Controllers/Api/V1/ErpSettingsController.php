@@ -1514,7 +1514,12 @@ class ErpSettingsController extends Controller
             ] as $key) {
                 unset($finance[$key]);
             }
-        } elseif (! empty($finance['kra_comstore_api_key'])) {
+        }
+
+        if (
+            $gate->kraIntegrationPlatformEnabled()
+            && ! empty($finance['kra_comstore_api_key'])
+        ) {
             $finance['kra_comstore_api_key'] = '********';
         }
 

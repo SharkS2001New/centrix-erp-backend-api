@@ -6,6 +6,8 @@ use App\Models\PlatformSubscription;
 use App\Models\Sale;
 use App\Models\User;
 use App\Services\Sales\MobileCheckoutSettings;
+use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
@@ -60,6 +62,7 @@ class MobileSalesApiTest extends TestCase
             ->json();
 
         $this->assertSame((int) $cart['id'], (int) ($addLine['id'] ?? 0));
+        $this->assertNotEmpty($addLine['update_code'] ?? null);
         $this->assertArrayNotHasKey('lines', $addLine);
         $this->assertArrayNotHasKey('next_order_num', $addLine);
 
@@ -108,6 +111,31 @@ class MobileSalesApiTest extends TestCase
             ->getJson('/api/v1/sales/customers/lookup?q=demo&per_page=10')
             ->assertOk()
             ->assertJsonStructure(['data']);
+    }
+
+    public function test_mobile_order_list_counts_filtered_sales_once_for_pagination_and_summary(): void
+    {
+        $user = $this->makeMobileUser(['username' => 'mobile_speed_'.uniqid()]);
+        $token = $this->loginMobile($user);
+        $salesCountQueries = 0;
+
+        DB::listen(function (QueryExecuted $query) use (&$salesCountQueries): void {
+            $sql = strtolower($query->sql);
+            if (str_contains($sql, 'count(*)') && str_contains($sql, 'sales')) {
+                $salesCountQueries++;
+            }
+        });
+
+        $response = $this->withToken($token)
+            ->getJson('/api/v1/mobile/orders?from_date=2020-01-01&to_date=2020-01-01')
+            ->assertOk()
+            ->assertJsonStructure(['data', 'meta' => ['total', 'summary' => ['order_count']]]);
+
+        $this->assertSame(
+            (int) $response->json('meta.total'),
+            (int) $response->json('meta.summary.order_count'),
+        );
+        $this->assertSame(1, $salesCountQueries);
     }
 
     public function test_mobile_dashboard_scopes_orders_to_signed_in_rep(): void
@@ -919,6 +947,33 @@ class MobileSalesApiTest extends TestCase
             ])
             ->assertJsonPath('route_selection_locked', true)
             ->assertJsonPath('assigned_route_id', $user->assigned_route_id);
+    }
+
+    public function test_mobile_routes_endpoint_reads_assigned_routes_once(): void
+    {
+        $route = \App\Models\RouteModel::query()->where('is_active', true)->firstOrFail();
+        $user = $this->makeMobileUser([
+            'username' => 'mobile_routes_speed_'.uniqid(),
+            'assigned_route_id' => $route->id,
+        ]);
+        $user->assignedRoutes()->sync([$route->id]);
+        $token = $this->loginMobile($user);
+        $assignmentQueries = 0;
+
+        DB::listen(function (QueryExecuted $query) use (&$assignmentQueries): void {
+            if (str_contains(strtolower($query->sql), 'user_assigned_routes')) {
+                $assignmentQueries++;
+            }
+        });
+
+        $this->withToken($token)
+            ->getJson('/api/v1/mobile/routes')
+            ->assertOk()
+            ->assertJsonPath('route_selection_locked', true)
+            ->assertJsonPath('assigned_route_ids', [$route->id])
+            ->assertJsonCount(1, 'data');
+
+        $this->assertSame(1, $assignmentQueries);
     }
 
     public function test_route_locked_mobile_user_sees_only_assigned_route(): void
