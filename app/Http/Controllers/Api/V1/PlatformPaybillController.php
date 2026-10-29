@@ -19,6 +19,7 @@ use App\Services\WhatsApp\ResolvedWhatsAppConfig;
 use App\Services\WhatsApp\WhatsAppSettingsResolver;
 use App\Support\PhoneNumber;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 
@@ -49,6 +50,15 @@ class PlatformPaybillController extends Controller
         $data = $request->validate([
             'short_code' => 'nullable|string|max:20',
             'account_name_prefix' => 'nullable|string|max:40',
+            'manual_mpesa_account_name' => 'nullable|string|max:160',
+            'manual_mpesa_instructions' => 'nullable|string|max:1000',
+            'stk_env' => 'sometimes|in:sandbox,live',
+            'stk_consumer_key' => 'nullable|string|max:255',
+            'stk_consumer_secret' => 'nullable|string|max:500',
+            'stk_shortcode' => 'nullable|string|max:20',
+            'stk_passkey' => 'nullable|string|max:500',
+            'stk_callback_url' => 'nullable|url|max:500',
+            'clear_stk_credentials' => 'sometimes|boolean',
             'duration_discount_percent' => 'sometimes|numeric|min:0|max:100',
             'duration_discount_min_months' => 'sometimes|integer|min:0|max:36',
             'free_plan_access' => 'sometimes|array',
@@ -62,7 +72,7 @@ class PlatformPaybillController extends Controller
 
         return response()->json([
             'data' => $this->settingsPayload($settings),
-            'message' => 'Centrix Paybill saved.',
+            'message' => 'Platform payment settings saved.',
         ]);
     }
 
@@ -152,19 +162,39 @@ class PlatformPaybillController extends Controller
             return response()->json(['message' => 'No organisation on this login.'], 422);
         }
 
-        $plan = $this->activeMonthlyPlan($request);
-        if ($plan instanceof \Illuminate\Http\JsonResponse) {
-            return $plan;
+        $data = $request->validate([
+            'plan_id' => 'required|integer',
+            'months' => 'required|integer|min:1|max:36',
+            'billing' => 'sometimes|in:monthly,yearly',
+        ]);
+        $billing = $data['billing'] ?? 'monthly';
+        $plan = $this->findSelfServePlan((int) $data['plan_id']);
+        $price = $billing === 'yearly'
+            ? (float) ($plan?->yearly_price ?? 0)
+            : (float) ($plan?->monthly_price ?? 0);
+        if (! $plan || $price <= 0) {
+            return response()->json(['message' => 'This plan is not available for the selected billing period.'], 422);
         }
 
-        $checkout = $this->paybill->startCheckout($org, $plan, (int) $request->input('months'));
+        $checkout = $this->paybill->startCheckout(
+            $org,
+            $plan,
+            $billing === 'yearly' ? 12 : (int) $data['months'],
+            null,
+            $billing,
+        );
         $instructions = $this->paybill->instructionsFor($org, null);
+        if (! $instructions) {
+            $checkout->delete();
+
+            return response()->json(['message' => 'Manual M-Pesa payment instructions are not configured yet.'], 422);
+        }
 
         return response()->json([
-            'message' => 'Pay the Paybill with the account number shown, then notify Centrix on WhatsApp or enter the M-Pesa code.',
+            'message' => 'Transfer the exact amount to the M-Pesa Paybill shown, then enter the transaction code.',
             'checkout' => $this->checkoutPayload($checkout),
             'paybill' => $instructions,
-        ]);
+        ], 201);
     }
 
     public function equityCheckout(Request $request)
@@ -308,6 +338,12 @@ class PlatformPaybillController extends Controller
             return response()->json(['message' => 'No organisation on this login.'], 422);
         }
 
+        if (! $this->paybill->stkConfigured()) {
+            return response()->json([
+                'message' => 'M-Pesa STK is not configured. Choose manual M-Pesa or Equity transfer instead.',
+            ], 422);
+        }
+
         $needsPlan = ! in_array($request->input('billing'), ['token', 'renew'], true);
         $data = $request->validate([
             'plan_id' => [Rule::requiredIf($needsPlan), 'nullable', 'integer'],
@@ -341,7 +377,7 @@ class PlatformPaybillController extends Controller
             }
         } else {
             $plan = $this->findSelfServePlan((int) $data['plan_id']);
-            $priced = $billing === 'yearly' ? (float) ($plan->yearly_price ?? 0) : (float) ($plan->monthly_price ?? 0);
+            $priced = $billing === 'yearly' ? (float) ($plan?->yearly_price ?? 0) : (float) ($plan?->monthly_price ?? 0);
             if (! $plan || $priced <= 0) {
                 return response()->json(['message' => $billing === 'yearly' ? 'Choose an active yearly plan.' : 'Choose an active monthly plan.'], 422);
             }
@@ -353,37 +389,40 @@ class PlatformPaybillController extends Controller
                 $billing,
             );
         }
-        $platform = $this->platformOrganization();
-        if (! $platform) {
-            return response()->json([
-                'message' => 'M-Pesa prompt is not set up yet. Pay the Paybill with your organisation code, then notify Centrix or enter the M-Pesa code.',
-                'checkout' => $this->checkoutPayload($checkout),
-                'stk' => false,
-            ]);
-        }
-
         try {
-            $stk = MpesaService::forOrganization($platform)->stkPaybill(
+            $stk = new MpesaService($this->paybill->stkConfig());
+            $stk = $stk->stkPaybill(
                 $phone,
                 (int) round((float) $checkout->amount),
                 (string) $org->company_code,
-                $this->paybill->settings()?->short_code,
+                $this->paybill->settings()?->stk_shortcode,
             );
         } catch (\Throwable $e) {
+            Log::warning('Platform licence STK push failed.', [
+                'organization_id' => $org->id,
+                'checkout_id' => $checkout->id,
+                'exception' => $e::class,
+                'message' => $e->getMessage(),
+            ]);
+
             return response()->json([
-                'message' => 'Could not send the M-Pesa prompt. Pay the Paybill with your organisation code, then enter the M-Pesa code. '.$e->getMessage(),
+                'message' => 'Could not send the M-Pesa prompt. Check the platform STK settings or choose manual M-Pesa.',
                 'checkout' => $this->checkoutPayload($checkout),
                 'stk' => false,
-            ]);
+            ], 422);
         }
 
         $checkoutRequestId = trim((string) ($stk['CheckoutRequestID'] ?? ''));
         $responseCode = (string) ($stk['ResponseCode'] ?? '');
         if ($checkoutRequestId === '' || isset($stk['errorCode']) || ($responseCode !== '' && $responseCode !== '0')) {
-            $message = (string) ($stk['errorMessage'] ?? $stk['ResponseDescription'] ?? 'M-Pesa rejected the prompt.');
+            Log::warning('Platform licence STK prompt was rejected.', [
+                'organization_id' => $org->id,
+                'checkout_id' => $checkout->id,
+                'error_code' => $stk['errorCode'] ?? ($responseCode !== '' ? $responseCode : null),
+            ]);
 
             return response()->json([
-                'message' => $message.' Pay the Paybill with your organisation code, then check the M-Pesa code.',
+                'message' => 'M-Pesa rejected the prompt. Check the platform STK settings or choose manual M-Pesa.',
                 'checkout' => $this->checkoutPayload($checkout),
                 'stk' => false,
             ]);
@@ -426,6 +465,7 @@ class PlatformPaybillController extends Controller
 
         $data = $request->validate([
             'mpesa_code' => 'nullable|string|max:20',
+            'checkout_id' => 'nullable|integer',
             'plan_id' => 'nullable|integer',
             'months' => 'nullable|integer|min:1|max:36',
             'billing' => 'nullable|in:monthly,yearly,token,renew',
@@ -437,7 +477,16 @@ class PlatformPaybillController extends Controller
             'renew' => 'renew',
             default => 'monthly',
         };
-        if ($billing === 'renew') {
+        $checkout = null;
+        if (! empty($data['checkout_id'])) {
+            $checkout = PlatformLicenceCheckout::query()
+                ->whereKey((int) $data['checkout_id'])
+                ->where('organization_id', $org->id)
+                ->first();
+            if (! $checkout) {
+                return response()->json(['message' => 'This payment request does not belong to your organisation.'], 404);
+            }
+        } elseif ($billing === 'renew') {
             $this->paybill->startRenewalCheckout($org);
         } elseif ($billing === 'token') {
             if ($off = $this->tokensTurnedOff()) {
@@ -446,7 +495,7 @@ class PlatformPaybillController extends Controller
             $this->paybill->startTokenCheckout($org);
         } elseif (! empty($data['plan_id'])) {
             $plan = PlatformPlan::query()->where('is_active', true)->find($data['plan_id']);
-            $priced = $billing === 'yearly' ? (float) ($plan->yearly_price ?? 0) : (float) ($plan->monthly_price ?? 0);
+            $priced = $billing === 'yearly' ? (float) ($plan?->yearly_price ?? 0) : (float) ($plan?->monthly_price ?? 0);
             if ($plan && $priced > 0) {
                 $this->paybill->startCheckout(
                     $org,
@@ -468,30 +517,40 @@ class PlatformPaybillController extends Controller
             if ($payment && $payment->organization_id && (int) $payment->organization_id !== (int) $org->id) {
                 $foreign = true;
                 $payment = null;
-            } elseif ($payment && ! $payment->organization_id && $this->pendingCheckoutMatches($org, (float) $payment->amount)) {
+            } elseif ($checkout && $checkout->status === 'paid') {
+                $payment = $checkout->mpesa_receipt === $code ? $payment : null;
+            } elseif ($checkout && $checkout->status === 'pending'
+                && $payment && abs((float) $payment->amount - (float) $checkout->amount) > 1) {
+                return response()->json(['message' => 'The M-Pesa amount does not match this checkout.'], 422);
+            } elseif ($payment && ! $payment->organization_id
+                && (($checkout && $checkout->status === 'pending')
+                    || $this->pendingCheckoutMatches($org, (float) $payment->amount))) {
                 $payment->organization_id = $org->id;
                 $payment->bill_ref_number = $payment->bill_ref_number ?: $org->company_code;
                 $payment->save();
-                $payment = $this->paybill->retryUnapplied($payment->fresh());
+                $payment = $this->paybill->retryUnapplied($payment->fresh(), $checkout?->id);
             } elseif ($payment && (int) $payment->organization_id === (int) $org->id && $payment->status !== 'applied') {
-                $payment = $this->paybill->retryUnapplied($payment);
+                $payment = $this->paybill->retryUnapplied($payment, $checkout?->id);
             }
         }
 
         $license = app(OrganizationLicenseService::class)->resolveForOrganization($org->fresh());
+        $checkoutPaid = $checkout?->status === 'paid' && $checkout?->mpesa_receipt === $code;
 
         return response()->json([
-            'confirmed' => $payment && $payment->status === 'applied',
+            'confirmed' => $checkoutPaid || ($payment && $payment->status === 'applied'),
             'payment_status' => $payment?->status,
             'message' => $code === ''
                 ? 'Enter the M-Pesa code from the Paybill payment.'
                 : ($foreign
                     ? 'That M-Pesa code belongs to a different organisation.'
-                    : ($payment
+                    : ($checkoutPaid
+                        ? 'M-Pesa code confirmed. This organisation is paid.'
+                        : ($payment
                         ? ($payment->status === 'applied'
                             ? 'M-Pesa code confirmed. This organisation is paid.'
                             : 'That M-Pesa code is recorded but does not match a plan amount yet.')
-                        : 'That M-Pesa code is not in Centrix yet. Wait a moment and check again.')),
+                        : 'That M-Pesa code is not in Centrix yet. Wait a moment and check again.'))),
             'license' => $license,
         ]);
     }
@@ -608,11 +667,24 @@ class PlatformPaybillController extends Controller
         return [
             'short_code' => $settings?->short_code ?? '',
             'account_name_prefix' => $settings?->account_name_prefix ?? '',
+            'manual_mpesa_account_name' => $settings?->manual_mpesa_account_name ?? '',
+            'manual_mpesa_instructions' => $settings?->manual_mpesa_instructions ?? '',
+            'stk_env' => $settings?->stk_env ?: 'sandbox',
+            'stk_consumer_key' => $settings?->stk_consumer_key ? '********' : '',
+            'stk_shortcode' => $settings?->stk_shortcode ?? '',
+            'stk_callback_url' => $settings?->stk_callback_url ?? '',
+            'has_stk_consumer_key' => (bool) $settings?->stk_consumer_key,
+            'has_stk_consumer_secret' => (bool) $settings?->stk_consumer_secret,
+            'has_stk_passkey' => (bool) $settings?->stk_passkey,
             'organization_id' => $settings?->organization_id,
             'duration_discount_percent' => (float) ($settings?->duration_discount_percent ?? 0),
             'duration_discount_min_months' => (int) ($settings?->duration_discount_min_months ?? 3),
             'free_plan_access' => app(FreePlanAccess::class)->stored(),
             'free_plan_catalog' => app(FreePlanAccess::class)->catalog(),
+            'payment_methods' => [
+                'mpesa_stk' => $this->paybill->stkConfigured(),
+                'mpesa_manual' => trim((string) ($settings?->short_code ?? '')) !== '',
+            ],
         ];
     }
 

@@ -29,12 +29,15 @@ class OrganizationBillingController extends Controller
         $license = $licenses->resolveForOrganization($org);
         $subscription = PlatformSubscription::query()->with('plan')->where('organization_id', $org->id)->first();
         $plan = $subscription?->plan;
+        $licencePayments = app(\App\Services\Platform\PlatformPaybillLicenceService::class);
 
         return response()->json([
             'data' => [
                 'license' => $license,
                 'policy' => $policy->current(),
-                'equity' => app(\App\Services\Platform\PlatformPaybillLicenceService::class)->equityInstructionsFor($org),
+                'equity' => $licencePayments->equityInstructionsFor($org),
+                'payment_methods' => $licencePayments->paymentMethodsFor($org),
+                'paybill' => $licencePayments->instructionsFor($org, $subscription),
                 'subscription' => $subscription ? [
                     'id' => $subscription->id,
                     'status' => $subscription->status,

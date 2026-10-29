@@ -208,6 +208,49 @@ class PlatformPaybillLicenceTest extends TestCase
             ->assertJsonPath('data.0.product', 'monthly');
     }
 
+    public function test_admin_payment_settings_keep_stk_secrets_private_and_allow_clear(): void
+    {
+        [$org] = $this->seedLicensedOrg('MOON', '0712000111', '2026-09-01');
+        Sanctum::actingAs(User::query()->where('username', 'superadmin')->firstOrFail());
+
+        $this->putJson('/api/v1/admin/platform-paybill', [
+            'short_code' => '4036507',
+            'manual_mpesa_account_name' => 'CentrixERP',
+            'manual_mpesa_instructions' => 'Use the organisation code as the account reference.',
+            'stk_env' => 'sandbox',
+            'stk_consumer_key' => 'consumer-key-value',
+            'stk_consumer_secret' => 'consumer-secret-value',
+            'stk_shortcode' => '174379',
+            'stk_passkey' => 'passkey-value',
+            'stk_callback_url' => 'https://api.example.test/api/v1/payments/stk/callback',
+        ])->assertOk()
+            ->assertJsonPath('data.has_stk_consumer_key', true)
+            ->assertJsonPath('data.has_stk_consumer_secret', true)
+            ->assertJsonPath('data.has_stk_passkey', true)
+            ->assertJsonPath('data.payment_methods.mpesa_manual', true)
+            ->assertJsonPath('data.payment_methods.mpesa_stk', true)
+            ->assertJsonMissingPath('data.stk_consumer_secret')
+            ->assertJsonPath('data.stk_consumer_key', '********');
+
+        $settings = app(PlatformPaybillLicenceService::class)->settings();
+        $this->assertSame('consumer-secret-value', $settings->stk_consumer_secret);
+        $this->assertNotSame('consumer-key-value', $settings->getRawOriginal('stk_consumer_key'));
+        $this->assertNotSame('consumer-secret-value', $settings->getRawOriginal('stk_consumer_secret'));
+        $this->assertTrue(app(PlatformPaybillLicenceService::class)->paymentMethodsFor($org)['mpesa_stk']);
+
+        app(PlatformPaybillLicenceService::class)->saveSettings([
+            'stk_consumer_key' => '',
+            'stk_consumer_secret' => '',
+            'stk_passkey' => '',
+        ]);
+        $this->assertSame('consumer-key-value', $settings->fresh()->stk_consumer_key);
+        $this->assertSame('consumer-secret-value', $settings->fresh()->stk_consumer_secret);
+
+        app(PlatformPaybillLicenceService::class)->saveSettings(['clear_stk_credentials' => true]);
+        $this->assertFalse(app(PlatformPaybillLicenceService::class)->stkConfigured());
+        $this->assertSame('4036507', app(PlatformPaybillLicenceService::class)->settings()->short_code);
+    }
+
     public function test_public_plan_catalogue_returns_admin_configured_cta_action(): void
     {
         [, $plan] = $this->seedLicensedOrg('MOON', '0712000111', '2026-09-01');

@@ -7,6 +7,7 @@ use App\Models\PlatformOneTimeQuote;
 use App\Models\User;
 use App\Services\Erp\IndustryRegistry;
 use App\Services\Notifications\AdminNotificationService;
+use App\Services\Mpesa\MpesaSettingsResolver;
 use Illuminate\Validation\ValidationException;
 use App\Models\PlatformBillingSetting;
 use App\Models\PlatformLicenceBalance;
@@ -37,7 +38,7 @@ class PlatformPaybillLicenceService
         return PlatformBillingSetting::current();
     }
 
-    /** @param  array{short_code?: string|null, account_name_prefix?: string|null}  $data */
+    /** @param  array<string, mixed>  $data */
     public function saveSettings(array $data): PlatformBillingSetting
     {
         $platformCode = (string) config('erp.platform_company_code', 'PLATFORM');
@@ -61,10 +62,72 @@ class PlatformPaybillLicenceService
         if (array_key_exists('duration_discount_min_months', $data)) {
             $fill['duration_discount_min_months'] = min(36, max(0, (int) $data['duration_discount_min_months']));
         }
+        foreach ([
+            'manual_mpesa_account_name',
+            'manual_mpesa_instructions',
+            'stk_env',
+            'stk_shortcode',
+            'stk_callback_url',
+        ] as $key) {
+            if (array_key_exists($key, $data)) {
+                $fill[$key] = $this->blankToNull($data[$key] ?? null);
+            }
+        }
+        foreach (['stk_consumer_key', 'stk_consumer_secret', 'stk_passkey'] as $key) {
+            if (array_key_exists($key, $data) && trim((string) $data[$key]) !== '') {
+                $fill[$key] = trim((string) $data[$key]);
+            }
+        }
+        if (($data['clear_stk_credentials'] ?? false) === true) {
+            $fill['stk_consumer_key'] = null;
+            $fill['stk_consumer_secret'] = null;
+            $fill['stk_shortcode'] = null;
+            $fill['stk_passkey'] = null;
+            $fill['stk_callback_url'] = null;
+        }
         $row->fill($fill);
         $row->save();
 
         return $row->fresh();
+    }
+
+    /** @return array<string, mixed> */
+    public function stkConfig(): array
+    {
+        $settings = $this->settings();
+
+        return MpesaSettingsResolver::normalize([
+            'env' => $settings?->stk_env ?: 'sandbox',
+            'consumer_key' => $settings?->stk_consumer_key,
+            'consumer_secret' => $settings?->stk_consumer_secret,
+            'shortcode' => $settings?->stk_shortcode,
+            'till_number' => $settings?->stk_shortcode,
+            'passkey' => $settings?->stk_passkey,
+            'stk_callback_url' => $settings?->stk_callback_url,
+            'enable_stk_push' => true,
+        ]);
+    }
+
+    public function stkConfigured(): bool
+    {
+        $config = $this->stkConfig();
+        try {
+            MpesaSettingsResolver::assertReadyForStkPaybill($config);
+
+            return true;
+        } catch (\RuntimeException) {
+            return false;
+        }
+    }
+
+    /** @return array{mpesa_stk: bool, mpesa_manual: bool, equity: bool} */
+    public function paymentMethodsFor(Organization $org): array
+    {
+        return [
+            'mpesa_stk' => $this->stkConfigured(),
+            'mpesa_manual' => trim((string) ($this->settings()?->short_code ?? '')) !== '',
+            'equity' => $this->equityInstructionsFor($org) !== null,
+        ];
     }
 
     public function handlesPayload(array $payload): bool
@@ -151,6 +214,8 @@ class PlatformPaybillLicenceService
             'short_code' => $shortCode,
             'account_number' => $org->company_code,
             'account_phone' => $org->primary_tel,
+            'account_name' => (string) ($this->settings()?->manual_mpesa_account_name ?? ''),
+            'instructions' => (string) ($this->settings()?->manual_mpesa_instructions ?? ''),
             'currency' => $plan?->currency ?? $subscription?->currency ?? 'KES',
             'monthly_price' => isset($byProduct['monthly']) ? $byProduct['monthly']['price'] : null,
             'yearly_price' => isset($byProduct['yearly']) ? $byProduct['yearly']['price'] : null,
@@ -913,7 +978,7 @@ class PlatformPaybillLicenceService
         ]);
     }
 
-    public function retryUnapplied(PlatformLicencePayment $payment): PlatformLicencePayment
+    public function retryUnapplied(PlatformLicencePayment $payment, ?int $checkoutId = null): PlatformLicencePayment
     {
         if ($payment->status === 'applied' || ! $payment->organization_id) {
             return $payment;
@@ -924,13 +989,13 @@ class PlatformPaybillLicenceService
             return $payment;
         }
 
-        return DB::transaction(function () use ($payment, $org) {
+        return DB::transaction(function () use ($payment, $org, $checkoutId) {
             $locked = PlatformLicencePayment::query()->whereKey($payment->id)->lockForUpdate()->first();
             if (! $locked || $locked->status === 'applied') {
                 return $locked ?? $payment;
             }
 
-            return $this->applyCredit($locked, $org, (float) $locked->amount);
+            return $this->applyCredit($locked, $org, (float) $locked->amount, $checkoutId);
         });
     }
 

@@ -195,6 +195,22 @@ class MpesaSettingsResolver
     }
 
     /** @param  array<string, mixed>  $config */
+    public static function assertReadyForStkPaybill(array $config): void
+    {
+        if (($config['consumer_key'] ?? '') === '' || ($config['consumer_secret'] ?? '') === '') {
+            throw new \RuntimeException('M-Pesa consumer key and secret are required.');
+        }
+        if (($config['shortcode'] ?? '') === '' || ($config['passkey'] ?? '') === '') {
+            throw new \RuntimeException('M-Pesa shortcode and passkey are required.');
+        }
+        if (($config['stk_callback_url'] ?? '') === '') {
+            throw new \RuntimeException('STK callback URL is required.');
+        }
+
+        self::assertPublicHttpsUrl($config['stk_callback_url'], 'STK callback URL', $config['env'] ?? 'sandbox');
+    }
+
+    /** @param  array<string, mixed>  $config */
     public static function assertReadyForC2b(array $config): void
     {
         if (($config['consumer_key'] ?? '') === '' || ($config['consumer_secret'] ?? '') === '') {

@@ -142,7 +142,7 @@ class MpesaService
      */
     public function stkPaybill(string $phone, int $amount, string $accountReference, ?string $partyB = null): array
     {
-        $this->assertReadyForStkPush();
+        MpesaSettingsResolver::assertReadyForStkPaybill($this->config);
         $accessToken = $this->getAccessToken();
         $timestamp = Carbon::now()->format('YmdHis');
         $password = base64_encode($this->config['shortcode'].$this->config['passkey'].$timestamp);
