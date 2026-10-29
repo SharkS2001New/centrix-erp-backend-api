@@ -260,6 +260,10 @@ class MobileSalesService
      */
     protected function isCacheableTodayOrdersList(array $filters): bool
     {
+        if ((int) ($filters['page'] ?? 1) > 1) {
+            return false;
+        }
+
         if (filled($filters['q'] ?? null)) {
             return false;
         }
@@ -340,17 +344,23 @@ class MobileSalesService
         $perPage = min(max((int) ($filters['per_page'] ?? 25), 1), 200);
         $dateScoped = ! $isExactOrderLookup && ($hasExplicitDates || $workflowStatus === null);
         $summaryQuery = clone $query;
-        $page = $query->paginate($perPage);
-        $listSummary = $this->buildOrderListSummary(
-            $summaryQuery,
-            $search,
-            (int) ($user->organization_id ?? 0),
-            $user,
-            $from,
-            $to,
-            $dateScoped && $search === '',
-            (int) $page->total(),
-        );
+        $requestedPage = max(1, (int) ($filters['page'] ?? 1));
+        $isLaterPage = $requestedPage > 1;
+        $page = $isLaterPage
+            ? $query->simplePaginate($perPage)
+            : $query->paginate($perPage);
+        $listSummary = $isLaterPage
+            ? []
+            : $this->buildOrderListSummary(
+                $summaryQuery,
+                $search,
+                (int) ($user->organization_id ?? 0),
+                $user,
+                $from,
+                $to,
+                $dateScoped && $search === '',
+                (int) $page->total(),
+            );
         $gate = $this->erp->gateForUser($user);
         $presentation = app(SaleOrderPresentationService::class);
         $cancelCaps = $this->cancellationCapabilitiesTemplate($user, $gate);
@@ -365,15 +375,22 @@ class MobileSalesService
                 ->all(),
             'meta' => [
                 'current_page' => $page->currentPage(),
-                'last_page' => $page->lastPage(),
+                'last_page' => $isLaterPage
+                    ? ($page->hasMorePages() ? $page->currentPage() + 1 : $page->currentPage())
+                    : $page->lastPage(),
                 'per_page' => $page->perPage(),
-                'total' => $page->total(),
+                'total' => $isLaterPage
+                    ? (($page->currentPage() - 1) * $page->perPage())
+                        + count($page->items())
+                        + ($page->hasMorePages() ? 1 : 0)
+                    : $page->total(),
                 'summary' => $listSummary,
             ],
         ];
 
         if (
             $cache->canServeMobileListFromCache($filters)
+            && (int) ($filters['page'] ?? 1) === 1
             && isset($filters['from_date'])
             && $cache->isPastDate(Carbon::parse((string) $filters['from_date'])->toDateString())
         ) {
@@ -447,10 +464,7 @@ class MobileSalesService
             return $summary;
         }
 
-        $saleIds = (clone $query)->select('sales.id')->pluck('sales.id');
-        if ($saleIds->isEmpty()) {
-            return $summary;
-        }
+        $saleIds = (clone $query)->reorder()->select('sales.id');
 
         $like = '%'.SqlLikeSearch::escape($term).'%';
         $aggRows = SaleItem::query()

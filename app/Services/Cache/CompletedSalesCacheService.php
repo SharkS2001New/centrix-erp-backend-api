@@ -136,6 +136,10 @@ class CompletedSalesCacheService
             return false;
         }
 
+        if ((int) ($filters['page'] ?? 1) > 1) {
+            return false;
+        }
+
         if (filled($filters['q'] ?? null)) {
             return false;
         }

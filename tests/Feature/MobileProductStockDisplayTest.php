@@ -7,6 +7,8 @@ use App\Models\Organization;
 use App\Models\PlatformSubscription;
 use App\Models\Product;
 use App\Models\User;
+use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
@@ -118,6 +120,34 @@ class MobileProductStockDisplayTest extends TestCase
 
         $this->assertContains($inStock->product_code, $codes);
         $this->assertNotContains($outOfStock->product_code, $codes);
+    }
+
+    public function test_mobile_product_list_uses_has_more_pagination_without_counting_catalogue(): void
+    {
+        $this->setMobileProductListMode('all_products');
+        $user = $this->makeMobileUser();
+        $token = $this->loginMobile($user);
+        $productCountQueries = 0;
+
+        DB::listen(function (QueryExecuted $query) use (&$productCountQueries): void {
+            $sql = strtolower($query->sql);
+            if (str_contains($sql, 'count(*)') && str_contains($sql, 'products')) {
+                $productCountQueries++;
+            }
+        });
+
+        $response = $this->withToken($token)
+            ->getJson('/api/v1/products?per_page=1')
+            ->assertOk()
+            ->assertJsonStructure([
+                'data',
+                'meta' => ['current_page', 'last_page', 'per_page', 'total'],
+            ])
+            ->assertJsonPath('meta.current_page', 1)
+            ->assertJsonPath('meta.per_page', 1);
+
+        $this->assertCount(1, $response->json('data'));
+        $this->assertSame(0, $productCountQueries);
     }
 
     public function test_mobile_product_list_includes_out_of_stock_when_configured(): void

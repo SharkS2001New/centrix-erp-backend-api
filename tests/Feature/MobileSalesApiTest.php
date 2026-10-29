@@ -138,6 +138,27 @@ class MobileSalesApiTest extends TestCase
         $this->assertSame(1, $salesCountQueries);
     }
 
+    public function test_mobile_order_list_skips_exact_count_and_summary_on_later_pages(): void
+    {
+        $user = $this->makeMobileUser(['username' => 'mobile_page_'.uniqid()]);
+        $token = $this->loginMobile($user);
+        $salesCountQueries = 0;
+
+        DB::listen(function (QueryExecuted $query) use (&$salesCountQueries): void {
+            $sql = strtolower($query->sql);
+            if (str_contains($sql, 'count(*)') && str_contains($sql, 'sales')) {
+                $salesCountQueries++;
+            }
+        });
+
+        $this->withToken($token)
+            ->getJson('/api/v1/mobile/orders?from_date=2020-01-01&to_date=2020-01-01&per_page=1&page=2')
+            ->assertOk()
+            ->assertJsonPath('meta.current_page', 2);
+
+        $this->assertSame(0, $salesCountQueries);
+    }
+
     public function test_mobile_dashboard_scopes_orders_to_signed_in_rep(): void
     {
         $rep = $this->makeMobileUser(['username' => 'mobile_rep_'.uniqid()]);

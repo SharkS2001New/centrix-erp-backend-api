@@ -383,7 +383,10 @@ class ProductController extends BaseResourceController
         if (! $useLeanSelect) {
             $paginatorQuery->with('branch:id,branch_code,branch_name');
         }
-        $paginator = $paginatorQuery->paginate($perPage);
+        $mobileList = $this->salesLoginChannel($request) === 'mobile';
+        $paginator = $mobileList
+            ? $paginatorQuery->simplePaginate($perPage)
+            : $paginatorQuery->paginate($perPage);
 
         $branchId = $this->branchStock->resolveBranchIdOptional($user, $request);
         $presented = $paginator->getCollection()->map(
@@ -412,6 +415,23 @@ class ProductController extends BaseResourceController
         }
 
         $paginator->setCollection($presented);
+
+        if ($mobileList) {
+            $currentPage = $paginator->currentPage();
+            $hasMore = $paginator->hasMorePages();
+
+            return response()->json([
+                'data' => $paginator->items(),
+                'meta' => [
+                    'current_page' => $currentPage,
+                    'last_page' => $hasMore ? $currentPage + 1 : $currentPage,
+                    'per_page' => $perPage,
+                    'total' => (($currentPage - 1) * $perPage)
+                        + count($paginator->items())
+                        + ($hasMore ? 1 : 0),
+                ],
+            ]);
+        }
 
         return response()->json($paginator);
     }
