@@ -8,6 +8,7 @@ use App\Models\KraResponse;
 use App\Models\Organization;
 use App\Models\Product;
 use App\Models\Sale;
+use App\Models\SaleItem;
 use App\Models\User;
 use App\Models\Vat;
 use App\Services\Kra\KraAgentBridge;
@@ -120,6 +121,7 @@ class KraDeviceCheckoutTest extends TestCase
         if (! $product->vat_id) {
             $product->update(['vat_id' => Vat::first()->id]);
         }
+        $product->update(['product_name' => 'Maziwa 🥛 – 1L']);
 
         $template = Sale::query()
             ->where('organization_id', $this->user->organization_id)
@@ -137,7 +139,7 @@ class KraDeviceCheckoutTest extends TestCase
 
         $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
             'product_code' => $product->product_code,
-            'quantity' => 1,
+            'quantity' => 0.333,
         ])->assertCreated();
 
         $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
@@ -155,6 +157,19 @@ class KraDeviceCheckoutTest extends TestCase
         $this->assertTrue(
             KraAgentCommand::query()->where('path', '/api/complete-workflow')->exists(),
             'Mobile checkout must fiscalize through Centrix KRA Agent',
+        );
+        $command = KraAgentCommand::query()
+            ->where('path', '/api/complete-workflow')
+            ->latest('created_at')
+            ->firstOrFail();
+        $saleItem = SaleItem::query()->where('sale_id', $sale['id'])->firstOrFail();
+        $pluLine = $command->body_json['plu_data'][0] ?? [];
+        $this->assertSame('Maziwa - 1L', $pluLine['item_Name'] ?? null);
+        $this->assertSame('0.333', $pluLine['SaleQty'] ?? null);
+        $this->assertEqualsWithDelta(
+            (float) $saleItem->amount,
+            (float) ($pluLine['SalePrice'] ?? 0) * (float) ($pluLine['SaleQty'] ?? 0),
+            0.0001,
         );
         Http::assertNothingSent();
     }

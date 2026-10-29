@@ -54,6 +54,26 @@ class KraWorkflowPayloadTest extends TestCase
         $this->assertEqualsWithDelta(416.63, (float) $line['SalePrice'] * 12.5, 0.0001);
     }
 
+    public function test_workflow_plu_line_sanitizes_name_and_preserves_mobile_fractional_quantity(): void
+    {
+        $line = KraDeviceService::buildWorkflowPluLine([
+            'product_name' => 'Maziwa 🥛 – 1L',
+            'product_code' => 'MILK-1L',
+            'quantity' => 0.333,
+            'amount' => 33.30,
+        ]);
+
+        $this->assertSame('Maziwa - 1L', $line['item_Name']);
+        $this->assertSame('0.333', $line['SaleQty']);
+        $this->assertSame('100.00', $line['SalePrice']);
+        $this->assertSame('33.30', $line['SaleAmount']);
+        $this->assertEqualsWithDelta(
+            (float) $line['SaleAmount'],
+            (float) $line['SalePrice'] * (float) $line['SaleQty'],
+            0.0001,
+        );
+    }
+
     public function test_workflow_plu_line_keeps_two_decimal_price_when_it_reconciles(): void
     {
         $line = KraDeviceService::buildWorkflowPluLine([

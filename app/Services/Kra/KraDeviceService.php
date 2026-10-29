@@ -860,15 +860,17 @@ class KraDeviceService
         $quantity = max(0.001, (float) ($item['quantity'] ?? 1));
         $itemName = trim((string) ($item['product_name'] ?? 'Product'));
         $productCode = trim((string) ($item['product_code'] ?? ''));
+        $saleQty = self::formatWorkflowSaleQty($quantity);
+        $wireQuantity = (float) $saleQty;
 
         return [
-            'item_Name' => $itemName !== '' ? $itemName : 'Product',
+            'item_Name' => self::sanitizeComstorePluName($itemName !== '' ? $itemName : 'Product'),
             // Comstore sale workflow expects an empty Barcode; keep product_code for
             // Centrix matching against device SKU / "NO FIND PLU DATA for item …".
             'Barcode' => '',
             'product_code' => $productCode,
-            'SalePrice' => self::formatWorkflowSalePrice($amount, $quantity),
-            'SaleQty' => self::formatWorkflowSaleQty($quantity),
+            'SalePrice' => self::formatWorkflowSalePrice($amount, $wireQuantity),
+            'SaleQty' => $saleQty,
             'SaleAmount' => number_format($amount, 2, '.', ''),
             'ItemDisCount(%)' => '0',
             'ItemDisCount' => '0',
@@ -883,7 +885,7 @@ class KraDeviceService
             return (string) (int) round($quantity);
         }
 
-        return rtrim(rtrim(number_format($quantity, 2, '.', ''), '0'), '.');
+        return rtrim(rtrim(number_format($quantity, 4, '.', ''), '0'), '.');
     }
 
     /**
