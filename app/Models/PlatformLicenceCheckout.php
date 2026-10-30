@@ -16,6 +16,8 @@ class PlatformLicenceCheckout extends Model
         'phone_number',
         'checkout_request_id',
         'mpesa_receipt',
+        'manual_payment_reference',
+        'manual_payment_notified_at',
         'status',
         'result_code',
         'result_desc',
@@ -25,6 +27,7 @@ class PlatformLicenceCheckout extends Model
         'months' => 'integer',
         'amount' => 'decimal:2',
         'discount_percent' => 'decimal:2',
+        'manual_payment_notified_at' => 'datetime',
     ];
 
     public function organization(): BelongsTo

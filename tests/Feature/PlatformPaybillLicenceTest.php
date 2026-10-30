@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Organization;
 use App\Models\EquityBankAccount;
 use App\Models\EquityIncomingPayment;
+use App\Models\InAppNotification;
 use App\Models\PlatformLicencePayment;
 use App\Models\PlatformPlan;
 use App\Models\PlatformSubscription;
@@ -358,6 +359,56 @@ class PlatformPaybillLicenceTest extends TestCase
         $this->assertSame('pending', $checkout->fresh()->status);
         $this->assertSame('available', EquityIncomingPayment::query()->where('transaction_id', 'EQPLANPAY002')->firstOrFail()->status);
         $this->assertSame(0, PlatformLicencePayment::query()->count());
+    }
+
+    public function test_manual_equity_payment_reference_notifies_platform_admin_without_activating(): void
+    {
+        [$org, $plan] = $this->seedLicensedOrg('MOON', '0712000111', '2026-09-01');
+        $platform = Organization::query()
+            ->whereRaw('UPPER(company_code) = ?', ['PLATFORM'])
+            ->firstOrFail();
+        EquityBankAccount::query()->where('organization_id', $platform->id)->update(['is_active' => false]);
+
+        $service = app(PlatformPaybillLicenceService::class);
+        $service->saveSettings([
+            'equity_manual_paybill' => '123456',
+            'equity_manual_account_name' => 'Centrix Equity',
+            'equity_manual_account_number' => 'PLATFORM-EQ',
+            'equity_manual_instructions' => 'Use the organisation code as the reference.',
+        ]);
+        $this->assertSame('123456', $service->equityInstructionsFor($org)['paybill_number']);
+        $this->assertTrue($service->paymentMethodsFor($org)['equity']);
+
+        $checkout = $service->startCheckout($org, $plan, 1, null, 'monthly');
+        $admin = User::query()->create([
+            'organization_id' => $platform->id,
+            'role_id' => Role::query()->where('role_name', 'Administrator')->where('scope', 'org')->value('id'),
+            'username' => 'platform_admin_'.uniqid(),
+            'password' => Hash::make('password'),
+            'full_name' => 'Platform Admin',
+            'is_admin' => true,
+            'is_super_admin' => true,
+            'access_scope' => 'org',
+            'is_active' => true,
+        ]);
+        Sanctum::actingAs($this->userForOrg($org));
+
+        $payload = [
+            'checkout_id' => $checkout->id,
+            'transaction_id' => 'EQMANUAL123',
+        ];
+        $this->postJson('/api/v1/erp/organization/licence/equity/notify', $payload)
+            ->assertOk()
+            ->assertJsonPath('admin_notified', true);
+        $this->postJson('/api/v1/erp/organization/licence/equity/notify', $payload)
+            ->assertOk()
+            ->assertJsonPath('admin_notified', true);
+
+        $this->assertSame('pending', $checkout->fresh()->status);
+        $this->assertSame('EQMANUAL123', $checkout->fresh()->manual_payment_reference);
+        $this->assertNotNull($checkout->fresh()->manual_payment_notified_at);
+        $this->assertSame(1, InAppNotification::query()->where('user_id', $admin->id)->count());
+        $this->assertSame('trialing', PlatformSubscription::query()->where('organization_id', $org->id)->firstOrFail()->status);
     }
 
     protected function userForOrg(Organization $org): User

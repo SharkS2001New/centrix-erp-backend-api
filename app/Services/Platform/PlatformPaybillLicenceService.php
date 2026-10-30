@@ -65,6 +65,10 @@ class PlatformPaybillLicenceService
         foreach ([
             'manual_mpesa_account_name',
             'manual_mpesa_instructions',
+            'equity_manual_paybill',
+            'equity_manual_account_name',
+            'equity_manual_account_number',
+            'equity_manual_instructions',
             'stk_env',
             'stk_shortcode',
             'stk_callback_url',
@@ -228,15 +232,20 @@ class PlatformPaybillLicenceService
     public function equityInstructionsFor(Organization $customer): ?array
     {
         $account = $this->platformEquityAccount();
-        if (! $account) {
+        $settings = $this->settings();
+        $manualPaybill = trim((string) ($settings?->equity_manual_paybill ?? ''));
+        if (! $account && $manualPaybill === '') {
             return null;
         }
 
+        $accountName = $settings?->equity_manual_account_name ?: ($account?->name ?? '');
+
         return [
-            'account_name' => (string) $account->name,
-            'paybill_number' => (string) ($account->paybill_number ?: $account->primary_account_number),
-            'account_number' => (string) ($account->account_number ?: $customer->company_code),
+            'account_name' => (string) $accountName,
+            'paybill_number' => (string) ($manualPaybill ?: ($account?->paybill_number ?: $account?->primary_account_number)),
+            'account_number' => (string) ($settings?->equity_manual_account_number ?: ($account?->account_number ?: $customer->company_code)),
             'reference' => (string) $customer->company_code,
+            'instructions' => (string) ($settings?->equity_manual_instructions ?? ''),
         ];
     }
 

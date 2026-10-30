@@ -224,8 +224,12 @@ class KraDeviceCheckoutTest extends TestCase
             ->firstOrFail();
         $saleItem = SaleItem::query()->where('sale_id', $sale['id'])->firstOrFail();
         $pluLine = $command->body_json['plu_data'][0] ?? [];
+        $sign = $command->body_json['sign_structure'] ?? [];
         $this->assertSame('Maziwa - 1L', $pluLine['item_Name'] ?? null);
         $this->assertSame('0.333', $pluLine['SaleQty'] ?? null);
+        $this->assertSame((string) $pluLine['SaleAmount'], $sign['CashAmt'] ?? null);
+        $this->assertSame('0.00', $sign['CheckAmt'] ?? null);
+        $this->assertSame('0.00', $sign['CardAmt'] ?? null);
         $this->assertNotEquals((float) $product->unit_price + 500, (float) $saleItem->unit_price);
         $this->assertEqualsWithDelta(
             (float) $saleItem->amount,
@@ -520,6 +524,10 @@ class KraDeviceCheckoutTest extends TestCase
         $this->assertNotNull($command);
         $sign = is_array($command->body_json) ? ($command->body_json['sign_structure'] ?? []) : [];
         $this->assertSame('P051234567X', $sign['pinOfBuyer'] ?? null);
+        $saleItem = SaleItem::query()->where('sale_id', $sale['id'])->firstOrFail();
+        $this->assertSame(number_format((float) $saleItem->amount, 2, '.', ''), $sign['CashAmt'] ?? null);
+        $this->assertSame('0.00', $sign['CheckAmt'] ?? null);
+        $this->assertSame('0.00', $sign['CardAmt'] ?? null);
 
         $this->assertDatabaseHas('kra_responses', [
             'order_no' => 42,

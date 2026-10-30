@@ -685,6 +685,7 @@ Route::prefix('v1')->group(function () {
         Route::post('erp/organization/licence/checkout', [PlatformPaybillController::class, 'checkout']);
         Route::post('erp/organization/licence/equity/checkout', [PlatformPaybillController::class, 'equityCheckout']);
         Route::post('erp/organization/licence/equity/verify', [PlatformPaybillController::class, 'verifyEquityCheckout']);
+        Route::post('erp/organization/licence/equity/notify', [PlatformPaybillController::class, 'notifyEquityCheckout']);
         Route::post('erp/organization/licence/notify', [PlatformPaybillController::class, 'notify']);
         Route::post('erp/organization/licence/stk', [PlatformPaybillController::class, 'stk']);
         Route::get('erp/organization/licence/status', [PlatformPaybillController::class, 'status']);

@@ -87,4 +87,5 @@ class KraWorkflowPayloadTest extends TestCase
         $this->assertSame('127.40', $line['SalePrice']);
         $this->assertEqualsWithDelta(1592.5, (float) $line['SalePrice'] * 12.5, 0.0001);
     }
+
 }

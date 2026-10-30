@@ -1103,7 +1103,8 @@ class KraDeviceService
         $cashAmt = round((float) ($tenders['cash'] ?? $totalAmount), 2);
         $checkAmt = round((float) ($tenders['check'] ?? 0), 2);
         $cardAmt = round((float) ($tenders['card'] ?? 0), 2);
-        // KRA validates sum(plu SaleAmount) against CashAmt — prefer line sum when they diverge.
+        // Checkout callers that provide tenders must fiscalize those exact recorded
+        // amounts, as POS does. Only callers without tender details use the line total.
         if ($tenders === null && abs($pluLineTotal - $cashAmt) > 0.009) {
             $cashAmt = $pluLineTotal;
         }

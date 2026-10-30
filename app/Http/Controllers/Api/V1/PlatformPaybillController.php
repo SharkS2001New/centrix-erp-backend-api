@@ -52,6 +52,10 @@ class PlatformPaybillController extends Controller
             'account_name_prefix' => 'nullable|string|max:40',
             'manual_mpesa_account_name' => 'nullable|string|max:160',
             'manual_mpesa_instructions' => 'nullable|string|max:1000',
+            'equity_manual_paybill' => 'nullable|string|max:40',
+            'equity_manual_account_name' => 'nullable|string|max:160',
+            'equity_manual_account_number' => 'nullable|string|max:80',
+            'equity_manual_instructions' => 'nullable|string|max:1000',
             'stk_env' => 'sometimes|in:sandbox,live',
             'stk_consumer_key' => 'nullable|string|max:255',
             'stk_consumer_secret' => 'nullable|string|max:500',
@@ -263,6 +267,79 @@ class PlatformPaybillController extends Controller
                 ? 'Equity payment confirmed. Your plan is active.'
                 : 'Equity payment has not been applied yet.',
             'license' => $license,
+        ]);
+    }
+
+    public function notifyEquityCheckout(Request $request)
+    {
+        $user = $request->user();
+        $org = $user?->organization;
+        if (! $user || ! $org) {
+            return response()->json(['message' => 'No organisation on this login.'], 422);
+        }
+
+        $data = $request->validate([
+            'checkout_id' => 'required|integer',
+            'transaction_id' => 'required|string|max:100',
+        ]);
+        $transactionId = trim($data['transaction_id']);
+        $checkout = PlatformLicenceCheckout::query()
+            ->where('organization_id', $org->id)
+            ->findOrFail((int) $data['checkout_id']);
+        if ($checkout->status !== 'pending') {
+            return response()->json(['message' => 'This licence payment is no longer pending review.'], 422);
+        }
+
+        $duplicate = PlatformLicenceCheckout::query()
+            ->where('manual_payment_reference', $transactionId)
+            ->whereKeyNot($checkout->id)
+            ->exists();
+        if ($duplicate) {
+            return response()->json(['message' => 'This payment reference has already been submitted.'], 422);
+        }
+
+        if ($checkout->manual_payment_reference === $transactionId && $checkout->manual_payment_notified_at) {
+            return response()->json([
+                'message' => 'Your payment reference was already sent to the platform administrator for review.',
+                'admin_notified' => true,
+                'checkout' => $this->checkoutPayload($checkout),
+            ]);
+        }
+
+        $checkout->manual_payment_reference = $transactionId;
+        $checkout->manual_payment_notified_at = null;
+        $checkout->save();
+
+        $plan = $checkout->plan;
+        $notified = app(\App\Services\Notifications\AdminNotificationService::class)->notifySuperAdmins($user, [
+            'type' => 'licence_payment_review',
+            'severity' => 'warning',
+            'title' => 'Equity licence payment review',
+            'message' => implode(' ', [
+                $org->org_name.' ('.$org->company_code.') reported an Equity payment of',
+                number_format((float) $checkout->amount, 2).' '.($plan?->currency ?: 'KES').'.',
+                'Reference: '.$transactionId.'.',
+                $plan ? 'Plan: '.$plan->name.'.' : '',
+                'Verify the payment before activating the licence.',
+            ]),
+            'action_url' => '/platform/organizations/'.$org->id,
+        ]);
+
+        if ($notified === 0) {
+            return response()->json([
+                'message' => 'The payment reference was saved, but no active platform administrator could be notified. Please contact Centrix support.',
+                'admin_notified' => false,
+                'checkout' => $this->checkoutPayload($checkout),
+            ], 503);
+        }
+
+        $checkout->manual_payment_notified_at = now();
+        $checkout->save();
+
+        return response()->json([
+            'message' => 'Your payment reference was sent to the platform administrator for review. Your plan will activate after the payment is verified.',
+            'admin_notified' => true,
+            'checkout' => $this->checkoutPayload($checkout),
         ]);
     }
 
@@ -676,6 +753,10 @@ class PlatformPaybillController extends Controller
             'has_stk_consumer_key' => (bool) $settings?->stk_consumer_key,
             'has_stk_consumer_secret' => (bool) $settings?->stk_consumer_secret,
             'has_stk_passkey' => (bool) $settings?->stk_passkey,
+            'equity_manual_paybill' => $settings?->equity_manual_paybill ?? '',
+            'equity_manual_account_name' => $settings?->equity_manual_account_name ?? '',
+            'equity_manual_account_number' => $settings?->equity_manual_account_number ?? '',
+            'equity_manual_instructions' => $settings?->equity_manual_instructions ?? '',
             'organization_id' => $settings?->organization_id,
             'duration_discount_percent' => (float) ($settings?->duration_discount_percent ?? 0),
             'duration_discount_min_months' => (int) ($settings?->duration_discount_min_months ?? 3),
@@ -697,6 +778,8 @@ class PlatformPaybillController extends Controller
             'months' => (int) $checkout->months,
             'discount_percent' => (float) $checkout->discount_percent,
             'status' => $checkout->status,
+            'manual_payment_reference' => $checkout->manual_payment_reference,
+            'manual_payment_notified_at' => $checkout->manual_payment_notified_at?->toIso8601String(),
         ];
     }
 }
