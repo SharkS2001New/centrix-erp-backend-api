@@ -1103,9 +1103,12 @@ class KraDeviceService
         $cashAmt = round((float) ($tenders['cash'] ?? $totalAmount), 2);
         $checkAmt = round((float) ($tenders['check'] ?? 0), 2);
         $cardAmt = round((float) ($tenders['card'] ?? 0), 2);
-        // Checkout callers that provide tenders must fiscalize those exact recorded
-        // amounts, as POS does. Only callers without tender details use the line total.
-        if ($tenders === null && abs($pluLineTotal - $cashAmt) > 0.009) {
+        // Keep the recorded tender mix, but put any amount needed to reconcile the
+        // invoice total into cash so Comstore sees tenders equal the PLU line total.
+        $tenderShortfall = round($pluLineTotal - $cashAmt - $checkAmt - $cardAmt, 2);
+        if ($tenderShortfall > 0.009) {
+            $cashAmt = round($cashAmt + $tenderShortfall, 2);
+        } elseif ($tenders === null && abs($tenderShortfall) > 0.009) {
             $cashAmt = $pluLineTotal;
         }
 

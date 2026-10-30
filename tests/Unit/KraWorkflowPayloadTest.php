@@ -4,10 +4,37 @@ namespace Tests\Unit;
 
 use App\Services\Kra\KraDeviceService;
 use App\Services\Kra\SalesVatCalculator;
+use ReflectionMethod;
 use Tests\TestCase;
 
 class KraWorkflowPayloadTest extends TestCase
 {
+    /** @param array{cash: float, check: float, card: float} $tenders
+     *  @return array<string, mixed>
+     */
+    protected function buildWorkflowPayloadWithTenders(array $tenders): array
+    {
+        $service = KraDeviceService::fromSettings([
+            'kra_device_ip' => 'http://127.0.0.1:4000',
+            'kra_serial_number' => 'DEJA02220240050',
+            'kra_pin_number' => 'P052177271G',
+        ]);
+        $method = new ReflectionMethod(KraDeviceService::class, 'buildWorkflowPayload');
+        $method->setAccessible(true);
+
+        return $method->invoke(
+            $service,
+            [['product_name' => 'Orange', 'quantity' => 1, 'amount' => 100]],
+            100.0,
+            '1000000001',
+            'original',
+            '',
+            '',
+            null,
+            $tenders,
+        );
+    }
+
     public function test_workflow_plu_line_uses_empty_barcode_and_product_name(): void
     {
         $line = KraDeviceService::buildWorkflowPluLine([
@@ -88,4 +115,29 @@ class KraWorkflowPayloadTest extends TestCase
         $this->assertEqualsWithDelta(1592.5, (float) $line['SalePrice'] * 12.5, 0.0001);
     }
 
+    public function test_workflow_adds_tender_shortfall_to_cash_without_changing_other_tenders(): void
+    {
+        $sign = $this->buildWorkflowPayloadWithTenders([
+            'cash' => 20.0,
+            'check' => 10.0,
+            'card' => 30.0,
+        ])['sign_structure'];
+
+        $this->assertSame('60.00', $sign['CashAmt']);
+        $this->assertSame('10.00', $sign['CheckAmt']);
+        $this->assertSame('30.00', $sign['CardAmt']);
+    }
+
+    public function test_workflow_unpaid_order_uses_plu_total_as_cash_to_reconcile(): void
+    {
+        $sign = $this->buildWorkflowPayloadWithTenders([
+            'cash' => 0.0,
+            'check' => 0.0,
+            'card' => 0.0,
+        ])['sign_structure'];
+
+        $this->assertSame('100.00', $sign['CashAmt']);
+        $this->assertSame('0.00', $sign['CheckAmt']);
+        $this->assertSame('0.00', $sign['CardAmt']);
+    }
 }
