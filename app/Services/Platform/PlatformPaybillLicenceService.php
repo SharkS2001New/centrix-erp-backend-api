@@ -72,6 +72,8 @@ class PlatformPaybillLicenceService
             'stk_env',
             'stk_shortcode',
             'stk_callback_url',
+            'c2b_confirmation_url',
+            'c2b_validation_url',
         ] as $key) {
             if (array_key_exists($key, $data)) {
                 $fill[$key] = $this->blankToNull($data[$key] ?? null);

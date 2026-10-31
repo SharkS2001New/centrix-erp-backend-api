@@ -234,6 +234,16 @@ class MpesaSettingsResolver
         }
     }
 
+    /** @param  array<string, mixed>  $config */
+    public static function assertReadyForC2bRegistration(array $config): void
+    {
+        if (trim((string) ($config['c2b_confirmation_url'] ?? '')) === '') {
+            throw new \RuntimeException('A C2B confirmation URL is required. The STK callback URL cannot be used for C2B registration.');
+        }
+
+        self::assertReadyForC2b($config);
+    }
+
     protected static function assertPublicHttpsUrl(string $endpoint, string $label, string $env): void
     {
         $path = strtolower((string) parse_url($endpoint, PHP_URL_PATH));

@@ -14,6 +14,8 @@ use App\Services\Platform\FreePlanAccess;
 use App\Services\Platform\OrganizationLicenseService;
 use App\Services\Platform\PlatformPaybillLicenceService;
 use App\Services\SystemIssues\SystemIssueAlertSettingsResolver;
+use App\Services\Mpesa\MpesaC2bUrlRegistrationService;
+use App\Services\Mpesa\MpesaSettingsResolver;
 use App\Services\WhatsApp\MetaWhatsAppClient;
 use App\Services\WhatsApp\ResolvedWhatsAppConfig;
 use App\Services\WhatsApp\WhatsAppSettingsResolver;
@@ -22,6 +24,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
+use RuntimeException;
 
 class PlatformPaybillController extends Controller
 {
@@ -62,6 +66,8 @@ class PlatformPaybillController extends Controller
             'stk_shortcode' => 'nullable|string|max:20',
             'stk_passkey' => 'nullable|string|max:500',
             'stk_callback_url' => 'nullable|url|max:500',
+            'c2b_confirmation_url' => 'nullable|url|max:500',
+            'c2b_validation_url' => 'nullable|url|max:500',
             'clear_stk_credentials' => 'sometimes|boolean',
             'duration_discount_percent' => 'sometimes|numeric|min:0|max:100',
             'duration_discount_min_months' => 'sometimes|integer|min:0|max:36',
@@ -78,6 +84,38 @@ class PlatformPaybillController extends Controller
             'data' => $this->settingsPayload($settings),
             'message' => 'Platform payment settings saved.',
         ]);
+    }
+
+    public function registerC2bUrls(MpesaC2bUrlRegistrationService $registration)
+    {
+        $settings = $this->paybill->settings();
+        $config = MpesaSettingsResolver::normalize([
+            'env' => $settings?->stk_env ?: 'sandbox',
+            'consumer_key' => $settings?->stk_consumer_key,
+            'consumer_secret' => $settings?->stk_consumer_secret,
+            'child_storecode' => $settings?->short_code,
+            'c2b_confirmation_url' => $settings?->c2b_confirmation_url,
+            'c2b_validation_url' => $settings?->c2b_validation_url,
+        ]);
+
+        try {
+            MpesaSettingsResolver::assertReadyForC2bRegistration($config);
+        } catch (RuntimeException $e) {
+            throw ValidationException::withMessages(['mpesa' => [$e->getMessage()]]);
+        }
+
+        try {
+            return response()->json([
+                'success' => true,
+                'message' => 'Platform C2B URLs registered successfully with Daraja.',
+                'registration' => $registration->register($config),
+            ]);
+        } catch (RuntimeException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 502);
+        }
     }
 
     public function payments(Request $request)
@@ -750,6 +788,8 @@ class PlatformPaybillController extends Controller
             'stk_consumer_key' => $settings?->stk_consumer_key ? '********' : '',
             'stk_shortcode' => $settings?->stk_shortcode ?? '',
             'stk_callback_url' => $settings?->stk_callback_url ?? '',
+            'c2b_confirmation_url' => $settings?->c2b_confirmation_url ?? '',
+            'c2b_validation_url' => $settings?->c2b_validation_url ?? '',
             'has_stk_consumer_key' => (bool) $settings?->stk_consumer_key,
             'has_stk_consumer_secret' => (bool) $settings?->stk_consumer_secret,
             'has_stk_passkey' => (bool) $settings?->stk_passkey,

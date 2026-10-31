@@ -1349,19 +1349,23 @@ class CartOperationsController extends Controller
         // firstOrCreate(user+channel) row. Local-first checkout fire-and-forgets
         // DELETE /lines on that sticky cart, which raced PUT + checkout ("Cart is empty.").
         if (filter_var($input['offline_sync'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
-            $cart = TemporaryCart::create([
+            $cart = DB::transaction(fn () => TemporaryCart::create([
                 'user_id' => $user->id,
                 'channel' => $channel,
                 ...$cartAttributes,
-            ]);
+            ]), 3);
         } else {
-            $cart = TemporaryCart::firstOrCreate(
-                [
-                    'user_id' => $user->id,
-                    'channel' => $channel,
-                ],
-                $cartAttributes,
-            );
+            $cart = DB::transaction(function () use ($user, $channel, $cartAttributes) {
+                User::query()->whereKey($user->id)->lockForUpdate()->firstOrFail();
+
+                return TemporaryCart::firstOrCreate(
+                    [
+                        'user_id' => $user->id,
+                        'channel' => $channel,
+                    ],
+                    $cartAttributes,
+                );
+            }, 3);
         }
 
         if (! $cart->organization_id && $user->organization_id) {

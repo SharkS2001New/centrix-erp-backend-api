@@ -27,6 +27,8 @@ class PlatformBillingSetting extends Model
         'stk_shortcode',
         'stk_passkey',
         'stk_callback_url',
+        'c2b_confirmation_url',
+        'c2b_validation_url',
     ];
 
     protected $casts = [

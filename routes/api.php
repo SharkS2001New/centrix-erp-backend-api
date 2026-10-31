@@ -364,8 +364,13 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.module_any:accounting,payments', 'erp.permission:admin.manage']);
         Route::get('mpesa-paybill-accounts', [MpesaPaybillAccountController::class, 'index'])
             ->middleware(['erp.module_any:admin,accounting,payments,sales', 'erp.permission:admin.manage|payments.manage|accounting.view']);
+        Route::post('mpesa-paybill-accounts/register-default-c2b-urls', [MpesaPaybillAccountController::class, 'registerDefaultC2bUrls'])
+            ->middleware(['erp.module_any:admin,accounting,payments', 'erp.permission:admin.manage']);
         Route::post('mpesa-paybill-accounts', [MpesaPaybillAccountController::class, 'store'])
             ->middleware(['erp.module_any:admin,accounting,payments', 'erp.permission:admin.manage']);
+        Route::post('mpesa-paybill-accounts/{id}/register-c2b-urls', [MpesaPaybillAccountController::class, 'registerAccountC2bUrls'])
+            ->middleware(['erp.module_any:admin,accounting,payments', 'erp.permission:admin.manage'])
+            ->whereNumber('id');
         Route::patch('mpesa-paybill-accounts/{id}', [MpesaPaybillAccountController::class, 'update'])
             ->middleware(['erp.module_any:admin,accounting,payments', 'erp.permission:admin.manage'])
             ->whereNumber('id');
@@ -640,6 +645,8 @@ Route::prefix('v1')->group(function () {
         Route::get('admin/platform-paybill', [PlatformPaybillController::class, 'show'])
             ->middleware(['erp.super_admin']);
         Route::put('admin/platform-paybill', [PlatformPaybillController::class, 'update'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/platform-paybill/register-c2b-urls', [PlatformPaybillController::class, 'registerC2bUrls'])
             ->middleware(['erp.super_admin']);
         Route::get('admin/platform-licence-payments', [PlatformPaybillController::class, 'payments'])
             ->middleware(['erp.super_admin']);

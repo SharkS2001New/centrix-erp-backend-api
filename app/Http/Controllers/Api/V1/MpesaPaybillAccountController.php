@@ -5,14 +5,19 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Models\Branch;
 use App\Models\MpesaPaybillAccount;
+use App\Models\Organization;
 use App\Models\RouteModel;
 use App\Models\Till;
 use App\Services\Auth\UserAccessService;
+use App\Services\Mpesa\MpesaC2bUrlRegistrationService;
+use App\Services\Mpesa\MpesaPaybillAccountService;
+use App\Services\Mpesa\MpesaSettingsResolver;
 use App\Services\Payments\PaymentAccountService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use RuntimeException;
 
 class MpesaPaybillAccountController extends Controller
 {
@@ -37,6 +42,44 @@ class MpesaPaybillAccountController extends Controller
             ->get();
 
         return response()->json(['data' => $rows]);
+    }
+
+    public function registerDefaultC2bUrls(Request $request, MpesaC2bUrlRegistrationService $registration)
+    {
+        $organization = $this->organizationForRequest($request);
+        $config = MpesaSettingsResolver::forOrganization($organization);
+
+        return $this->registerC2bUrls($config, $registration);
+    }
+
+    public function registerAccountC2bUrls(
+        Request $request,
+        int $id,
+        MpesaC2bUrlRegistrationService $registration,
+        MpesaPaybillAccountService $paybillAccounts,
+    ) {
+        if (! Schema::hasTable('mpesa_paybill_accounts')) {
+            return response()->json([
+                'message' => 'Paybill accounts are not available yet. Run database migrations on the API server.',
+            ], 503);
+        }
+
+        $organization = $this->organizationForRequest($request);
+        $account = MpesaPaybillAccount::query()
+            ->where('organization_id', $organization->id)
+            ->findOrFail($id);
+        if (! $account->is_active) {
+            throw ValidationException::withMessages([
+                'account' => ['Activate this M-Pesa account before registering its C2B URLs.'],
+            ]);
+        }
+
+        $config = $paybillAccounts->applyAccountToConfig(
+            MpesaSettingsResolver::forOrganization($organization),
+            $account,
+        );
+
+        return $this->registerC2bUrls($config, $registration);
     }
 
     public function store(Request $request)
@@ -243,6 +286,39 @@ class MpesaPaybillAccountController extends Controller
         }
 
         return $data;
+    }
+
+    private function organizationForRequest(Request $request): Organization
+    {
+        $orgId = (int) ($this->access->organizationId($request->user(), $request) ?? 0);
+        if ($orgId <= 0) {
+            abort(403, 'Your account is not linked to an organization.');
+        }
+
+        return Organization::query()->findOrFail($orgId);
+    }
+
+    /** @param  array<string, mixed>  $config */
+    private function registerC2bUrls(array $config, MpesaC2bUrlRegistrationService $registration)
+    {
+        try {
+            MpesaSettingsResolver::assertReadyForC2bRegistration($config);
+        } catch (RuntimeException $e) {
+            throw ValidationException::withMessages(['mpesa' => [$e->getMessage()]]);
+        }
+
+        try {
+            return response()->json([
+                'success' => true,
+                'message' => 'C2B URLs registered successfully with Daraja.',
+                'registration' => $registration->register($config),
+            ]);
+        } catch (RuntimeException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 502);
+        }
     }
 
     protected function assertShortCodeAvailable(string $primary, int $orgId, ?int $ignoreId = null): void
