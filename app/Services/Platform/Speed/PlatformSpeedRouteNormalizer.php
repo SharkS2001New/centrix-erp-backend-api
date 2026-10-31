@@ -33,6 +33,7 @@ class PlatformSpeedRouteNormalizer
             '/{id}',
             $path,
         ) ?? $path;
+        $path = preg_replace('#\{[^}/]+\}#', '{id}', $path) ?? $path;
 
         return substr($path, 0, 220);
     }

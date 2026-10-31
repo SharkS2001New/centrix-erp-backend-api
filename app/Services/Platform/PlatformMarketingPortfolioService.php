@@ -7,9 +7,12 @@ use App\Models\User;
 use App\Services\Ai\AiProviderFactory;
 use App\Services\Ai\AiSettingsResolver;
 use App\Exceptions\Ai\AiProviderException;
+use App\Support\UploadedImageProcessor;
 use Dompdf\Dompdf;
 use Dompdf\Options;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
 class PlatformMarketingPortfolioService
@@ -36,6 +39,12 @@ class PlatformMarketingPortfolioService
             })->values()->all(),
             'modules' => $cfg['module_catalog'] ?? [],
             'illustrations' => $cfg['illustrations'] ?? [],
+            'templates' => [
+                ['id' => 'modern', 'label' => 'Modern', 'description' => 'Clean cards, generous spacing, and a confident blue-green palette.'],
+                ['id' => 'editorial', 'label' => 'Editorial', 'description' => 'Refined typography and a calm, minimal document layout.'],
+                ['id' => 'bold', 'label' => 'Bold', 'description' => 'High-contrast sections for an energetic sales presentation.'],
+            ],
+            'section_suggestions' => $this->sectionSuggestions($cfg),
             'section_keys' => $cfg['section_keys'] ?? [],
             'section_labels' => $cfg['section_labels'] ?? [],
             'tones' => [
@@ -73,6 +82,7 @@ class PlatformMarketingPortfolioService
             'status' => 'draft',
             'industry' => $industry,
             'vertical' => $vertical,
+            'template_key' => $data['template_key'] ?? 'modern',
             'prospect_name' => $prospect,
             'prospect_contact' => $data['prospect_contact'] ?? null,
             'prospect_email' => $data['prospect_email'] ?? null,
@@ -108,7 +118,7 @@ class PlatformMarketingPortfolioService
         $allowed = [
             'title', 'status', 'industry', 'vertical', 'prospect_name', 'prospect_contact',
             'prospect_email', 'prospect_phone', 'business_name', 'location', 'business_size',
-            'branch_count', 'till_count', 'pain_points', 'focus_modules', 'tone',
+            'branch_count', 'till_count',             'pain_points', 'focus_modules', 'tone', 'template_key',
             'hero_image_key', 'sections', 'organization_id', 'quote_id',
         ];
         $patch = [];
@@ -131,6 +141,30 @@ class PlatformMarketingPortfolioService
         return $portfolio->fresh();
     }
 
+    /**
+     * Store an uploaded portfolio photo after resizing and JPEG compression.
+     *
+     * @return array{path: string, url: string, size: int}
+     */
+    public function storeImage(PlatformMarketingPortfolio $portfolio, UploadedFile $file): array
+    {
+        $processor = UploadedImageProcessor::forPhoto();
+        if (! $processor->isProcessableImage($file)) {
+            throw new \RuntimeException('Upload a JPEG, PNG, or WebP image.');
+        }
+        if (! extension_loaded('gd')) {
+            throw new \RuntimeException('Image compression is unavailable on this server. Contact your platform administrator.');
+        }
+
+        $stored = $processor->storePublicImage($file, 'marketing-portfolios/'.$portfolio->id);
+
+        return [
+            'path' => $stored['path'],
+            'url' => Storage::disk('public')->url($stored['path']),
+            'size' => $stored['size'],
+        ];
+    }
+
     public function generate(PlatformMarketingPortfolio $portfolio, ?string $instruction = null): PlatformMarketingPortfolio
     {
         $instruction = $instruction !== null ? trim($instruction) : null;
@@ -147,7 +181,10 @@ class PlatformMarketingPortfolioService
         if (! $runtime) {
             // Still produce a usable general portfolio from vertical templates + instruction.
             $portfolio->forceFill([
-                'sections' => $this->fallbackSections($portfolio, $instruction),
+                'sections' => $this->preserveUploadedSectionImages(
+                    $this->fallbackSections($portfolio, $instruction),
+                    $portfolio->sections ?? [],
+                ),
                 'ai_brief' => Str::limit($instruction ?: 'Template portfolio (no AI key)', 2000),
                 'status' => $portfolio->status === 'shared' ? 'shared' : 'ready',
                 'hero_image_key' => $portfolio->hero_image_key
@@ -163,6 +200,7 @@ class PlatformMarketingPortfolioService
         if ($parsed === []) {
             $parsed = $this->fallbackSections($portfolio, $instruction);
         }
+        $parsed = $this->preserveUploadedSectionImages($parsed, $portfolio->sections ?? []);
 
         $portfolio->forceFill([
             'sections' => $parsed,
@@ -198,6 +236,11 @@ class PlatformMarketingPortfolioService
         }
 
         $sections = is_array($portfolio->sections) ? $portfolio->sections : [];
+        $existingSection = collect($sections)->firstWhere('key', $sectionKey);
+        if (is_array($existingSection)) {
+            $parsed['image_path'] = $existingSection['image_path'] ?? null;
+            $parsed['image_url'] = $existingSection['image_url'] ?? null;
+        }
         $found = false;
         foreach ($sections as $i => $row) {
             if (($row['key'] ?? '') === $sectionKey) {
@@ -216,6 +259,85 @@ class PlatformMarketingPortfolioService
         ])->save();
 
         return $portfolio->fresh();
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $generated
+     * @param  list<array<string, mixed>>  $existing
+     * @return list<array<string, mixed>>
+     */
+    protected function preserveUploadedSectionImages(array $generated, array $existing): array
+    {
+        $byKey = collect($existing)->keyBy('key');
+
+        return array_map(static function (array $section) use ($byKey): array {
+            $previous = $byKey->get($section['key'] ?? '');
+            if (is_array($previous) && ! empty($previous['image_path'])) {
+                $section['image_path'] = $previous['image_path'];
+                $section['image_url'] = $previous['image_url'] ?? Storage::disk('public')->url($previous['image_path']);
+            }
+
+            return $section;
+        }, $generated);
+    }
+
+    /**
+     * @param  array<string, mixed>  $cfg
+     * @return array<string, array<string, list<string>>>
+     */
+    protected function sectionSuggestions(array $cfg): array
+    {
+        $modules = $cfg['module_catalog'] ?? [];
+        $labels = $cfg['section_labels'] ?? [];
+        $suggestions = [];
+        foreach (($cfg['verticals'] ?? []) as $verticalId => $vertical) {
+            $moduleNames = collect($vertical['default_modules'] ?? [])
+                ->map(fn ($module) => $modules[$module] ?? null)
+                ->filter()
+                ->values()
+                ->all();
+            $valueBullets = array_values($vertical['value_bullets'] ?? []);
+            $painHints = array_values($vertical['pain_hints'] ?? []);
+            $suggestions[$verticalId] = [
+                'cover' => [
+                    'Name the business and industry, then promise one practical improvement.',
+                    'Keep the title short enough to read at a glance.',
+                ],
+                'understanding' => $painHints !== []
+                    ? array_slice($painHints, 0, 4)
+                    : ['Describe the current workflow and the business impact.'],
+                'fit' => $moduleNames !== []
+                    ? ['Connect the prospect’s needs to these available Centrix areas: '.implode(', ', $moduleNames).'.']
+                    : ['Connect the prospect’s needs only to verified Centrix capabilities.'],
+                'day_in_life' => [
+                    'Describe a realistic daily workflow from opening through close of business.',
+                    'Show how the selected areas '.($moduleNames !== [] ? implode(', ', $moduleNames) : 'work together').' support the team.',
+                ],
+                'outcomes' => $valueBullets !== []
+                    ? array_slice($valueBullets, 0, 4)
+                    : ['Use measurable operational outcomes and avoid guarantees.'],
+                'included' => $moduleNames !== []
+                    ? ['List relevant configured capabilities: '.implode(', ', $moduleNames).'.', 'Separate included services from optional onboarding or integrations.']
+                    : ['List only the selected, verified Centrix capabilities.'],
+                'next_steps' => [
+                    'Offer a short discovery/demo, confirm scope, then prepare a tailored quote.',
+                    'Invite the prospect to confirm their priorities and decision timeline.',
+                ],
+            ];
+        }
+
+        foreach ($suggestions as &$verticalSuggestions) {
+            foreach ($verticalSuggestions as $key => &$items) {
+                $items = array_values(array_filter($items, static fn ($item) => is_string($item) && trim($item) !== ''));
+                if (! isset($labels[$key])) {
+                    unset($verticalSuggestions[$key]);
+                }
+            }
+            unset($items);
+        }
+        unset($verticalSuggestions);
+
+        return $suggestions;
     }
 
     /** @return array{binary: string, filename: string} */
@@ -308,13 +430,26 @@ class PlatformMarketingPortfolioService
                     .'. Built for '.($vCfg['label'] ?? 'your industry').' operations in Kenya (Kenyan Shillings).'
                     .($briefLine ? "\n\nFocus: {$briefLine}" : ''),
                 'understanding' => $briefLine
-                    ?: 'You need clearer stock, sales, and cash visibility without juggling spreadsheets.',
+                    ?: match ($portfolio->vertical) {
+                        'spa_salon' => 'You need an easier way to coordinate appointments, walk-ins, service delivery, staff, and retail sales.',
+                        'driving_school' => 'You need a clear view of student enrolment, lesson progress, instructor schedules, and fee balances.',
+                        default => 'You need clearer stock, sales, and cash visibility without juggling spreadsheets.',
+                    },
                 'fit' => 'Centrix connects the tools your team already needs — '
                     .($focus !== [] ? implode(', ', $focus) : 'POS, stock, purchasing, and reports')
                     .' — in one Kenya-ready ERP.'
                     .($briefLine ? " This portfolio emphasises: {$briefLine}." : ''),
-                'day_in_life' => 'Morning stock checks, mid-day sales on till or counter, afternoon purchasing and credit follow-ups, and evening end-of-day — all visible to managers on web or Centrix Manager.',
-                'outcomes' => 'Tighter stock control, cleaner end-of-day cash, faster purchasing, and live visibility for owners and managers.',
+                'day_in_life' => match ($portfolio->vertical) {
+                    'spa_salon' => 'Start with the appointment book and staff schedule, manage walk-ins and services during the day, then review service and retail sales at close.',
+                    'driving_school' => 'Register and enrol students, schedule lessons with instructors, record attendance and assessments, then review fee collections and vehicle servicing.',
+                    'hotel_bar' => 'Manage guest and outlet activity through the day, track room and F&B charges, and review stock and outlet reports at close.',
+                    default => 'Morning stock checks, mid-day sales on till or counter, afternoon purchasing and credit follow-ups, and evening end-of-day — all visible to managers on web or Centrix Manager.',
+                },
+                'outcomes' => match ($portfolio->vertical) {
+                    'spa_salon' => 'Clearer appointment and staff coordination, better visibility into service and retail sales, and more informed stock replenishment.',
+                    'driving_school' => 'Clearer student progress, lesson utilization, fee balances, and vehicle readiness for day-to-day school operations.',
+                    default => 'Tighter stock control, cleaner end-of-day cash, faster purchasing, and live visibility for owners and managers.',
+                },
                 'included' => 'A practical Centrix footprint for '.($vCfg['label'] ?? 'your business')
                     .' with onboarding support from the Centrix team.',
                 'next_steps' => 'Review this portfolio together, confirm the modules that matter most, then we prepare a quote and provision your company on Centrix.',
@@ -588,8 +723,22 @@ PROMPT;
         $sections = is_array($portfolio->sections) ? $portfolio->sections : [];
         $body = '';
         $illustrations = config('marketing_portfolio.illustrations', []);
+        $template = (string) ($portfolio->template_key ?: 'modern');
+        [$accent, $secondary, $paper] = match ($template) {
+            'editorial' => ['#173B3F', '#A66B42', '#F6F4EF'],
+            'bold' => ['#382274', '#E86A33', '#F4F1FA'],
+            default => ['#185FA5', '#16A085', '#F3F7FA'],
+        };
+        $coverSection = collect($sections)->firstWhere('key', 'cover') ?? [];
+        $coverImage = $this->pdfImageData($coverSection['image_path'] ?? null);
+        $coverArt = $coverImage
+            ? '<img class="cover-photo" src="'.$coverImage.'" />'
+            : '<div class="cover-art"></div>';
         foreach ($sections as $section) {
             if (! is_array($section)) {
+                continue;
+            }
+            if (($section['key'] ?? null) === 'cover') {
                 continue;
             }
             $title = $e($section['title'] ?? '');
@@ -604,40 +753,52 @@ PROMPT;
             $g1 = $e($ill['gradient'][1] ?? '#2DB88A');
             $illLabel = $e($ill['label'] ?? $imageKey);
             $illHint = $e($ill['hint'] ?? '');
+            $photo = $this->pdfImageData($section['image_path'] ?? null);
+            $imageBlock = $photo
+                ? '<img class="section-photo" src="'.$photo.'" />'
+                : '<div class="ill" style="background:linear-gradient(135deg,'.$g0.' 0%,'.$g1.' 100%);">'
+                    .'<div class="ill-brand">Centrix</div><div class="ill-label">'.$illLabel.'</div>'
+                    .($illHint !== '' ? '<div class="ill-hint">'.$illHint.'</div>' : '').'</div>';
             $body .= '<section class="sec">'
-                .'<div class="ill" style="background:linear-gradient(135deg,'.$g0.' 0%,'.$g1.' 100%);">'
-                .'<div class="ill-brand">Centrix</div>'
-                .'<div class="ill-label">'.$illLabel.'</div>'
-                .($illHint !== '' ? '<div class="ill-hint">'.$illHint.'</div>' : '')
-                .'</div>'
-                .'<h2>'.$title.'</h2><div class="body">'.$text.'</div>'
+                .'<table class="section-layout"><tr><td class="copy"><h2>'.$title.'</h2><div class="body">'.$text.'</div>'
                 .($bullets !== '' ? '<ul>'.$bullets.'</ul>' : '')
-                .'</section>';
+                .'</td><td class="art">'.$imageBlock.'</td></tr></table></section>';
         }
 
         return '<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-            body{font-family:DejaVu Sans,sans-serif;font-size:11px;color:#0f172a;margin:28px 32px;line-height:1.45;}
-            .brand{font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:#4C5BA4;font-weight:700;}
-            h1{font-size:22px;margin:8px 0 4px;}
-            .meta{color:#64748b;margin-bottom:18px;}
-            .sec{margin:16px 0;padding-top:10px;border-top:1px solid #e2e8f0;}
-            .ill{color:#fff;border-radius:8px;padding:14px 16px;margin:0 0 10px;}
-            .ill-brand{font-size:9px;letter-spacing:0.14em;text-transform:uppercase;opacity:0.85;font-weight:700;}
-            .ill-label{font-size:13px;font-weight:700;margin-top:4px;}
-            .ill-hint{font-size:10px;opacity:0.9;margin-top:2px;}
-            h2{font-size:14px;margin:0 0 6px;color:#4C5BA4;}
-            ul{margin:8px 0 0 18px;padding:0;}
-            li{margin:3px 0;}
-            .footer{margin-top:28px;font-size:9px;color:#94a3b8;text-align:center;}
+            @page{margin:24px 30px 32px;}body{font-family:DejaVu Sans,sans-serif;font-size:10px;color:#172033;line-height:1.55;margin:0;}
+            .cover{background:'.$paper.';border-radius:16px;padding:0 0 20px;margin-bottom:18px;page-break-inside:avoid;}
+            .cover-art,.cover-photo{height:245px;width:100%;object-fit:cover;border-radius:16px 16px 0 0;background:linear-gradient(130deg,'.$accent.', '.$secondary.');}
+            .cover-copy{padding:22px 24px 8px;}.brand{font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:'.$accent.';font-weight:700;}
+            h1{font-size:27px;line-height:1.18;margin:9px 0 6px;color:'.$accent.';}.meta{color:#667085;font-size:10px;}
+            .sec{margin:13px 0;padding:14px 0 4px;border-top:1px solid #e5e9ef;page-break-inside:avoid;}
+            .section-layout{width:100%;border-collapse:collapse;}.copy{width:67%;vertical-align:top;padding-right:18px;}.art{width:33%;vertical-align:middle;}
+            .ill{height:132px;color:#fff;border-radius:11px;padding:14px;box-sizing:border-box;}
+            .section-photo{width:100%;height:132px;object-fit:cover;border-radius:11px;}
+            .ill-brand{font-size:8px;letter-spacing:0.14em;text-transform:uppercase;opacity:0.85;font-weight:700;}
+            .ill-label{font-size:12px;font-weight:700;margin-top:7px;}.ill-hint{font-size:9px;opacity:0.9;margin-top:4px;}
+            h2{font-size:14px;margin:0 0 6px;color:'.$accent.';}ul{margin:7px 0 0 14px;padding:0;}li{margin:3px 0;}
+            .footer{margin-top:22px;padding-top:9px;border-top:2px solid '.$secondary.';font-size:8px;color:#728096;text-align:center;}
         </style></head><body>
-            <div class="brand">Centrix</div>
-            <h1>'.$e($portfolio->title).'</h1>
-            <div class="meta">Prepared for '.$e($biz)
+            <header class="cover">'.$coverArt.'<div class="cover-copy"><div class="brand">Centrix ERP · Business portfolio</div>
+            <h1>'.$e($portfolio->title).'</h1><div class="meta">Prepared for '.$e($biz)
             .($portfolio->location ? ' · '.$e($portfolio->location) : '')
-            .' · Kenyan Shillings (KES)</div>
+            .' · Kenyan Shillings (KES)</div></div></header>
             '.$body.'
-            <div class="footer">Centrix ERP · Kenya · centrix portfolio</div>
+            <div class="footer">Prepared for '.$e($biz).' · Centrix ERP · Kenya</div>
         </body></html>';
+    }
+
+    protected function pdfImageData(?string $path): ?string
+    {
+        if (! $path || ! Storage::disk('public')->exists($path)) {
+            return null;
+        }
+
+        $mime = Storage::disk('public')->mimeType($path) ?: 'image/jpeg';
+        $content = Storage::disk('public')->get($path);
+
+        return 'data:'.$mime.';base64,'.base64_encode($content);
     }
 
     protected function jsonLine(mixed $value): string

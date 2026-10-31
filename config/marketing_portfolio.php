@@ -156,15 +156,28 @@ return [
         ],
         'spa_salon' => [
             'label' => 'Spa & salon',
-            'industry' => 'hospitality',
+            'industry' => 'spa',
             'hero_image_key' => 'hero_spa',
             'default_modules' => ['pos', 'inventory', 'customers', 'hr', 'reports'],
-            'pain_hints' => ['Appointments and product sales separate', 'Therapist productivity unclear', 'Membership / package tracking'],
+            'pain_hints' => ['Appointments and product sales are disconnected', 'Staff schedules and service performance are hard to track', 'Walk-ins and returning clients need a smoother flow'],
             'value_bullets' => [
-                'Retail POS for products and walk-in sales',
-                'Customer history and credit where needed',
-                'Staff attendance for therapists and front desk',
-                'Sales and stock reports for treatments and retail',
+                'Appointment scheduling, walk-in handling, and service records for salon and spa operations',
+                'Service and retail sales with client history',
+                'Staff schedules, attendance, and service performance',
+                'Product stock and sales reporting for the branch',
+            ],
+        ],
+        'driving_school' => [
+            'label' => 'Driving school',
+            'industry' => 'driving',
+            'hero_image_key' => 'hero_distribution',
+            'default_modules' => ['driving', 'accounting', 'reports'],
+            'pain_hints' => ['Student progress and lesson attendance are difficult to follow', 'Instructor and vehicle schedules are hard to coordinate', 'Course fees and outstanding balances need clearer tracking'],
+            'value_bullets' => [
+                'Student registration, enrolment, and course tracking',
+                'Lesson schedules, instructor assignments, and attendance',
+                'Assessments, fee invoices, payments, and balances',
+                'Training vehicle records, servicing, and school reports',
             ],
         ],
     ],
@@ -184,16 +197,22 @@ return [
         'hotel' => 'Hotel & F&B',
         'reports' => 'Reports & insights',
         'ai' => 'Centrix Assistant',
+        'driving' => 'Driving school management',
+        'spa' => 'SPA & Kinyozi workspace',
+        'payments' => 'Payment collection & M-Pesa',
+        'fiscalization' => 'KRA eTIMS fiscalization',
     ],
 
     'product_truth' => <<<'TXT'
-Centrix is a Kenya-focused ERP for retail, wholesale, distribution, and hospitality.
+Centrix is a Kenya-focused ERP for retail, wholesale, distribution, hospitality, SPA & Kinyozi, and driving schools.
 Currency is Kenyan Shillings (KES). Core pillars:
 - Commerce: POS (tills, EOD, payments), catalogue, inventory, LPOs/GRN, customers/debtors, reports, Centrix Manager mobile app for approvals and dashboards, optional field/mobile sales and distribution trips.
 - Hospitality: hotel / bar POS and guest-oriented collect-payment flows, stock for outlets, purchasing, backoffice reports.
-- Shared: HR attendance & payroll, accounting (AR/AP, P&L), AI Centrix Assistant for natural-language questions and guided creates (e.g. LPOs) with confirm-before-save.
+- SPA & Kinyozi: appointment scheduling, services, walk-ins, clients, staff, retail products, and branch reporting; do not imply a comprehensive booking engine or recurring-membership platform.
+- Driving schools: student registration and enrolment, courses, lessons, instructors, attendance, assessments, fee invoices and payments, vehicles and servicing, expenses, and reports.
+- Shared: HR attendance & payroll, accounting (AR/AP, P&L), KRA eTIMS fiscalization, M-Pesa payment flows, AI Centrix Assistant for natural-language questions and guided creates (e.g. LPOs) with confirm-before-save. Fiscalization and payment integrations depend on the tenant's compatible devices, credentials, and configuration.
 - Channels: Backoffice web ERP, POS terminals, Centrix Manager app, optional mobile sales app.
-Do not invent modules Centrix does not have (e.g. full spa booking engine). For spa/salon, emphasise POS retail, customers, stock, HR attendance, and reports — honest fit, not overclaim.
+Do not invent modules, integrations, or outcomes. Describe only configured capabilities relevant to the selected vertical; do not imply a customer has a module unless it is in their selected scope.
 Tone: confident, concrete, Kenya SME-aware. Prefer outcomes over jargon. Never say "backend"; say Backoffice.
 TXT,
 ];

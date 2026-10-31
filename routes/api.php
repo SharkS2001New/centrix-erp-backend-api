@@ -497,6 +497,8 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::get('admin/platform-speed/queues', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'queues'])
             ->middleware(['erp.super_admin']);
+        Route::get('admin/platform-speed/failed-jobs', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'failedJobs'])
+            ->middleware(['erp.super_admin']);
         Route::get('admin/platform-speed/frontend', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'frontend'])
             ->middleware(['erp.super_admin']);
         Route::get('admin/platform-speed/synthetic', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'synthetic'])
@@ -730,6 +732,10 @@ Route::prefix('v1')->group(function () {
                 Route::post('{platform_marketing_portfolio}/regenerate-section', [PlatformMarketingPortfolioController::class, 'regenerateSection'])
                     ->whereNumber('platform_marketing_portfolio');
                 Route::post('{platform_marketing_portfolio}/share', [PlatformMarketingPortfolioController::class, 'share'])
+                    ->whereNumber('platform_marketing_portfolio');
+                Route::post('{platform_marketing_portfolio}/images', [PlatformMarketingPortfolioController::class, 'uploadImage'])
+                    ->whereNumber('platform_marketing_portfolio');
+                Route::get('{platform_marketing_portfolio}/image', [PlatformMarketingPortfolioController::class, 'image'])
                     ->whereNumber('platform_marketing_portfolio');
                 Route::get('{platform_marketing_portfolio}/pdf', [PlatformMarketingPortfolioController::class, 'pdf'])
                     ->whereNumber('platform_marketing_portfolio');

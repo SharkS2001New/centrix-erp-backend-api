@@ -90,6 +90,7 @@ class OrganizationLicenseService
             'plan_id' => $sub->plan_id,
             'billing_cycle' => $this->billingCycle($sub),
             'renewal_amount' => $this->renewalAmount($sub),
+            'currency' => $sub->currency ?: $sub->plan?->currency ?: 'KES',
             'subscription_id' => $sub->id,
             'token_balance' => $this->tokenBalanceFor($org),
             'sale_tokens' => app(BillingPolicy::class)->saleCost(),

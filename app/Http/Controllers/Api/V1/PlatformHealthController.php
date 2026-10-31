@@ -53,7 +53,7 @@ class PlatformHealthController extends Controller
             'severity' => 'success',
             'title' => 'Reverb test notification',
             'message' => 'Realtime is working. If the bell updated without a page refresh, Reverb delivered this event.',
-            'action_url' => '/platform/health',
+            'action_url' => '/platform/speed',
             'created_by' => $user->id,
         ]);
 

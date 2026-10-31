@@ -48,8 +48,35 @@ class OrganizationBillingController extends Controller
                     'amount' => $subscription->amount !== null ? (float) $subscription->amount : null,
                     'renewal_price' => $subscription->renewal_price !== null ? (float) $subscription->renewal_price : null,
                     'currency' => $subscription->currency ?: 'KES',
+                    'billing_cycle' => $licenses->billingCycle($subscription),
                     'interval' => $plan?->interval,
                     'plan_name' => $plan?->name,
+                    'plan' => $plan ? [
+                        'id' => (int) $plan->id,
+                        'name' => (string) $plan->name,
+                        'description' => $plan->description,
+                        'self_serve' => Schema::hasColumn('platform_plans', 'self_serve')
+                            ? (bool) $plan->self_serve
+                            : false,
+                        'interval' => $plan->interval,
+                        'yearly_billing' => $plan->yearly_billing,
+                        'currency' => $plan->currency ?: 'KES',
+                        'seat_limit' => $plan->seat_limit,
+                        'license_basis' => $plan->license_basis,
+                        'features' => collect(is_array($plan->feature_details) ? $plan->feature_details : [])
+                            ->map(function ($row) {
+                                if (! is_array($row)) {
+                                    return '';
+                                }
+                                $label = trim((string) ($row['label'] ?? ''));
+                                $detail = trim((string) ($row['detail'] ?? ''));
+
+                                return $label === '' ? '' : ($detail !== '' ? $label.': '.$detail : $label);
+                            })
+                            ->filter()
+                            ->values()
+                            ->all(),
+                    ] : null,
                     'yearly_price' => $plan?->yearly_price !== null ? (float) $plan->yearly_price : null,
                     'monthly_price' => $plan?->monthly_price !== null ? (float) $plan->monthly_price : null,
                     'seat_limit' => $plan?->seat_limit,

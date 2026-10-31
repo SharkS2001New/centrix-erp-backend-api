@@ -43,6 +43,7 @@ class PublicFreeSignupTest extends TestCase
 
         $org = Organization::query()->where('company_code', $companyCode)->firstOrFail();
         $this->assertSame('wholesale_retail', $org->deployment_profile);
+        $this->assertSame('self_registered', $org->registration_source);
         $this->assertSame(0, PlatformSubscription::query()->where('organization_id', $org->id)->count());
 
         $licenses = app(OrganizationLicenseService::class);

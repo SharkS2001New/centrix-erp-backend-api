@@ -260,8 +260,8 @@ class PlatformSpeedAnalytics
             $out[] = [
                 'severity' => 'warning',
                 'title' => 'Queue backlog high',
-                'detail' => $pending.' pending jobs. Check queue workers on Infrastructure Health.',
-                'href' => '/platform/health',
+                'detail' => $pending.' pending jobs. Check queue workers in ERP Speed → Infrastructure Health.',
+                'href' => '/platform/speed',
             ];
         }
         if (! ($api['monitoring_active'] ?? true)) {

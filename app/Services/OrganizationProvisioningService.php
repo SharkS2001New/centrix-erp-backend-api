@@ -32,7 +32,12 @@ class OrganizationProvisioningService
      */
     public function provision(array $data): array
     {
-        return DB::transaction(function () use ($data) {
+        $registrationSource = (string) ($data['registration_source'] ?? 'platform_created');
+        if (! in_array($registrationSource, ['self_registered', 'platform_created'], true)) {
+            $registrationSource = 'platform_created';
+        }
+
+        return DB::transaction(function () use ($data, $registrationSource) {
             $org = Organization::create([
                 'company_code' => strtoupper($data['company_code']),
                 'org_name' => $data['org_name'],
@@ -42,6 +47,7 @@ class OrganizationProvisioningService
                 'org_pin' => $data['org_pin'] ?? null,
                 'vat_regno' => $data['vat_regno'] ?? null,
                 'deployment_profile' => $data['deployment_profile'],
+                'registration_source' => $registrationSource,
                 'enabled_modules' => $this->normalizeEnabledModules($data['enabled_modules'] ?? null),
                 'module_settings' => $this->defaultModuleSettingsForProfile((string) $data['deployment_profile']),
             ]);

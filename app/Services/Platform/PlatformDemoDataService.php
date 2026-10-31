@@ -327,18 +327,34 @@ class PlatformDemoDataService
             ];
         }
 
+        if (data_get(config('erp.profiles.'.$profile), 'industry') === 'commerce') {
+            $result = app(CommerceDemoDataSeeder::class)->seedForOrganization($org, $branch, $admin);
+            $this->stampOrganization($org, $profile);
+
+            return [
+                'profile' => $profile,
+                'message' => sprintf(
+                    'Seeded %d sample products with %d representative images and opening stock.',
+                    $result['products'],
+                    $result['images'],
+                ),
+                ...$result,
+                ...$this->organizationStatus($org),
+            ];
+        }
+
         if ($profile === 'spa_kinyozi') {
             $this->stampOrganization($org, $profile);
 
             return [
                 'profile' => $profile,
-                'message' => 'SPA & Kinyozi sample appointments, services, and clients load in the browser the first time someone opens the salon. Day-to-day settings stay in Administration.',
+                'message' => 'SPA & Kinyozi sample appointments, services, and clients are available in its browser-based demo workspace. Day-to-day settings stay in Administration.',
                 ...$this->organizationStatus($org),
             ];
         }
 
         throw ValidationException::withMessages([
-            'demo' => ['Demo data is available for a Driving School, SPA & Kinyozi, or Hotel & Bar organisation.'],
+            'demo' => ['Demo data is not configured for this organisation profile.'],
         ]);
     }
 
@@ -349,6 +365,8 @@ class PlatformDemoDataService
             DB::transaction(fn () => $this->clearDrivingDemo($org));
         } elseif ($profile === 'hotel_bar') {
             app(HospitalityDemoDataSeeder::class)->removeForOrganization($org);
+        } elseif (data_get(config('erp.profiles.'.$profile), 'industry') === 'commerce') {
+            app(CommerceDemoDataSeeder::class)->removeForOrganization($org);
         }
 
         $settings = is_array($org->module_settings) ? $org->module_settings : [];

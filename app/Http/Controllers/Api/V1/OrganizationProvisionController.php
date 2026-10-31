@@ -49,7 +49,7 @@ class OrganizationProvisionController extends Controller
         $organizations = Organization::query()
             ->where('company_code', '!=', $platformCode)
             ->orderBy('org_name')
-            ->get(['id', 'company_code', 'org_name', 'org_email', 'deployment_profile', 'is_active', 'created_at', 'enabled_modules']);
+            ->get(['id', 'company_code', 'org_name', 'org_email', 'deployment_profile', 'registration_source', 'is_active', 'created_at', 'enabled_modules']);
 
         $data = $organizations->map(function (Organization $org) {
             $gate = app(\App\Services\Erp\CapabilityGate::class)->forOrganization($org);
@@ -57,7 +57,7 @@ class OrganizationProvisionController extends Controller
             $industry = IndustryRegistry::summaryForOrganization($org->deployment_profile);
 
             return array_merge($org->only([
-                'id', 'company_code', 'org_name', 'org_email', 'deployment_profile', 'is_active', 'created_at',
+                'id', 'company_code', 'org_name', 'org_email', 'deployment_profile', 'registration_source', 'is_active', 'created_at',
             ]), [
                 'industry' => $industry['id'],
                 'industry_label' => $industry['label'],
@@ -689,6 +689,7 @@ class OrganizationProvisionController extends Controller
             $data['enabled_modules'] = $this->validateEnabledModulesMap($data['enabled_modules']);
         }
 
+        $data['registration_source'] = 'platform_created';
         $result = $this->provisioning->provision($data);
         $org = $result['organization']->fresh();
         $gate = app(\App\Services\Erp\CapabilityGate::class)->forOrganization($org);

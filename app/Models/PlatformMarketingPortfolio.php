@@ -9,7 +9,7 @@ use Illuminate\Support\Str;
 class PlatformMarketingPortfolio extends Model
 {
     protected $fillable = [
-        'title', 'status', 'industry', 'vertical',
+        'title', 'status', 'industry', 'vertical', 'template_key',
         'prospect_name', 'prospect_contact', 'prospect_email', 'prospect_phone',
         'business_name', 'location', 'business_size', 'branch_count', 'till_count',
         'pain_points', 'focus_modules', 'tone', 'hero_image_key',
@@ -63,11 +63,18 @@ class PlatformMarketingPortfolio extends Model
             'title' => $this->title,
             'industry' => $this->industry,
             'vertical' => $this->vertical,
+            'template_key' => $this->template_key ?: 'modern',
             'prospect_name' => $this->prospect_name,
             'business_name' => $this->business_name,
             'location' => $this->location,
             'hero_image_key' => $this->hero_image_key,
-            'sections' => $this->sections ?? [],
+            'sections' => collect($this->sections ?? [])->map(function (array $section): array {
+                if (! empty($section['image_path'])) {
+                    $section['image_url'] = \Illuminate\Support\Facades\Storage::disk('public')->url($section['image_path']);
+                }
+
+                return $section;
+            })->all(),
             'shared_at' => $this->shared_at?->toIso8601String(),
         ];
     }

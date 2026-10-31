@@ -34,6 +34,13 @@ class PlatformOrganizationSettingsTest extends TestCase
         ])->assertCreated();
 
         $orgId = $create->json('organization.id');
+        $this->assertSame('platform_created', Organization::query()->findOrFail($orgId)->registration_source);
+        $this->getJson('/api/v1/admin/organizations')
+            ->assertOk()
+            ->assertJsonFragment([
+                'company_code' => 'SETORG',
+                'registration_source' => 'platform_created',
+            ]);
 
         $this->getJson("/api/v1/admin/organizations/{$orgId}/settings/general")
             ->assertOk()

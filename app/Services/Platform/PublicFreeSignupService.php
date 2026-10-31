@@ -87,6 +87,7 @@ class PublicFreeSignupService
             'primary_tel' => $phone,
             'org_address' => $address,
             'deployment_profile' => $profile,
+            'registration_source' => 'self_registered',
             'admin_username' => $username,
             'admin_email' => $orgEmail,
             'admin_password' => $password,

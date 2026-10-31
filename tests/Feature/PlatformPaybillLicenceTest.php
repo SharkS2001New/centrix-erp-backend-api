@@ -60,6 +60,55 @@ class PlatformPaybillLicenceTest extends TestCase
         $this->assertSame($plan->id, $sub->plan_id);
     }
 
+    public function test_monthly_subscription_can_start_a_renewal_checkout(): void
+    {
+        [$org] = $this->seedLicensedOrg('MONTHLY', '0712000112', '2026-11-07');
+        $subscription = PlatformSubscription::query()
+            ->where('organization_id', $org->id)
+            ->firstOrFail();
+        $subscription->update([
+            'status' => 'active',
+            'is_trial' => false,
+            'renewal_price' => 1500,
+            'amount' => 1500,
+            'billing_cycle' => 'monthly',
+        ]);
+
+        $checkout = app(PlatformPaybillLicenceService::class)->startRenewalCheckout($org);
+
+        $this->assertSame(1, (int) $checkout->months);
+        $this->assertSame(1500.0, (float) $checkout->amount);
+        $this->assertSame($subscription->plan_id, $checkout->plan_id);
+    }
+
+    public function test_billing_details_include_the_assigned_platform_managed_plan(): void
+    {
+        [$org, $plan] = $this->seedLicensedOrg('MANAGED', '0712000113', '2026-11-07');
+        $plan->update([
+            'self_serve' => false,
+            'description' => 'Configured for this organization.',
+            'feature_details' => [['label' => 'Inventory', 'detail' => 'Multi-branch stock']],
+        ]);
+        PlatformSubscription::query()
+            ->where('organization_id', $org->id)
+            ->update([
+                'status' => 'active',
+                'is_trial' => false,
+                'renewal_price' => 1500,
+                'amount' => 1500,
+            ]);
+
+        Sanctum::actingAs($this->userForOrg($org));
+
+        $this->getJson('/api/v1/erp/organization/billing')
+            ->assertOk()
+            ->assertJsonPath('data.subscription.plan.name', 'MANAGED plan')
+            ->assertJsonPath('data.subscription.plan.self_serve', false)
+            ->assertJsonPath('data.subscription.plan.description', 'Configured for this organization.')
+            ->assertJsonPath('data.subscription.plan.features.0', 'Inventory: Multi-branch stock')
+            ->assertJsonPath('data.subscription.billing_cycle', 'monthly');
+    }
+
     public function test_amount_that_is_not_a_time_plan_becomes_tokens(): void
     {
         [$org] = $this->seedLicensedOrg('OMEGA', '0712333444', '2026-12-01');
@@ -252,20 +301,39 @@ class PlatformPaybillLicenceTest extends TestCase
         $this->assertSame('4036507', app(PlatformPaybillLicenceService::class)->settings()->short_code);
     }
 
-    public function test_public_plan_catalogue_returns_admin_configured_cta_action(): void
+    public function test_plan_catalogue_returns_admin_configured_cta_action_and_label(): void
     {
-        [, $plan] = $this->seedLicensedOrg('MOON', '0712000111', '2026-09-01');
+        [$org, $plan] = $this->seedLicensedOrg('MOON', '0712000111', '2026-09-01');
         $plan->update(['self_serve' => true]);
         $admin = User::query()->where('username', 'superadmin')->firstOrFail();
         Sanctum::actingAs($admin);
 
         $this->patchJson('/api/v1/admin/platform-plans/'.$plan->id, [
             'cta_action' => 'start_now',
-        ])->assertOk()->assertJsonPath('data.cta_action', 'start_now');
+            'cta_label' => 'Subscribe today',
+        ])->assertOk()
+            ->assertJsonPath('data.cta_action', 'start_now')
+            ->assertJsonPath('data.cta_label', 'Subscribe today');
 
         $this->getJson('/api/v1/public/self-serve-plans')
             ->assertOk()
-            ->assertJsonPath('data.0.cta_action', 'start_now');
+            ->assertJsonPath('data.0.cta_action', 'start_now')
+            ->assertJsonPath('data.0.cta_label', 'Subscribe today');
+
+        $choices = app(PlatformPaybillLicenceService::class)->monthlyPlanChoices($org);
+        $this->assertSame(
+            'Subscribe today',
+            collect($choices)->firstWhere('id', $plan->id)['cta_label'],
+        );
+    }
+
+    public function test_plan_cta_label_defaults_to_action_specific_payment_copy(): void
+    {
+        $plan = new PlatformPlan(['cta_action' => 'start_now']);
+        $this->assertSame('Subscribe Now', $plan->callToActionLabel());
+
+        $plan->cta_action = 'buy_now';
+        $this->assertSame('Pay Now', $plan->callToActionLabel());
     }
 
     public function test_equity_checkout_applies_verified_callback_and_is_idempotent(): void

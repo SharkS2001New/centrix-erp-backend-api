@@ -15,7 +15,7 @@ class PlatformPlan extends Model
         'currency',
         'seat_limit', 'workspace_keys', 'module_keys', 'section_keys', 'feature_keys', 'feature_details',
         'self_serve', 'is_active', 'is_recommended', 'sort_order',
-        'cta_action',
+        'cta_action', 'cta_label',
         'auto_invoice_template_id',
     ];
 
@@ -46,6 +46,21 @@ class PlatformPlan extends Model
 
         $next = (int) static::query()->where('id', '!=', $plan->id)->max('sort_order') + 1;
         $plan->forceFill(['sort_order' => $next])->save();
+    }
+
+    public function callToActionLabel(): string
+    {
+        $custom = trim((string) $this->cta_label);
+        if ($custom !== '') {
+            return $custom;
+        }
+
+        return match ($this->cta_action) {
+            'start_now' => 'Subscribe Now',
+            'view_details' => 'View details',
+            'contact_sales' => 'Contact sales',
+            default => 'Pay Now',
+        };
     }
 
     public function subscriptions(): HasMany

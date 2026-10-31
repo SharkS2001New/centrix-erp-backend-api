@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\PlatformMarketingPortfolio;
 use App\Services\Platform\PlatformMarketingPortfolioService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 
 class PlatformMarketingPortfolioController extends Controller
@@ -163,6 +164,37 @@ class PlatformMarketingPortfolioController extends Controller
         ]);
     }
 
+    public function uploadImage(Request $request, PlatformMarketingPortfolio $platform_marketing_portfolio)
+    {
+        $data = $request->validate([
+            'image' => ['required', 'image', 'mimes:jpeg,jpg,png,webp', 'max:10240'],
+        ]);
+
+        try {
+            $stored = $this->portfolios->storeImage($platform_marketing_portfolio, $data['image']);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json([
+            'data' => $stored,
+            'message' => 'Image compressed and uploaded.',
+        ], 201);
+    }
+
+    public function image(Request $request, PlatformMarketingPortfolio $platform_marketing_portfolio)
+    {
+        $path = (string) $request->query('path', '');
+        $prefix = 'marketing-portfolios/'.$platform_marketing_portfolio->id.'/';
+        abort_unless(str_starts_with($path, $prefix), 404);
+        abort_unless(Storage::disk('public')->exists($path), 404);
+
+        return response(Storage::disk('public')->get($path), 200, [
+            'Content-Type' => Storage::disk('public')->mimeType($path) ?: 'image/jpeg',
+            'Cache-Control' => 'private, max-age=300',
+        ]);
+    }
+
     /** Public — no auth. */
     public function shared(string $token)
     {
@@ -189,6 +221,7 @@ class PlatformMarketingPortfolioController extends Controller
             'status' => 'sometimes|string|in:draft,ready,shared',
             'industry' => 'sometimes|string|max:40',
             'vertical' => ($creating ? 'required' : 'sometimes').'|string|in:'.implode(',', $verticals ?: ['small_shop']),
+            'template_key' => 'sometimes|in:modern,editorial,bold',
             'prospect_name' => ($creating ? 'nullable' : 'sometimes').'|string|max:200',
             'prospect_contact' => 'nullable|string|max:200',
             'prospect_email' => 'nullable|email|max:200',

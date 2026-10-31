@@ -142,11 +142,13 @@ Expenses linked to an open session (`float_session_id`) reduce expected cash on 
 
 ## Payments & M-Pesa
 
-Organization config: `GET/PATCH /erp/settings/finance` → `finance.mpesa` (consumer key/secret, paybill, till, passkey, Daraja callback URLs). Branch overrides: `branches.settings.mpesa` (till/shortcode only). Register URLs on the Safaricom Daraja portal; the API validates stored URLs but does not call Daraja register-URL.
+Organization config: `GET/PATCH /erp/settings/finance` → `finance.mpesa` (consumer key/secret, paybill, till, passkey, and callback URLs). Organization admins can save settings and register their default C2B confirmation/validation URLs directly with Daraja using `POST /mpesa-paybill-accounts/register-default-c2b-urls`. Saved paybill accounts have their own registration endpoint. STK callback URLs are sent with each STK push and are not registered through Daraja's C2B Register URL API. Branch overrides: `branches.settings.mpesa` (till/shortcode only).
 
 | Method | Path | Notes |
 |--------|------|-------|
 | POST | `/sales/carts/{id}/payment/mpesa/stk-push` | STK push; uses org (+ branch) M-Pesa config |
+| POST | `/mpesa-paybill-accounts/register-default-c2b-urls` | Save organization default C2B URLs with Daraja (admin) |
+| POST | `/mpesa-paybill-accounts/{id}/register-c2b-urls` | Register a saved paybill account's C2B URLs with Daraja (admin) |
 | POST | `/payments/stk/callback` | Daraja STK callback (no auth) |
 | POST | `/payments/c2b/validation` | Daraja C2B validation (no auth) |
 | POST | `/payments/c2b/confirmation` | Daraja C2B confirmation (no auth); org resolved by `BusinessShortCode` |

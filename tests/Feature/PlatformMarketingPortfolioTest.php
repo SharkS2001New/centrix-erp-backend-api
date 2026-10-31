@@ -4,7 +4,9 @@ namespace Tests\Feature;
 
 use App\Models\PlatformMarketingPortfolio;
 use App\Models\User;
+use App\Services\Ai\AiSettingsResolver;
 use App\Services\Platform\PlatformMarketingPortfolioService;
+use Illuminate\Support\Facades\Config;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
@@ -26,15 +28,81 @@ class PlatformMarketingPortfolioTest extends TestCase
     {
         Sanctum::actingAs($this->superAdmin);
 
-        $ids = collect(
-            $this->getJson('/api/v1/admin/platform-marketing-portfolios/meta')
-                ->assertOk()
-                ->json('verticals')
-        )->pluck('id')->all();
+        $response = $this->getJson('/api/v1/admin/platform-marketing-portfolios/meta')->assertOk();
+        $ids = collect($response->json('verticals'))->pluck('id')->all();
 
         $this->assertContains('spa_salon', $ids);
+        $this->assertContains('driving_school', $ids);
         $this->assertContains('supermarket', $ids);
         $this->assertContains('hotel_bar', $ids);
+        $this->assertContains('modern', collect($response->json('templates'))->pluck('id')->all());
+        $this->assertNotEmpty($response->json('section_suggestions.driving_school.fit'));
+    }
+
+    public function test_template_is_persisted_for_driving_school_portfolios(): void
+    {
+        Sanctum::actingAs($this->superAdmin);
+
+        $create = $this->postJson('/api/v1/admin/platform-marketing-portfolios', [
+            'prospect_name' => 'Nairobi Driving Academy',
+            'vertical' => 'driving_school',
+            'template_key' => 'editorial',
+            'focus_modules' => ['driving', 'accounting', 'reports'],
+        ])->assertCreated();
+
+        $id = (int) $create->json('data.id');
+        $this->assertSame('driving', $create->json('data.industry'));
+        $this->assertSame('editorial', $create->json('data.template_key'));
+        $this->assertStringContainsString(
+            'student enrolment',
+            strtolower(implode(' ', array_column($create->json('data.sections'), 'body'))),
+        );
+
+        $this->patchJson("/api/v1/admin/platform-marketing-portfolios/{$id}", [
+            'template_key' => 'bold',
+        ])->assertOk()->assertJsonPath('data.template_key', 'bold');
+    }
+
+    public function test_template_fallback_generation_preserves_uploaded_section_photos(): void
+    {
+        Sanctum::actingAs($this->superAdmin);
+
+        $platformOrganization = AiSettingsResolver::platformOrganization(refresh: true);
+        $this->assertNotNull($platformOrganization);
+        $originalSettings = $platformOrganization->module_settings;
+        $originalGeminiKey = config('ai.gemini.api_key');
+        $originalOpenAiKey = config('ai.platform_training.api_key');
+        $platformOrganization->forceFill(['module_settings' => []])->save();
+        Config::set('ai.gemini.api_key', '');
+        Config::set('ai.platform_training.api_key', '');
+        AiSettingsResolver::platformOrganization(refresh: true);
+
+        try {
+            $portfolio = app(PlatformMarketingPortfolioService::class)->create($this->superAdmin, [
+                'vertical' => 'small_shop',
+                'prospect_name' => 'Photo Shop',
+            ]);
+            $sections = $portfolio->sections;
+            $sections[0]['image_path'] = "marketing-portfolios/{$portfolio->id}/cover.jpg";
+            $sections[0]['image_url'] = '/storage/'.$sections[0]['image_path'];
+            $portfolio->forceFill(['sections' => $sections])->save();
+
+            $generated = app(PlatformMarketingPortfolioService::class)->generate($portfolio->fresh());
+
+            $this->assertSame(
+                $sections[0]['image_path'],
+                collect($generated->sections)->firstWhere('key', 'cover')['image_path'],
+            );
+            $this->assertSame(
+                $sections[0]['image_url'],
+                collect($generated->sections)->firstWhere('key', 'cover')['image_url'],
+            );
+        } finally {
+            $platformOrganization->forceFill(['module_settings' => $originalSettings])->save();
+            Config::set('ai.gemini.api_key', $originalGeminiKey);
+            Config::set('ai.platform_training.api_key', $originalOpenAiKey);
+            AiSettingsResolver::platformOrganization(refresh: true);
+        }
     }
 
     public function test_can_create_update_share_and_download_pdf(): void

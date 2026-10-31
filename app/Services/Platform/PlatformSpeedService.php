@@ -5,6 +5,7 @@ namespace App\Services\Platform;
 use App\Models\SystemIssueReport;
 use App\Services\Platform\Speed\PlatformInfraSnapshot;
 use App\Services\Platform\Speed\PlatformSpeedAnalytics;
+use App\Services\Platform\Speed\PlatformSpeedRouteNormalizer;
 use App\Services\Platform\Speed\PlatformSpeedSyntheticRunner;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -21,6 +22,7 @@ class PlatformSpeedService
         protected PlatformSpeedAnalytics $analytics,
         protected PlatformInfraSnapshot $infra,
         protected PlatformSpeedSyntheticRunner $synthetic,
+        protected PlatformSpeedRouteNormalizer $routeNormalizer,
     ) {}
 
     /**
@@ -39,6 +41,7 @@ class PlatformSpeedService
         $slowQueries = $this->slowQueries->topQueries(5);
         $slowIssues = $this->slowIssuesSummary();
         $api = $this->analytics->apiSummary($range);
+        $api['slow_endpoints'] = $this->slowEndpoints($api['slowest'] ?? []);
         $queries = $this->analytics->querySummary($range);
         $infra = $this->infra->current();
         $diagnostics = $this->analytics->diagnostics($api, $queries, $infra, $slowQueries);
@@ -73,7 +76,120 @@ class PlatformSpeedService
     /** @return array<string, mixed> */
     public function apiTab(string $range = '1h'): array
     {
-        return $this->analytics->apiSummary($range);
+        $api = $this->analytics->apiSummary($range);
+        $api['slow_endpoints'] = $this->slowEndpoints($api['slowest'] ?? []);
+
+        return $api;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $measuredEndpoints
+     * @return list<array<string, mixed>>
+     */
+    protected function slowEndpoints(array $measuredEndpoints): array
+    {
+        $endpoints = [];
+        $p95Threshold = (int) config('platform_speed.alerts.api_p95_ms', 800);
+
+        foreach ($measuredEndpoints as $row) {
+            $p95 = isset($row['p95_ms']) ? (int) $row['p95_ms'] : null;
+            $max = isset($row['max_ms']) ? (int) $row['max_ms'] : 0;
+            if (($p95 === null || $p95 < $p95Threshold) && $max < 5000) {
+                continue;
+            }
+
+            $route = $this->routeNormalizer->normalizePath((string) ($row['route_key'] ?? ''));
+            $key = strtoupper((string) ($row['method'] ?? '')).' '.$route;
+            $endpoints[$key] = [
+                ...$row,
+                'route_key' => $route,
+                'report_count' => 0,
+                'reported_max_ms' => null,
+                'reported_organizations' => [],
+                'reports' => [],
+                'source' => 'latency',
+            ];
+        }
+
+        $reports = \App\Models\SystemIssueReport::query()
+            ->with('organization:id,org_name,company_code')
+            ->where('kind', 'slow')
+            ->whereIn('status', ['open', 'acknowledged'])
+            ->whereNotNull('api_path')
+            ->whereNotNull('http_method')
+            ->orderByDesc('created_at')
+            ->limit(500)
+            ->get([
+                'id', 'organization_id', 'http_method', 'api_path', 'http_status',
+                'duration_ms', 'message', 'status', 'created_at',
+            ]);
+
+        foreach ($reports as $report) {
+            $method = strtoupper(trim((string) $report->http_method));
+            $path = (string) (parse_url((string) $report->api_path, PHP_URL_PATH) ?: $report->api_path);
+            $route = $this->routeNormalizer->normalizePath($path);
+            $key = $method.' '.$route;
+            if (! isset($endpoints[$key])) {
+                $endpoints[$key] = [
+                    'method' => $method,
+                    'route_key' => $route,
+                    'count' => 0,
+                    'error_count' => 0,
+                    'avg_ms' => null,
+                    'p95_ms' => null,
+                    'max_ms' => null,
+                    'report_count' => 0,
+                    'reported_max_ms' => null,
+                    'reported_organizations' => [],
+                    'reports' => [],
+                    'source' => 'system_report',
+                ];
+            }
+
+            $endpoint = &$endpoints[$key];
+            $duration = $report->duration_ms !== null ? (int) $report->duration_ms : null;
+            $endpoint['report_count']++;
+            if ($duration !== null) {
+                $endpoint['reported_max_ms'] = max((int) ($endpoint['reported_max_ms'] ?? 0), $duration);
+            }
+            if ($report->organization) {
+                $org = [
+                    'id' => (int) $report->organization->id,
+                    'name' => (string) $report->organization->org_name,
+                    'company_code' => (string) $report->organization->company_code,
+                ];
+                $endpoint['reported_organizations'][$org['id']] = $org;
+            }
+            if (count($endpoint['reports']) < 5) {
+                $endpoint['reports'][] = [
+                    'id' => (string) $report->id,
+                    'duration_ms' => $duration,
+                    'http_status' => $report->http_status !== null ? (int) $report->http_status : null,
+                    'status' => (string) $report->status,
+                    'message' => (string) $report->message,
+                    'created_at' => $report->created_at?->toIso8601String(),
+                    'organization' => $report->organization ? [
+                        'id' => (int) $report->organization->id,
+                        'name' => (string) $report->organization->org_name,
+                        'company_code' => (string) $report->organization->company_code,
+                    ] : null,
+                ];
+            }
+            unset($endpoint);
+        }
+
+        foreach ($endpoints as &$endpoint) {
+            $endpoint['reported_organizations'] = array_values($endpoint['reported_organizations']);
+        }
+        unset($endpoint);
+
+        $endpoints = array_values($endpoints);
+        usort($endpoints, static fn (array $a, array $b) =>
+            (($b['report_count'] ?? 0) <=> ($a['report_count'] ?? 0))
+            ?: (($b['reported_max_ms'] ?? $b['max_ms'] ?? 0) <=> ($a['reported_max_ms'] ?? $a['max_ms'] ?? 0))
+        );
+
+        return array_slice($endpoints, 0, 100);
     }
 
     /** @return array<string, mixed> */
@@ -99,8 +215,8 @@ class PlatformSpeedService
         return [
             'queue' => $infra['queue'] ?? [],
             'health_queue_check' => collect($infra['health']['checks'] ?? [])->firstWhere('id', 'queue'),
-            'note' => 'Live worker probe runs on Infrastructure Health to keep Speed Measure snappy.',
-            'health_href' => '/platform/health',
+            'note' => 'Run live worker and infrastructure checks in ERP Speed → Infrastructure Health.',
+            'health_href' => '/platform/speed',
         ];
     }
 

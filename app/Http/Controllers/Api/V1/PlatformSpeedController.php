@@ -232,6 +232,43 @@ class PlatformSpeedController extends Controller
         return response()->json($speed->queuesTab());
     }
 
+    public function failedJobs(Request $request)
+    {
+        if (! Schema::hasTable('failed_jobs')) {
+            return response()->json([
+                'message' => 'The failed_jobs table is not available on this queue connection.',
+            ], 503);
+        }
+
+        $page = max(1, (int) $request->query('page', 1));
+        $jobs = DB::table('failed_jobs')
+            ->orderByDesc('failed_at')
+            ->paginate(25, ['id', 'uuid', 'connection', 'queue', 'payload', 'exception', 'failed_at'], 'page', $page);
+        $items = $jobs->getCollection()->map(function ($job) {
+            $payload = json_decode((string) $job->payload, true);
+            $payload = is_array($payload) ? $payload : [];
+
+            return [
+                'id' => (int) $job->id,
+                'uuid' => (string) ($job->uuid ?? ''),
+                'connection' => (string) ($job->connection ?? ''),
+                'queue' => (string) ($job->queue ?? ''),
+                'display_name' => (string) ($payload['displayName'] ?? ''),
+                'job_name' => (string) ($payload['data']['commandName'] ?? ''),
+                'exception' => (string) ($job->exception ?? ''),
+                'failed_at' => $job->failed_at,
+            ];
+        });
+
+        return response()->json([
+            'data' => $items,
+            'current_page' => $jobs->currentPage(),
+            'last_page' => $jobs->lastPage(),
+            'per_page' => $jobs->perPage(),
+            'total' => $jobs->total(),
+        ]);
+    }
+
     public function frontend(PlatformSpeedService $speed)
     {
         return response()->json($speed->frontendTab());

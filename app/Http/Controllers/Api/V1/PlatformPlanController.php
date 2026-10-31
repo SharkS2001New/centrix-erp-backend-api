@@ -168,6 +168,7 @@ class PlatformPlanController extends Controller
             'is_active' => 'sometimes|boolean',
             'is_recommended' => 'sometimes|boolean',
             'cta_action' => 'sometimes|in:buy_now,start_now,view_details,contact_sales',
+            'cta_label' => 'nullable|string|max:48',
             'auto_invoice_template_id' => 'nullable|integer',
         ]);
 

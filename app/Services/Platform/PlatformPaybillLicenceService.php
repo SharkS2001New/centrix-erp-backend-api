@@ -629,6 +629,10 @@ class PlatformPaybillLicenceService
                     'industry' => $plan->industry ?: 'commerce',
                     'workspace_keys' => array_values($plan->workspace_keys ?? []),
                     'is_recommended' => Schema::hasColumn('platform_plans', 'is_recommended') && (bool) $plan->is_recommended,
+                    'cta_action' => in_array($plan->cta_action, ['buy_now', 'start_now', 'view_details', 'contact_sales'], true)
+                        ? $plan->cta_action
+                        : 'buy_now',
+                    'cta_label' => $plan->callToActionLabel(),
                     'discount_percent' => $discount['percent'],
                     'discount_min_months' => $discount['min_months'],
                 ];
@@ -846,7 +850,7 @@ class PlatformPaybillLicenceService
         });
     }
 
-    /** Renew a yearly organisation at the amount saved on that organisation. */
+    /** Renew an organisation at the amount saved on that subscription. */
     public function startRenewalCheckout(Organization $org, ?string $phone = null): PlatformLicenceCheckout
     {
         $subscription = PlatformSubscription::query()
@@ -854,9 +858,9 @@ class PlatformPaybillLicenceService
             ->where('organization_id', $org->id)
             ->first();
         $licenses = app(OrganizationLicenseService::class);
-        if (! $subscription || $licenses->billingCycle($subscription) !== 'yearly') {
+        if (! $subscription || $subscription->is_trial || $subscription->status === 'trialing') {
             throw \Illuminate\Validation\ValidationException::withMessages([
-                'billing' => ['This organisation is not on a yearly plan.'],
+                'billing' => ['This organisation does not have a paid subscription to renew.'],
             ]);
         }
 
@@ -870,7 +874,7 @@ class PlatformPaybillLicenceService
         return PlatformLicenceCheckout::query()->create([
             'organization_id' => $org->id,
             'plan_id' => $subscription->plan_id,
-            'months' => 12,
+            'months' => $licenses->billingCycle($subscription) === 'yearly' ? 12 : 1,
             'amount' => $amount,
             'discount_percent' => 0,
             'phone_number' => $phone,
