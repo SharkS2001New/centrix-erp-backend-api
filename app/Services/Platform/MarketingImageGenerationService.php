@@ -50,12 +50,28 @@ class MarketingImageGenerationService
         }
 
         if (! $response->successful()) {
+            $providerMessage = $response->json('error.message');
+            $providerCode = $response->json('error.code');
+            $details = is_string($providerMessage) ? trim($providerMessage) : '';
+            if ($details !== '') {
+                $details = mb_substr(preg_replace('/[\x00-\x1F\x7F]/u', ' ', $details) ?? '', 0, 400);
+            }
+
             Log::warning('Marketing image generation provider returned an error', [
                 'directory' => $directory,
                 'status' => $response->status(),
+                'provider_code' => is_string($providerCode) ? mb_substr($providerCode, 0, 100) : null,
             ]);
 
-            throw new \RuntimeException('Image generation provider returned HTTP '.$response->status().'.');
+            $message = 'Image generation provider returned HTTP '.$response->status().'.';
+            if ($response->status() === 404) {
+                $message .= ' Confirm the platform AI base URL points to an image-generation API and the configured image model is available. OpenAI-compatible chat providers may not support image generation.';
+            }
+            if ($details !== '') {
+                $message .= ' Provider detail: '.$details;
+            }
+
+            throw new \RuntimeException($message);
         }
 
         $encoded = $response->json('data.0.b64_json');

@@ -181,6 +181,49 @@ class PlatformMarketingPortfolioTest extends TestCase
         }
     }
 
+    public function test_image_generation_404_explains_endpoint_and_model_mismatch(): void
+    {
+        Sanctum::actingAs($this->superAdmin);
+
+        $platformOrganization = AiSettingsResolver::platformOrganization(refresh: true);
+        $this->assertNotNull($platformOrganization);
+        $originalSettings = $platformOrganization->module_settings;
+        $originalApiKey = config('ai.platform_training.api_key');
+        $originalBaseUrl = config('ai.platform_training.base_url');
+        $platformOrganization->forceFill(['module_settings' => []])->save();
+        Config::set('ai.platform_training.api_key', 'sk-test-image-generation');
+        Config::set('ai.platform_training.base_url', 'https://api.openai.com/v1');
+        AiSettingsResolver::platformOrganization(refresh: true);
+        Http::fake([
+            'api.openai.com/v1/images/generations' => Http::response([
+                'error' => [
+                    'message' => 'The configured image model was not found.',
+                    'code' => 'model_not_found',
+                ],
+            ], 404),
+        ]);
+
+        try {
+            $portfolio = app(PlatformMarketingPortfolioService::class)->create($this->superAdmin, [
+                'vertical' => 'small_shop',
+                'business_name' => 'Amina Fresh Mart',
+            ]);
+
+            $this->postJson(
+                "/api/v1/admin/platform-marketing-portfolios/{$portfolio->id}/generate-images",
+            )->assertUnprocessable()
+                ->assertJsonPath(
+                    'message',
+                    'Image generation provider returned HTTP 404. Confirm the platform AI base URL points to an image-generation API and the configured image model is available. OpenAI-compatible chat providers may not support image generation. Provider detail: The configured image model was not found.',
+                );
+        } finally {
+            $platformOrganization->forceFill(['module_settings' => $originalSettings])->save();
+            Config::set('ai.platform_training.api_key', $originalApiKey);
+            Config::set('ai.platform_training.base_url', $originalBaseUrl);
+            AiSettingsResolver::platformOrganization(refresh: true);
+        }
+    }
+
     public function test_can_create_update_share_and_download_pdf(): void
     {
         Sanctum::actingAs($this->superAdmin);
