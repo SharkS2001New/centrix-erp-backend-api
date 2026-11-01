@@ -5,8 +5,6 @@
  * and product-truth knowledge used when generating prospect portfolios.
  */
 return [
-    'image_model' => env('MARKETING_PORTFOLIO_IMAGE_MODEL', 'gpt-image-1'),
-
     'fonts' => [
         ['id' => 'sans', 'label' => 'Modern Sans'],
         ['id' => 'serif', 'label' => 'Classic Serif'],

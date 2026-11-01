@@ -141,33 +141,6 @@ class PlatformMarketingBlogController extends Controller
         ], 201);
     }
 
-    public function generateCoverImage(Request $request, int $id)
-    {
-        $data = $request->validate([
-            'instruction' => 'nullable|string|max:1000',
-        ]);
-        $blog = PlatformMarketingBlog::query()->findOrFail($id);
-
-        try {
-            $blog = $this->service->generateCoverImage(
-                $blog,
-                $request->user(),
-                $data['instruction'] ?? null,
-            );
-        } catch (\RuntimeException $e) {
-            return response()->json([
-                'message' => $e->getMessage(),
-                'data' => $this->service->present($blog->fresh()),
-            ], 422);
-        }
-        $blog->load(['creator:id,full_name', 'publisher:id,full_name']);
-
-        return response()->json([
-            'data' => $this->service->present($blog),
-            'message' => 'Cover image generated from the blog content.',
-        ]);
-    }
-
     public function purgeCache(Request $request)
     {
         $slug = trim((string) $request->input('slug', ''));
