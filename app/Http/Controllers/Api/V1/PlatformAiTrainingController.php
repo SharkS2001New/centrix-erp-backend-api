@@ -60,6 +60,15 @@ class PlatformAiTrainingController extends Controller
         ]);
     }
 
+    public function landingPageDemoVideo()
+    {
+        return response()->json([
+            'video_embed_url' => $this->onboardingVideoEmbedUrl(
+                (string) (AiSettingsResolver::forPlatformTraining()['landing_video_url'] ?? ''),
+            ),
+        ]);
+    }
+
     public function usage(Request $request, \App\Services\Ai\AiUsageAnalyticsService $analytics)
     {
         return response()->json($analytics->platformSummary($this->usageFilters($request)));
@@ -238,6 +247,18 @@ class PlatformAiTrainingController extends Controller
             'talk_gemini_api_key' => 'sometimes|nullable|string|max:512',
             'talk_gemini_model' => 'sometimes|nullable|string|max:80',
             'demo_video_url' => [
+                'sometimes',
+                'nullable',
+                'string',
+                'max:500',
+                function (string $attribute, mixed $value, \Closure $fail): void {
+                    if ($value !== null && trim((string) $value) !== ''
+                        && $this->onboardingVideoEmbedUrl((string) $value) === null) {
+                        $fail('Use a valid HTTPS YouTube or Vimeo video link.');
+                    }
+                },
+            ],
+            'landing_video_url' => [
                 'sometimes',
                 'nullable',
                 'string',

@@ -95,14 +95,16 @@ class PlatformAiTrainingTest extends TestCase
         $this->assertSame('sk-test-platform-key-updated', $fresh['api_key']);
     }
 
-    public function test_platform_admin_can_configure_the_public_system_guide_video(): void
+    public function test_platform_admin_can_configure_the_in_app_and_landing_page_demo_videos(): void
     {
         $this->actingAs($this->superAdmin, 'sanctum')
             ->patchJson('/api/v1/admin/ai-training/settings', [
                 'demo_video_url' => 'https://youtu.be/abcdefghijk',
+                'landing_video_url' => 'https://vimeo.com/123456',
             ])
             ->assertOk()
-            ->assertJsonPath('settings.demo_video_url', 'https://youtu.be/abcdefghijk');
+            ->assertJsonPath('settings.demo_video_url', 'https://youtu.be/abcdefghijk')
+            ->assertJsonPath('settings.landing_video_url', 'https://vimeo.com/123456');
 
         $this->getJson('/api/v1/onboarding-guide/video')
             ->assertOk()
@@ -110,6 +112,9 @@ class PlatformAiTrainingTest extends TestCase
                 'video_embed_url',
                 'https://www.youtube-nocookie.com/embed/abcdefghijk?rel=0',
             );
+        $this->getJson('/api/v1/landing-page/demo-video')
+            ->assertOk()
+            ->assertJsonPath('video_embed_url', 'https://player.vimeo.com/video/123456');
     }
 
     public function test_platform_admin_video_setting_rejects_non_video_hosts(): void
@@ -120,6 +125,13 @@ class PlatformAiTrainingTest extends TestCase
             ])
             ->assertUnprocessable()
             ->assertJsonValidationErrors('demo_video_url');
+
+        $this->actingAs($this->superAdmin, 'sanctum')
+            ->patchJson('/api/v1/admin/ai-training/settings', [
+                'landing_video_url' => 'https://example.com/demo',
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('landing_video_url');
     }
 
     public function test_super_admin_can_save_platform_gemini_api_key(): void

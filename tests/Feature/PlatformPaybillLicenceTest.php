@@ -81,6 +81,54 @@ class PlatformPaybillLicenceTest extends TestCase
         $this->assertSame($subscription->plan_id, $checkout->plan_id);
     }
 
+    public function test_manual_and_equity_checkout_support_paid_subscription_renewals(): void
+    {
+        [$org] = $this->seedLicensedOrg('RENEW', '0712000114', '2026-11-07');
+        $subscription = PlatformSubscription::query()
+            ->where('organization_id', $org->id)
+            ->firstOrFail();
+        $subscription->update([
+            'status' => 'active',
+            'is_trial' => false,
+            'renewal_price' => 1500,
+            'amount' => 1500,
+            'billing_cycle' => 'monthly',
+        ]);
+        $this->configurePaybill();
+        $user = $this->userForOrg($org);
+        Sanctum::actingAs($user);
+
+        $manual = $this->postJson('/api/v1/erp/organization/licence/checkout', [
+            'billing' => 'renew',
+            'months' => 1,
+        ])->assertCreated()
+            ->assertJsonPath('checkout.amount', 1500)
+            ->assertJsonPath('checkout.months', 1);
+        $this->assertNotEmpty($manual->json('paybill.short_code'));
+
+        $platform = Organization::query()
+            ->whereRaw('UPPER(company_code) = ?', ['PLATFORM'])
+            ->firstOrFail();
+        EquityBankAccount::query()->where('organization_id', $platform->id)->update(['is_active' => false]);
+        EquityBankAccount::query()->create([
+            'organization_id' => $platform->id,
+            'name' => 'Platform Equity',
+            'primary_account_number' => 'EQRENEW1',
+            'account_number' => 'EQRENEW1',
+            'paybill_number' => 'EQRENEW1',
+            'is_default' => true,
+            'is_active' => true,
+        ]);
+
+        $this->postJson('/api/v1/erp/organization/licence/equity/checkout', [
+            'billing' => 'renew',
+            'months' => 1,
+        ])->assertCreated()
+            ->assertJsonPath('checkout.amount', 1500)
+            ->assertJsonPath('checkout.months', 1)
+            ->assertJsonPath('equity.account_number', 'EQRENEW1');
+    }
+
     public function test_billing_details_include_the_assigned_platform_managed_plan(): void
     {
         [$org, $plan] = $this->seedLicensedOrg('MANAGED', '0712000113', '2026-11-07');

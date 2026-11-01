@@ -170,6 +170,8 @@ Route::prefix('v1')->group(function () {
     Route::get('health', [AuthController::class, 'health']);
     Route::get('onboarding-guide/video', [PlatformAiTrainingController::class, 'onboardingGuideVideo'])
         ->middleware('throttle:auth-org-preview');
+    Route::get('landing-page/demo-video', [PlatformAiTrainingController::class, 'landingPageDemoVideo'])
+        ->middleware('throttle:auth-org-preview');
     Route::get('marketing-portfolios/shared/{token}', [PlatformMarketingPortfolioController::class, 'shared'])
         ->where('token', '[A-Za-z0-9]{20,64}');
     Route::get('marketing-portfolios/shared/{token}/pdf', [PlatformMarketingPortfolioController::class, 'sharedPdf'])

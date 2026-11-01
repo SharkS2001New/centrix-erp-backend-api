@@ -204,27 +204,32 @@ class PlatformPaybillController extends Controller
             return response()->json(['message' => 'No organisation on this login.'], 422);
         }
 
+        $renewal = $request->input('billing') === 'renew';
         $data = $request->validate([
-            'plan_id' => 'required|integer',
-            'months' => 'required|integer|min:1|max:36',
-            'billing' => 'sometimes|in:monthly,yearly',
+            'plan_id' => [Rule::requiredIf(! $renewal), 'nullable', 'integer'],
+            'months' => [Rule::requiredIf(! $renewal), 'nullable', 'integer', 'min:1', 'max:36'],
+            'billing' => 'sometimes|in:monthly,yearly,renew',
         ]);
-        $billing = $data['billing'] ?? 'monthly';
-        $plan = $this->findSelfServePlan((int) $data['plan_id']);
-        $price = $billing === 'yearly'
-            ? (float) ($plan?->yearly_price ?? 0)
-            : (float) ($plan?->monthly_price ?? 0);
-        if (! $plan || $price <= 0) {
-            return response()->json(['message' => 'This plan is not available for the selected billing period.'], 422);
-        }
+        if ($renewal) {
+            $checkout = $this->paybill->startRenewalCheckout($org);
+        } else {
+            $billing = $data['billing'] ?? 'monthly';
+            $plan = $this->findSelfServePlan((int) $data['plan_id']);
+            $price = $billing === 'yearly'
+                ? (float) ($plan?->yearly_price ?? 0)
+                : (float) ($plan?->monthly_price ?? 0);
+            if (! $plan || $price <= 0) {
+                return response()->json(['message' => 'This plan is not available for the selected billing period.'], 422);
+            }
 
-        $checkout = $this->paybill->startCheckout(
-            $org,
-            $plan,
-            $billing === 'yearly' ? 12 : (int) $data['months'],
-            null,
-            $billing,
-        );
+            $checkout = $this->paybill->startCheckout(
+                $org,
+                $plan,
+                $billing === 'yearly' ? 12 : (int) $data['months'],
+                null,
+                $billing,
+            );
+        }
         $instructions = $this->paybill->instructionsFor($org, null);
         if (! $instructions) {
             $checkout->delete();
@@ -246,27 +251,32 @@ class PlatformPaybillController extends Controller
             return response()->json(['message' => 'No organisation on this login.'], 422);
         }
 
+        $renewal = $request->input('billing') === 'renew';
         $data = $request->validate([
-            'plan_id' => 'required|integer',
-            'months' => 'required|integer|min:1|max:36',
-            'billing' => 'sometimes|in:monthly,yearly',
+            'plan_id' => [Rule::requiredIf(! $renewal), 'nullable', 'integer'],
+            'months' => [Rule::requiredIf(! $renewal), 'nullable', 'integer', 'min:1', 'max:36'],
+            'billing' => 'sometimes|in:monthly,yearly,renew',
         ]);
-        $billing = $data['billing'] ?? 'monthly';
-        $plan = $this->findSelfServePlan((int) $data['plan_id']);
-        $price = $billing === 'yearly'
-            ? (float) ($plan?->yearly_price ?? 0)
-            : (float) ($plan?->monthly_price ?? 0);
-        if (! $plan || $price <= 0) {
-            return response()->json(['message' => 'This plan is not available for the selected billing period.'], 422);
-        }
+        if ($renewal) {
+            $checkout = $this->paybill->startRenewalCheckout($org);
+        } else {
+            $billing = $data['billing'] ?? 'monthly';
+            $plan = $this->findSelfServePlan((int) $data['plan_id']);
+            $price = $billing === 'yearly'
+                ? (float) ($plan?->yearly_price ?? 0)
+                : (float) ($plan?->monthly_price ?? 0);
+            if (! $plan || $price <= 0) {
+                return response()->json(['message' => 'This plan is not available for the selected billing period.'], 422);
+            }
 
-        $checkout = $this->paybill->startCheckout(
-            $org,
-            $plan,
-            $billing === 'yearly' ? 12 : (int) $data['months'],
-            null,
-            $billing,
-        );
+            $checkout = $this->paybill->startCheckout(
+                $org,
+                $plan,
+                $billing === 'yearly' ? 12 : (int) $data['months'],
+                null,
+                $billing,
+            );
+        }
         $instructions = $this->paybill->equityInstructionsFor($org);
         if (! $instructions) {
             $checkout->delete();

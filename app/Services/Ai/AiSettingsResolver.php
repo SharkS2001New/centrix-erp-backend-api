@@ -526,6 +526,7 @@ class AiSettingsResolver
             'talk_gemini_api_key',
             'talk_gemini_model',
             'demo_video_url',
+            'landing_video_url',
         ] as $key) {
                 $out[$key] = trim((string) ($out[$key] ?? ''));
             }

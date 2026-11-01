@@ -176,6 +176,7 @@ class Organization extends Model
             'primary_color',
             'deployment_profile',
             'enabled_modules',
+            'registration_source',
             'module_settings',
             'is_active',
             'created_at',
