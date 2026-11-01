@@ -540,17 +540,48 @@ class PlatformPaybillController extends Controller
         $checkoutRequestId = trim((string) ($stk['CheckoutRequestID'] ?? ''));
         $responseCode = (string) ($stk['ResponseCode'] ?? '');
         if ($checkoutRequestId === '' || isset($stk['errorCode']) || ($responseCode !== '' && $responseCode !== '0')) {
+            $darajaCode = trim((string) ($stk['errorCode'] ?? ($responseCode !== '' ? $responseCode : '')));
+            $darajaMessage = trim((string) (
+                $stk['errorMessage']
+                ?? $stk['ResponseDescription']
+                ?? $stk['CustomerMessage']
+                ?? ''
+            ));
+            if ($darajaMessage === '') {
+                $darajaMessage = $checkoutRequestId === ''
+                    ? 'Daraja did not return a CheckoutRequestID.'
+                    : 'Daraja rejected the STK request without providing an error description.';
+            }
+            $darajaMessage = mb_substr($darajaMessage, 0, 500);
+            $message = 'Safaricom Daraja error'
+                .($darajaCode !== '' ? ' '.$darajaCode : '')
+                .': '.$darajaMessage;
+
             Log::warning('Platform licence STK prompt was rejected.', [
                 'organization_id' => $org->id,
                 'checkout_id' => $checkout->id,
-                'error_code' => $stk['errorCode'] ?? ($responseCode !== '' ? $responseCode : null),
+                'error_code' => $darajaCode !== '' ? $darajaCode : null,
+                'error_message' => $darajaMessage,
+                'response_code' => $responseCode !== '' ? $responseCode : null,
+                'response_description' => isset($stk['ResponseDescription'])
+                    ? mb_substr((string) $stk['ResponseDescription'], 0, 500)
+                    : null,
             ]);
 
             return response()->json([
-                'message' => 'M-Pesa rejected the prompt. Check the platform STK settings or choose manual M-Pesa.',
+                'message' => $message,
                 'checkout' => $this->checkoutPayload($checkout),
                 'stk' => false,
-            ]);
+                'daraja' => [
+                    'error_code' => $darajaCode !== '' ? $darajaCode : null,
+                    'error_message' => $darajaMessage,
+                    'response_code' => $responseCode !== '' ? $responseCode : null,
+                    'response_description' => isset($stk['ResponseDescription'])
+                        ? mb_substr((string) $stk['ResponseDescription'], 0, 500)
+                        : null,
+                    'request_id' => isset($stk['requestId']) ? mb_substr((string) $stk['requestId'], 0, 100) : null,
+                ],
+            ], 422);
         }
 
         $checkout->checkout_request_id = $checkoutRequestId;
