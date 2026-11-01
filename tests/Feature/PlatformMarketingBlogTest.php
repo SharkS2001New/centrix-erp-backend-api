@@ -97,7 +97,7 @@ class PlatformMarketingBlogTest extends TestCase
         Config::set('ai.platform_training.base_url', 'https://api.openai.com/v1');
         AiSettingsResolver::platformOrganization(refresh: true);
         $storageRoot = sys_get_temp_dir().'/centrix-blog-cover-'.bin2hex(random_bytes(8));
-        Storage::fake('public', $storageRoot);
+        Storage::set('public', Storage::build($storageRoot));
         Http::fake([
             'api.openai.com/v1/images/generations' => Http::response([
                 'data' => [[

@@ -264,7 +264,7 @@ class PlatformMarketingPortfolioService
     }
 
     /**
-     * Generate illustrations from the generated copy for sections without an uploaded image.
+     * Generate illustrations from the generated copy for sections without an existing image.
      *
      * @return array{portfolio: PlatformMarketingPortfolio, generated_sections: list<string>}
      */
@@ -282,7 +282,8 @@ class PlatformMarketingPortfolioService
         foreach ($sections as $index => $section) {
             if (! is_array($section)
                 || ($sectionKey !== null && ($section['key'] ?? null) !== $sectionKey)
-                || ! empty($section['image_path'])) {
+                || ! empty($section['image_path'])
+                || ! empty($section['image_url'])) {
                 continue;
             }
 
@@ -808,6 +809,7 @@ PROMPT;
         $coverArt = $coverImage
             ? '<img class="cover-photo" src="'.$coverImage.'" />'
             : '<div class="cover-art"></div>';
+        $sectionNumber = 0;
         foreach ($sections as $section) {
             if (! is_array($section)) {
                 continue;
@@ -815,6 +817,7 @@ PROMPT;
             if (($section['key'] ?? null) === 'cover') {
                 continue;
             }
+            $sectionNumber++;
             $title = $e($section['title'] ?? '');
             $text = nl2br($e($section['body'] ?? ''));
             $bullets = '';
@@ -824,35 +827,36 @@ PROMPT;
             $imageKey = (string) ($section['image_key'] ?? $portfolio->hero_image_key ?? 'ill_manager');
             $ill = $illustrations[$imageKey] ?? $illustrations['ill_manager'] ?? null;
             $g0 = $e($ill['gradient'][0] ?? '#4C5BA4');
-            $g1 = $e($ill['gradient'][1] ?? '#2DB88A');
             $illLabel = $e($ill['label'] ?? $imageKey);
             $illHint = $e($ill['hint'] ?? '');
             $photo = $this->pdfImageData($section['image_path'] ?? null);
             $imageBlock = $photo
                 ? '<img class="section-photo" src="'.$photo.'" />'
-                : '<div class="ill" style="background:linear-gradient(135deg,'.$g0.' 0%,'.$g1.' 100%);">'
+                : '<div class="ill" style="background-color:'.$g0.';">'
                     .'<div class="ill-brand">Centrix</div><div class="ill-label">'.$illLabel.'</div>'
                     .($illHint !== '' ? '<div class="ill-hint">'.$illHint.'</div>' : '').'</div>';
-            $body .= '<section class="sec">'
-                .'<table class="section-layout"><tr><td class="copy"><h2>'.$title.'</h2><div class="body">'.$text.'</div>'
+            $body .= '<section class="section">'
+                .'<table class="section-layout"><tr><td class="copy"><div class="section-number">'
+                .str_pad((string) $sectionNumber, 2, '0', STR_PAD_LEFT).'</div><h2>'.$title.'</h2><div class="body">'.$text.'</div>'
                 .($bullets !== '' ? '<ul>'.$bullets.'</ul>' : '')
                 .'</td><td class="art">'.$imageBlock.'</td></tr></table></section>';
         }
 
         return '<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-            @page{margin:24px 30px 32px;}body{font-family:DejaVu Sans,sans-serif;font-size:10px;color:#172033;line-height:1.55;margin:0;}
-            .cover{background:'.$paper.';border-radius:16px;padding:0 0 20px;margin-bottom:18px;page-break-inside:avoid;}
-            .cover-art,.cover-photo{height:245px;width:100%;object-fit:cover;border-radius:16px 16px 0 0;background:linear-gradient(130deg,'.$accent.', '.$secondary.');}
-            .cover-copy{padding:22px 24px 8px;}.brand{font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:'.$accent.';font-weight:700;}
-            h1{font-size:27px;line-height:1.18;margin:9px 0 6px;color:'.$accent.';}.meta{color:#667085;font-size:10px;}
-            .sec{margin:13px 0;padding:14px 0 4px;border-top:1px solid #e5e9ef;page-break-inside:avoid;}
-            .section-layout{width:100%;border-collapse:collapse;}.copy{width:67%;vertical-align:top;padding-right:18px;}.art{width:33%;vertical-align:middle;}
-            .ill{height:132px;color:#fff;border-radius:11px;padding:14px;box-sizing:border-box;}
-            .section-photo{width:100%;height:132px;object-fit:cover;border-radius:11px;}
+            @page{margin:28px 34px 34px;}body{font-family:DejaVu Sans,sans-serif;font-size:10px;color:#172033;line-height:1.6;margin:0;}
+            .cover{background:'.$paper.';border:1px solid #e5e9ef;border-radius:14px;overflow:hidden;margin-bottom:22px;page-break-inside:avoid;}
+            .cover-art,.cover-photo{height:265px;width:100%;object-fit:cover;background-color:'.$accent.';}
+            .cover-copy{padding:22px 24px 24px;border-left:6px solid '.$accent.';}.brand{font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:'.$secondary.';font-weight:700;}
+            h1{font-size:28px;line-height:1.2;margin:9px 0 7px;color:'.$accent.';}.meta{color:#667085;font-size:10px;}
+            .section{margin:16px 0;padding:16px;background:'.$paper.';border:1px solid #e5e9ef;border-left:5px solid '.$accent.';border-radius:12px;page-break-inside:avoid;}
+            .section-layout{width:100%;border-collapse:collapse;}.copy{width:64%;vertical-align:top;padding:0 18px 0 2px;}.art{width:36%;vertical-align:middle;}
+            .section-number{font-size:9px;letter-spacing:0.15em;color:'.$secondary.';font-weight:700;margin-bottom:5px;}
+            .ill{height:172px;color:#fff;border-radius:10px;padding:16px;box-sizing:border-box;}
+            .section-photo{width:100%;height:172px;object-fit:cover;border-radius:10px;}
             .ill-brand{font-size:8px;letter-spacing:0.14em;text-transform:uppercase;opacity:0.85;font-weight:700;}
-            .ill-label{font-size:12px;font-weight:700;margin-top:7px;}.ill-hint{font-size:9px;opacity:0.9;margin-top:4px;}
-            h2{font-size:14px;margin:0 0 6px;color:'.$accent.';}ul{margin:7px 0 0 14px;padding:0;}li{margin:3px 0;}
-            .footer{margin-top:22px;padding-top:9px;border-top:2px solid '.$secondary.';font-size:8px;color:#728096;text-align:center;}
+            .ill-label{font-size:13px;font-weight:700;margin-top:8px;}.ill-hint{font-size:9px;opacity:0.9;margin-top:5px;}
+            h2{font-size:16px;line-height:1.3;margin:0 0 7px;color:'.$accent.';}ul{margin:8px 0 0 14px;padding:0;}li{margin:4px 0;}
+            .footer{margin-top:24px;padding-top:10px;border-top:2px solid '.$secondary.';font-size:8px;color:#728096;text-align:center;}
         </style></head><body>
             <header class="cover">'.$coverArt.'<div class="cover-copy"><div class="brand">Centrix ERP · Business portfolio</div>
             <h1>'.$e($portfolio->title).'</h1><div class="meta">Prepared for '.$e($biz)

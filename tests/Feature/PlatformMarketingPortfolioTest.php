@@ -121,7 +121,7 @@ class PlatformMarketingPortfolioTest extends TestCase
         Config::set('ai.platform_training.base_url', 'https://api.openai.com/v1');
         AiSettingsResolver::platformOrganization(refresh: true);
         $testStorageRoot = sys_get_temp_dir().'/centrix-marketing-portfolio-'.bin2hex(random_bytes(8));
-        Storage::fake('public', $testStorageRoot);
+        Storage::set('public', Storage::build($testStorageRoot));
 
         $imageBytes = base64_decode(
             'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/r0kAAAAASUVORK5CYII=',
