@@ -109,6 +109,20 @@ class PlatformPaybillLicenceTest extends TestCase
             ->assertJsonPath('data.subscription.billing_cycle', 'monthly');
     }
 
+    public function test_organization_billing_exposes_manual_payment_when_paybill_is_configured(): void
+    {
+        [$org] = $this->seedLicensedOrg('PAYMENTS', '0712000114', '2026-11-07');
+        $this->configurePaybill();
+        Sanctum::actingAs($this->userForOrg($org));
+
+        $this->getJson('/api/v1/erp/organization/billing')
+            ->assertOk()
+            ->assertJsonPath('data.payment_methods.mpesa_manual', true)
+            ->assertJsonPath('data.payment_methods.mpesa_stk', false)
+            ->assertJsonPath('data.payment_methods.equity', false)
+            ->assertJsonPath('data.paybill.short_code', '4036507');
+    }
+
     public function test_amount_that_is_not_a_time_plan_becomes_tokens(): void
     {
         [$org] = $this->seedLicensedOrg('OMEGA', '0712333444', '2026-12-01');
