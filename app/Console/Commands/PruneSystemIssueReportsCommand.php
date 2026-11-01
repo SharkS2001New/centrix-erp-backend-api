@@ -10,9 +10,10 @@ class PruneSystemIssueReportsCommand extends Command
 {
     protected $signature = 'erp:prune-system-issue-reports
                             {--days= : Override retention days (default from config)}
+                            {--resolved-days= : Override resolved issue retention days (default from config)}
                             {--dry-run : Count matching rows without deleting}';
 
-    protected $description = 'Delete system errors & reports older than the configured retention period (default 30 days)';
+    protected $description = 'Delete resolved reports after a week and unresolved reports after the configured retention period';
 
     public function handle(): int
     {
@@ -24,18 +25,43 @@ class PruneSystemIssueReportsCommand extends Command
         }
 
         $cutoff = Carbon::now()->subDays($days)->startOfDay();
-        $query = SystemIssueReport::query()->where('created_at', '<', $cutoff);
-        $count = (clone $query)->count();
+        $resolvedDays = (int) ($this->option('resolved-days') ?: config('system_issues.resolved_retention_days', 7));
+        if ($resolvedDays < 1) {
+            $this->error('Resolved retention days must be at least 1.');
+
+            return self::FAILURE;
+        }
+
+        $resolvedCutoff = Carbon::now()->subDays($resolvedDays)->startOfDay();
+        $resolvedQuery = SystemIssueReport::query()
+            ->where('status', 'resolved')
+            ->where(function ($query) use ($resolvedCutoff) {
+                $query->where('resolved_at', '<', $resolvedCutoff)
+                    ->orWhere(function ($fallback) use ($resolvedCutoff) {
+                        $fallback->whereNull('resolved_at')
+                            ->where('created_at', '<', $resolvedCutoff);
+                    });
+            });
+        $unresolvedQuery = SystemIssueReport::query()
+            ->where('status', '!=', 'resolved')
+            ->where('created_at', '<', $cutoff);
+        $count = (clone $resolvedQuery)->count() + (clone $unresolvedQuery)->count();
 
         if ($this->option('dry-run')) {
-            $this->info("Would delete {$count} system issue report(s) older than {$days} day(s) (before {$cutoff->toDateString()}).");
+            $this->info(
+                "Would delete {$count} report(s): resolved at least {$resolvedDays} day(s) ago "
+                ."and unresolved reports older than {$days} day(s).",
+            );
 
             return self::SUCCESS;
         }
 
-        $deleted = $query->delete();
+        $deleted = $resolvedQuery->delete() + $unresolvedQuery->delete();
 
-        $this->info("Deleted {$deleted} system issue report(s) older than {$days} day(s).");
+        $this->info(
+            "Deleted {$deleted} report(s): resolved at least {$resolvedDays} day(s) ago "
+            ."and unresolved reports older than {$days} day(s).",
+        );
 
         return self::SUCCESS;
     }

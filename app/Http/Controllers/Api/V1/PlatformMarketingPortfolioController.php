@@ -240,6 +240,20 @@ class PlatformMarketingPortfolioController extends Controller
         ]);
     }
 
+    /** Public PDF download for a portfolio with a valid share token. */
+    public function sharedPdf(string $token)
+    {
+        $portfolio = PlatformMarketingPortfolio::query()
+            ->where('share_token', $token)
+            ->firstOrFail();
+        $built = $this->portfolios->buildPdf($portfolio);
+
+        return response($built['binary'], 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'attachment; filename="'.$built['filename'].'"',
+        ]);
+    }
+
     /** @return array<string, mixed> */
     protected function validated(Request $request, bool $creating = true): array
     {
@@ -251,6 +265,7 @@ class PlatformMarketingPortfolioController extends Controller
             'industry' => 'sometimes|string|max:40',
             'vertical' => ($creating ? 'required' : 'sometimes').'|string|in:'.implode(',', $verticals ?: ['small_shop']),
             'template_key' => 'sometimes|in:modern,editorial,bold',
+            'font_family' => 'sometimes|in:sans,serif,mono',
             'prospect_name' => ($creating ? 'nullable' : 'sometimes').'|string|max:200',
             'prospect_contact' => 'nullable|string|max:200',
             'prospect_email' => 'nullable|email|max:200',

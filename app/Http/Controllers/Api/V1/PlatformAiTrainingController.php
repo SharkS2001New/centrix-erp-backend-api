@@ -51,6 +51,15 @@ class PlatformAiTrainingController extends Controller
         return response()->json(AiSettingsResolver::describePlatformTraining());
     }
 
+    public function onboardingGuideVideo()
+    {
+        return response()->json([
+            'video_embed_url' => $this->onboardingVideoEmbedUrl(
+                (string) (AiSettingsResolver::forPlatformTraining()['demo_video_url'] ?? ''),
+            ),
+        ]);
+    }
+
     public function usage(Request $request, \App\Services\Ai\AiUsageAnalyticsService $analytics)
     {
         return response()->json($analytics->platformSummary($this->usageFilters($request)));
@@ -228,6 +237,18 @@ class PlatformAiTrainingController extends Controller
             'talk_base_url' => 'sometimes|nullable|string|max:500',
             'talk_gemini_api_key' => 'sometimes|nullable|string|max:512',
             'talk_gemini_model' => 'sometimes|nullable|string|max:80',
+            'demo_video_url' => [
+                'sometimes',
+                'nullable',
+                'string',
+                'max:500',
+                function (string $attribute, mixed $value, \Closure $fail): void {
+                    if ($value !== null && trim((string) $value) !== ''
+                        && $this->onboardingVideoEmbedUrl((string) $value) === null) {
+                        $fail('Use a valid HTTPS YouTube or Vimeo video link.');
+                    }
+                },
+            ],
         ]);
 
         if (($data['talk_provider'] ?? null) === 'chatgpt') {
@@ -239,6 +260,42 @@ class PlatformAiTrainingController extends Controller
         }
 
         return response()->json(AiSettingsResolver::savePlatformTraining($data));
+    }
+
+    protected function onboardingVideoEmbedUrl(string $value): ?string
+    {
+        $parts = parse_url(trim($value));
+        if (! is_array($parts) || strtolower((string) ($parts['scheme'] ?? '')) !== 'https') {
+            return null;
+        }
+
+        $host = strtolower((string) ($parts['host'] ?? ''));
+        $path = (string) ($parts['path'] ?? '');
+        $videoId = '';
+        if ($host === 'youtu.be') {
+            $videoId = trim($path, '/');
+        } elseif (in_array($host, ['youtube.com', 'www.youtube.com', 'm.youtube.com'], true)) {
+            parse_str((string) ($parts['query'] ?? ''), $query);
+            $videoId = (string) ($query['v'] ?? '');
+            if ($videoId === '' && preg_match('#^/(?:embed|shorts)/([^/]+)#', $path, $matches)) {
+                $videoId = $matches[1];
+            }
+        } elseif (in_array($host, ['youtube-nocookie.com', 'www.youtube-nocookie.com'], true)) {
+            if (preg_match('#^/embed/([^/]+)#', $path, $matches)) {
+                $videoId = $matches[1];
+            }
+        }
+
+        if (preg_match('/^[\w-]{11}$/', $videoId)) {
+            return 'https://www.youtube-nocookie.com/embed/'.$videoId.'?rel=0';
+        }
+
+        if (in_array($host, ['vimeo.com', 'www.vimeo.com'], true)
+            && preg_match('#^/(\d+)/?$#', $path, $matches)) {
+            return 'https://player.vimeo.com/video/'.$matches[1];
+        }
+
+        return null;
     }
 
     /**

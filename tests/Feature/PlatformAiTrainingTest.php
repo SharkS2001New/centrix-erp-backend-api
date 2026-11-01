@@ -95,6 +95,33 @@ class PlatformAiTrainingTest extends TestCase
         $this->assertSame('sk-test-platform-key-updated', $fresh['api_key']);
     }
 
+    public function test_platform_admin_can_configure_the_public_system_guide_video(): void
+    {
+        $this->actingAs($this->superAdmin, 'sanctum')
+            ->patchJson('/api/v1/admin/ai-training/settings', [
+                'demo_video_url' => 'https://youtu.be/abcdefghijk',
+            ])
+            ->assertOk()
+            ->assertJsonPath('settings.demo_video_url', 'https://youtu.be/abcdefghijk');
+
+        $this->getJson('/api/v1/onboarding-guide/video')
+            ->assertOk()
+            ->assertJsonPath(
+                'video_embed_url',
+                'https://www.youtube-nocookie.com/embed/abcdefghijk?rel=0',
+            );
+    }
+
+    public function test_platform_admin_video_setting_rejects_non_video_hosts(): void
+    {
+        $this->actingAs($this->superAdmin, 'sanctum')
+            ->patchJson('/api/v1/admin/ai-training/settings', [
+                'demo_video_url' => 'https://example.com/demo',
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('demo_video_url');
+    }
+
     public function test_super_admin_can_save_platform_gemini_api_key(): void
     {
         $this->actingAs($this->superAdmin, 'sanctum')

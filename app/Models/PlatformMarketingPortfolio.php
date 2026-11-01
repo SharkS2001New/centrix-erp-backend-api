@@ -9,7 +9,7 @@ use Illuminate\Support\Str;
 class PlatformMarketingPortfolio extends Model
 {
     protected $fillable = [
-        'title', 'status', 'industry', 'vertical', 'template_key',
+        'title', 'status', 'industry', 'vertical', 'template_key', 'font_family',
         'prospect_name', 'prospect_contact', 'prospect_email', 'prospect_phone',
         'business_name', 'location', 'business_size', 'branch_count', 'till_count',
         'pain_points', 'focus_modules', 'tone', 'hero_image_key',
@@ -64,6 +64,7 @@ class PlatformMarketingPortfolio extends Model
             'industry' => $this->industry,
             'vertical' => $this->vertical,
             'template_key' => $this->template_key ?: 'modern',
+            'font_family' => $this->font_family ?: 'sans',
             'prospect_name' => $this->prospect_name,
             'business_name' => $this->business_name,
             'location' => $this->location,

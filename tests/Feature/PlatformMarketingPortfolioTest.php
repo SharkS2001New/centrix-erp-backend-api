@@ -233,6 +233,7 @@ class PlatformMarketingPortfolioTest extends TestCase
             'business_name' => 'Amina Fresh Mart',
             'location' => 'Westlands, Nairobi',
             'vertical' => 'supermarket',
+            'font_family' => 'serif',
             'pain_points' => 'Multi-till reconciliation is slow; stockouts on milk.',
             'focus_modules' => ['pos', 'inventory', 'purchasing', 'reports'],
             'tone' => 'professional',
@@ -262,6 +263,7 @@ class PlatformMarketingPortfolioTest extends TestCase
         $this->getJson("/api/v1/marketing-portfolios/shared/{$token}")
             ->assertOk()
             ->assertJsonPath('data.business_name', 'Amina Fresh Mart')
+            ->assertJsonPath('data.font_family', 'serif')
             ->assertJsonPath('data.prospect_name', 'Amina Wanjiku')
             ->assertJsonMissingPath('data.prospect_email');
 
@@ -275,6 +277,34 @@ class PlatformMarketingPortfolioTest extends TestCase
             'vertical' => 'supermarket',
             'status' => 'shared',
         ]);
+    }
+
+    public function test_shared_portfolio_pdf_can_be_downloaded_without_authentication(): void
+    {
+        $portfolio = PlatformMarketingPortfolio::query()->create([
+            'title' => 'Centrix for Amina Fresh Mart',
+            'status' => 'shared',
+            'industry' => 'commerce',
+            'vertical' => 'small_shop',
+            'prospect_name' => 'Amina',
+            'business_name' => 'Amina Fresh Mart',
+            'sections' => [
+                [
+                    'key' => 'cover',
+                    'title' => 'Cover',
+                    'body' => 'A portfolio prepared for Amina Fresh Mart.',
+                    'bullets' => [],
+                    'image_key' => 'hero_retail',
+                ],
+            ],
+            'share_token' => 'publicportfolio1234567890',
+            'created_by' => $this->superAdmin->id,
+        ]);
+
+        $this->get('/api/v1/marketing-portfolios/shared/'.$portfolio->share_token.'/pdf')
+            ->assertOk()
+            ->assertHeader('content-type', 'application/pdf')
+            ->assertHeader('content-disposition', 'attachment; filename="Centrix-for-Amina-Fresh-Mart.pdf"');
     }
 
     public function test_non_admin_cannot_list_portfolios(): void

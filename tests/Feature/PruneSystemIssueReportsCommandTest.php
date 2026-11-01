@@ -13,7 +13,7 @@ class PruneSystemIssueReportsCommandTest extends TestCase
 {
     use RefreshesErpDatabase;
 
-    public function test_prunes_reports_older_than_retention_days(): void
+    public function test_prunes_old_unresolved_reports_and_resolved_reports_after_a_week(): void
     {
         $user = User::where('username', 'superadmin')->firstOrFail();
 
@@ -37,11 +37,32 @@ class PruneSystemIssueReportsCommandTest extends TestCase
         ]);
         $recent->forceFill(['created_at' => Carbon::now()->subDays(5)])->save();
 
+        $resolvedOld = SystemIssueReport::create([
+            'organization_id' => null,
+            'user_id' => $user->id,
+            'kind' => 'error',
+            'fingerprint' => SystemIssueFingerprint::forReport('error', 'Resolved old', '/api/v1/resolved-old'),
+            'status' => 'resolved',
+            'message' => 'Resolved old',
+            'resolved_at' => Carbon::now()->subDays(8),
+        ]);
+        $resolvedRecent = SystemIssueReport::create([
+            'organization_id' => null,
+            'user_id' => $user->id,
+            'kind' => 'error',
+            'fingerprint' => SystemIssueFingerprint::forReport('error', 'Resolved recent', '/api/v1/resolved-recent'),
+            'status' => 'resolved',
+            'message' => 'Resolved recent',
+            'resolved_at' => Carbon::now()->subDays(6),
+        ]);
+
         $this->artisan('erp:prune-system-issue-reports')
             ->assertSuccessful();
 
         $this->assertDatabaseMissing('system_issue_reports', ['id' => $old->id]);
         $this->assertDatabaseHas('system_issue_reports', ['id' => $recent->id]);
+        $this->assertDatabaseMissing('system_issue_reports', ['id' => $resolvedOld->id]);
+        $this->assertDatabaseHas('system_issue_reports', ['id' => $resolvedRecent->id]);
     }
 
     public function test_dry_run_does_not_delete(): void
