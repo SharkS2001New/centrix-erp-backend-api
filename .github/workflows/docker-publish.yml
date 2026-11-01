@@ -1,7 +1,6 @@
 # Docker image build and publish only — no PHPUnit, no `php artisan test`.
-# On every push to main/master, bumps Centrix VERSION (patch) before the image
-# build so the shipped container matches the product version, then commits VERSION
-# with [skip ci] so workflows do not loop.
+# VERSION is updated in the release changes before they are pushed. This workflow
+# reads it for image tags and never generates or commits a product version.
 name: Docker Publish
 
 on:
@@ -22,43 +21,31 @@ env:
 
 jobs:
   build:
-    # Always run on PRs; on push, skip VERSION-bump commits to avoid loops.
+    # Always run on PRs; respect explicit CI skips on branch pushes.
     if: >-
       github.event_name == 'pull_request' ||
-      (
-        !contains(github.event.head_commit.message, '[skip ci]') &&
-        !contains(github.event.head_commit.message, '[skip version]')
-      )
+      !contains(github.event.head_commit.message, '[skip ci]')
     runs-on: ubuntu-latest
 
     permissions:
-      contents: write
+      contents: read
       packages: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 0
 
-      - name: Bump Centrix VERSION (patch)
-        id: bump
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+      - name: Read Centrix VERSION
+        id: version
         run: |
           set -euo pipefail
-          BEFORE="$(tr -d '[:space:]' < VERSION 2>/dev/null || echo '0.0.0')"
-          if ! [[ "$BEFORE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            BEFORE="0.0.0"
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "VERSION must contain a semantic version in X.Y.Z format." >&2
+            exit 1
           fi
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$BEFORE"
-          PATCH=$((PATCH + 1))
-          AFTER="${MAJOR}.${MINOR}.${PATCH}"
-          printf '%s\n' "$AFTER" > VERSION
-          echo "before=${BEFORE}" >> "$GITHUB_OUTPUT"
-          echo "after=${AFTER}" >> "$GITHUB_OUTPUT"
-          echo "bumped=true" >> "$GITHUB_OUTPUT"
-          echo "Bumped Centrix ${BEFORE} → ${AFTER} (included in this image build)"
+          echo "value=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Building Centrix v${VERSION}"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -78,7 +65,7 @@ jobs:
           images: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
           tags: |
             type=sha,format=short
-            type=raw,value=v${{ steps.bump.outputs.after }},enable=${{ steps.bump.outputs.bumped == 'true' }}
+            type=raw,value=v${{ steps.version.outputs.value }}
 
       - name: Resolve image tag for Helm
         id: image_tag
@@ -95,30 +82,6 @@ jobs:
           cache-to: type=gha,mode=max
           build-args: |
             GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}
-
-      - name: Commit and push VERSION
-        if: github.event_name == 'push' && steps.bump.outputs.bumped == 'true'
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add VERSION
-          if git diff --staged --quiet; then
-            echo "VERSION unchanged."
-            exit 0
-          fi
-          git commit -m "chore: bump Centrix version to ${{ steps.bump.outputs.after }} [skip ci]"
-          for attempt in 1 2 3 4 5; do
-            git pull --rebase origin "${{ github.ref_name }}"
-            if git push origin "HEAD:${{ github.ref_name }}"; then
-              echo "VERSION push succeeded on attempt ${attempt}."
-              exit 0
-            fi
-            echo "Push rejected (attempt ${attempt}); retrying…"
-            sleep $((attempt * 2))
-          done
-          echo "Failed to push VERSION after 5 attempts."
-          exit 1
 
       - name: Check out pitchpredk3ssetup
         if: github.event_name != 'pull_request'

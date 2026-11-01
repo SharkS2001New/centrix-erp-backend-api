@@ -182,6 +182,12 @@ Every API container start runs `docker-bootstrap.sh` (see `docker-entrypoint.sh`
 
 Push to `main`/`master` builds a new image (`ghcr.io/.../centrix-erp-backend-api`) and bumps the Helm tag in `pitchpredk3ssetup`. After Argo/Helm rolls out new pods, pending migrations apply automatically.
 
+`VERSION` is the Centrix product version displayed in platform health and POS
+footers, and used for the published API image tag. Bump it as part of any release
+changes intended for deployment (for example, `php artisan centrix:bump-version`).
+The Docker publish workflow reads this committed value; it does not generate or
+change the product version during the image build.
+
 **Important:** migration PHP files must be **committed and pushed** before deploy — otherwise `migrate --force` has nothing to run and you can get “Unknown column” errors when new code ships first.
 
 Optional one-time after large permission changes:

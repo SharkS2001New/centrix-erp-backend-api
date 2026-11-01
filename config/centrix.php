@@ -3,7 +3,7 @@
 /**
  * Centrix product release metadata.
  * VERSION at the repo root is the source of truth (semver X.Y.Z).
- * CI bumps the patch on every push to main/master.
+ * Update it with release changes before pushing them for deployment.
  */
 return [
     'version' => trim((string) (

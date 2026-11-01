@@ -144,6 +144,8 @@ class ErpCapabilitiesController extends Controller
 
         // Lightweight fields that may change without busting the org capabilities cache.
         // Permissions stay on the cached payload — role/module changes call invalidateCapabilities().
+        $payload['centrix_version'] = \App\Support\CentrixVersion::current();
+        $payload['centrix_version_label'] = \App\Support\CentrixVersion::label();
         $payload['is_super_admin'] = (bool) $user->is_super_admin;
         $payload['is_admin'] = (bool) $user->is_admin;
         $payload['access_scope'] = $user->access_scope ?? 'org';

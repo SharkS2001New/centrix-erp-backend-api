@@ -53,10 +53,13 @@ class ErpCapabilitiesTest extends TestCase
         $user = User::where('username', 'admin')->firstOrFail();
         Sanctum::actingAs($user);
 
-        $versionBefore = OrganizationCache::capabilitiesVersion((int) $user->organization_id);
-
         $response = $this->getJson('/api/v1/erp/capabilities')->assertOk();
-        $response->assertJsonPath('capabilities_version', $versionBefore);
+        $response->assertJsonPath('centrix_version', \App\Support\CentrixVersion::current());
+        $response->assertJsonPath('centrix_version_label', \App\Support\CentrixVersion::label());
+        $this->assertSame(
+            OrganizationCache::capabilitiesVersion((int) $user->organization_id),
+            $response->json('capabilities_version'),
+        );
     }
 
     public function test_allow_org_provisioning_reflects_current_config_not_stale_cache(): void
