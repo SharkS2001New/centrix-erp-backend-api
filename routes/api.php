@@ -542,6 +542,9 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::post('admin/marketing-blogs/upload-image', [\App\Http\Controllers\Api\V1\PlatformMarketingBlogController::class, 'uploadImage'])
             ->middleware(['erp.super_admin']);
+        Route::post('admin/marketing-blogs/{id}/generate-cover-image', [\App\Http\Controllers\Api\V1\PlatformMarketingBlogController::class, 'generateCoverImage'])
+            ->middleware(['erp.super_admin'])
+            ->whereNumber('id');
         Route::post('admin/marketing-blogs/purge-cache', [\App\Http\Controllers\Api\V1\PlatformMarketingBlogController::class, 'purgeCache'])
             ->middleware(['erp.super_admin']);
         Route::get('admin/marketing-blogs/{id}', [\App\Http\Controllers\Api\V1\PlatformMarketingBlogController::class, 'show'])
@@ -730,6 +733,8 @@ Route::prefix('v1')->group(function () {
                 Route::post('{platform_marketing_portfolio}/generate', [PlatformMarketingPortfolioController::class, 'generate'])
                     ->whereNumber('platform_marketing_portfolio');
                 Route::post('{platform_marketing_portfolio}/regenerate-section', [PlatformMarketingPortfolioController::class, 'regenerateSection'])
+                    ->whereNumber('platform_marketing_portfolio');
+                Route::post('{platform_marketing_portfolio}/generate-images', [PlatformMarketingPortfolioController::class, 'generateImages'])
                     ->whereNumber('platform_marketing_portfolio');
                 Route::post('{platform_marketing_portfolio}/share', [PlatformMarketingPortfolioController::class, 'share'])
                     ->whereNumber('platform_marketing_portfolio');

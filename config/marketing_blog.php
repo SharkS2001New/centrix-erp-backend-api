@@ -1,6 +1,11 @@
 <?php
 
 return [
+    'image_model' => env(
+        'MARKETING_BLOG_IMAGE_MODEL',
+        env('MARKETING_PORTFOLIO_IMAGE_MODEL', 'gpt-image-1'),
+    ),
+
     /** Public CentrixERP marketing site origin (no trailing slash), e.g. https://centrixerp.com */
     'website_url' => rtrim((string) env('MARKETING_BLOG_WEBSITE_URL', env('MARKETING_SITE_URL', '')), '/'),
 

@@ -142,6 +142,35 @@ class PlatformMarketingPortfolioController extends Controller
         ]);
     }
 
+    public function generateImages(Request $request, PlatformMarketingPortfolio $platform_marketing_portfolio)
+    {
+        $data = $request->validate([
+            'section_key' => ['nullable', 'string', Rule::in(config('marketing_portfolio.section_keys', []))],
+            'instruction' => 'nullable|string|max:1000',
+        ]);
+
+        try {
+            $result = $this->portfolios->generateSectionImages(
+                $platform_marketing_portfolio,
+                $data['section_key'] ?? null,
+                $data['instruction'] ?? null,
+            );
+        } catch (\RuntimeException $e) {
+            return response()->json([
+                'message' => $e->getMessage(),
+                'data' => $platform_marketing_portfolio->fresh(),
+            ], 422);
+        }
+
+        return response()->json([
+            'data' => $result['portfolio'],
+            'generated_sections' => $result['generated_sections'],
+            'message' => $result['generated_sections'] === []
+                ? 'No sections needed a generated image.'
+                : 'Images generated for '.count($result['generated_sections']).' section(s).',
+        ]);
+    }
+
     public function share(PlatformMarketingPortfolio $platform_marketing_portfolio)
     {
         $token = $platform_marketing_portfolio->ensureShareToken();
