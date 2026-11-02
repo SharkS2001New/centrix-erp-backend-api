@@ -477,9 +477,11 @@ class PlatformPaybillController extends Controller
             'billing' => 'sometimes|in:monthly,yearly,token,renew',
         ]);
 
-        $phone = PhoneNumber::normalize($data['phone']);
-        if ($phone === null) {
-            return response()->json(['message' => 'Enter a valid M-Pesa phone number.'], 422);
+        $phone = PhoneNumber::toE164($data['phone']);
+        if ($phone === null || ! preg_match('/^254[17]\d{8}$/', $phone)) {
+            return response()->json([
+                'message' => 'Enter a valid Kenyan M-Pesa mobile number, for example 0712345678 or 254712345678.',
+            ], 422);
         }
 
         $billing = match ($data['billing'] ?? 'monthly') {

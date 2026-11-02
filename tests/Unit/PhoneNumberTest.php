@@ -16,4 +16,9 @@ class PhoneNumberTest extends TestCase
     {
         $this->assertSame('254712345678', PhoneNumber::toE164('0712345678'));
     }
+
+    public function test_to_e164_from_local_number_entered_on_subscription_checkout(): void
+    {
+        $this->assertSame('254799566287', PhoneNumber::toE164('0799566287'));
+    }
 }
