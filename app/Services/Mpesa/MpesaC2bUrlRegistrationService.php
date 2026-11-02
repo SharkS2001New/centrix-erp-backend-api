@@ -31,8 +31,8 @@ class MpesaC2bUrlRegistrationService
 
         try {
             $tokenResponse = Http::acceptJson()
-                ->connectTimeout(3)
-                ->timeout(10)
+                ->connectTimeout(2)
+                ->timeout(4)
                 ->withBasicAuth($config['consumer_key'], $config['consumer_secret'])
                 ->get($baseUrl.'/oauth/v1/generate', ['grant_type' => 'client_credentials']);
 
@@ -42,8 +42,8 @@ class MpesaC2bUrlRegistrationService
             }
 
             $registrationResponse = Http::acceptJson()
-                ->connectTimeout(3)
-                ->timeout(10)
+                ->connectTimeout(2)
+                ->timeout(4)
                 ->withToken($tokenBody['access_token'])
                 ->post($baseUrl.'/mpesa/c2b/v1/registerurl', [
                     'ShortCode' => $shortCode,

@@ -48,7 +48,7 @@ class OrganizationLicenseService
 
         /** @var PlatformSubscription|null $sub */
         $sub = PlatformSubscription::query()
-            ->with('plan')
+            ->with(['plan', 'contract'])
             ->where('organization_id', $org->id)
             ->first();
 
@@ -86,7 +86,7 @@ class OrganizationLicenseService
             'is_trial' => (bool) ($sub->is_trial || $status === 'trialing'),
             'days_remaining' => $daysRemaining,
             'warning_days' => self::WARNING_DAYS,
-            'plan_name' => $sub->plan?->name,
+            'plan_name' => $sub->plan?->name ?: $sub->contract?->title,
             'plan_id' => $sub->plan_id,
             'billing_cycle' => $this->billingCycle($sub),
             'renewal_amount' => $this->renewalAmount($sub),
@@ -160,7 +160,6 @@ class OrganizationLicenseService
             $grant = $free->grantFor($free->industryFor($org), $free->stored()[$free->industryFor($org)] ?? []);
             $license['modules'] = array_values($grant['workspace_keys'] ?? []);
             $license['current_package'] = $free->name();
-            $license['is_trial'] = false;
         } else {
             $license['current_package'] = $license['plan_name'] ?? null;
         }
@@ -567,6 +566,11 @@ class OrganizationLicenseService
     {
         if (! $subscription) {
             return 'monthly';
+        }
+
+        $contractInterval = strtolower(trim((string) $subscription->contract?->interval));
+        if (in_array($contractInterval, ['monthly', 'annual', 'yearly', 'year'], true)) {
+            return in_array($contractInterval, ['annual', 'yearly', 'year'], true) ? 'yearly' : 'monthly';
         }
 
         $stored = strtolower(trim((string) ($subscription->billing_cycle ?? '')));

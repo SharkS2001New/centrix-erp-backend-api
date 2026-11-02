@@ -90,6 +90,9 @@ class PlatformContractController extends Controller
             'first_payment_price' => $platform_contract->first_payment_price ?? $platform_contract->amount,
             'renewal_price' => $platform_contract->renewal_price ?? $platform_contract->amount,
             'currency' => $platform_contract->currency,
+            'billing_cycle' => in_array(strtolower((string) $platform_contract->interval), ['annual', 'yearly'], true)
+                ? 'yearly'
+                : 'monthly',
             'license_basis' => $platform_contract->license_basis,
             'workspace_keys' => $platform_contract->workspace_keys,
             'module_keys' => $platform_contract->module_keys,

@@ -37,6 +37,11 @@ class PlatformSubscription extends Model
         return $this->belongsTo(PlatformPlan::class, 'plan_id');
     }
 
+    public function contract(): BelongsTo
+    {
+        return $this->belongsTo(PlatformContract::class, 'contract_id');
+    }
+
     public function invoice(): BelongsTo
     {
         return $this->belongsTo(PlatformInvoice::class, 'invoice_id');

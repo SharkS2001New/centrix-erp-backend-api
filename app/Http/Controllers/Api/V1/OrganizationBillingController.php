@@ -27,7 +27,7 @@ class OrganizationBillingController extends Controller
         }
 
         $license = $licenses->resolveForOrganization($org);
-        $subscription = PlatformSubscription::query()->with('plan')->where('organization_id', $org->id)->first();
+        $subscription = PlatformSubscription::query()->with(['plan', 'contract'])->where('organization_id', $org->id)->first();
         $plan = $subscription?->plan;
         $licencePayments = app(\App\Services\Platform\PlatformPaybillLicenceService::class);
 
@@ -49,8 +49,8 @@ class OrganizationBillingController extends Controller
                     'renewal_price' => $subscription->renewal_price !== null ? (float) $subscription->renewal_price : null,
                     'currency' => $subscription->currency ?: 'KES',
                     'billing_cycle' => $licenses->billingCycle($subscription),
-                    'interval' => $plan?->interval,
-                    'plan_name' => $plan?->name,
+                    'interval' => $plan?->interval ?? $subscription->contract?->interval,
+                    'plan_name' => $plan?->name ?: $subscription->contract?->title,
                     'plan' => $plan ? [
                         'id' => (int) $plan->id,
                         'name' => (string) $plan->name,

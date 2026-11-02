@@ -854,7 +854,7 @@ class PlatformPaybillLicenceService
     public function startRenewalCheckout(Organization $org, ?string $phone = null): PlatformLicenceCheckout
     {
         $subscription = PlatformSubscription::query()
-            ->with('plan')
+            ->with(['plan', 'contract'])
             ->where('organization_id', $org->id)
             ->first();
         $licenses = app(OrganizationLicenseService::class);
@@ -1196,6 +1196,10 @@ class PlatformPaybillLicenceService
 
         $plan = $checkout->plan_id ? PlatformPlan::query()->find($checkout->plan_id) : null;
         if (! $plan) {
+            if ((int) $checkout->months > 0) {
+                return $this->applyContractRenewalCheckout($payment, $org, $checkout, $amount);
+            }
+
             return $this->applyTokenCheckout($payment, $org, $checkout, $amount);
         }
         if (! $this->planMatchesIndustry($org, $plan)) {
@@ -1259,6 +1263,60 @@ class PlatformPaybillLicenceService
             'balance_after' => 0,
             'period_end_after' => $subscription->fresh()?->current_period_end?->toDateString(),
             'note' => $payment->match_method === 'equity_checkout' ? $payment->note : 'plan_checkout',
+        ])->save();
+
+        return $payment->fresh();
+    }
+
+    protected function applyContractRenewalCheckout(
+        PlatformLicencePayment $payment,
+        Organization $org,
+        PlatformLicenceCheckout $checkout,
+        float $amount,
+    ): PlatformLicencePayment {
+        $subscription = PlatformSubscription::query()
+            ->where('organization_id', $org->id)
+            ->lockForUpdate()
+            ->first();
+
+        if (! $subscription || $subscription->plan_id || $subscription->is_trial || $subscription->status === 'trialing') {
+            $payment->fill([
+                'status' => 'unmatched',
+                'note' => 'contract_renewal_subscription_not_eligible',
+            ])->save();
+
+            return $payment->fresh();
+        }
+
+        $yearly = (int) $checkout->months >= 12;
+        $days = $yearly ? 365 : max(1, (int) $checkout->months) * 30;
+        $periodBefore = ($subscription->current_period_end ?? $subscription->trial_ends_at)?->toDateString();
+        $subscription->status = 'active';
+        $subscription->is_trial = false;
+        $subscription->trial_ends_at = null;
+        if (\Illuminate\Support\Facades\Schema::hasColumn('platform_subscriptions', 'billing_cycle')) {
+            $subscription->billing_cycle = $yearly ? 'yearly' : 'monthly';
+        }
+        $subscription->save();
+        $this->extendSubscription($subscription, [
+            'product' => $yearly ? 'yearly' : 'monthly',
+            'price' => (float) $checkout->amount,
+            'days' => $days,
+        ]);
+
+        $checkout->status = 'paid';
+        $checkout->mpesa_receipt = $payment->mpesa_transaction_id;
+        $checkout->save();
+
+        $payment->fill([
+            'status' => 'applied',
+            'product' => $yearly ? 'yearly' : 'monthly',
+            'days_added' => $days,
+            'amount_applied' => $amount,
+            'balance_after' => 0,
+            'period_end_before' => $periodBefore,
+            'period_end_after' => $subscription->fresh()?->current_period_end?->toDateString(),
+            'note' => 'contract_renewal',
         ])->save();
 
         return $payment->fresh();

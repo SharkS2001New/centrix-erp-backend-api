@@ -147,6 +147,13 @@ class DatabaseRestoreService
             );
         }
 
+        if (DB::connection()->transactionLevel() > 0) {
+            throw new DatabaseRestoreException(
+                'Database restore cannot run inside an active transaction. Retry the restore after the transaction has completed.',
+                'restore_in_transaction',
+            );
+        }
+
         $truncated = [];
         if ($mode === 'replace' && $tables !== null) {
             $truncated = $this->truncateTables($tables, $driver);
@@ -546,13 +553,15 @@ class DatabaseRestoreService
             || str_starts_with($upper, 'SET NAMES')
             || str_starts_with($upper, 'SET CHARACTER')
             || preg_match('/^SET\s+@/i', $trimmed) === 1
+                || preg_match('/^SET\s+(?:(?:SESSION|LOCAL|GLOBAL)\s+)?AUTOCOMMIT\b/i', $trimmed) === 1
+                || preg_match('/^(START\s+TRANSACTION|BEGIN(?:\s+WORK)?|COMMIT(?:\s+WORK)?|ROLLBACK(?:\s+WORK)?)(?:\s|$)/i', $trimmed) === 1
         ) {
-            return null;
-        }
+                return null;
+            }
 
-        if (preg_match('/^SET\s+(FOREIGN_KEY_CHECKS|SQL_MODE|UNIQUE_CHECKS|AUTOCOMMIT|MAX_ALLOWED_PACKET)\b/i', $trimmed) === 1) {
-            return $driver === 'sqlite' ? null : $trimmed;
-        }
+            if (preg_match('/^SET\s+(FOREIGN_KEY_CHECKS|SQL_MODE|UNIQUE_CHECKS|MAX_ALLOWED_PACKET)\b/i', $trimmed) === 1) {
+                return $driver === 'sqlite' ? null : $trimmed;
+            }
 
         $table = $this->extractTableName($trimmed);
         if ($tables !== null) {

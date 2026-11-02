@@ -102,6 +102,66 @@ SQL;
         $this->assertSame('only-from-dump', $rows[0]->name);
     }
 
+    public function test_restore_rejects_an_active_transaction_before_truncating(): void
+    {
+        $path = $this->writeSql("INSERT INTO `restore_demo` (`id`, `name`) VALUES (9, 'only-from-dump');");
+        $connection = DB::connection('testing_restore');
+        $connection->beginTransaction();
+
+        try {
+            try {
+                app(DatabaseRestoreService::class)->restoreFromAbsolutePath(
+                    $path,
+                    'replace',
+                    ['restore_demo'],
+                    false,
+                    false,
+                    'demo.sql',
+                );
+                $this->fail('Restore should reject an active database transaction.');
+            } catch (DatabaseRestoreException $exception) {
+                $this->assertSame('restore_in_transaction', $exception->codeKey);
+            }
+
+            $this->assertSame(1, $connection->transactionLevel());
+            $this->assertSame(
+                ['keep-me', 'will-replace'],
+                $connection->table('restore_demo')->orderBy('id')->pluck('name')->all(),
+            );
+        } finally {
+            if ($connection->transactionLevel() > 0) {
+                $connection->rollBack();
+            }
+            @unlink($path);
+        }
+    }
+
+    public function test_restore_ignores_dump_transaction_control_statements(): void
+    {
+        $sql = <<<'SQL'
+SET SESSION AUTOCOMMIT=0;
+START TRANSACTION;
+INSERT INTO `restore_demo` (`id`, `name`) VALUES (9, 'COMMIT is part of this value');
+COMMIT;
+SET GLOBAL AUTOCOMMIT=1;
+SQL;
+        $path = $this->writeSql($sql);
+
+        app(DatabaseRestoreService::class)->restoreFromAbsolutePath(
+            $path,
+            'merge',
+            null,
+            false,
+            true,
+            'demo.sql',
+        );
+
+        @unlink($path);
+        $row = DB::connection('testing_restore')->table('restore_demo')->where('id', 9)->first();
+        $this->assertSame('COMMIT is part of this value', $row->name);
+        $this->assertSame(0, DB::connection('testing_restore')->transactionLevel());
+    }
+
     public function test_full_replace_requires_confirm(): void
     {
         $path = $this->writeSql("INSERT INTO `restore_demo` (`id`, `name`) VALUES (1, 'x');");

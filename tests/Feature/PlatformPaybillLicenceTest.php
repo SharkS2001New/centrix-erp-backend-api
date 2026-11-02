@@ -7,6 +7,7 @@ use App\Models\EquityBankAccount;
 use App\Models\EquityIncomingPayment;
 use App\Models\InAppNotification;
 use App\Models\PlatformLicencePayment;
+use App\Models\PlatformContract;
 use App\Models\PlatformPlan;
 use App\Models\PlatformSubscription;
 use App\Models\Role;
@@ -79,6 +80,69 @@ class PlatformPaybillLicenceTest extends TestCase
         $this->assertSame(1, (int) $checkout->months);
         $this->assertSame(1500.0, (float) $checkout->amount);
         $this->assertSame($subscription->plan_id, $checkout->plan_id);
+    }
+
+    public function test_expired_trial_remains_identified_as_a_trial_in_the_license_payload(): void
+    {
+        [$org] = $this->seedLicensedOrg('TRIAL', '0712000115', '2026-09-01');
+
+        $license = app(\App\Services\Platform\OrganizationLicenseService::class)
+            ->resolveForOrganization($org);
+
+        $this->assertSame('expired', $license['status']);
+        $this->assertTrue($license['is_trial']);
+    }
+
+    public function test_annual_contract_without_a_plan_can_renew_and_activate_after_payment(): void
+    {
+        [$org] = $this->seedLicensedOrg('CONTRACT', '0712000116', '2026-09-01');
+        $contract = PlatformContract::query()->create([
+            'kind' => 'contract',
+            'status' => 'active',
+            'organization_id' => $org->id,
+            'title' => 'Annual Enterprise Contract',
+            'interval' => 'annual',
+            'amount' => 30000,
+            'renewal_price' => 24000,
+            'currency' => 'KES',
+        ]);
+        $subscription = PlatformSubscription::query()
+            ->where('organization_id', $org->id)
+            ->firstOrFail();
+        $subscription->update([
+            'plan_id' => null,
+            'contract_id' => $contract->id,
+            'status' => 'expired',
+            'is_trial' => false,
+            'current_period_start' => '2025-10-08',
+            'current_period_end' => '2026-10-07',
+            'amount' => 30000,
+            'renewal_price' => 24000,
+            'billing_cycle' => 'monthly',
+        ]);
+        $this->configurePaybill();
+
+        $licenses = app(\App\Services\Platform\OrganizationLicenseService::class);
+        $license = $licenses->resolveForOrganization($org);
+        $this->assertSame('yearly', $license['billing_cycle']);
+        $this->assertSame(24000.0, $license['renewal_amount']);
+
+        $service = app(PlatformPaybillLicenceService::class);
+        $checkout = $service->startRenewalCheckout($org);
+        $this->assertNull($checkout->plan_id);
+        $this->assertSame(12, (int) $checkout->months);
+        $this->assertSame(24000.0, (float) $checkout->amount);
+
+        $payment = $service->acceptC2b($this->payload('CONTRACT-RENEWAL-1', 24000, 'CONTRACT'));
+
+        $this->assertSame('applied', $payment->status);
+        $this->assertSame('yearly', $payment->product);
+        $this->assertSame('contract_renewal', $payment->note);
+        $this->assertSame('paid', $checkout->fresh()->status);
+        $subscription->refresh();
+        $this->assertSame('active', $subscription->status);
+        $this->assertFalse((bool) $subscription->is_trial);
+        $this->assertSame('2027-10-08', $subscription->current_period_end->toDateString());
     }
 
     public function test_manual_and_equity_checkout_support_paid_subscription_renewals(): void

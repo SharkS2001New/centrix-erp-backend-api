@@ -77,4 +77,32 @@ class PlatformC2bUrlRegistrationTest extends TestCase
 
         Http::assertNothingSent();
     }
+
+    public function test_platform_registration_returns_a_readable_daraja_error(): void
+    {
+        Sanctum::actingAs(User::query()->where('username', 'superadmin')->firstOrFail());
+        $this->putJson('/api/v1/admin/platform-paybill', [
+            'short_code' => '4036507',
+            'stk_env' => 'sandbox',
+            'stk_consumer_key' => 'platform-consumer-key',
+            'stk_consumer_secret' => 'platform-consumer-secret',
+            'c2b_confirmation_url' => 'https://api.centrixerp.com/api/v1/payments/c2b/confirmation',
+            'c2b_validation_url' => 'https://api.centrixerp.com/api/v1/payments/c2b/validation',
+        ])->assertOk();
+
+        Http::fake([
+            'sandbox.safaricom.co.ke/oauth/v1/generate*' => Http::response([
+                'access_token' => 'platform-test-token',
+            ]),
+            'sandbox.safaricom.co.ke/mpesa/c2b/v1/registerurl' => Http::response([
+                'errorCode' => '400.002.02',
+                'errorMessage' => 'Invalid ShortCode',
+            ], 400),
+        ]);
+
+        $this->postJson('/api/v1/admin/platform-paybill/register-c2b-urls')
+            ->assertStatus(502)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'Invalid ShortCode');
+    }
 }

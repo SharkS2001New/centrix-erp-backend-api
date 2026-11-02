@@ -111,6 +111,12 @@ class PlatformPaybillController extends Controller
                 'registration' => $registration->register($config),
             ]);
         } catch (RuntimeException $e) {
+            Log::warning('Platform C2B callback URL registration failed.', [
+                'environment' => $config['env'] ?? 'sandbox',
+                'short_code' => $config['child_storecode'] ?? null,
+                'error' => $e->getMessage(),
+            ]);
+
             return response()->json([
                 'success' => false,
                 'message' => $e->getMessage(),
