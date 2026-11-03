@@ -32,6 +32,13 @@ return [
     */
     'revoke_idle_tokens' => filter_var(env('AUTH_SERVER_IDLE_REVOKE', false), FILTER_VALIDATE_BOOL),
 
+    'night_session' => [
+        'enabled' => filter_var(env('AUTH_NIGHT_SESSION_ENABLED', true), FILTER_VALIDATE_BOOL),
+        'start' => env('AUTH_NIGHT_SESSION_START', '23:00'),
+        'end' => env('AUTH_NIGHT_SESSION_END', '06:00'),
+        'idle_minutes' => (int) env('AUTH_NIGHT_SESSION_IDLE_MINUTES', 30),
+    ],
+
     /*
     | Reject M-Pesa payment callbacks unless the client IP is in Safaricom ranges.
     | Disable in local/testing (MPESA_CALLBACK_IP_CHECK=false).

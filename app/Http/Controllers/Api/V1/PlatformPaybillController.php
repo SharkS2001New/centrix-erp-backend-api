@@ -21,6 +21,7 @@ use App\Services\WhatsApp\ResolvedWhatsAppConfig;
 use App\Services\WhatsApp\WhatsAppSettingsResolver;
 use App\Support\PhoneNumber;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
@@ -502,110 +503,144 @@ class PlatformPaybillController extends Controller
             'renew' => 'renew',
             default => 'monthly',
         };
-        if ($billing === 'renew') {
-            $checkout = $this->paybill->startRenewalCheckout($org, $phone);
-        } elseif ($billing === 'token') {
-            if ($off = $this->tokensTurnedOff()) {
-                return $off;
-            }
-            $checkout = $this->paybill->startTokenCheckout($org, $phone);
-            if ((float) $checkout->amount <= 0) {
-                $checkout->delete();
-
-                return response()->json(['message' => 'A platform administrator has not published a token pack price yet.'], 422);
-            }
-        } else {
-            $plan = $this->findSelfServePlan((int) $data['plan_id']);
-            $priced = $billing === 'yearly' ? (float) ($plan?->yearly_price ?? 0) : (float) ($plan?->monthly_price ?? 0);
-            if (! $plan || $priced <= 0) {
-                return response()->json(['message' => $billing === 'yearly' ? 'Choose an active yearly plan.' : 'Choose an active monthly plan.'], 422);
-            }
-            $checkout = $this->paybill->startCheckout(
-                $org,
-                $plan,
-                $billing === 'yearly' ? 12 : (int) $data['months'],
-                $phone,
-                $billing,
-            );
+        $lock = Cache::lock('platform-licence-stk:'.$org->id, 60);
+        if (! $lock->get()) {
+            return response()->json([
+                'message' => 'An M-Pesa prompt request is already being processed. Wait a moment before trying again.',
+            ], 409);
         }
+
         try {
-            $stk = new MpesaService($this->paybill->stkConfig());
-            $stk = $stk->stkPaybill(
-                $phone,
-                (int) round((float) $checkout->amount),
-                (string) $org->company_code,
-                $this->paybill->settings()?->stk_shortcode,
-            );
-        } catch (\Throwable $e) {
-            Log::warning('Platform licence STK push failed.', [
-                'organization_id' => $org->id,
-                'checkout_id' => $checkout->id,
-                'exception' => $e::class,
-                'message' => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'message' => 'Could not send the M-Pesa prompt. Check the platform STK settings or choose manual M-Pesa.',
-                'checkout' => $this->checkoutPayload($checkout),
-                'stk' => false,
-            ], 422);
-        }
-
-        $checkoutRequestId = trim((string) ($stk['CheckoutRequestID'] ?? ''));
-        $responseCode = (string) ($stk['ResponseCode'] ?? '');
-        if ($checkoutRequestId === '' || isset($stk['errorCode']) || ($responseCode !== '' && $responseCode !== '0')) {
-            $darajaCode = trim((string) ($stk['errorCode'] ?? ($responseCode !== '' ? $responseCode : '')));
-            $darajaMessage = trim((string) (
-                $stk['errorMessage']
-                ?? $stk['ResponseDescription']
-                ?? $stk['CustomerMessage']
-                ?? ''
-            ));
-            if ($darajaMessage === '') {
-                $darajaMessage = $checkoutRequestId === ''
-                    ? 'Daraja did not return a CheckoutRequestID.'
-                    : 'Daraja rejected the STK request without providing an error description.';
+            $pendingCheckout = PlatformLicenceCheckout::query()
+                ->where('organization_id', $org->id)
+                ->where('status', 'pending')
+                ->whereNotNull('phone_number')
+                ->whereNull('result_code')
+                ->latest('id')
+                ->first();
+            if ($pendingCheckout) {
+                return response()->json([
+                    'message' => 'An M-Pesa prompt is already awaiting payment for this organisation. Complete or cancel it before requesting another prompt.',
+                    'checkout' => $this->checkoutPayload($pendingCheckout),
+                    'stk' => false,
+                    'prompt_already_pending' => true,
+                ], 409);
             }
-            $darajaMessage = mb_substr($darajaMessage, 0, 500);
-            $message = 'Safaricom Daraja error'
-                .($darajaCode !== '' ? ' '.$darajaCode : '')
-                .': '.$darajaMessage;
 
-            Log::warning('Platform licence STK prompt was rejected.', [
-                'organization_id' => $org->id,
-                'checkout_id' => $checkout->id,
-                'error_code' => $darajaCode !== '' ? $darajaCode : null,
-                'error_message' => $darajaMessage,
-                'response_code' => $responseCode !== '' ? $responseCode : null,
-                'response_description' => isset($stk['ResponseDescription'])
-                    ? mb_substr((string) $stk['ResponseDescription'], 0, 500)
-                    : null,
-            ]);
+            if ($billing === 'renew') {
+                $checkout = $this->paybill->startRenewalCheckout($org, $phone);
+            } elseif ($billing === 'token') {
+                if ($off = $this->tokensTurnedOff()) {
+                    return $off;
+                }
+                $checkout = $this->paybill->startTokenCheckout($org, $phone);
+                if ((float) $checkout->amount <= 0) {
+                    $checkout->delete();
 
-            return response()->json([
-                'message' => $message,
-                'checkout' => $this->checkoutPayload($checkout),
-                'stk' => false,
-                'daraja' => [
+                    return response()->json(['message' => 'A platform administrator has not published a token pack price yet.'], 422);
+                }
+            } else {
+                $plan = $this->findSelfServePlan((int) $data['plan_id']);
+                $priced = $billing === 'yearly' ? (float) ($plan?->yearly_price ?? 0) : (float) ($plan?->monthly_price ?? 0);
+                if (! $plan || $priced <= 0) {
+                    return response()->json(['message' => $billing === 'yearly' ? 'Choose an active yearly plan.' : 'Choose an active monthly plan.'], 422);
+                }
+                $checkout = $this->paybill->startCheckout(
+                    $org,
+                    $plan,
+                    $billing === 'yearly' ? 12 : (int) $data['months'],
+                    $phone,
+                    $billing,
+                );
+            }
+            try {
+                $stk = new MpesaService($this->paybill->stkConfig());
+                $stk = $stk->stkPaybill(
+                    $phone,
+                    (int) round((float) $checkout->amount),
+                    (string) $org->company_code,
+                    $this->paybill->settings()?->stk_shortcode,
+                );
+            } catch (\Throwable $e) {
+                Log::warning('Platform licence STK push failed.', [
+                    'organization_id' => $org->id,
+                    'checkout_id' => $checkout->id,
+                    'exception' => $e::class,
+                    'message' => $e->getMessage(),
+                ]);
+
+                return response()->json([
+                    'message' => 'The M-Pesa request could not be confirmed. It may have reached Safaricom; check your phone before trying again, or pay via Paybill.',
+                    'checkout' => $this->checkoutPayload($checkout),
+                    'stk' => false,
+                ], 422);
+            }
+
+            $checkoutRequestId = trim((string) ($stk['CheckoutRequestID'] ?? ''));
+            $responseCode = (string) ($stk['ResponseCode'] ?? '');
+            if ($checkoutRequestId === '' || isset($stk['errorCode']) || ($responseCode !== '' && $responseCode !== '0')) {
+                $darajaCode = trim((string) ($stk['errorCode'] ?? ($responseCode !== '' ? $responseCode : '')));
+                $darajaMessage = trim((string) (
+                    $stk['errorMessage']
+                    ?? $stk['ResponseDescription']
+                    ?? $stk['CustomerMessage']
+                    ?? ''
+                ));
+                if ($darajaMessage === '') {
+                    $darajaMessage = $checkoutRequestId === ''
+                        ? 'Daraja did not return a CheckoutRequestID.'
+                        : 'Daraja rejected the STK request without providing an error description.';
+                }
+                $darajaMessage = mb_substr($darajaMessage, 0, 500);
+                $message = 'Safaricom Daraja error'
+                    .($darajaCode !== '' ? ' '.$darajaCode : '')
+                    .': '.$darajaMessage;
+
+                Log::warning('Platform licence STK prompt was rejected.', [
+                    'organization_id' => $org->id,
+                    'checkout_id' => $checkout->id,
                     'error_code' => $darajaCode !== '' ? $darajaCode : null,
                     'error_message' => $darajaMessage,
                     'response_code' => $responseCode !== '' ? $responseCode : null,
                     'response_description' => isset($stk['ResponseDescription'])
                         ? mb_substr((string) $stk['ResponseDescription'], 0, 500)
                         : null,
-                    'request_id' => isset($stk['requestId']) ? mb_substr((string) $stk['requestId'], 0, 100) : null,
-                ],
-            ], 422);
+                ]);
+                $explicitlyRejected = isset($stk['errorCode'])
+                    || ($responseCode !== '' && $responseCode !== '0');
+                if ($explicitlyRejected && Schema::hasColumn('platform_licence_checkouts', 'result_code')) {
+                    $checkout->result_code = is_numeric($darajaCode) ? (int) $darajaCode : -1;
+                    $checkout->result_desc = $darajaMessage;
+                    $checkout->save();
+                }
+
+                return response()->json([
+                    'message' => $message,
+                    'checkout' => $this->checkoutPayload($checkout),
+                    'stk' => false,
+                    'daraja' => [
+                        'error_code' => $darajaCode !== '' ? $darajaCode : null,
+                        'error_message' => $darajaMessage,
+                        'response_code' => $responseCode !== '' ? $responseCode : null,
+                        'response_description' => isset($stk['ResponseDescription'])
+                            ? mb_substr((string) $stk['ResponseDescription'], 0, 500)
+                            : null,
+                        'request_id' => isset($stk['requestId']) ? mb_substr((string) $stk['requestId'], 0, 100) : null,
+                    ],
+                ], 422);
+            }
+
+            $checkout->checkout_request_id = $checkoutRequestId;
+            $checkout->save();
+
+            return response()->json([
+                'message' => 'M-Pesa prompt sent. Enter your PIN. This page confirms the subscription when Safaricom reports the payment.',
+                'checkout' => $this->checkoutPayload($checkout->fresh()),
+                'stk' => true,
+            ]);
+        } finally {
+            $lock->release();
         }
-
-        $checkout->checkout_request_id = $checkoutRequestId;
-        $checkout->save();
-
-        return response()->json([
-            'message' => 'M-Pesa prompt sent. Enter your PIN. This page confirms the subscription when Safaricom reports the payment.',
-            'checkout' => $this->checkoutPayload($checkout->fresh()),
-            'stk' => true,
-        ]);
     }
 
     public function status(Request $request)

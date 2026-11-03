@@ -11,7 +11,9 @@ class EnsureSessionNotIdle
 {
     public function handle(Request $request, Closure $next): Response
     {
-        if (! config('security.revoke_idle_tokens', false)) {
+        $nightPolicy = app(\App\Services\Auth\NightSessionPolicy::class);
+        $nightSessionActive = $nightPolicy->isActive();
+        if (! config('security.revoke_idle_tokens', false) && ! $nightSessionActive) {
             return $next($request);
         }
 
@@ -34,6 +36,9 @@ class EnsureSessionNotIdle
         $idleMinutes = \App\Services\Auth\SecuritySettingsResolver::sessionIdleMinutesForOrganizationId(
             (int) ($accessToken->organization_id ?? 0) ?: null,
         );
+        if ($nightSessionActive) {
+            $idleMinutes = min($idleMinutes, $nightPolicy->idleMinutes());
+        }
         $lastActivity = $accessToken->last_used_at ?? $accessToken->created_at;
 
         if ($lastActivity && $lastActivity->lt(now()->subMinutes($idleMinutes))) {

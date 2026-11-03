@@ -27,11 +27,12 @@ return Application::configure(basePath: dirname(__DIR__))
         // clients do not use Sanctum cookie sessions or CSRF cookies.
         $middleware->prependToGroup('api', \App\Http\Middleware\RecordResponseTime::class);
         $middleware->prependToGroup('api', \App\Http\Middleware\SecurityHeaders::class);
-        // Inactivity is handled by the web app lock screen — do not revoke API tokens mid-session.
+        // The UI handles ordinary idle timeout; the server also revokes overnight idle sessions.
         $middleware->prependToGroup('api', \App\Http\Middleware\EnsureUserIsActive::class);
         $middleware->prependToGroup('api', \App\Http\Middleware\EnsureOrganizationLicenseActive::class);
         $middleware->prependToGroup('api', \App\Http\Middleware\EnsureLoginChannel::class);
         // Must run before EnsureUserIsActive / EnsureLoginChannel / auth:sanctum read Bearer from cookie.
+        $middleware->prependToGroup('api', \App\Http\Middleware\EnsureSessionNotIdle::class);
         $middleware->prependToGroup('api', \App\Http\Middleware\AuthenticateApiTokenCookie::class);
         $middleware->redirectGuestsTo(function (Request $request) {
             if ($request->is('api/*') || $request->expectsJson()) {

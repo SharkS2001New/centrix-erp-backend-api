@@ -452,7 +452,26 @@ class OrganizationLicenseService
         $planId = $payload['plan_id'] ?? null;
         $plan = $planId ? \App\Models\PlatformPlan::query()->find($planId) : null;
 
-        $isTrial = (bool) ($payload['is_trial'] ?? (($payload['status'] ?? '') === 'trialing'));
+        $isTrial = (bool) ($payload['is_trial'] ?? false) || (($payload['status'] ?? '') === 'trialing');
+        if ($isTrial && $plan) {
+            $organizationIndustry = \App\Services\Erp\IndustryRegistry::industryForProfile(
+                (string) $org->deployment_profile,
+            );
+            $planIndustry = trim((string) ($plan->industry ?: 'commerce'));
+            if ($planIndustry !== $organizationIndustry) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'plan_id' => ['Choose a trial package for this organisation’s industry and setup type.'],
+                ]);
+            }
+
+            $trialProfiles = is_array($plan->trial_profile_keys) ? $plan->trial_profile_keys : [];
+            if ($trialProfiles !== [] && ! in_array((string) $org->deployment_profile, $trialProfiles, true)) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'plan_id' => ['This package’s free trial is not available for the organisation’s setup type.'],
+                ]);
+            }
+        }
+
         $status = $payload['status'] ?? ($isTrial ? 'trialing' : 'active');
         $start = $this->normalizePeriodInstant($payload['current_period_start'] ?? now(), false);
         $end = $this->normalizePeriodInstant(

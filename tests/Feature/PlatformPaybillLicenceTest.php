@@ -345,6 +345,37 @@ class PlatformPaybillLicenceTest extends TestCase
         $this->assertSame('2026-11-07', $sub->current_period_end->toDateString());
     }
 
+    public function test_second_stk_request_is_blocked_while_an_existing_prompt_is_pending(): void
+    {
+        [$org, $plan] = $this->seedLicensedOrg('STKONCE', '0712000118', '2026-09-01');
+        $service = app(PlatformPaybillLicenceService::class);
+        $service->saveSettings([
+            'short_code' => '4036507',
+            'stk_env' => 'sandbox',
+            'stk_shortcode' => '4036507',
+            'stk_consumer_key' => 'platform-consumer-key',
+            'stk_consumer_secret' => 'platform-consumer-secret',
+            'stk_passkey' => 'platform-passkey',
+            'stk_callback_url' => 'https://api.centrixerp.com/api/v1/payments/stk/callback',
+        ]);
+        $checkout = $service->startCheckout($org, $plan, 1, '254712000118', 'monthly');
+        $checkout->update(['checkout_request_id' => 'ws_CO_stk_already_pending']);
+        Sanctum::actingAs($this->userForOrg($org));
+
+        $this->postJson('/api/v1/erp/organization/licence/stk', [
+            'plan_id' => $plan->id,
+            'months' => 1,
+            'billing' => 'monthly',
+            'phone' => '0712000118',
+        ])->assertStatus(409)
+            ->assertJsonPath('prompt_already_pending', true)
+            ->assertJsonPath('checkout.id', $checkout->id);
+
+        $this->assertSame(1, \App\Models\PlatformLicenceCheckout::query()
+            ->where('organization_id', $org->id)
+            ->count());
+    }
+
     public function test_stk_query_fallback_applies_a_success_when_callback_is_delayed(): void
     {
         [$org, $plan] = $this->seedLicensedOrg('STKQUERY', '0712000117', '2026-09-01');
@@ -557,6 +588,32 @@ class PlatformPaybillLicenceTest extends TestCase
 
         $plan->cta_action = 'buy_now';
         $this->assertSame('Pay Now', $plan->callToActionLabel());
+    }
+
+    public function test_trial_assignment_requires_a_plan_setup_profile_match(): void
+    {
+        [$org, $plan] = $this->seedLicensedOrg('TRIALPROFILE', '0712000117', '2026-11-07');
+        $plan->update([
+            'industry' => 'commerce',
+            'trial_profile_keys' => ['wholesale_retail'],
+        ]);
+        $licenses = app(\App\Services\Platform\OrganizationLicenseService::class);
+
+        $licenses->createOrUpdateForOrganization($org, [
+            'plan_id' => $plan->id,
+            'status' => 'trialing',
+            'is_trial' => false,
+            'trial_days' => 14,
+        ]);
+
+        $org->update(['deployment_profile' => 'small_shop']);
+        $this->expectException(\Illuminate\Validation\ValidationException::class);
+        $licenses->createOrUpdateForOrganization($org, [
+            'plan_id' => $plan->id,
+            'status' => 'trialing',
+            'is_trial' => false,
+            'trial_days' => 14,
+        ]);
     }
 
     public function test_equity_checkout_applies_verified_callback_and_is_idempotent(): void

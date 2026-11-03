@@ -960,6 +960,7 @@ class CapabilityGate
             'screen_lock_minutes' => $this->organization
                 ? \App\Services\Auth\SecuritySettingsResolver::forGate($this)['screen_lock_minutes']
                 : (int) config('erp.screen_lock_minutes', 5),
+            'night_session' => app(\App\Services\Auth\NightSessionPolicy::class)->clientSettings(),
             'catalog' => $this->organization
                 ? app(ProductCatalogScopeService::class)->metadata((int) $this->organization->id)
                 : [

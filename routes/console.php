@@ -36,6 +36,11 @@ Schedule::command('erp:release-expired-stock-reservations')
     ->everyMinute()
     ->withoutOverlapping();
 
+Schedule::command('erp:revoke-idle-night-sessions')
+    ->everyMinute()
+    ->timezone(config('app.timezone', 'Africa/Nairobi'))
+    ->withoutOverlapping();
+
 Schedule::command('inventory:finalize-pending-sale-stock --limit=50')
     ->everyFiveMinutes()
     ->withoutOverlapping()

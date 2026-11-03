@@ -243,7 +243,7 @@ Route::prefix('v1')->group(function () {
     Route::post('public/free-signup', [\App\Http\Controllers\Api\V1\PublicFreeSignupController::class, 'store'])
         ->middleware(['throttle:api', 'throttle:auth-login']);
 
-    Route::middleware(['auth:sanctum', 'erp.tenant', 'erp.session_idle', 'erp.password_expiry', 'throttle:api'])->group(function () {
+    Route::middleware(['auth:sanctum', 'erp.tenant', 'erp.password_expiry', 'throttle:api'])->group(function () {
         Route::get('auth/me', [AuthController::class, 'me']);
         Route::post('media/import-image', [RemoteImageController::class, 'import']);
         Route::patch('auth/me', [AuthController::class, 'updateMe']);

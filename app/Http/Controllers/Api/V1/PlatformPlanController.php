@@ -7,8 +7,11 @@ use App\Models\PlatformPlan;
 use App\Services\Platform\PackageFeatureCatalog;
 use App\Services\Platform\PlatformPaybillLicenceService;
 use App\Services\Platform\SelfServePlanComposer;
+use App\Services\Erp\IndustryRegistry;
+use App\Services\Erp\SetupProfileMenuService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
 
 class PlatformPlanController extends Controller
 {
@@ -106,7 +109,12 @@ class PlatformPlanController extends Controller
 
     public function update(Request $request, PlatformPlan $platform_plan)
     {
-        $data = $this->validated($request, false);
+        $data = $this->validated(
+            $request,
+            false,
+            (string) ($platform_plan->industry ?: 'commerce'),
+            $platform_plan->trial_profile_keys,
+        );
         $platform_plan->update($data);
         $fresh = $platform_plan->fresh();
         $this->keepOneRecommended($fresh);
@@ -137,7 +145,12 @@ class PlatformPlanController extends Controller
             ->update(['is_recommended' => false]);
     }
 
-    protected function validated(Request $request, bool $creating = true): array
+    protected function validated(
+        Request $request,
+        bool $creating = true,
+        ?string $currentIndustry = null,
+        ?array $currentTrialProfiles = null,
+    ): array
     {
         $data = $request->validate([
             'name' => ($creating ? 'required' : 'sometimes').'|string|max:200',
@@ -156,6 +169,8 @@ class PlatformPlanController extends Controller
             'token_pack_days' => 'nullable|integer|min:1',
             'currency' => 'sometimes|string|max:8',
             'seat_limit' => 'nullable|integer|min:1',
+            'trial_profile_keys' => 'sometimes|array',
+            'trial_profile_keys.*' => 'string|max:80',
             'workspace_keys' => 'sometimes|array',
             'module_keys' => 'sometimes|array',
             'section_keys' => 'sometimes|array',
@@ -176,7 +191,27 @@ class PlatformPlanController extends Controller
             $data['industry'] = 'commerce';
         }
 
-        $industry = (string) ($data['industry'] ?? '');
+        $industry = (string) ($data['industry'] ?? $currentIndustry ?? '');
+        if (array_key_exists('trial_profile_keys', $data) || $currentTrialProfiles !== null) {
+            $validProfiles = app(SetupProfileMenuService::class)->profileKeys();
+            $trialProfiles = array_values(array_unique(array_map(
+                static fn ($key) => trim((string) $key),
+                $data['trial_profile_keys'] ?? $currentTrialProfiles ?? [],
+            )));
+            foreach ($trialProfiles as $profileKey) {
+                if (! in_array($profileKey, $validProfiles, true)
+                    || IndustryRegistry::industryForProfile($profileKey) !== $industry
+                ) {
+                    throw ValidationException::withMessages([
+                        'trial_profile_keys' => ['Choose setup types that belong to this plan’s industry.'],
+                    ]);
+                }
+            }
+            if (array_key_exists('trial_profile_keys', $data)) {
+                $data['trial_profile_keys'] = $trialProfiles;
+            }
+        }
+
         if ($industry !== '' && array_key_exists('workspace_keys', $data) && ! array_key_exists('feature_keys', $data)) {
             $allowed = array_flip(config('erp_industries.definitions.'.$industry.'.permission_application_ids', []));
             $data['workspace_keys'] = array_values(array_filter(
