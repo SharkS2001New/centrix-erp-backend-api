@@ -308,10 +308,16 @@ class MpesaPaybillAccountController extends Controller
         }
 
         try {
+            $result = $registration->register($config);
+
             return response()->json([
                 'success' => true,
-                'message' => 'C2B URLs registered successfully with Daraja.',
-                'registration' => $registration->register($config),
+                'message' => sprintf(
+                    'Daraja accepted the C2B URL registration request for %s shortcode %s.',
+                    $result['environment'],
+                    $result['short_code'],
+                ),
+                'registration' => $result,
             ]);
         } catch (RuntimeException $e) {
             return response()->json([

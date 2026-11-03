@@ -31,16 +31,57 @@ class MpesaC2bUrlRegistrationTest extends TestCase
         $this->postJson('/api/v1/mpesa-paybill-accounts/register-default-c2b-urls')
             ->assertOk()
             ->assertJsonPath('success', true)
-            ->assertJsonPath('registration.response_code', '0');
+            ->assertJsonPath('registration.response_code', '0')
+            ->assertJsonPath('registration.environment', 'sandbox')
+            ->assertJsonPath('registration.short_code', '600001')
+            ->assertJsonPath('registration.confirmation_url', 'https://api.centrixerp.com/api/v1/payments/c2b/confirmation')
+            ->assertJsonPath('registration.validation_url', 'https://api.centrixerp.com/api/v1/payments/c2b/validation')
+            ->assertJsonPath('message', 'Daraja accepted the C2B URL registration request for sandbox shortcode 600001.');
 
         Http::assertSent(fn (ClientRequest $request) => str_ends_with(
             $request->url(),
-            '/mpesa/c2b/v1/registerurl',
+            '/mpesa/c2b/v2/registerurl',
         ) && $request['ShortCode'] === '600001'
             && $request['ResponseType'] === 'Completed'
             && $request['ConfirmationURL'] === 'https://api.centrixerp.com/api/v1/payments/c2b/confirmation'
             && $request['ValidationURL'] === 'https://api.centrixerp.com/api/v1/payments/c2b/validation'
             && $request->hasHeader('Authorization', 'Bearer test-access-token'));
+    }
+
+    public function test_live_c2b_registration_uses_live_daraja_and_reports_the_registered_target(): void
+    {
+        $admin = User::query()->where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+        $this->saveDefaultMpesaSettings($admin, [
+            'env' => 'live',
+            'consumer_key' => 'live-key',
+            'consumer_secret' => 'live-secret',
+            'child_storecode' => '600001',
+            'c2b_confirmation_url' => 'https://api.centrixerp.com/api/v1/payments/c2b/confirmation',
+            'c2b_validation_url' => 'https://api.centrixerp.com/api/v1/payments/c2b/validation',
+        ]);
+        Http::fake([
+            'api.safaricom.co.ke/oauth/v1/generate*' => Http::response([
+                'access_token' => 'live-access-token',
+                'expires_in' => '3599',
+            ]),
+            'api.safaricom.co.ke/mpesa/c2b/v2/registerurl' => Http::response([
+                'ResponseCode' => '0',
+                'ResponseDescription' => 'Success. Request accepted for processing.',
+            ]),
+        ]);
+
+        $this->postJson('/api/v1/mpesa-paybill-accounts/register-default-c2b-urls')
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('registration.environment', 'live')
+            ->assertJsonPath('registration.short_code', '600001')
+            ->assertJsonPath('message', 'Daraja accepted the C2B URL registration request for live shortcode 600001.');
+
+        Http::assertSent(fn (ClientRequest $request) => str_starts_with(
+            $request->url(),
+            'https://api.safaricom.co.ke/',
+        ));
     }
 
     public function test_account_registration_uses_its_saved_credentials_and_callback_urls(): void
@@ -79,7 +120,7 @@ class MpesaC2bUrlRegistrationTest extends TestCase
         ) && $request->hasHeader('Authorization', 'Basic '.base64_encode('account-key:account-secret')));
         Http::assertSent(fn (ClientRequest $request) => str_ends_with(
             $request->url(),
-            '/mpesa/c2b/v1/registerurl',
+            '/mpesa/c2b/v2/registerurl',
         ) && $request['ShortCode'] === '700002'
             && $request['ConfirmationURL'] === 'https://shop.centrixerp.com/api/v1/payments/c2b/confirmation'
             && $request['ValidationURL'] === 'https://shop.centrixerp.com/api/v1/payments/c2b/validation');
@@ -159,7 +200,7 @@ class MpesaC2bUrlRegistrationTest extends TestCase
                 'access_token' => 'test-access-token',
                 'expires_in' => '3599',
             ]),
-            'sandbox.safaricom.co.ke/mpesa/c2b/v1/registerurl' => Http::response([
+            'sandbox.safaricom.co.ke/mpesa/c2b/v2/registerurl' => Http::response([
                 'ResponseCode' => '0',
                 'ResponseDescription' => 'Success. Request accepted for processing.',
                 'OriginatorCoversationID' => 'test-originator-id',

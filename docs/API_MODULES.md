@@ -142,7 +142,7 @@ Expenses linked to an open session (`float_session_id`) reduce expected cash on 
 
 ## Payments & M-Pesa
 
-Organization config: `GET/PATCH /erp/settings/finance` → `finance.mpesa` (consumer key/secret, paybill, till, passkey, and callback URLs). Organization admins can save settings and register their default C2B confirmation/validation URLs directly with Daraja using `POST /mpesa-paybill-accounts/register-default-c2b-urls`. Saved paybill accounts have their own registration endpoint. STK callback URLs are sent with each STK push and are not registered through Daraja's C2B Register URL API. Branch overrides: `branches.settings.mpesa` (till/shortcode only).
+Organization config: `GET/PATCH /erp/settings/finance` → `finance.mpesa` (consumer key/secret, paybill, till, passkey, and callback URLs). Organization admins can save settings and register their default C2B confirmation/validation URLs directly with Daraja using `POST /mpesa-paybill-accounts/register-default-c2b-urls`. The response identifies the environment, shortcode, and exact URLs Daraja accepted; verify that the environment matches the payment API being used. Saved paybill accounts have their own registration endpoint. STK callback URLs are sent with each STK push and are not registered through Daraja's C2B Register URL API. Both C2B and STK callbacks are public POST endpoints; blocked callback IPs and STK callback arrivals are recorded in the API logs. Branch overrides: `branches.settings.mpesa` (till/shortcode only).
 
 | Method | Path | Notes |
 |--------|------|-------|

@@ -105,10 +105,16 @@ class PlatformPaybillController extends Controller
         }
 
         try {
+            $result = $registration->register($config);
+
             return response()->json([
                 'success' => true,
-                'message' => 'Platform C2B URLs registered successfully with Daraja.',
-                'registration' => $registration->register($config),
+                'message' => sprintf(
+                    'Daraja accepted the platform C2B URL registration request for %s shortcode %s.',
+                    $result['environment'],
+                    $result['short_code'],
+                ),
+                'registration' => $result,
             ]);
         } catch (RuntimeException $e) {
             Log::warning('Platform C2B callback URL registration failed.', [

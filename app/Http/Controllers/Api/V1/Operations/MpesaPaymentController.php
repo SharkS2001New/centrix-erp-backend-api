@@ -332,12 +332,20 @@ class MpesaPaymentController extends Controller
         $callback = $payload->Body->stkCallback ?? null;
 
         if (! $callback) {
+            Log::warning('M-Pesa STK callback received an invalid payload.', [
+                'content_type' => $request->header('Content-Type'),
+            ]);
+
             return response()->json(['ResultCode' => 1, 'ResultDesc' => 'Invalid callback payload']);
         }
 
         $checkoutRequestId = $callback->CheckoutRequestID ?? null;
         $resultCode = (int) ($callback->ResultCode ?? 1);
         $resultDesc = (string) ($callback->ResultDesc ?? 'Transaction failed');
+        Log::info('M-Pesa STK callback received.', [
+            'checkout_request_id' => $checkoutRequestId,
+            'result_code' => $resultCode,
+        ]);
 
         $stkRequest = $checkoutRequestId
             ? MpesaStkRequest::where('checkout_request_id', $checkoutRequestId)->first()

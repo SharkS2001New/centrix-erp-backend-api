@@ -33,7 +33,7 @@ class PlatformC2bUrlRegistrationTest extends TestCase
                 'access_token' => 'platform-test-token',
                 'expires_in' => '3599',
             ]),
-            'sandbox.safaricom.co.ke/mpesa/c2b/v1/registerurl' => Http::response([
+            'sandbox.safaricom.co.ke/mpesa/c2b/v2/registerurl' => Http::response([
                 'ResponseCode' => '0',
                 'ResponseDescription' => 'Success. Request accepted for processing.',
             ]),
@@ -41,7 +41,12 @@ class PlatformC2bUrlRegistrationTest extends TestCase
 
         $this->postJson('/api/v1/admin/platform-paybill/register-c2b-urls')
             ->assertOk()
-            ->assertJsonPath('success', true);
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('registration.environment', 'sandbox')
+            ->assertJsonPath('registration.short_code', '4036507')
+            ->assertJsonPath('registration.confirmation_url', 'https://api.centrixerp.com/api/v1/payments/c2b/confirmation')
+            ->assertJsonPath('registration.validation_url', 'https://api.centrixerp.com/api/v1/payments/c2b/validation')
+            ->assertJsonPath('message', 'Daraja accepted the platform C2B URL registration request for sandbox shortcode 4036507.');
 
         Http::assertSent(fn (ClientRequest $request) => str_ends_with(
             $request->url(),
@@ -52,7 +57,7 @@ class PlatformC2bUrlRegistrationTest extends TestCase
         ));
         Http::assertSent(fn (ClientRequest $request) => str_ends_with(
             $request->url(),
-            '/mpesa/c2b/v1/registerurl',
+            '/mpesa/c2b/v2/registerurl',
         ) && $request['ShortCode'] === '4036507'
             && $request['ConfirmationURL'] === 'https://api.centrixerp.com/api/v1/payments/c2b/confirmation'
             && $request['ValidationURL'] === 'https://api.centrixerp.com/api/v1/payments/c2b/validation');
@@ -94,7 +99,7 @@ class PlatformC2bUrlRegistrationTest extends TestCase
             'sandbox.safaricom.co.ke/oauth/v1/generate*' => Http::response([
                 'access_token' => 'platform-test-token',
             ]),
-            'sandbox.safaricom.co.ke/mpesa/c2b/v1/registerurl' => Http::response([
+            'sandbox.safaricom.co.ke/mpesa/c2b/v2/registerurl' => Http::response([
                 'errorCode' => '400.002.02',
                 'errorMessage' => 'Invalid ShortCode',
             ], 400),

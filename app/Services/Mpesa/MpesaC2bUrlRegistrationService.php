@@ -10,7 +10,7 @@ class MpesaC2bUrlRegistrationService
 {
     /**
      * @param  array<string, mixed>  $config
-     * @return array{response_code: string, response_description: string, originator_conversation_id: ?string, conversation_id: ?string}
+     * @return array{environment: string, short_code: string, confirmation_url: string, validation_url: string, response_code: string, response_description: string, originator_conversation_id: ?string, conversation_id: ?string}
      */
     public function register(array $config): array
     {
@@ -31,8 +31,8 @@ class MpesaC2bUrlRegistrationService
 
         try {
             $tokenResponse = Http::acceptJson()
-                ->connectTimeout(2)
-                ->timeout(4)
+                ->connectTimeout(3)
+                ->timeout(10)
                 ->withBasicAuth($config['consumer_key'], $config['consumer_secret'])
                 ->get($baseUrl.'/oauth/v1/generate', ['grant_type' => 'client_credentials']);
 
@@ -42,10 +42,10 @@ class MpesaC2bUrlRegistrationService
             }
 
             $registrationResponse = Http::acceptJson()
-                ->connectTimeout(2)
-                ->timeout(4)
+                ->connectTimeout(3)
+                ->timeout(10)
                 ->withToken($tokenBody['access_token'])
-                ->post($baseUrl.'/mpesa/c2b/v1/registerurl', [
+                ->post($baseUrl.'/mpesa/c2b/v2/registerurl', [
                     'ShortCode' => $shortCode,
                     'ResponseType' => 'Completed',
                     'ConfirmationURL' => $config['c2b_confirmation_url'],
@@ -62,6 +62,10 @@ class MpesaC2bUrlRegistrationService
         }
 
         return [
+            'environment' => $config['env'] ?? 'sandbox',
+            'short_code' => $shortCode,
+            'confirmation_url' => $config['c2b_confirmation_url'],
+            'validation_url' => $config['c2b_validation_url'],
             'response_code' => $responseCode,
             'response_description' => (string) ($body['ResponseDescription'] ?? 'C2B URLs registered successfully.'),
             'originator_conversation_id' => isset($body['OriginatorCoversationID'])

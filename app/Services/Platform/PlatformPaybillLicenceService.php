@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Services\Erp\IndustryRegistry;
 use App\Services\Notifications\AdminNotificationService;
 use App\Services\Mpesa\MpesaSettingsResolver;
+use App\Services\Mpesa\MpesaStkQueryService;
 use Illuminate\Validation\ValidationException;
 use App\Models\PlatformBillingSetting;
 use App\Models\PlatformLicenceBalance;
@@ -20,6 +21,8 @@ use App\Models\EquityIncomingPayment;
 use App\Support\PhoneNumber;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 
 /**
@@ -1032,7 +1035,28 @@ class PlatformPaybillLicenceService
         $checkout = PlatformLicenceCheckout::query()
             ->where('checkout_request_id', $checkoutRequestId)
             ->first();
-        if (! $checkout || $checkout->status === 'paid') {
+        if (! $checkout) {
+            return;
+        }
+
+        if ($checkout->status === 'paid') {
+            $receipt = trim((string) ($values['MpesaReceiptNumber'] ?? ''));
+            $syntheticReceipt = (string) $checkout->mpesa_receipt;
+            if ($resultCode === 0 && $receipt !== '' && str_starts_with($syntheticReceipt, 'STKQ-')) {
+                $payment = PlatformLicencePayment::query()
+                    ->where('mpesa_transaction_id', $syntheticReceipt)
+                    ->first();
+                $duplicate = PlatformLicencePayment::query()
+                    ->where('mpesa_transaction_id', $receipt)
+                    ->exists();
+                if ($payment && ! $duplicate) {
+                    $payment->mpesa_transaction_id = $receipt;
+                    $payment->save();
+                    $checkout->mpesa_receipt = $receipt;
+                    $checkout->save();
+                }
+            }
+
             return;
         }
 
@@ -1065,6 +1089,113 @@ class PlatformPaybillLicenceService
         }
     }
 
+    protected function queryPendingStkCheckout(PlatformLicenceCheckout $checkout): void
+        {
+            $checkoutRequestId = trim((string) $checkout->checkout_request_id);
+            if ($checkoutRequestId === '' || $checkout->result_code !== null) {
+                return;
+            }
+
+            $cacheKey = 'platform-stk-query:'.$checkout->id;
+            if (! Cache::add($cacheKey, true, 10)) {
+                return;
+            }
+
+            try {
+                $result = app(MpesaStkQueryService::class)->query($this->stkConfig(), $checkoutRequestId);
+            } catch (\RuntimeException $e) {
+                Log::warning('Platform licence STK status query failed.', [
+                    'checkout_id' => $checkout->id,
+                    'checkout_request_id' => $checkoutRequestId,
+                    'message' => $e->getMessage(),
+                ]);
+
+                return;
+            }
+
+            if (! array_key_exists('ResultCode', $result) || ! is_numeric($result['ResultCode'])) {
+                if (! empty($result['errorCode']) || (isset($result['ResponseCode']) && (string) $result['ResponseCode'] !== '0')) {
+                    Log::warning('Daraja STK Query did not return a payment result.', [
+                        'checkout_id' => $checkout->id,
+                        'checkout_request_id' => $checkoutRequestId,
+                        'error_code' => $result['errorCode'] ?? $result['ResponseCode'] ?? null,
+                        'message' => $result['errorMessage'] ?? $result['ResponseDescription'] ?? null,
+                    ]);
+                }
+
+                return;
+            }
+
+            $resultCode = (int) $result['ResultCode'];
+            $resultDesc = trim((string) ($result['ResultDesc'] ?? ''));
+            if ($resultCode !== 0) {
+                $this->rememberStkResult($checkout, $resultCode, $resultDesc);
+
+                return;
+            }
+
+            $metadata = [];
+            foreach (($result['CallbackMetadata']['Item'] ?? []) as $item) {
+                if (is_array($item) && isset($item['Name'])) {
+                    $metadata[(string) $item['Name']] = $item['Value'] ?? null;
+                }
+            }
+
+            $receipt = trim((string) ($metadata['MpesaReceiptNumber'] ?? ''));
+            if ($receipt !== '') {
+                $this->acceptStkResult($checkoutRequestId, 0, $metadata, $resultDesc);
+
+                return;
+            }
+
+            $this->applyQueriedSuccessfulCheckout($checkout, $resultDesc);
+        }
+
+    protected function applyQueriedSuccessfulCheckout(PlatformLicenceCheckout $checkout, string $resultDesc): void
+        {
+            DB::transaction(function () use ($checkout, $resultDesc): void {
+                $lockedCheckout = PlatformLicenceCheckout::query()
+                    ->whereKey($checkout->id)
+                    ->lockForUpdate()
+                    ->first();
+                if (! $lockedCheckout || $lockedCheckout->status !== 'pending') {
+                    return;
+                }
+
+                $org = $lockedCheckout->organization;
+                if (! $org) {
+                    return;
+                }
+
+                $transactionId = 'STKQ-'.strtoupper(substr(hash('sha256', (string) $lockedCheckout->checkout_request_id), 0, 32));
+                $payment = PlatformLicencePayment::query()->firstOrCreate(
+                    ['mpesa_transaction_id' => $transactionId],
+                    [
+                        'organization_id' => $org->id,
+                        'phone_number' => $lockedCheckout->phone_number,
+                        'amount' => (float) $lockedCheckout->amount,
+                        'bill_ref_number' => $org->company_code,
+                        'business_short_code' => $this->settings()?->short_code,
+                        'account_reference' => $org->company_code,
+                        'status' => 'unmatched',
+                        'match_method' => 'stk_query',
+                        'note' => $resultDesc !== '' ? mb_substr($resultDesc, 0, 255) : 'Daraja STK Query confirmed payment',
+                    ],
+                );
+
+                $payment = $this->applyPendingCheckout(
+                    $payment,
+                    $org,
+                    (float) $lockedCheckout->amount,
+                    (int) $lockedCheckout->id,
+                );
+                if ($payment && $payment->status === 'applied') {
+                    $payment->note = 'stk_query_confirmed';
+                    $payment->save();
+                }
+            });
+    }
+
     /**
      * @return array{status: string, checkout_id: ?int, stk_failed: bool, message: string, mpesa_receipt: ?string}
      */
@@ -1082,6 +1213,10 @@ class PlatformPaybillLicenceService
         if ($checkout && $checkout->status === 'pending') {
             $this->attachUnmatchedPayment($checkout);
             $checkout->refresh();
+            if ($checkout->status === 'pending') {
+                $this->queryPendingStkCheckout($checkout);
+                $checkout->refresh();
+            }
         }
 
         return $this->statusPayload($checkout);

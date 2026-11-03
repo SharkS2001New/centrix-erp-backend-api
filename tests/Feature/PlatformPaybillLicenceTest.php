@@ -12,7 +12,9 @@ use App\Models\PlatformPlan;
 use App\Models\PlatformSubscription;
 use App\Models\Role;
 use App\Models\User;
+use Illuminate\Http\Client\Request as ClientRequest;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Http;
 use App\Services\Platform\PlatformPaybillLicenceService;
 use Carbon\Carbon;
 use Laravel\Sanctum\Sanctum;
@@ -343,6 +345,71 @@ class PlatformPaybillLicenceTest extends TestCase
         $this->assertSame('2026-11-07', $sub->current_period_end->toDateString());
     }
 
+    public function test_stk_query_fallback_applies_a_success_when_callback_is_delayed(): void
+    {
+        [$org, $plan] = $this->seedLicensedOrg('STKQUERY', '0712000117', '2026-09-01');
+        $service = app(PlatformPaybillLicenceService::class);
+        $service->saveSettings([
+            'short_code' => '4036507',
+            'stk_env' => 'sandbox',
+            'stk_shortcode' => '4036507',
+            'stk_consumer_key' => 'platform-consumer-key',
+            'stk_consumer_secret' => 'platform-consumer-secret',
+            'stk_passkey' => 'platform-passkey',
+            'stk_callback_url' => 'https://api.centrixerp.com/api/v1/payments/stk/callback',
+        ]);
+        $checkout = $service->startCheckout($org, $plan, 1, '254712000117', 'monthly');
+        $checkout->update(['checkout_request_id' => 'ws_CO_stk_query_success']);
+
+        Http::fake([
+            'sandbox.safaricom.co.ke/oauth/v1/generate*' => Http::response([
+                'access_token' => 'platform-query-token',
+            ]),
+            'sandbox.safaricom.co.ke/mpesa/stkpushquery/v1/query' => Http::response([
+                'ResponseCode' => '0',
+                'ResultCode' => '0',
+                'ResultDesc' => 'The service request is processed successfully.',
+            ]),
+        ]);
+        Sanctum::actingAs($this->userForOrg($org));
+
+        $this->getJson('/api/v1/erp/organization/licence/status?checkout_id='.$checkout->id)
+            ->assertOk()
+            ->assertJsonPath('status', 'paid')
+            ->assertJsonPath('stk_failed', false)
+            ->assertJsonPath('license.status', 'active');
+
+        $this->assertSame('paid', $checkout->fresh()->status);
+        $this->assertSame('stk_query_confirmed', PlatformLicencePayment::query()->value('note'));
+        Http::assertSent(fn (ClientRequest $request) => str_ends_with(
+            $request->url(),
+            '/mpesa/stkpushquery/v1/query',
+        ) && $request['CheckoutRequestID'] === 'ws_CO_stk_query_success'
+            && $request['BusinessShortCode'] === '4036507');
+
+        $this->postJson('/api/v1/payments/stk/callback', [
+            'Body' => [
+                'stkCallback' => [
+                    'CheckoutRequestID' => 'ws_CO_stk_query_success',
+                    'ResultCode' => 0,
+                    'ResultDesc' => 'The service request is processed successfully.',
+                    'CallbackMetadata' => [
+                        'Item' => [
+                            ['Name' => 'Amount', 'Value' => 1500],
+                            ['Name' => 'MpesaReceiptNumber', 'Value' => 'STKQUERY1'],
+                            ['Name' => 'PhoneNumber', 'Value' => '254712000117'],
+                        ],
+                    ],
+                ],
+            ],
+        ])->assertOk();
+        $this->assertSame('STKQUERY1', $checkout->fresh()->mpesa_receipt);
+        $this->assertDatabaseHas('platform_licence_payments', [
+            'mpesa_transaction_id' => 'STKQUERY1',
+            'note' => 'stk_query_confirmed',
+        ]);
+    }
+
     public function test_cancelled_stk_prompt_stays_payable_by_paybill(): void
     {
         [$org, $plan] = $this->seedLicensedOrg('MOON', '0712000111', '2026-09-01');
@@ -352,15 +419,45 @@ class PlatformPaybillLicenceTest extends TestCase
         $checkout->checkout_request_id = 'ws_CO_licence_cancel';
         $checkout->save();
 
-        $service->acceptStkResult('ws_CO_licence_cancel', 1032, [], 'Request cancelled by user');
+        $this->postJson('/api/v1/payments/stk/callback', [
+            'Body' => [
+                'stkCallback' => [
+                    'CheckoutRequestID' => 'ws_CO_licence_cancel',
+                    'ResultCode' => 1032,
+                    'ResultDesc' => 'Request cancelled by user',
+                ],
+            ],
+        ])->assertOk();
         $checkout->refresh();
         $this->assertSame('pending', $checkout->status);
         $this->assertSame(1032, (int) $checkout->result_code);
+
+        Sanctum::actingAs($this->userForOrg($org));
+        $this->getJson('/api/v1/erp/organization/licence/status?checkout_id='.$checkout->id)
+            ->assertOk()
+            ->assertJsonPath('stk_failed', true)
+            ->assertJsonPath('message', 'Payment cancelled on the phone. You can send the prompt again, or pay the Paybill.');
 
         $payment = $service->acceptC2b($this->payload('PAYBILL1', 1500, 'MOON'));
         $this->assertSame('applied', $payment->status);
         $checkout->refresh();
         $this->assertSame('paid', $checkout->status);
+
+        $insufficientCheckout = $service->startCheckout($org, $plan, 1, '254712000111', 'monthly');
+        $insufficientCheckout->update(['checkout_request_id' => 'ws_CO_licence_insufficient']);
+        $this->postJson('/api/v1/payments/stk/callback', [
+            'Body' => [
+                'stkCallback' => [
+                    'CheckoutRequestID' => 'ws_CO_licence_insufficient',
+                    'ResultCode' => 1,
+                    'ResultDesc' => 'The balance is insufficient for the transaction.',
+                ],
+            ],
+        ])->assertOk();
+        $this->getJson('/api/v1/erp/organization/licence/status?checkout_id='.$insufficientCheckout->id)
+            ->assertOk()
+            ->assertJsonPath('stk_failed', true)
+            ->assertJsonPath('message', 'Insufficient M-Pesa balance.');
     }
 
     public function test_centrix_callback_and_admin_list(): void
