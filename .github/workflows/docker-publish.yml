@@ -10,10 +10,25 @@ on:
       - main
     tags:
       - "v*.*.*"
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - ".github/workflows/ci.yml"
   pull_request:
     branches:
       - master
       - main
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - ".github/workflows/ci.yml"
+
+# Serialize publishes on the same ref so concurrent pushes don't race the
+# downstream Helm commit. Do NOT cancel in-progress runs here — a half-published
+# image + half-updated Helm values is worse than a short queue.
+concurrency:
+  group: docker-publish-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   REGISTRY: ghcr.io
@@ -71,6 +86,9 @@ jobs:
         id: image_tag
         run: echo "value=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
+      # NOTE: GITHUB_TOKEN build-arg removed — composer resolves all deps from
+      # public packagist/github without auth on this project (verified locally).
+      # Re-add it only if composer starts hitting GitHub API rate limits.
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
@@ -79,16 +97,16 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
-          build-args: |
-            GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}
+          # ignore-error: GHA cache export can 504 after a successful push and
+          # must not fail the job (image is already on ghcr.io).
+          cache-to: type=gha,mode=max,ignore-error=true
 
-      - name: Check out pitchpredk3ssetup
+      - name: Check out centrixerpk3setup
         if: github.event_name != 'pull_request'
         uses: actions/checkout@v5
         with:
-          repository: ${{ github.repository_owner }}/pitchpredk3ssetup
-          path: pitchpredk3ssetup
+          repository: ${{ github.repository_owner }}/centrixerpk3setup
+          path: centrixerpk3setup
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
       - name: Update Helm image tags
@@ -96,21 +114,21 @@ jobs:
         run: |
           TAG="${{ steps.image_tag.outputs.value }}"
           for file in \
-            pitchpredk3ssetup/centrix-erp-backend-api/values.yaml \
-            pitchpredk3ssetup/centrix-erp-scheduler/values.yaml \
-            pitchpredk3ssetup/centrix-erp-queue-worker/values.yaml \
-            pitchpredk3ssetup/centrix-erp-reverb/values.yaml
+            centrixerpk3setup/centrix-erp-backend-api/values.yaml \
+            centrixerpk3setup/centrix-erp-scheduler/values.yaml \
+            centrixerpk3setup/centrix-erp-queue-worker/values.yaml \
+            centrixerpk3setup/centrix-erp-reverb/values.yaml
           do
             sed -i '/^[[:space:]]*tag:/d' "$file"
             sed -i "/pullPolicy:/a\\  tag: ${TAG}" "$file"
             echo "Updated ${file} -> ${TAG}"
           done
 
-      - name: Commit and push pitchpredk3ssetup
+      - name: Commit and push centrixerpk3setup
         if: github.event_name != 'pull_request'
-        # Uses PERSONAL_ACCESS_TOKEN — scope to repo contents only; protect pitchpredk3ssetup main branch.
+        # Uses PERSONAL_ACCESS_TOKEN — scope to repo contents only; protect centrixerpk3setup default branch.
         run: |
-          cd pitchpredk3ssetup
+          cd centrixerpk3setup
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add centrix-erp-backend-api/values.yaml centrix-erp-scheduler/values.yaml centrix-erp-queue-worker/values.yaml centrix-erp-reverb/values.yaml
@@ -119,14 +137,15 @@ jobs:
             exit 0
           fi
           git commit -m "chore(centrix-erp-backend-api): bump image tag to ${{ steps.image_tag.outputs.value }}"
+          DEFAULT_BRANCH="$(git symbolic-ref --short HEAD)"
           for attempt in 1 2 3 4 5; do
-            git pull --rebase origin master
-            if git push origin HEAD:master; then
+            git pull --rebase origin "$DEFAULT_BRANCH"
+            if git push origin "HEAD:${DEFAULT_BRANCH}"; then
               echo "Push succeeded on attempt ${attempt}."
               exit 0
             fi
             echo "Push rejected (attempt ${attempt}); retrying after rebase…"
             sleep $((attempt * 2))
           done
-          echo "Failed to push pitchpredk3ssetup after 5 attempts."
+          echo "Failed to push centrixerpk3setup after 5 attempts."
           exit 1

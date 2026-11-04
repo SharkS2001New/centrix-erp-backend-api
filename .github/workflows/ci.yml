@@ -6,10 +6,23 @@ on:
     branches:
       - master
       - main
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - ".github/workflows/docker-publish.yml"
   pull_request:
     branches:
       - master
       - main
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - ".github/workflows/docker-publish.yml"
+
+# Cancel superseded in-flight runs for the same ref.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   audit:
