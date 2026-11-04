@@ -105,13 +105,19 @@ jobs:
       # deploy.yml listens for backend-image-published, bumps the tag in all
       # four backend-chart values.yaml files (api, worker, scheduler, reverb)
       # on main, and runs helm upgrade from the self-hosted runner on the
-      # k3s host. PERSONAL_ACCESS_TOKEN needs repo scope on centrixerpk3setup.
+      # k3s host.
+      #
+      # CENTRIXERPK3SETUP_DISPATCH_TOKEN is a fine-grained PAT owned by
+      # chegelawrence, scoped to chegelawrence/centrixerpk3setup only with
+      # Contents: Read/write + Actions: Read/write. It is NOT interchangeable
+      # with PERSONAL_ACCESS_TOKEN (which belongs to SharkS2001New and only
+      # has write:packages for GHCR).
       - name: Dispatch deploy to centrixerpk3setup
         if: github.event_name != 'pull_request'
         uses: peter-evans/repository-dispatch@v3
         with:
-          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-          repository: ${{ github.repository_owner }}/centrixerpk3setup
+          token: ${{ secrets.CENTRIXERPK3SETUP_DISPATCH_TOKEN }}
+          repository: chegelawrence/centrixerpk3setup
           event-type: backend-image-published
           client-payload: |
             {
