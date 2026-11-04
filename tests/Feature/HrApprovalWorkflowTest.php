@@ -138,6 +138,31 @@ class HrApprovalWorkflowTest extends TestCase
         );
     }
 
+    public function test_employee_can_have_leave_assignments_on_different_dates(): void
+    {
+        $hrClerk = $this->userWithPermissions(['hr.manage']);
+        $employee = Employee::query()->firstOrFail();
+        Sanctum::actingAs($hrClerk);
+
+        $startDate = now()->addWeeks(2)->toDateString();
+        $this->postJson('/api/v1/employee-leave-days', [
+            'employee_id' => $employee->id,
+            'start_date' => $startDate,
+            'end_date' => $startDate,
+            'leave_type' => 'unpaid',
+            'deduct_from' => 'unpaid',
+        ])->assertCreated();
+
+        $nextDate = now()->addWeeks(3)->toDateString();
+        $this->postJson('/api/v1/employee-leave-days', [
+            'employee_id' => $employee->id,
+            'start_date' => $nextDate,
+            'end_date' => $nextDate,
+            'leave_type' => 'unpaid',
+            'deduct_from' => 'unpaid',
+        ])->assertCreated();
+    }
+
     public function test_cash_advance_creates_action_request_and_approver_can_open_advance(): void
     {
         $hrClerk = $this->userWithPermissions(['hr.manage']);

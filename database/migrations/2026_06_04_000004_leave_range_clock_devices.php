@@ -42,6 +42,24 @@ return new class extends Migration
             }
 
             if (Schema::hasColumn('employee_leave_days', 'leave_date')) {
+                $indexes = Schema::getIndexes('employee_leave_days');
+                $hasEmployeeIdIndex = collect($indexes)->contains(
+                    fn (array $index) => ! ($index['unique'] ?? false)
+                        && ($index['columns'][0] ?? null) === 'employee_id',
+                );
+
+                if (! $hasEmployeeIdIndex) {
+                    Schema::table('employee_leave_days', function (Blueprint $table) {
+                        $table->index('employee_id', 'idx_employee_leave_days_employee_id');
+                    });
+                }
+
+                if (collect($indexes)->contains('name', 'uq_emp_leave_date')) {
+                    Schema::table('employee_leave_days', function (Blueprint $table) {
+                        $table->dropUnique('uq_emp_leave_date');
+                    });
+                }
+
                 Schema::table('employee_leave_days', function (Blueprint $table) {
                     $table->dropColumn('leave_date');
                 });
