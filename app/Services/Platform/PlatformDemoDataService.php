@@ -62,6 +62,30 @@ class PlatformDemoDataService
             'admin_name' => 'Peter Otieno',
             'summary' => 'Hotel POS menu, outlets, and floor tables.',
         ],
+        [
+            'company_code' => 'RETAIL',
+            'profile' => 'small_shop',
+            'org_name' => 'Demo Retail Shop',
+            'email' => 'retail@demo.centrix.test',
+            'admin_name' => 'Grace Wanjiku',
+            'summary' => 'Retail products, point-of-sale stock, and sample product photos.',
+        ],
+        [
+            'company_code' => 'WHOLESALE',
+            'profile' => 'wholesale_retail',
+            'org_name' => 'Demo Wholesale Shop',
+            'email' => 'wholesale@demo.centrix.test',
+            'admin_name' => 'David Mwangi',
+            'summary' => 'Bulk products, wholesale stock levels, and sample product photos.',
+        ],
+        [
+            'company_code' => 'DISTRIB',
+            'profile' => 'distribution',
+            'org_name' => 'Demo Distribution',
+            'email' => 'distribution@demo.centrix.test',
+            'admin_name' => 'Mary Achieng',
+            'summary' => 'Distributor product catalogue, warehouse stock, and sample product photos.',
+        ],
     ];
 
     public function status(): array
@@ -104,6 +128,13 @@ class PlatformDemoDataService
                 if ($account['profile'] === 'hotel_bar') {
                     app(HospitalityDemoDataSeeder::class)->seedForOrganization(
                         $tenant['organization'],
+                        $tenant['user'],
+                    );
+                }
+                if (data_get(config('erp.profiles.'.$account['profile']), 'industry') === 'commerce') {
+                    app(CommerceDemoDataSeeder::class)->seedForOrganization(
+                        $tenant['organization'],
+                        $tenant['branch'],
                         $tenant['user'],
                     );
                 }
@@ -153,6 +184,9 @@ class PlatformDemoDataService
         foreach ($organizations as $org) {
             if ($org->deployment_profile === 'hotel_bar') {
                 app(HospitalityDemoDataSeeder::class)->removeForOrganization($org);
+            }
+            if (data_get(config('erp.profiles.'.$org->deployment_profile), 'industry') === 'commerce') {
+                app(CommerceDemoDataSeeder::class)->removeForOrganization($org);
             }
         }
 

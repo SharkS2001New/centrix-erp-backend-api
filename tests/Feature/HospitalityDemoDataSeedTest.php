@@ -70,11 +70,9 @@ class HospitalityDemoDataSeedTest extends TestCase
 
         foreach ($products as $product) {
             $this->assertNotEmpty($product->image_path, "Missing image_path for {$product->product_code}");
-            $this->assertTrue(
-                StoredPublicFile::exists($product->image_path),
-                "Missing seeded image file for {$product->product_code}",
-            );
             $this->assertNotEmpty($product->image_url);
+            $this->assertSame($product->image_path, $product->image_url);
+            $this->assertStringStartsWith('https://', $product->image_url);
         }
 
         $again = app(HospitalityDemoDataSeeder::class)->seedForOrganization($org);
@@ -108,6 +106,13 @@ class HospitalityDemoDataSeedTest extends TestCase
             ->assertOk()
             ->assertJsonPath('products', 38)
             ->assertJsonPath('tables', 8);
+
+        $product = Product::query()
+            ->where('organization_id', $org->id)
+            ->where('product_code', 'like', 'HTL-%')
+            ->firstOrFail();
+        $this->assertSame($product->image_path, $product->image_url);
+        $this->assertStringStartsWith('https://', $product->image_url);
     }
 
     public function test_seed_rejects_non_hotel_bar_orgs(): void

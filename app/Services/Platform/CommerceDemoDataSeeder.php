@@ -14,6 +14,7 @@ use App\Models\Vat;
 use App\Support\SeededProductImage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 
 class CommerceDemoDataSeeder
 {
@@ -31,6 +32,34 @@ class CommerceDemoDataSeeder
         ['name' => 'Tea leaves 500g', 'category' => 'Beverages', 'price' => 280, 'cost' => 220, 'shop' => 20, 'store' => 40, 'photo' => 'tea'],
         ['name' => 'White bread loaf', 'category' => 'Bakery', 'price' => 80, 'cost' => 60, 'shop' => 18, 'store' => 0, 'photo' => 'chapati'],
         ['name' => 'Instant coffee 100g', 'category' => 'Beverages', 'price' => 450, 'cost' => 360, 'shop' => 12, 'store' => 24, 'photo' => 'coffee'],
+    ];
+
+    /**
+     * @var list<array{name: string, category: string, price: float, cost: float, shop: float, store: float, photo: string}>
+     */
+    private const WHOLESALE_PRODUCTS = [
+        ['name' => 'Premium rice 25kg sack', 'category' => 'Bulk grains', 'price' => 4200, 'cost' => 3500, 'shop' => 12, 'store' => 48, 'photo' => 'retail'],
+        ['name' => 'Maize flour 50kg bag', 'category' => 'Bulk grains', 'price' => 4200, 'cost' => 3600, 'shop' => 8, 'store' => 32, 'photo' => 'retail'],
+        ['name' => 'White sugar 50kg bag', 'category' => 'Bulk grains', 'price' => 6500, 'cost' => 5600, 'shop' => 10, 'store' => 40, 'photo' => 'retail'],
+        ['name' => 'Cooking oil 20 litre jerrycan', 'category' => 'Bulk groceries', 'price' => 5600, 'cost' => 4800, 'shop' => 8, 'store' => 32, 'photo' => 'juice'],
+        ['name' => 'Bottled water crate', 'category' => 'Bulk beverages', 'price' => 600, 'cost' => 420, 'shop' => 20, 'store' => 80, 'photo' => 'water'],
+        ['name' => 'Tea leaves 5kg carton', 'category' => 'Bulk beverages', 'price' => 2600, 'cost' => 2100, 'shop' => 8, 'store' => 32, 'photo' => 'tea'],
+        ['name' => 'White bread 12-loaf tray', 'category' => 'Bulk bakery', 'price' => 900, 'cost' => 720, 'shop' => 12, 'store' => 24, 'photo' => 'chapati'],
+        ['name' => 'Instant coffee 1kg carton', 'category' => 'Bulk beverages', 'price' => 3600, 'cost' => 2900, 'shop' => 6, 'store' => 24, 'photo' => 'coffee'],
+    ];
+
+    /**
+     * @var list<array{name: string, category: string, price: float, cost: float, shop: float, store: float, photo: string}>
+     */
+    private const DISTRIBUTION_PRODUCTS = [
+        ['name' => 'Rice 2kg retail pack (carton)', 'category' => 'Grains', 'price' => 3600, 'cost' => 3000, 'shop' => 4, 'store' => 60, 'photo' => 'retail'],
+        ['name' => 'Maize flour 2kg retail pack (carton)', 'category' => 'Grains', 'price' => 1700, 'cost' => 1350, 'shop' => 4, 'store' => 80, 'photo' => 'retail'],
+        ['name' => 'Sugar 2kg retail pack (carton)', 'category' => 'Grains', 'price' => 3700, 'cost' => 3100, 'shop' => 4, 'store' => 50, 'photo' => 'retail'],
+        ['name' => 'Cooking oil 1 litre (carton)', 'category' => 'Household goods', 'price' => 3200, 'cost' => 2600, 'shop' => 4, 'store' => 48, 'photo' => 'juice'],
+        ['name' => 'Bottled water 1 litre (crate)', 'category' => 'Beverages', 'price' => 900, 'cost' => 600, 'shop' => 8, 'store' => 100, 'photo' => 'water'],
+        ['name' => 'Tea leaves 500g (carton)', 'category' => 'Beverages', 'price' => 2600, 'cost' => 2000, 'shop' => 4, 'store' => 36, 'photo' => 'tea'],
+        ['name' => 'White bread loaf (tray)', 'category' => 'Bakery', 'price' => 840, 'cost' => 600, 'shop' => 6, 'store' => 30, 'photo' => 'chapati'],
+        ['name' => 'Instant coffee 100g (carton)', 'category' => 'Beverages', 'price' => 4200, 'cost' => 3300, 'shop' => 4, 'store' => 28, 'photo' => 'coffee'],
     ];
 
     /**
@@ -69,7 +98,8 @@ class CommerceDemoDataSeeder
                 ['created_by' => $actorId],
             );
             $subcategories = [];
-            foreach (array_unique(array_column(self::PRODUCTS, 'category')) as $name) {
+            $products = $this->productsForProfile((string) $org->deployment_profile);
+            foreach (array_unique(array_column($products, 'category')) as $name) {
                 $subcategories[$name] = SubCategory::query()->firstOrCreate(
                     [
                         'organization_id' => $org->id,
@@ -82,7 +112,7 @@ class CommerceDemoDataSeeder
 
             $codes = [];
             $imageCount = 0;
-            foreach (self::PRODUCTS as $index => $item) {
+            foreach ($products as $index => $item) {
                 $code = self::PRODUCT_PREFIX.'-'.$org->id.'-'.str_pad((string) ($index + 1), 2, '0', STR_PAD_LEFT);
                 $attributes = [
                     'product_name' => $item['name'],
@@ -158,6 +188,16 @@ class CommerceDemoDataSeeder
                 return ['products' => 0, 'stock_rows' => 0];
             }
 
+            foreach ($products as $product) {
+                if (
+                    is_string($product->image_path)
+                    && $product->image_path !== ''
+                    && ! filter_var($product->image_path, FILTER_VALIDATE_URL)
+                ) {
+                    Storage::disk('public')->delete($product->image_path);
+                }
+            }
+
             $branchIds = Branch::query()->where('organization_id', $org->id)->pluck('id');
             $stockRows = CurrentStock::query()
                 ->whereIn('product_code', $codes)
@@ -184,5 +224,17 @@ class CommerceDemoDataSeeder
 
             return ['products' => $activeCount, 'stock_rows' => $stockRows];
         });
+    }
+
+    /**
+     * @return list<array{name: string, category: string, price: float, cost: float, shop: float, store: float, photo: string}>
+     */
+    private function productsForProfile(string $profile): array
+    {
+        return match ($profile) {
+            'wholesale_retail' => self::WHOLESALE_PRODUCTS,
+            'distribution' => self::DISTRIBUTION_PRODUCTS,
+            default => self::PRODUCTS,
+        };
     }
 }

@@ -430,6 +430,32 @@ return [
         ],
     ],
 
+    /*
+    | Setup-specific order pipelines. Profiles without an override use the full
+    | default workflow above; hospitality, SPA, and driving operations use their
+    | own domain workflows in addition to this shared sales configuration.
+    */
+    'order_workflow_profiles' => [
+        'small_shop' => [
+            'steps' => [
+                ['status' => 'booked', 'label' => 'Booked', 'enabled' => true],
+                ['status' => 'unpaid', 'label' => 'Unpaid', 'enabled' => true],
+                ['status' => 'pending_payment', 'label' => 'Partially paid', 'enabled' => true],
+                ['status' => 'paid', 'label' => 'Paid', 'enabled' => true],
+                ['status' => 'completed', 'label' => 'Completed', 'enabled' => true],
+            ],
+        ],
+        'supermarket' => [
+            'steps' => [
+                ['status' => 'booked', 'label' => 'Booked', 'enabled' => true],
+                ['status' => 'unpaid', 'label' => 'Unpaid', 'enabled' => true],
+                ['status' => 'pending_payment', 'label' => 'Partially paid', 'enabled' => true],
+                ['status' => 'paid', 'label' => 'Paid', 'enabled' => true],
+                ['status' => 'completed', 'label' => 'Completed', 'enabled' => true],
+            ],
+        ],
+    ],
+
     'standard_chart_of_accounts' => [
         ['account_code' => '1000', 'account_name' => 'Cash', 'account_type' => 'asset'],
         ['account_code' => '1100', 'account_name' => 'Bank Account', 'account_type' => 'asset'],

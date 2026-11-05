@@ -483,6 +483,7 @@ class HospitalityDemoDataSeeder
                 $item['group'] === 'drinks' ? 'drinks' : 'food',
                 force: true,
                 photoKey: $item['photo'] ?? null,
+                preferRemoteUrl: true,
             );
 
             $codes[] = (string) $product->product_code;

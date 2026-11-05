@@ -61,6 +61,10 @@ class Product extends Model
                 return null;
             }
 
+            if (filter_var($this->image_path, FILTER_VALIDATE_URL)) {
+                return $this->image_path;
+            }
+
             $base = rtrim((string) config('app.url'), '/');
             $code = rawurlencode((string) $this->product_code);
 

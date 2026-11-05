@@ -50,6 +50,12 @@ class PublicFreeSignupTest extends TestCase
         $org = Organization::query()->where('company_code', $companyCode)->firstOrFail();
         $this->assertSame('small_shop', $org->deployment_profile);
         $this->assertSame('Pharmacy', $org->business_type);
+        $this->assertSame(
+            ['booked', 'unpaid', 'pending_payment', 'paid', 'completed'],
+            array_column($org->module_settings['sales']['order_workflow']['steps'], 'status'),
+        );
+        $this->assertSame(['booked', 'editable'], $org->module_settings['sales']['edit_order_statuses']);
+        $this->assertSame(['paid', 'completed'], $org->module_settings['sales']['customer_return_statuses']);
         $response->assertJsonPath('setup_type_label', 'Small shop (backoffice sales only)');
         $this->assertSame('self_registered', $org->registration_source);
         $this->assertSame(0, PlatformSubscription::query()->where('organization_id', $org->id)->count());

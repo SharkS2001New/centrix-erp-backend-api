@@ -60,22 +60,39 @@ class OrganizationPlatformConfigServiceTest extends TestCase
         $this->assertSame(60, $distribution['orders_list_search_days']);
         $this->assertSame('order_completed', $distribution['stock_deduct_on']['mobile']);
         $this->assertSame('order_completed', $distribution['stock_deduct_on']['backend']);
+
+        $this->assertSame(
+            ['booked', 'unpaid', 'pending_payment', 'paid', 'completed'],
+            array_column($service->defaultSalesPlatformConfig('small_shop')['order_workflow']['steps'], 'status'),
+        );
+        $this->assertSame(
+            ['booked', 'unpaid', 'pending_payment', 'paid', 'completed'],
+            array_column($service->defaultSalesPlatformConfig('supermarket')['order_workflow']['steps'], 'status'),
+        );
+        $this->assertSame(
+            ['booked', 'pending', 'unpaid', 'pending_payment', 'paid', 'processed', 'delivered', 'completed'],
+            array_column($wholesale['order_workflow']['steps'], 'status'),
+        );
+        $this->assertSame(
+            ['booked', 'pending', 'unpaid', 'pending_payment', 'paid', 'processed', 'delivered', 'completed'],
+            array_column($distribution['order_workflow']['steps'], 'status'),
+        );
     }
 
     public function test_default_sales_platform_includes_order_action_status_gates(): void
     {
         $config = app(OrganizationPlatformConfigService::class)->defaultSalesPlatformConfig('small_shop');
 
-        $this->assertSame(['booked', 'pending', 'editable'], $config['edit_order_statuses']);
+        $this->assertSame(['booked', 'editable'], $config['edit_order_statuses']);
         $this->assertNull($config['print_invoice_statuses']);
         $this->assertSame(['unpaid', 'pending_payment'], $config['collect_payment_statuses']);
         $this->assertTrue($config['order_cancellation_enabled']);
         $this->assertSame(
-            ['booked', 'pending', 'unpaid', 'pending_payment', 'paid', 'processed', 'delivered', 'completed'],
+            ['booked', 'unpaid', 'pending_payment', 'paid', 'completed'],
             $config['cancel_order_statuses'],
         );
         $this->assertSame(
-            ['paid', 'processed', 'delivered', 'completed'],
+            ['paid', 'completed'],
             $config['customer_return_statuses'],
         );
         $this->assertSame(

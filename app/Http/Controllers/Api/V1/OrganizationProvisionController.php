@@ -84,6 +84,7 @@ class OrganizationProvisionController extends Controller
                 'key' => $key,
                 'label' => $profile['label'] ?? $key,
                 'industry' => $profile['industry'] ?? IndustryRegistry::industryForProfile($key),
+                'default_sales_platform' => $this->platformConfig->defaultSalesPlatformConfig($key),
                 'modules' => $profile['modules'] ?? [],
                 'applications' => $setupMenus->applicationsForProfile($key),
                 'menu_groups' => $setupMenus->forProfile($key),
@@ -101,6 +102,7 @@ class OrganizationProvisionController extends Controller
                 'key' => $row['key'],
                 'label' => $row['label'],
                 'industry' => $row['industry'],
+                'default_sales_platform' => $this->platformConfig->defaultSalesPlatformConfig($row['key']),
                 'modules' => [],
                 'applications' => $row['applications'],
                 'menu_groups' => $row['menu_groups'],
@@ -988,6 +990,7 @@ class OrganizationProvisionController extends Controller
     {
         $applications = $this->applications->applicationsFromEnabledModules($modules);
         $profileConfig = config("erp.profiles.{$profile}", []);
+        $salesPlatform ??= $this->platformConfig->defaultSalesPlatformConfig($profile);
         $mobileOrdersEnabled = ($salesPlatform['enable_mobile_orders'] ?? true) !== false;
 
         return [

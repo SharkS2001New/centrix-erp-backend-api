@@ -607,6 +607,29 @@ class OrganizationPlatformConfigService
         $isDistribution = $deploymentProfile === 'distribution';
 
         $workflowDefaults = config('erp.default_order_workflow', []);
+        $profileWorkflow = config("erp.order_workflow_profiles.{$deploymentProfile}", []);
+        if (is_array($profileWorkflow['steps'] ?? null)) {
+            $workflowDefaults['steps'] = $profileWorkflow['steps'];
+        }
+        $workflowStatuses = array_values(array_map(
+            static fn (array $step): string => (string) $step['status'],
+            array_filter(
+                $workflowDefaults['steps'] ?? [],
+                static fn (array $step): bool => ($step['enabled'] ?? true) === true,
+            ),
+        ));
+        $customerReturnStatuses = array_values(array_intersect(
+            ['paid', 'processed', 'delivered', 'completed'],
+            $workflowStatuses,
+        ));
+        $editOrderStatuses = array_values(array_unique(array_merge(
+            array_values(array_intersect(['booked', 'pending'], $workflowStatuses)),
+            ['editable'],
+        )));
+        $collectPaymentStatuses = array_values(array_intersect(
+            ['unpaid', 'pending_payment'],
+            $workflowStatuses,
+        ));
 
         return [
             'show_checkout_on_create_order' => true,
@@ -670,13 +693,13 @@ class OrganizationPlatformConfigService
             'orders_list_visible_columns_by_queue' => $this->normalizeOrdersListVisibleColumnsByQueue(
                 config('erp.module_settings_defaults.sales.orders_list_visible_columns_by_queue', []),
             ),
-            'edit_order_statuses' => ['booked', 'pending', 'editable'],
+            'edit_order_statuses' => $editOrderStatuses,
             'print_invoice_statuses' => null,
-            'collect_payment_statuses' => ['unpaid', 'pending_payment'],
+            'collect_payment_statuses' => $collectPaymentStatuses,
             'cancel_order_statuses' => OrderWorkflowService::defaultCancelOrderStatusesFromWorkflowConfig($workflowDefaults),
             'convert_to_paid_statuses' => [],
             'convert_to_unpaid_statuses' => [],
-            'customer_return_statuses' => ['paid', 'processed', 'delivered', 'completed'],
+            'customer_return_statuses' => $customerReturnStatuses,
         ];
     }
 

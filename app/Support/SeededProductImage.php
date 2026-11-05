@@ -10,9 +10,8 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
 /**
- * Attach demo product photos on the public disk.
- * Prefers bundled JPEGs in resources/seed-images/hospitality, then remote URLs,
- * then GD placeholders.
+ * Attach demo photos to products, either as direct URLs or public-disk files.
+ * File mode prefers bundled JPEGs, then remote downloads, then GD placeholders.
  */
 class SeededProductImage
 {
@@ -81,16 +80,33 @@ class SeededProductImage
         string $tone = 'neutral',
         bool $force = false,
         ?string $photoKey = null,
+        bool $preferRemoteUrl = false,
     ): ?string {
         if (! Schema::hasColumn('products', 'image_path')) {
             return null;
+        }
+
+        if ($preferRemoteUrl) {
+            $url = self::photoUrlFor($photoKey, $label, $tone);
+            if ($url !== null) {
+                if (
+                    is_string($product->image_path)
+                    && $product->image_path !== ''
+                    && StoredPublicFile::exists($product->image_path)
+                ) {
+                    Storage::disk('public')->delete($product->image_path);
+                }
+                $product->update(['image_path' => $url]);
+
+                return $url;
+            }
         }
 
         if (
             ! $force
             && is_string($product->image_path)
             && $product->image_path !== ''
-            && StoredPublicFile::exists($product->image_path)
+            && (filter_var($product->image_path, FILTER_VALIDATE_URL) || StoredPublicFile::exists($product->image_path))
         ) {
             return $product->image_path;
         }
@@ -109,7 +125,10 @@ class SeededProductImage
 
         $bytes = self::resolveJpegBytes($label, $tone, $photoKey);
         if ($bytes === null) {
-            return null;
+            $url = self::photoUrlFor($photoKey, $label, $tone);
+            $product->update(['image_path' => $url]);
+
+            return $url;
         }
 
         Storage::disk('public')->makeDirectory($directory);
