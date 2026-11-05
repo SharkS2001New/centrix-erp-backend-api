@@ -49,18 +49,22 @@ class OrganizationProvisionController extends Controller
         $organizations = Organization::query()
             ->where('company_code', '!=', $platformCode)
             ->orderBy('org_name')
-            ->get(['id', 'company_code', 'org_name', 'org_email', 'deployment_profile', 'registration_source', 'is_active', 'created_at', 'enabled_modules']);
+            ->get(['id', 'company_code', 'org_name', 'org_email', 'business_type', 'deployment_profile', 'registration_source', 'is_active', 'created_at', 'enabled_modules']);
+        $setupLabels = collect(app(SetupProfileMenuService::class)->all())->keyBy('key');
 
-        $data = $organizations->map(function (Organization $org) {
+        $data = $organizations->map(function (Organization $org) use ($setupLabels) {
             $gate = app(\App\Services\Erp\CapabilityGate::class)->forOrganization($org);
             $effectiveModules = $gate->allModules();
             $industry = IndustryRegistry::summaryForOrganization($org->deployment_profile);
 
             return array_merge($org->only([
-                'id', 'company_code', 'org_name', 'org_email', 'deployment_profile', 'registration_source', 'is_active', 'created_at',
+                'id', 'company_code', 'org_name', 'org_email', 'business_type', 'deployment_profile', 'registration_source', 'is_active', 'created_at',
             ]), [
                 'industry' => $industry['id'],
                 'industry_label' => $industry['label'],
+                'deployment_profile_label' => data_get($setupLabels->get($org->deployment_profile), 'label')
+                    ?? config("erp.profiles.{$org->deployment_profile}.label")
+                    ?? $org->deployment_profile,
                 'administration_enabled' => (bool) ($effectiveModules['admin'] ?? false),
             ]);
         });

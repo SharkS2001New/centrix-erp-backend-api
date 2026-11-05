@@ -25,7 +25,7 @@ class Organization extends Model
     protected $table = 'organizations';
     protected $fillable = [
         'company_code', 'company_code_aliases', 'logo', 'primary_color', 'org_name', 'org_email', 'primary_tel',
-        'secondary_tel', 'addn_tel1', 'addn_tel2', 'org_address', 'org_pin', 'vat_regno',
+        'secondary_tel', 'addn_tel1', 'addn_tel2', 'org_address', 'org_pin', 'vat_regno', 'business_type',
         'deployment_profile', 'enabled_modules', 'module_settings', 'is_active',
         'registration_source',
     ];

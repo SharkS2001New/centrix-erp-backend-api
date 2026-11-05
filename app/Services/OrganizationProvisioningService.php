@@ -46,6 +46,7 @@ class OrganizationProvisioningService
                 'org_address' => $data['org_address'],
                 'org_pin' => $data['org_pin'] ?? null,
                 'vat_regno' => $data['vat_regno'] ?? null,
+                'business_type' => $data['business_type'] ?? null,
                 'deployment_profile' => $data['deployment_profile'],
                 'registration_source' => $registrationSource,
                 'enabled_modules' => $this->normalizeEnabledModules($data['enabled_modules'] ?? null),
