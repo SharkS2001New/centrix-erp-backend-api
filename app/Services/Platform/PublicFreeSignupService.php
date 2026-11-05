@@ -3,10 +3,12 @@
 namespace App\Services\Platform;
 
 use App\Models\Organization;
+use App\Models\PlatformPlan;
 use App\Models\User;
 use App\Services\Erp\IndustryRegistry;
 use App\Services\Erp\SetupProfileMenuService;
 use App\Services\OrganizationProvisioningService;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -43,6 +45,7 @@ class PublicFreeSignupService
      *   primary_tel: string,
      *   industry?: string,
      *   setup_type?: string,
+     *   plan_id?: int|string|null,
      *   business_type?: string,
      *   admin_full_name: string,
      *   admin_password: string,
@@ -71,6 +74,21 @@ class PublicFreeSignupService
 
         $requestedIndustry = strtolower(trim((string) ($input['industry'] ?? '')));
         $setupType = trim((string) ($input['setup_type'] ?? ''));
+        $selectedPlan = null;
+        if (! empty($input['plan_id'])) {
+            $selectedPlan = PlatformPlan::query()->find((int) $input['plan_id']);
+            if (
+                $selectedPlan === null
+                || ! $selectedPlan->is_active
+                || (Schema::hasColumn('platform_plans', 'self_serve') && ! $selectedPlan->self_serve)
+                || (((float) ($selectedPlan->monthly_price ?? 0)) <= 0
+                    && ((float) ($selectedPlan->yearly_price ?? 0)) <= 0)
+            ) {
+                throw ValidationException::withMessages([
+                    'plan_id' => ['Choose an active self-serve package.'],
+                ]);
+            }
+        }
         $setupTypeOption = null;
         if ($setupType !== '') {
             foreach ($this->setupTypeOptions() as $option) {
@@ -111,6 +129,25 @@ class PublicFreeSignupService
                 'label' => (string) (config("erp.profiles.{$profile}.label") ?? $profile),
                 'industry' => $industry,
             ];
+        }
+
+        if ($selectedPlan !== null) {
+            $planIndustry = (string) ($selectedPlan->industry ?: 'commerce');
+            if ($planIndustry !== $industry) {
+                throw ValidationException::withMessages([
+                    'plan_id' => ['Choose a setup type for the selected package.'],
+                ]);
+            }
+            $allowedProfiles = is_array($selectedPlan->setup_profile_keys) ? $selectedPlan->setup_profile_keys : [];
+            $trialProfiles = is_array($selectedPlan->trial_profile_keys) ? $selectedPlan->trial_profile_keys : [];
+            if (
+                ($allowedProfiles !== [] && ! in_array($profile, $allowedProfiles, true))
+                || ($trialProfiles !== [] && ! in_array($profile, $trialProfiles, true))
+            ) {
+                throw ValidationException::withMessages([
+                    'setup_type' => ['Choose a setup type available with the selected package.'],
+                ]);
+            }
         }
 
         $businessType = trim((string) ($input['business_type'] ?? ''));

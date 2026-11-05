@@ -611,6 +611,17 @@ class OrganizationPlatformConfigService
         if (is_array($profileWorkflow['steps'] ?? null)) {
             $workflowDefaults['steps'] = $profileWorkflow['steps'];
         }
+        $profileSalesSettings = app(\App\Services\Erp\SetupProfileMenuService::class)
+            ->salesPlatformSettingsForProfile($deploymentProfile);
+        $customWorkflow = $profileSalesSettings['order_workflow'] ?? null;
+        if (is_array($customWorkflow)) {
+            $customWorkflowWithoutSteps = $customWorkflow;
+            unset($customWorkflowWithoutSteps['steps']);
+            $workflowDefaults = array_replace_recursive($workflowDefaults, $customWorkflowWithoutSteps);
+            if (is_array($customWorkflow['steps'] ?? null)) {
+                $workflowDefaults['steps'] = array_values($customWorkflow['steps']);
+            }
+        }
         $workflowStatuses = array_values(array_map(
             static fn (array $step): string => (string) $step['status'],
             array_filter(
@@ -631,7 +642,7 @@ class OrganizationPlatformConfigService
             $workflowStatuses,
         ));
 
-        return [
+        $defaults = [
             'show_checkout_on_create_order' => true,
             'enable_mobile_orders' => ! in_array($deploymentProfile, ['small_shop', 'supermarket'], true),
             'mobile_enable_field_attendance' => false,
@@ -701,6 +712,12 @@ class OrganizationPlatformConfigService
             'convert_to_unpaid_statuses' => [],
             'customer_return_statuses' => $customerReturnStatuses,
         ];
+
+        if (is_array($customWorkflow)) {
+            $profileSalesSettings['order_workflow'] = $workflowDefaults;
+        }
+
+        return array_replace($defaults, $profileSalesSettings);
     }
 
     /**

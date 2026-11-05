@@ -129,7 +129,7 @@ class OrganizationProvisionController extends Controller
                 'industry' => 'Select industry first (Retail & Distribution, Hotel & Hospitality, or SPA & Kinyozi). Applications and roles follow that industry.',
                 'applications' => 'Enable or disable tenant applications for this setup type. Hotel & Hospitality only exposes Hotel POS and Hotel Backoffice.',
                 'custom_profile' => 'Within Retail & Distribution, Custom setup starts from a blank module map.',
-                'sales_platform' => 'Checkout vs save order, order workflow, and stock timing are configured by the platform super admin — not the organization manager.',
+                'sales_platform' => 'Checkout behavior, order workflow, stock timing, and order-list defaults come from the selected setup type and can be adjusted by the platform super admin.',
                 'org_settings' => 'Organization managers configure day-to-day preferences (payment fields, receipts, SMTP, M-Pesa, etc.) under Administration → Organization settings when Administration is enabled.',
                 'role_templates' => 'Recommended staff roles are seeded globally and suggested per profile when an organization is registered.',
             ],

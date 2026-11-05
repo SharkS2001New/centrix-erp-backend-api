@@ -6,11 +6,63 @@ use App\Models\PlatformSetupProfile;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * Menu groups saved for each setup type (Small shop, Wholesale, and the rest).
- * Choosing that setup on an organisation copies these groups onto it.
+ * Menu groups and platform defaults saved for each setup type.
+ * Choosing that setup on an organisation copies these defaults onto it.
  */
 class SetupProfileMenuService
 {
+    /** @var list<string> */
+    private const SALES_PLATFORM_SETTING_KEYS = [
+        'show_checkout_on_create_order',
+        'backoffice_product_search_mode',
+        'enable_mobile_orders',
+        'mobile_enable_field_attendance',
+        'mobile_enable_driver_app',
+        'mobile_enable_driver_attendance',
+        'enable_mobile_orders_returns_card',
+        'enable_mobile_orders_payments_card',
+        'enable_mobile_orders_expenses_card',
+        'append_same_day_customer_orders',
+        'enable_mpesa_stk',
+        'enable_equity_bank',
+        'enable_kra_integration',
+        'enable_ai',
+        'enable_ai_chat',
+        'enable_ai_talk',
+        'use_platform_gemini',
+        'enable_whatsapp_orders',
+        'enable_investors',
+        'enable_advanced_data_import',
+        'advanced_data_import_pages',
+        'hospitality_services',
+        'hospitality_payment_workflow',
+        'hotel_pos_payment_methods',
+        'hotel_pos_collect_payment',
+        'stock_deduct_on',
+        'reserve_stock_on_cart',
+        'cart_reservation_ttl_minutes',
+        'enable_receive_batch_tracking',
+        'orders_list_default_days',
+        'shop_debtors_default_days',
+        'reports_default_date_range_days',
+        'orders_list_search_days',
+        'orders_list_sort',
+        'orders_list_visible_columns',
+        'orders_list_visible_columns_by_queue',
+        'order_expiry_enabled',
+        'order_expiry_days',
+        'order_expiry_before_status',
+        'order_cancellation_enabled',
+        'order_workflow',
+        'edit_order_statuses',
+        'print_invoice_statuses',
+        'collect_payment_statuses',
+        'cancel_order_statuses',
+        'convert_to_paid_statuses',
+        'convert_to_unpaid_statuses',
+        'customer_return_statuses',
+    ];
+
     /** @var list<string> */
     public const HR_KEYS = [
         'hr_people',
@@ -153,6 +205,15 @@ class SetupProfileMenuService
         $raw = is_array($stored['applications'] ?? null) ? $stored['applications'] : null;
 
         return $this->normalizeApplications($profileKey, $raw);
+    }
+
+    /** @return array<string, mixed> */
+    public function salesPlatformSettingsForProfile(string $profileKey): array
+    {
+        $stored = $this->storedDocument($profileKey);
+        $settings = is_array($stored['sales_platform'] ?? null) ? $stored['sales_platform'] : [];
+
+        return array_intersect_key($settings, array_flip(self::SALES_PLATFORM_SETTING_KEYS));
     }
 
     /**
@@ -310,7 +371,7 @@ class SetupProfileMenuService
 
     /**
      * @param  array<string, mixed>  $payload
-     * @return array{menu_groups: array<string, mixed>, applications: array<string, bool>}
+     * @return array{menu_groups: array<string, mixed>, applications: array<string, bool>, sales_platform: array<string, mixed>}
      */
     public function save(string $profileKey, array $payload): array
     {
@@ -339,7 +400,16 @@ class SetupProfileMenuService
             ? $this->storedIndustry($profileKey)
             : (config('erp.profiles.'.$profileKey.'.industry') ?? null);
 
-        $document = array_merge($menu, ['applications' => $applications]);
+        $salesPlatform = array_replace(
+            $this->salesPlatformSettingsForProfile($profileKey),
+            is_array($payload['sales_platform'] ?? null)
+                ? array_intersect_key($payload['sales_platform'], array_flip(self::SALES_PLATFORM_SETTING_KEYS))
+                : [],
+        );
+        $document = array_merge($menu, [
+            'applications' => $applications,
+            'sales_platform' => $salesPlatform,
+        ]);
         if ($custom) {
             $document['custom'] = true;
             $document['label'] = $label;
@@ -356,6 +426,7 @@ class SetupProfileMenuService
         return [
             'menu_groups' => $menu,
             'applications' => $applications,
+            'sales_platform' => $salesPlatform,
             'label' => $label,
             'industry' => $industry,
             'custom' => $custom,
@@ -430,7 +501,9 @@ class SetupProfileMenuService
         $stored = $this->storedDocument($profileKey);
         $industry = is_array($stored) ? ($stored['industry'] ?? null) : null;
 
-        return $industry === 'hospitality' ? 'hospitality' : 'commerce';
+        return is_string($industry) && in_array($industry, IndustryRegistry::ids(), true)
+            ? $industry
+            : 'commerce';
     }
 
     /**

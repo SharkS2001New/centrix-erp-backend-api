@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\PlatformPlan;
 use App\Services\Platform\PackageFeatureCatalog;
 use App\Services\Platform\PlatformPaybillLicenceService;
+use App\Services\Platform\PublicFreeSignupService;
 use App\Services\Platform\SelfServePlanComposer;
 use App\Services\Erp\IndustryRegistry;
 use App\Services\Erp\SetupProfileMenuService;
@@ -114,6 +115,7 @@ class PlatformPlanController extends Controller
             false,
             (string) ($platform_plan->industry ?: 'commerce'),
             $platform_plan->trial_profile_keys,
+            $platform_plan->setup_profile_keys,
         );
         $platform_plan->update($data);
         $fresh = $platform_plan->fresh();
@@ -150,6 +152,7 @@ class PlatformPlanController extends Controller
         bool $creating = true,
         ?string $currentIndustry = null,
         ?array $currentTrialProfiles = null,
+        ?array $currentSetupProfiles = null,
     ): array
     {
         $data = $request->validate([
@@ -171,6 +174,8 @@ class PlatformPlanController extends Controller
             'seat_limit' => 'nullable|integer|min:1',
             'trial_profile_keys' => 'sometimes|array',
             'trial_profile_keys.*' => 'string|max:80',
+            'setup_profile_keys' => 'sometimes|array',
+            'setup_profile_keys.*' => 'string|max:80',
             'workspace_keys' => 'sometimes|array',
             'module_keys' => 'sometimes|array',
             'section_keys' => 'sometimes|array',
@@ -210,6 +215,39 @@ class PlatformPlanController extends Controller
             if (array_key_exists('trial_profile_keys', $data)) {
                 $data['trial_profile_keys'] = $trialProfiles;
             }
+        }
+
+        if (array_key_exists('setup_profile_keys', $data) || $currentSetupProfiles !== null) {
+            $availableProfiles = collect(app(PublicFreeSignupService::class)->setupTypeOptions())
+                ->keyBy('id');
+            $setupProfiles = array_values(array_unique(array_map(
+                static fn ($key) => trim((string) $key),
+                $data['setup_profile_keys'] ?? $currentSetupProfiles ?? [],
+            )));
+            foreach ($setupProfiles as $profileKey) {
+                if (! $availableProfiles->has($profileKey)
+                    || $availableProfiles->get($profileKey)['industry'] !== $industry
+                ) {
+                    throw ValidationException::withMessages([
+                        'setup_profile_keys' => ['Choose setup types available for this plan’s industry.'],
+                    ]);
+                }
+            }
+            if (array_key_exists('setup_profile_keys', $data)) {
+                $data['setup_profile_keys'] = $setupProfiles;
+            }
+        }
+
+        $allowedSetupProfiles = $data['setup_profile_keys'] ?? $currentSetupProfiles ?? [];
+        $allowedTrialProfiles = $data['trial_profile_keys'] ?? $currentTrialProfiles ?? [];
+        if (
+            $allowedSetupProfiles !== []
+            && $allowedTrialProfiles !== []
+            && array_intersect($allowedSetupProfiles, $allowedTrialProfiles) === []
+        ) {
+            throw ValidationException::withMessages([
+                'setup_profile_keys' => ['At least one package setup type must also be allowed for the free trial.'],
+            ]);
         }
 
         if ($industry !== '' && array_key_exists('workspace_keys', $data) && ! array_key_exists('feature_keys', $data)) {

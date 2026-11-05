@@ -155,6 +155,7 @@ class PublicSelfServePlansController extends Controller
             'annual_discount' => $annualQuote !== null ? $annualQuote['discount'] : 0,
             'industry' => $industry,
             'trial_profile_keys' => is_array($plan->trial_profile_keys) ? array_values($plan->trial_profile_keys) : [],
+            'setup_profile_keys' => is_array($plan->setup_profile_keys) ? array_values($plan->setup_profile_keys) : [],
             'recommended' => Schema::hasColumn('platform_plans', 'is_recommended') && (bool) $plan->is_recommended,
             'cta_action' => in_array($plan->cta_action, ['buy_now', 'start_now', 'view_details', 'contact_sales'], true)
                 ? $plan->cta_action

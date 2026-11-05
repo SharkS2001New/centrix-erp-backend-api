@@ -3,6 +3,7 @@
 namespace Tests\Unit;
 
 use App\Models\Organization;
+use App\Services\Erp\SetupProfileMenuService;
 use App\Services\OrganizationPlatformConfigService;
 use Tests\TestCase;
 
@@ -77,6 +78,40 @@ class OrganizationPlatformConfigServiceTest extends TestCase
             ['booked', 'pending', 'unpaid', 'pending_payment', 'paid', 'processed', 'delivered', 'completed'],
             array_column($distribution['order_workflow']['steps'], 'status'),
         );
+    }
+
+    public function test_setup_profile_sales_defaults_override_provisioning_configuration(): void
+    {
+        $this->mock(SetupProfileMenuService::class, function ($mock) {
+            $mock->shouldReceive('salesPlatformSettingsForProfile')
+                ->once()
+                ->with('small_shop')
+                ->andReturn([
+                    'order_workflow' => [
+                        'steps' => [
+                            ['status' => 'booked', 'label' => 'Received', 'enabled' => true],
+                            ['status' => 'completed', 'label' => 'Done', 'enabled' => true],
+                        ],
+                    ],
+                    'orders_list_default_days' => 21,
+                    'stock_deduct_on' => [
+                        'pos' => 'order_completed',
+                        'mobile' => 'order_completed',
+                        'backend' => 'order_completed',
+                    ],
+                ]);
+        });
+
+        $config = app(OrganizationPlatformConfigService::class)
+            ->defaultSalesPlatformConfig('small_shop');
+
+        $this->assertSame(
+            ['booked', 'completed'],
+            array_column($config['order_workflow']['steps'], 'status'),
+        );
+        $this->assertSame('Received', $config['order_workflow']['steps'][0]['label']);
+        $this->assertSame(21, $config['orders_list_default_days']);
+        $this->assertSame('order_completed', $config['stock_deduct_on']['pos']);
     }
 
     public function test_default_sales_platform_includes_order_action_status_gates(): void

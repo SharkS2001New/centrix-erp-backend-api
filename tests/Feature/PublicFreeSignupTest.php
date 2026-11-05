@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Organization;
+use App\Models\PlatformPlan;
 use App\Models\PlatformSubscription;
 use App\Services\Platform\OrganizationLicenseService;
 use Tests\Concerns\RefreshesErpDatabase;
@@ -124,6 +125,80 @@ class PublicFreeSignupTest extends TestCase
             ->firstOrFail();
         $this->assertSame('hotel_bar', $organization->deployment_profile);
         $this->assertSame('Lodge', $organization->business_type);
+    }
+
+    public function test_public_free_signup_uses_a_setup_type_allowed_by_the_selected_package(): void
+    {
+        config(['erp.allow_public_free_signup' => true]);
+        $plan = PlatformPlan::query()->create([
+            'name' => 'Wholesale package',
+            'industry' => 'commerce',
+            'monthly_price' => 2500,
+            'yearly_price' => null,
+            'self_serve' => true,
+            'is_active' => true,
+            'setup_profile_keys' => ['wholesale_retail'],
+        ]);
+
+        $response = $this->postJson('/api/v1/public/free-signup', [
+            'org_name' => 'Wholesale Account',
+            'org_email' => 'owner@wholesale.test',
+            'primary_tel' => '0712345678',
+            'industry' => 'commerce',
+            'setup_type' => 'wholesale_retail',
+            'plan_id' => $plan->id,
+            'business_type' => 'Wholesale shop',
+            'admin_full_name' => 'Wholesale Owner',
+            'admin_password' => 'SecurePass1',
+        ]);
+
+        $response->assertCreated()->assertJsonPath('setup_type', 'wholesale_retail');
+        $this->assertSame(
+            'wholesale_retail',
+            Organization::query()->where('company_code', $response->json('company_code'))->value('deployment_profile'),
+        );
+    }
+
+    public function test_public_plan_catalog_exposes_its_allowed_setup_types(): void
+    {
+        PlatformPlan::query()->create([
+            'name' => 'Wholesale package',
+            'industry' => 'commerce',
+            'monthly_price' => 2500,
+            'self_serve' => true,
+            'is_active' => true,
+            'setup_profile_keys' => ['wholesale_retail'],
+        ]);
+
+        $this->getJson('/api/v1/public/self-serve-plans?industry=commerce')
+            ->assertOk()
+            ->assertJsonPath('data.0.setup_profile_keys', ['wholesale_retail']);
+    }
+
+    public function test_public_free_signup_rejects_setup_types_not_allowed_by_the_selected_package(): void
+    {
+        config(['erp.allow_public_free_signup' => true]);
+        $plan = PlatformPlan::query()->create([
+            'name' => 'Wholesale package',
+            'industry' => 'commerce',
+            'monthly_price' => 2500,
+            'self_serve' => true,
+            'is_active' => true,
+            'setup_profile_keys' => ['wholesale_retail'],
+        ]);
+
+        $this->postJson('/api/v1/public/free-signup', [
+            'org_name' => 'Retail Account',
+            'org_email' => 'owner@retail.test',
+            'primary_tel' => '0712345678',
+            'industry' => 'commerce',
+            'setup_type' => 'small_shop',
+            'plan_id' => $plan->id,
+            'business_type' => 'Retail shop',
+            'admin_full_name' => 'Retail Owner',
+            'admin_password' => 'SecurePass1',
+        ])->assertUnprocessable()
+            ->assertJsonValidationErrors('setup_type');
     }
 
     public function test_public_free_signup_can_be_disabled(): void
