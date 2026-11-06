@@ -248,6 +248,7 @@ class OrganizationProvisionController extends Controller
     public function update(Request $request, int $organization)
     {
         $org = $this->findTenantOrganization($organization);
+        $previousProfile = (string) $org->deployment_profile;
 
         $data = $request->validate(array_merge(
             $this->salesPlatformRules(),
@@ -260,6 +261,24 @@ class OrganizationProvisionController extends Controller
                 'enabled_modules.*' => 'boolean',
             ],
         ));
+        $profileChanged = isset($data['deployment_profile'])
+            && $data['deployment_profile'] !== $previousProfile;
+        if ($profileChanged && ! array_key_exists('sales_platform', $data)) {
+            $data['sales_platform'] = $this->platformConfig
+                ->defaultSalesPlatformConfig((string) $data['deployment_profile']);
+        }
+        if ($profileChanged && ! array_key_exists('payroll_platform', $data)) {
+            $data['payroll_platform'] = $this->platformConfig
+                ->defaultPayrollPlatformConfig((string) $data['deployment_profile']);
+        }
+        if (
+            $profileChanged
+            && ! array_key_exists('applications', $data)
+            && ! array_key_exists('enabled_modules', $data)
+        ) {
+            $data['applications'] = app(SetupProfileMenuService::class)
+                ->applicationsForProfile((string) $data['deployment_profile']);
+        }
 
         if ($resolvedModules = $this->resolveEnabledModulesInput($data, $org)) {
             $resolvedModules['centrix_payments'] = false;
@@ -302,19 +321,32 @@ class OrganizationProvisionController extends Controller
             $this->provisioning->syncModuleSettingsFromEnabledModules($org);
         }
 
-        if (array_key_exists('sales_platform', $data) && is_array($data['sales_platform'])) {
-            $this->platformConfig->applySalesPlatformConfig($org, $data['sales_platform']);
-            if (array_key_exists('enable_mobile_orders', $data['sales_platform'])) {
+        if (
+            (array_key_exists('sales_platform', $data) && is_array($data['sales_platform']))
+            || $profileChanged
+        ) {
+            $salesPlatform = is_array($data['sales_platform'] ?? null)
+                ? $data['sales_platform']
+                : $this->platformConfig->defaultSalesPlatformConfig((string) $org->deployment_profile);
+            $this->platformConfig->applySalesPlatformConfig($org, $salesPlatform);
+            if (array_key_exists('enable_mobile_orders', $salesPlatform)) {
                 $modules = $org->enabled_modules ?? [];
-                $modules = $this->platformConfig->reconcileEnabledModules($org, $modules, $data['sales_platform']);
+                $modules = $this->platformConfig->reconcileEnabledModules($org, $modules, $salesPlatform);
                 $org->enabled_modules = $this->provisioning->normalizeEnabledModules($modules);
                 $org->save();
             }
             $this->provisioning->syncModuleSettingsFromEnabledModules($org);
         }
 
-        if (array_key_exists('payroll_platform', $data) && is_array($data['payroll_platform'])) {
-            $this->platformConfig->applyPayrollPlatformConfig($org, $data['payroll_platform']);
+        if (
+            (array_key_exists('payroll_platform', $data) && is_array($data['payroll_platform']))
+            || $profileChanged
+        ) {
+            $payrollPlatform = array_replace(
+                $this->platformConfig->defaultPayrollPlatformConfig((string) $org->deployment_profile),
+                is_array($data['payroll_platform'] ?? null) ? $data['payroll_platform'] : [],
+            );
+            $this->platformConfig->applyPayrollPlatformConfig($org, $payrollPlatform);
         }
 
         return response()->json($this->organizationPayload($org->fresh()));

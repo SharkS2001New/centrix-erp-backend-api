@@ -83,6 +83,28 @@ class OrganizationPlatformConfigServiceTest extends TestCase
     public function test_setup_profile_sales_defaults_override_provisioning_configuration(): void
     {
         $this->mock(SetupProfileMenuService::class, function ($mock) {
+            $mock->shouldReceive('applicationsForProfile')
+                ->once()
+                ->with('small_shop')
+                ->andReturn([
+                    'pos' => true,
+                    'backoffice' => true,
+                    'distribution' => false,
+                    'accounting' => false,
+                    'hr' => false,
+                ]);
+            $mock->shouldReceive('forProfile')
+                ->once()
+                ->with('small_shop')
+                ->andReturn([
+                    'backoffice' => \App\Services\Erp\BackofficeSections::DEFAULTS,
+                    'hr' => \App\Services\Erp\SetupProfileMenuService::defaultGroup(
+                        \App\Services\Erp\SetupProfileMenuService::HR_KEYS,
+                    ),
+                    'accounting' => \App\Services\Erp\SetupProfileMenuService::defaultGroup(
+                        \App\Services\Erp\SetupProfileMenuService::ACCOUNTING_KEYS,
+                    ),
+                ]);
             $mock->shouldReceive('salesPlatformSettingsForProfile')
                 ->once()
                 ->with('small_shop')
@@ -112,6 +134,12 @@ class OrganizationPlatformConfigServiceTest extends TestCase
         $this->assertSame('Received', $config['order_workflow']['steps'][0]['label']);
         $this->assertSame(21, $config['orders_list_default_days']);
         $this->assertSame('order_completed', $config['stock_deduct_on']['pos']);
+        $this->assertSame(
+            \App\Services\Erp\BackofficeSections::DEFAULTS,
+            $config['backoffice_sections'],
+        );
+        $this->assertFalse($config['hr_sections']['hr_payroll']);
+        $this->assertFalse($config['accounting_sections']['accounting']);
     }
 
     public function test_setup_profile_payroll_defaults_override_platform_defaults(): void

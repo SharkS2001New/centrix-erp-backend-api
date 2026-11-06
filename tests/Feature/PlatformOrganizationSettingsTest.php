@@ -198,6 +198,47 @@ class PlatformOrganizationSettingsTest extends TestCase
         $this->assertSame(7, $org->module_settings['inventory']['cart_reservation_ttl_minutes']);
     }
 
+    public function test_switching_setup_type_applies_its_applications_and_operational_defaults(): void
+    {
+        config(['erp.allow_org_provisioning' => true]);
+
+        Sanctum::actingAs(User::where('username', 'superadmin')->firstOrFail());
+
+        $create = $this->postJson('/api/v1/admin/organizations/provision', [
+            'company_code' => 'SETUPSW',
+            'org_name' => 'Setup switch organization',
+            'org_email' => 'setupsw@org.com',
+            'primary_tel' => '0711000004',
+            'org_address' => 'Nairobi',
+            'deployment_profile' => 'small_shop',
+            'admin_username' => 'setupsw_admin',
+            'admin_email' => 'setupsw_admin@org.com',
+            'admin_password' => 'password123',
+            'admin_full_name' => 'Setup Switch Admin',
+        ])->assertCreated();
+
+        $orgId = (int) $create->json('organization.id');
+        $org = Organization::query()->findOrFail($orgId);
+        $settings = $org->module_settings;
+        $settings['sales']['orders_list_default_days'] = 7;
+        $org->forceFill(['module_settings' => $settings])->save();
+
+        $response = $this->patchJson("/api/v1/admin/organizations/{$orgId}", [
+            'deployment_profile' => 'distribution',
+        ])->assertOk()
+            ->assertJsonPath('organization.deployment_profile', 'distribution')
+            ->assertJsonPath('sales_platform.orders_list_default_days', 30);
+
+        $this->assertSame(
+            ['booked', 'pending', 'unpaid', 'pending_payment', 'paid', 'processed', 'delivered', 'completed'],
+            array_column($response->json('sales_platform.order_workflow.steps'), 'status'),
+        );
+
+        $org->refresh();
+        $this->assertTrue((bool) ($org->enabled_modules['distribution'] ?? false));
+        $this->assertSame(30, $org->module_settings['sales']['orders_list_default_days']);
+    }
+
     public function test_super_admin_can_configure_order_action_status_gates(): void
     {
         config(['erp.allow_org_provisioning' => true]);

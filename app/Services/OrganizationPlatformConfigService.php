@@ -611,8 +611,30 @@ class OrganizationPlatformConfigService
         if (is_array($profileWorkflow['steps'] ?? null)) {
             $workflowDefaults['steps'] = $profileWorkflow['steps'];
         }
-        $profileSalesSettings = app(\App\Services\Erp\SetupProfileMenuService::class)
-            ->salesPlatformSettingsForProfile($deploymentProfile);
+        $setupProfiles = app(\App\Services\Erp\SetupProfileMenuService::class);
+        $profileApplications = $setupProfiles->applicationsForProfile($deploymentProfile);
+        $profileMenuGroups = $setupProfiles->forProfile($deploymentProfile);
+        $disabledMenus = static fn (array $map): array => array_fill_keys(array_keys($map), false);
+        $profileMenuSettings = [
+            'backoffice_sections' => ($profileApplications['backoffice'] ?? false)
+                || ($profileApplications['hospitality_backoffice'] ?? false)
+                ? $profileMenuGroups['backoffice']
+                : $disabledMenus(\App\Services\Erp\BackofficeSections::DEFAULTS),
+            'hr_sections' => ($profileApplications['hr'] ?? false)
+                ? $profileMenuGroups['hr']
+                : $disabledMenus(\App\Services\Erp\SetupProfileMenuService::defaultGroup(
+                    \App\Services\Erp\SetupProfileMenuService::HR_KEYS,
+                )),
+            'accounting_sections' => ($profileApplications['accounting'] ?? false)
+                ? $profileMenuGroups['accounting']
+                : $disabledMenus(\App\Services\Erp\SetupProfileMenuService::defaultGroup(
+                    \App\Services\Erp\SetupProfileMenuService::ACCOUNTING_KEYS,
+                )),
+        ];
+        $profileSalesSettings = array_replace(
+            $profileMenuSettings,
+            $setupProfiles->salesPlatformSettingsForProfile($deploymentProfile),
+        );
         $customWorkflow = $profileSalesSettings['order_workflow'] ?? null;
         if (is_array($customWorkflow)) {
             $customWorkflowWithoutSteps = $customWorkflow;
