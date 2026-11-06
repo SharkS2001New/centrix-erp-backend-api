@@ -420,6 +420,8 @@ class PlatformPaybillLicenceTest extends TestCase
             ->assertJsonPath('license.status', 'active');
 
         $this->assertSame('paid', $checkout->fresh()->status);
+        $this->assertLessThanOrEqual(40, strlen((string) $checkout->fresh()->mpesa_receipt));
+        $this->assertStringStartsWith('STKQ-', (string) $checkout->fresh()->mpesa_receipt);
         $this->assertSame('stk_query_confirmed', PlatformLicencePayment::query()->value('note'));
         Http::assertSent(fn (ClientRequest $request) => str_ends_with(
             $request->url(),
