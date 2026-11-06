@@ -30,7 +30,17 @@ $mysql = [
     'engine' => null,
     'options' => extension_loaded('pdo_mysql') ? array_filter([
         Mysql::ATTR_SSL_CA => env('MYSQL_ATTR_SSL_CA'),
-    ]) : [],
+        // Honor the standard PDO constant when MYSQL_ATTR_SSL_CA is set.
+        // MySQL 8.4 requires an encrypted channel even for mysql_native_password
+        // auth; without MYSQL_ATTR_SSL_CA, PDO stays plaintext and the server
+        // rejects the handshake. Setting MYSQL_ATTR_SSL_CA to any path triggers
+        // TLS negotiation; MYSQL_ATTR_SSL_VERIFY_SERVER_CERT=false lets a
+        // self-signed server cert without matching SAN through — acceptable on a
+        // private, firewalled network.
+        Mysql::ATTR_SSL_VERIFY_SERVER_CERT => env('MYSQL_ATTR_SSL_CA')
+            ? filter_var(env('MYSQL_ATTR_SSL_VERIFY_SERVER_CERT', true), FILTER_VALIDATE_BOOL)
+            : null,
+    ], static fn ($v) => $v !== null) : [],
 ];
 
 return [
