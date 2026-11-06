@@ -28,6 +28,7 @@ use App\Support\SalesChannelLabels;
 use App\Support\SalesReportUserScope;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -3020,7 +3021,24 @@ class ReportController extends Controller
             $view,
             $effectiveSumColumns,
         );
-        $paginator = $aggregated->paginate(min((int) ($filters['per_page'] ?? 20), 200));
+
+        // Build the paginator by hand instead of ->paginate(), which would run its own
+        // COUNT(*) over the same expensive view subquery. summary.row_count already has
+        // the total, so reuse it and run only the data page query.
+        $perPage = min((int) ($filters['per_page'] ?? 20), 200);
+        $page = max(1, (int) request()->input('page', 1));
+        $total = (int) ($summary['row_count'] ?? 0);
+        $items = $aggregated->forPage($page, $perPage)->get();
+        $paginator = new LengthAwarePaginator(
+            $items,
+            $total,
+            $perPage,
+            $page,
+            [
+                'path' => LengthAwarePaginator::resolveCurrentPath(),
+                'pageName' => 'page',
+            ],
+        );
 
         return array_merge($paginator->toArray(), [
             'summary' => $summary,
