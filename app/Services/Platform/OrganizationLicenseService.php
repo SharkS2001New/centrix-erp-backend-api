@@ -53,6 +53,8 @@ class OrganizationLicenseService
             ->first();
 
         if (! $sub) {
+            $licencePayments = app(PlatformPaybillLicenceService::class);
+            $durationDiscount = $licencePayments->durationDiscount();
             $missing = [
                 'status' => 'missing',
                 'expires_at' => null,
@@ -65,10 +67,10 @@ class OrganizationLicenseService
                 'sale_tokens' => app(BillingPolicy::class)->saleCost(),
                 'write_costs' => app(BillingPolicy::class)->current()['write_costs'],
                 'modules' => [],
-                'paybill' => app(PlatformPaybillLicenceService::class)->instructionsFor($org, null),
-                'offers' => app(PlatformPaybillLicenceService::class)->paymentOffers($org, null),
-                'plans' => app(PlatformPaybillLicenceService::class)->monthlyPlanChoices($org),
-                'duration_discount' => app(PlatformPaybillLicenceService::class)->durationDiscount(),
+                'paybill' => $licencePayments->instructionsFor($org, null),
+                'offers' => $licencePayments->paymentOffers($org, null),
+                'plans' => $licencePayments->monthlyPlanChoices($org, $durationDiscount),
+                'duration_discount' => $durationDiscount,
             ];
 
             return $this->finishLicense($org, $missing);
@@ -98,10 +100,12 @@ class OrganizationLicenseService
             'modules' => $this->licensedModules($sub),
         ];
         $license = $this->finishLicense($org, $license);
-        $license['paybill'] = app(PlatformPaybillLicenceService::class)->instructionsFor($org, $sub);
-        $license['offers'] = app(PlatformPaybillLicenceService::class)->paymentOffers($org, $sub);
-        $license['plans'] = app(PlatformPaybillLicenceService::class)->monthlyPlanChoices($org);
-        $license['duration_discount'] = app(PlatformPaybillLicenceService::class)->durationDiscount();
+        $licencePayments = app(PlatformPaybillLicenceService::class);
+        $durationDiscount = $licencePayments->durationDiscount();
+        $license['paybill'] = $licencePayments->instructionsFor($org, $sub);
+        $license['offers'] = $licencePayments->paymentOffers($org, $sub);
+        $license['plans'] = $licencePayments->monthlyPlanChoices($org, $durationDiscount);
+        $license['duration_discount'] = $durationDiscount;
 
         return $license;
     }

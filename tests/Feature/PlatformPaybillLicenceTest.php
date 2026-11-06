@@ -235,6 +235,15 @@ class PlatformPaybillLicenceTest extends TestCase
             ->assertJsonPath('data.payment_methods.mpesa_stk', false)
             ->assertJsonPath('data.payment_methods.equity', false)
             ->assertJsonPath('data.paybill.short_code', '4036507');
+
+        $this->getJson('/api/v1/erp/organization/billing?payment_options=1')
+            ->assertOk()
+            ->assertJsonPath('data.payment_methods.mpesa_manual', true)
+            ->assertJsonPath('data.paybill.short_code', '4036507')
+            ->assertJsonMissingPath('data.license')
+            ->assertJsonMissingPath('data.plans')
+            ->assertJsonMissingPath('data.invoices')
+            ->assertJsonMissingPath('data.payments');
     }
 
     public function test_amount_that_is_not_a_time_plan_becomes_tokens(): void
