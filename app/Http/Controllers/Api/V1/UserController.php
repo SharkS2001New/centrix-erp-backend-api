@@ -335,7 +335,7 @@ class UserController extends BaseResourceController
 
     public function permissions(string $id, ?string $nestedId = null)
     {
-        PermissionMatrixService::ensure();
+        PermissionMatrixService::ensureCached();
 
         return response()->json(
             app(UserPermissionService::class)->describeForUser(

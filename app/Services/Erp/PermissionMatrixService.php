@@ -311,7 +311,7 @@ class PermissionMatrixService
     /** @return list<int> Permission ids whose registry module is enabled for the org. */
     public static function enabledPermissionIds(CapabilityGate $gate, bool $includeAdminWhenDisabled = false): array
     {
-        self::ensure();
+        self::ensureCached();
 
         return Permission::query()
             ->get()
@@ -461,7 +461,7 @@ class PermissionMatrixService
         bool $includeAdminWhenDisabled = false,
         ?string $industry = null,
     ): array {
-        self::ensure();
+        self::ensureCached();
 
         $byCode = Permission::query()->get()->keyBy('permission_code');
         $groups = [];
@@ -613,7 +613,7 @@ class PermissionMatrixService
      */
     public static function buildRegistryModuleGroup(string $moduleKey): ?array
     {
-        self::ensure();
+        self::ensureCached();
 
         $groupDef = config("permission_registry.groups.{$moduleKey}");
         if (! is_array($groupDef)) {
