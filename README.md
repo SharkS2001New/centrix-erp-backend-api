@@ -180,7 +180,7 @@ Every API container start runs `docker-bootstrap.sh` (see `docker-entrypoint.sh`
 | Config cache | `php artisan config:cache` | — (always in entrypoint) |
 | Event cache | `php artisan event:cache` | — (best-effort) |
 
-Push to `main`/`master` builds a new image (`ghcr.io/.../centrix-erp-backend-api`) and bumps the Helm tag in `pitchpredk3ssetup`. After Argo/Helm rolls out new pods, pending migrations apply automatically.
+Push to `main`/`master` builds a new image (`ghcr.io/.../centrix-erp-backend-api`) and opens or updates a pull request in `pitchpredk3ssetup` to bump the API, scheduler, queue-worker, and Reverb Helm tags. Merge that PR to deploy; after Argo/Helm rolls out new pods, pending migrations apply automatically.
 
 `VERSION` is the Centrix product version displayed in platform health and POS
 footers, and used for the published API image tag. Bump it as part of any release

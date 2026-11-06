@@ -106,27 +106,20 @@ jobs:
             echo "Updated ${file} -> ${TAG}"
           done
 
-      - name: Commit and push pitchpredk3ssetup
+      - name: Create Helm image update pull request
         if: github.event_name != 'pull_request'
-        # Uses PERSONAL_ACCESS_TOKEN — scope to repo contents only; protect pitchpredk3ssetup main branch.
-        run: |
-          cd pitchpredk3ssetup
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add centrix-erp-backend-api/values.yaml centrix-erp-scheduler/values.yaml centrix-erp-queue-worker/values.yaml centrix-erp-reverb/values.yaml
-          if git diff --staged --quiet; then
-            echo "No tag changes to commit."
-            exit 0
-          fi
-          git commit -m "chore(centrix-erp-backend-api): bump image tag to ${{ steps.image_tag.outputs.value }}"
-          for attempt in 1 2 3 4 5; do
-            git pull --rebase origin master
-            if git push origin HEAD:master; then
-              echo "Push succeeded on attempt ${attempt}."
-              exit 0
-            fi
-            echo "Push rejected (attempt ${attempt}); retrying after rebase…"
-            sleep $((attempt * 2))
-          done
-          echo "Failed to push pitchpredk3ssetup after 5 attempts."
-          exit 1
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          path: pitchpredk3ssetup
+          branch: automation/centrix-erp-backend-api-image
+          delete-branch: true
+          add-paths: |
+            centrix-erp-backend-api/values.yaml
+            centrix-erp-scheduler/values.yaml
+            centrix-erp-queue-worker/values.yaml
+            centrix-erp-reverb/values.yaml
+          commit-message: "chore(centrix-erp-backend-api): bump image tag to ${{ steps.image_tag.outputs.value }}"
+          title: "chore(centrix-erp-backend-api): bump image tag to ${{ steps.image_tag.outputs.value }}"
+          body: "Updates the Centrix ERP API, scheduler, queue-worker, and Reverb Helm charts to the newly published image."
+          base: master
