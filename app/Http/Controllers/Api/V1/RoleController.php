@@ -139,7 +139,12 @@ class RoleController extends BaseResourceController
 
     public function permissionMatrix(Request $request)
     {
-        PermissionMatrixService::ensure();
+        // Was ensure() — ran the full 15-step heal cascade on every request
+        // (hundreds of firstOrCreate / insertOrIgnore calls). ensureCached()
+        // wraps it with a 7-day cache keyed by registry version, so warm
+        // requests return in O(1) and the cold boot after a deploy still
+        // runs the full sweep exactly once.
+        PermissionMatrixService::ensureCached();
 
         $gate = app(ErpContext::class)->gateForRequest($request);
         $includeAdmin = $this->includeAdminPermissionsWhenActing($request);
