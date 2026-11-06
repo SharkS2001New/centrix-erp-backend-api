@@ -3213,20 +3213,21 @@ class ReportController extends Controller
             // Some builders may not support reorder; continue.
         }
 
-        $sample = (clone $query)->limit(1)->first();
-        if (! $sample) {
-            return ['row_count' => 0];
-        }
-
-        $available = array_map('strval', array_keys((array) $sample));
-
+        // Fast path: caller passed the summable columns explicitly (reportFromViewOverall).
+        // Skip the sample-row probe — it runs the whole expensive view subquery just to
+        // learn column names we already know. Saves ~1 execution of the view per request.
         if ($sumColumns !== null) {
             $sumCols = array_values(array_filter(
                 $sumColumns,
-                fn (string $col): bool => in_array($col, $available, true),
+                fn (string $col): bool => $this->viewColumnExists($view, $col),
             ));
         } else {
-            // Direct view queries: summable view columns that are present on this result.
+            $sample = (clone $query)->limit(1)->first();
+            if (! $sample) {
+                return ['row_count' => 0];
+            }
+
+            $available = array_map('strval', array_keys((array) $sample));
             $sumCols = array_values(array_filter(
                 $this->summableColumnsForView($view),
                 fn (string $col): bool => in_array($col, $available, true),
