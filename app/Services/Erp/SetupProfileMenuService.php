@@ -216,6 +216,18 @@ class SetupProfileMenuService
         return array_intersect_key($settings, array_flip(self::SALES_PLATFORM_SETTING_KEYS));
     }
 
+    /** @return array<string, mixed> */
+    public function payrollPlatformSettingsForProfile(string $profileKey): array
+    {
+        $stored = $this->storedDocument($profileKey);
+        $settings = is_array($stored['payroll_platform'] ?? null) ? $stored['payroll_platform'] : [];
+
+        return array_intersect_key($settings, array_flip([
+            'payroll_month_days_basis',
+            'shif_minimum_monthly',
+        ]));
+    }
+
     /**
      * @return list<string>
      */
@@ -371,7 +383,7 @@ class SetupProfileMenuService
 
     /**
      * @param  array<string, mixed>  $payload
-     * @return array{menu_groups: array<string, mixed>, applications: array<string, bool>, sales_platform: array<string, mixed>}
+     * @return array{menu_groups: array<string, mixed>, applications: array<string, bool>, sales_platform: array<string, mixed>, payroll_platform: array<string, mixed>}
      */
     public function save(string $profileKey, array $payload): array
     {
@@ -406,9 +418,19 @@ class SetupProfileMenuService
                 ? array_intersect_key($payload['sales_platform'], array_flip(self::SALES_PLATFORM_SETTING_KEYS))
                 : [],
         );
+        $payrollPlatform = array_replace(
+            $this->payrollPlatformSettingsForProfile($profileKey),
+            is_array($payload['payroll_platform'] ?? null)
+                ? array_intersect_key($payload['payroll_platform'], array_flip([
+                    'payroll_month_days_basis',
+                    'shif_minimum_monthly',
+                ]))
+                : [],
+        );
         $document = array_merge($menu, [
             'applications' => $applications,
             'sales_platform' => $salesPlatform,
+            'payroll_platform' => $payrollPlatform,
         ]);
         if ($custom) {
             $document['custom'] = true;
@@ -427,6 +449,7 @@ class SetupProfileMenuService
             'menu_groups' => $menu,
             'applications' => $applications,
             'sales_platform' => $salesPlatform,
+            'payroll_platform' => $payrollPlatform,
             'label' => $label,
             'industry' => $industry,
             'custom' => $custom,

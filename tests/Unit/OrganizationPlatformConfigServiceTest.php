@@ -114,6 +114,25 @@ class OrganizationPlatformConfigServiceTest extends TestCase
         $this->assertSame('order_completed', $config['stock_deduct_on']['pos']);
     }
 
+    public function test_setup_profile_payroll_defaults_override_platform_defaults(): void
+    {
+        $this->mock(SetupProfileMenuService::class, function ($mock) {
+            $mock->shouldReceive('payrollPlatformSettingsForProfile')
+                ->once()
+                ->with('small_shop')
+                ->andReturn([
+                    'payroll_month_days_basis' => 'fixed_30',
+                    'shif_minimum_monthly' => 2500,
+                ]);
+        });
+
+        $config = app(OrganizationPlatformConfigService::class)
+            ->defaultPayrollPlatformConfig('small_shop');
+
+        $this->assertSame('fixed_30', $config['payroll_month_days_basis']);
+        $this->assertSame(2500.0, $config['shif_minimum_monthly']);
+    }
+
     public function test_default_sales_platform_includes_order_action_status_gates(): void
     {
         $config = app(OrganizationPlatformConfigService::class)->defaultSalesPlatformConfig('small_shop');

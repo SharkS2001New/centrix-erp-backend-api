@@ -721,6 +721,25 @@ class OrganizationPlatformConfigService
     }
 
     /**
+     * Default platform payroll config for a new tenant.
+     *
+     * @return array{payroll_month_days_basis: string, shif_minimum_monthly: float|int|null}
+     */
+    public function defaultPayrollPlatformConfig(string $deploymentProfile = 'wholesale_retail'): array
+    {
+        $defaults = \App\Services\Hr\HrPayrollSettingsResolver::defaults();
+        $profileSettings = app(\App\Services\Erp\SetupProfileMenuService::class)
+            ->payrollPlatformSettingsForProfile($deploymentProfile);
+        $settings = array_merge($defaults, $profileSettings);
+        $normalized = \App\Services\Hr\HrPayrollSettingsResolver::normalize($settings);
+
+        return [
+            'payroll_month_days_basis' => $normalized['payroll_month_days_basis'],
+            'shif_minimum_monthly' => $normalized['shif_minimum_monthly'],
+        ];
+    }
+
+    /**
      * @return array<string, mixed>
      */
     public function salesPlatformConfigForOrganization(Organization $org): array

@@ -163,9 +163,14 @@ class OrganizationProvisioningService
                 );
             }
 
-            if (! empty($data['payroll_platform']) && is_array($data['payroll_platform'])) {
-                $org = app(OrganizationPlatformConfigService::class)->applyPayrollPlatformConfig($org, $data['payroll_platform']);
-            }
+            $platformConfig = app(OrganizationPlatformConfigService::class);
+            $payrollPlatform = array_replace(
+                $platformConfig->defaultPayrollPlatformConfig(
+                    (string) ($data['deployment_profile'] ?? 'wholesale_retail'),
+                ),
+                is_array($data['payroll_platform'] ?? null) ? $data['payroll_platform'] : [],
+            );
+            $org = $platformConfig->applyPayrollPlatformConfig($org, $payrollPlatform);
 
             return [
                 'organization' => $org,

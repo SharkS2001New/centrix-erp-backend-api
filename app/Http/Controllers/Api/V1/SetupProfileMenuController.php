@@ -23,6 +23,7 @@ class SetupProfileMenuController extends Controller
             'data' => collect($this->menus->all())
                 ->map(fn (array $profile) => array_merge($profile, [
                     'default_sales_platform' => $this->platformConfig->defaultSalesPlatformConfig($profile['key']),
+                    'default_payroll_platform' => $this->platformConfig->defaultPayrollPlatformConfig($profile['key']),
                 ]))
                 ->values(),
         ]);
@@ -127,6 +128,9 @@ class SetupProfileMenuController extends Controller
         }
 
         $data = $request->validate(array_merge($salesRules, [
+            'payroll_platform' => 'sometimes|array',
+            'payroll_platform.payroll_month_days_basis' => 'sometimes|in:calendar,fixed_30',
+            'payroll_platform.shif_minimum_monthly' => 'sometimes|nullable|numeric|min:0|max:100000',
             'backoffice' => 'sometimes|array',
             'backoffice.*' => 'sometimes|boolean',
             'hr' => 'sometimes|array',
@@ -153,6 +157,7 @@ class SetupProfileMenuController extends Controller
                 'menu_groups' => $saved['menu_groups'],
                 'applications' => $saved['applications'],
                 'sales_platform' => $saved['sales_platform'],
+                'payroll_platform' => $saved['payroll_platform'],
             ],
         ]);
     }

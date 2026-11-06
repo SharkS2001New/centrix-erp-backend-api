@@ -85,6 +85,7 @@ class OrganizationProvisionController extends Controller
                 'label' => $profile['label'] ?? $key,
                 'industry' => $profile['industry'] ?? IndustryRegistry::industryForProfile($key),
                 'default_sales_platform' => $this->platformConfig->defaultSalesPlatformConfig($key),
+                'default_payroll_platform' => $this->platformConfig->defaultPayrollPlatformConfig($key),
                 'modules' => $profile['modules'] ?? [],
                 'applications' => $setupMenus->applicationsForProfile($key),
                 'menu_groups' => $setupMenus->forProfile($key),
@@ -103,6 +104,7 @@ class OrganizationProvisionController extends Controller
                 'label' => $row['label'],
                 'industry' => $row['industry'],
                 'default_sales_platform' => $this->platformConfig->defaultSalesPlatformConfig($row['key']),
+                'default_payroll_platform' => $this->platformConfig->defaultPayrollPlatformConfig($row['key']),
                 'modules' => [],
                 'applications' => $row['applications'],
                 'menu_groups' => $row['menu_groups'],
@@ -208,6 +210,7 @@ class OrganizationProvisionController extends Controller
             'applications' => $this->applications->applicationsFromEnabledModules($gate->allModules()),
             'enabled_modules' => $org->enabled_modules,
             'sales_platform' => $this->platformConfig->salesPlatformConfigForOrganization($org),
+            'payroll_platform' => $this->platformConfig->payrollPlatformConfigForOrganization($org),
             'source_organization' => [
                 'id' => $org->id,
                 'company_code' => $org->company_code,
