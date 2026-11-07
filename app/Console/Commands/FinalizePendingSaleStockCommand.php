@@ -30,11 +30,7 @@ class FinalizePendingSaleStockCommand extends Command
         $query = Sale::query()
             ->where('stock_balanced', 0)
             ->whereNull('deleted_at')
-            ->where(function ($q) {
-                $q->where('fulfillment_meta->pending_stock_deduct', true)
-                    ->orWhere('fulfillment_meta->pending_stock_deduct', 1)
-                    ->orWhere('fulfillment_meta->pending_stock_deduct', 'true');
-            })
+            ->where('pending_stock_deduct', 1)
             ->when($orgFilter, fn ($q) => $q->where('organization_id', $orgFilter))
             ->orderBy('id')
             ->limit($limit);
