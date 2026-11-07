@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Providers;
 
 use App\Models\Organization;
@@ -9,22 +10,35 @@ use App\Observers\SaleObserver;
 use App\Services\Ai\AiSettingsResolver;
 use App\Services\Audit\AuditLogger;
 use App\Services\Audit\ModelChangeAuditor;
+use App\Services\Auth\PermissionCatalog;
+use App\Services\SystemIssues\SystemIssueReporter;
+use App\Support\LocalAgentTokens;
 use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
 use Illuminate\Queue\Events\JobFailed;
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Validation\ValidationException;
 use Laravel\Sanctum\Sanctum;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
         $this->app->singleton(AuditLogger::class);
+
+        // Request-scoped so every call site within a single HTTP / queue job
+        // reuses the same in-memory catalog, collapsing dozens of per-request
+        // SELECTs against `permissions` into one. The catalog is adaptive —
+        // narrow routes pay a few indexed point lookups (bytes); admin / matrix
+        // routes that call all() hydrate ~461 Eloquent models (~2.5 MiB).
+        $this->app->scoped(PermissionCatalog::class);
     }
 
     public function boot(): void
@@ -34,7 +48,7 @@ class AppServiceProvider extends ServiceProvider
         // CentrixAttendanceAgent tokens must never die from the global Sanctum
         // created_at TTL (browser sessions). Only an explicit expires_at (or revoke) ends them.
         Sanctum::authenticateAccessTokensUsing(function ($accessToken, bool $isValid) {
-            if (! \App\Support\LocalAgentTokens::isAnyAgentTokenName($accessToken->name ?? null)) {
+            if (! LocalAgentTokens::isAnyAgentTokenName($accessToken->name ?? null)) {
                 return $isValid;
             }
 
@@ -88,18 +102,18 @@ class AppServiceProvider extends ServiceProvider
     {
         Queue::failing(function (JobFailed $event) {
             $exception = $event->exception;
-            if ($exception instanceof \Illuminate\Validation\ValidationException) {
+            if ($exception instanceof ValidationException) {
                 return;
             }
-            if ($exception instanceof \Illuminate\Database\Eloquent\ModelNotFoundException) {
+            if ($exception instanceof ModelNotFoundException) {
                 // Missing run/line after delete is an operational outcome, not a system fault.
                 return;
             }
-            if ($exception instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface
+            if ($exception instanceof HttpExceptionInterface
                 && in_array($exception->getStatusCode(), [404, 422], true)) {
                 return;
             }
-            if (\App\Services\SystemIssues\SystemIssueReporter::isBenignImapNoise($exception)) {
+            if (SystemIssueReporter::isBenignImapNoise($exception)) {
                 return;
             }
 
@@ -107,7 +121,7 @@ class AppServiceProvider extends ServiceProvider
                 $jobName = method_exists($event->job, 'resolveName')
                     ? $event->job->resolveName()
                     : class_basename($event->job::class);
-                $reporter = app(\App\Services\SystemIssues\SystemIssueReporter::class);
+                $reporter = app(SystemIssueReporter::class);
                 $reporter->reportMessage(
                     'Queue job failed: '.$jobName,
                     $reporter->formatException($exception),

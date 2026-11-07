@@ -3,6 +3,12 @@
 namespace App\Services\Erp;
 
 use App\Models\Permission;
+use App\Models\Role;
+use App\Services\Auth\PermissionCatalog;
+use App\Services\Platform\PackageFeatureCatalog;
+use App\Support\ShopDebtorsPermissions;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 class PermissionMatrixService
 {
@@ -67,7 +73,7 @@ class PermissionMatrixService
     public static function ensureCached(): void
     {
         $key = 'erp:permission_matrix:ensure_done:'.self::registryCacheVersion();
-        \Illuminate\Support\Facades\Cache::remember($key, 86400 * 7, function () {
+        Cache::remember($key, 86400 * 7, function () {
             self::ensure();
 
             return true;
@@ -84,17 +90,26 @@ class PermissionMatrixService
     public static function healLoginGrantsCached(): array
     {
         $key = 'erp:permission_matrix:login_heal_done:'.self::registryCacheVersion();
-        if (\Illuminate\Support\Facades\Cache::get($key)) {
+        if (Cache::get($key)) {
             return ['industry' => 0, 'hr' => 0];
         }
 
-        $result = [
-            'industry' => self::ensureAdministratorIndustryCatalogPermissions(),
-            'hr' => self::ensureHrTimeAttendancePagesForExistingRoles(),
-        ];
-        \Illuminate\Support\Facades\Cache::put($key, true, 86400 * 7);
+        // Both heal helpers can insert into `permissions` and `role_permissions`
+        // (ensureHrTimeAttendancePagesForExistingRoles calls ensureRegistryPermissions).
+        // Flush the request-scoped catalog in finally so later reads in the same
+        // request see the new rows and a partial failure can't leave a caller that
+        // catches the exception reading pre-write state.
+        try {
+            $result = [
+                'industry' => self::ensureAdministratorIndustryCatalogPermissions(),
+                'hr' => self::ensureHrTimeAttendancePagesForExistingRoles(),
+            ];
+            Cache::put($key, true, 86400 * 7);
 
-        return $result;
+            return $result;
+        } finally {
+            app(PermissionCatalog::class)->flush();
+        }
     }
 
     public static function ensure(): void
@@ -125,6 +140,11 @@ class PermissionMatrixService
             self::ensureAdministratorIndustryCatalogPermissions();
         } finally {
             self::$ensuring = false;
+            // ensure() mutates `permissions` and `role_permissions`. Flush the
+            // request-scoped catalog so later reads in the same request/process
+            // see the new rows. In a finally so a partial failure can't leave
+            // a caller that catches the exception reading pre-write state.
+            app(PermissionCatalog::class)->flush();
         }
     }
 
@@ -141,7 +161,7 @@ class PermissionMatrixService
             return 0;
         }
 
-        $roleIds = \App\Models\Role::query()
+        $roleIds = Role::query()
             ->whereIn('role_name', ['Administrator', 'Admin'])
             ->pluck('id');
 
@@ -152,7 +172,7 @@ class PermissionMatrixService
         $inserted = 0;
         foreach ($roleIds as $roleId) {
             foreach ($permissionIds as $permissionId) {
-                $ok = \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
+                $ok = DB::table('role_permissions')->insertOrIgnore([
                     'role_id' => $roleId,
                     'permission_id' => $permissionId,
                 ]);
@@ -313,8 +333,8 @@ class PermissionMatrixService
     {
         self::ensureCached();
 
-        return Permission::query()
-            ->get()
+        return app(PermissionCatalog::class)
+            ->all()
             ->filter(fn (Permission $permission) => self::permissionModuleEnabled(
                 (string) $permission->permission_code,
                 (string) $permission->module,
@@ -344,8 +364,8 @@ class PermissionMatrixService
             return array_map('intval', array_keys($enabled));
         }
 
-        $ids = Permission::query()
-            ->get()
+        $ids = app(PermissionCatalog::class)
+            ->all()
             ->filter(function (Permission $permission) use ($enabled, $industryModules) {
                 if (! isset($enabled[(int) $permission->id])) {
                     return false;
@@ -399,7 +419,7 @@ class PermissionMatrixService
             }
         }
 
-        $byId = Permission::query()->whereIn('id', $ids)->get()->keyBy('id');
+        $byId = app(PermissionCatalog::class)->forIds($ids);
         $kept = [];
         foreach ($ids as $id) {
             $permission = $byId->get($id);
@@ -463,7 +483,7 @@ class PermissionMatrixService
     ): array {
         self::ensureCached();
 
-        $byCode = Permission::query()->get()->keyBy('permission_code');
+        $byCode = app(PermissionCatalog::class)->all()->keyBy('permission_code');
         $groups = [];
         $industryModules = $industry !== null && $industry !== ''
             ? array_flip(IndustryRegistry::registryModulesForIndustry($industry))
@@ -569,9 +589,9 @@ class PermissionMatrixService
 
                 $filtered = self::filterApplicationModuleGroup($group, $def, (string) $registryModule);
                 if ($filtered !== null && $gate?->organization()) {
-                    $allowed = app(\App\Services\Platform\PackageFeatureCatalog::class)
+                    $allowed = app(PackageFeatureCatalog::class)
                         ->allowedFeatureSet($gate->organization());
-                    $filtered = app(\App\Services\Platform\PackageFeatureCatalog::class)
+                    $filtered = app(PackageFeatureCatalog::class)
                         ->restrictGroup($filtered, (string) $registryModule, $allowed);
                 }
                 if ($filtered !== null) {
@@ -620,7 +640,7 @@ class PermissionMatrixService
             return null;
         }
 
-        $byCode = Permission::query()->get()->keyBy('permission_code');
+        $byCode = app(PermissionCatalog::class)->all()->keyBy('permission_code');
         $features = [];
         foreach ($groupDef['features'] ?? [] as $featureKey => $featureDef) {
             if (! is_array($featureDef)) {
@@ -729,22 +749,22 @@ class PermissionMatrixService
                 continue;
             }
 
-            $roleIds = \Illuminate\Support\Facades\DB::table('role_permissions')
+            $roleIds = DB::table('role_permissions')
                 ->where('permission_id', $fromId)
                 ->pluck('role_id');
 
             foreach ($roleIds as $roleId) {
-                \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
+                DB::table('role_permissions')->insertOrIgnore([
                     'role_id' => $roleId,
                     'permission_id' => $toId,
                 ]);
             }
 
-            \Illuminate\Support\Facades\DB::table('role_permissions')
+            DB::table('role_permissions')
                 ->where('permission_id', $fromId)
                 ->delete();
 
-            \Illuminate\Support\Facades\DB::table('user_permission_overrides')
+            DB::table('user_permission_overrides')
                 ->where('permission_id', $fromId)
                 ->update(['permission_id' => $toId]);
         }
@@ -788,7 +808,7 @@ class PermissionMatrixService
     protected static function ensureCodesForAdminRoles(array $codes): void
     {
         $industryCodes = array_flip(IndustryRegistry::permissionCodesForAllIndustries());
-        $roleIds = \App\Models\Role::query()
+        $roleIds = Role::query()
             ->whereIn('role_name', ['Administrator', 'Admin'])
             ->pluck('id');
 
@@ -807,7 +827,7 @@ class PermissionMatrixService
                 continue;
             }
             foreach ($roleIds as $roleId) {
-                \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
+                DB::table('role_permissions')->insertOrIgnore([
                     'role_id' => $roleId,
                     'permission_id' => $permissionId,
                 ]);
@@ -832,16 +852,16 @@ class PermissionMatrixService
             return;
         }
 
-        $roleIds = \Illuminate\Support\Facades\DB::table('role_permissions')
+        $roleIds = DB::table('role_permissions')
             ->where('permission_id', $overviewId)
             ->pluck('role_id');
 
-        $adminRoleIds = \App\Models\Role::query()
+        $adminRoleIds = Role::query()
             ->whereIn('role_name', ['Administrator', 'Admin'])
             ->pluck('id');
 
         foreach ($roleIds->merge($adminRoleIds)->unique() as $roleId) {
-            \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
+            DB::table('role_permissions')->insertOrIgnore([
                 'role_id' => $roleId,
                 'permission_id' => $notificationId,
             ]);
@@ -852,20 +872,20 @@ class PermissionMatrixService
     public static function ensureShopDebtorsForAdminRoles(): void
     {
         $shopDebtorsIds = Permission::query()
-            ->whereIn('permission_code', \App\Support\ShopDebtorsPermissions::allViewPermissionCodes())
+            ->whereIn('permission_code', ShopDebtorsPermissions::allViewPermissionCodes())
             ->pluck('id');
 
         if ($shopDebtorsIds->isEmpty()) {
             return;
         }
 
-        $adminRoleIds = \App\Models\Role::query()
+        $adminRoleIds = Role::query()
             ->whereIn('role_name', ['Administrator', 'Admin'])
             ->pluck('id');
 
         foreach ($adminRoleIds as $roleId) {
             foreach ($shopDebtorsIds as $permissionId) {
-                \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
+                DB::table('role_permissions')->insertOrIgnore([
                     'role_id' => $roleId,
                     'permission_id' => $permissionId,
                 ]);
@@ -884,13 +904,13 @@ class PermissionMatrixService
             return;
         }
 
-        $adminRoleIds = \App\Models\Role::query()
+        $adminRoleIds = Role::query()
             ->whereIn('role_name', ['Administrator', 'Admin'])
             ->pluck('id');
 
         foreach ($adminRoleIds as $roleId) {
             foreach ($permissionIds as $permissionId) {
-                \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
+                DB::table('role_permissions')->insertOrIgnore([
                     'role_id' => $roleId,
                     'permission_id' => $permissionId,
                 ]);
@@ -902,10 +922,10 @@ class PermissionMatrixService
     public static function migrateLegacyShopDebtorsPermissions(): void
     {
         $legacyToNew = [
-            'customers.shop_debtors.view' => \App\Support\ShopDebtorsPermissions::allViewPermissionCodes(),
-            'customers.shop_debtors_unpaid.view' => [\App\Support\ShopDebtorsPermissions::permissionCodeForBucket('unpaid')],
-            'customers.shop_debtors_partial.view' => [\App\Support\ShopDebtorsPermissions::permissionCodeForBucket('partial')],
-            'customers.shop_debtors_paid.view' => [\App\Support\ShopDebtorsPermissions::permissionCodeForBucket('paid')],
+            'customers.shop_debtors.view' => ShopDebtorsPermissions::allViewPermissionCodes(),
+            'customers.shop_debtors_unpaid.view' => [ShopDebtorsPermissions::permissionCodeForBucket('unpaid')],
+            'customers.shop_debtors_partial.view' => [ShopDebtorsPermissions::permissionCodeForBucket('partial')],
+            'customers.shop_debtors_paid.view' => [ShopDebtorsPermissions::permissionCodeForBucket('paid')],
         ];
 
         foreach ($legacyToNew as $legacyCode => $newCodes) {
@@ -919,13 +939,13 @@ class PermissionMatrixService
                 continue;
             }
 
-            $roleIds = \Illuminate\Support\Facades\DB::table('role_permissions')
+            $roleIds = DB::table('role_permissions')
                 ->where('permission_id', $legacyId)
                 ->pluck('role_id');
 
             foreach ($roleIds as $roleId) {
                 foreach ($newIds as $permissionId) {
-                    \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
+                    DB::table('role_permissions')->insertOrIgnore([
                         'role_id' => $roleId,
                         'permission_id' => $permissionId,
                     ]);
@@ -950,16 +970,16 @@ class PermissionMatrixService
             return;
         }
 
-        $roleIds = \Illuminate\Support\Facades\DB::table('role_permissions')
+        $roleIds = DB::table('role_permissions')
             ->where('permission_id', $checkoutId)
             ->pluck('role_id');
 
-        $namedCashierIds = \App\Models\Role::query()
+        $namedCashierIds = Role::query()
             ->whereIn('role_name', ['Cashier'])
             ->pluck('id');
 
         foreach ($roleIds->merge($namedCashierIds)->unique() as $roleId) {
-            \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
+            DB::table('role_permissions')->insertOrIgnore([
                 'role_id' => $roleId,
                 'permission_id' => $collectId,
             ]);
@@ -1016,7 +1036,7 @@ class PermissionMatrixService
                 continue;
             }
 
-            $roleIds = \Illuminate\Support\Facades\DB::table('role_permissions')
+            $roleIds = DB::table('role_permissions')
                 ->where('permission_id', $triggerId)
                 ->pluck('role_id');
 
@@ -1027,7 +1047,7 @@ class PermissionMatrixService
                         continue;
                     }
 
-                    $ok = \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
+                    $ok = DB::table('role_permissions')->insertOrIgnore([
                         'role_id' => $roleId,
                         'permission_id' => $permissionId,
                     ]);

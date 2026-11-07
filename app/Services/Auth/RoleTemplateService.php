@@ -3,7 +3,6 @@
 namespace App\Services\Auth;
 
 use App\Models\Organization;
-use App\Models\Permission;
 use App\Models\Role;
 use App\Services\Cache\CapabilitiesCacheInvalidator;
 use App\Services\Erp\CapabilityGate;
@@ -230,9 +229,8 @@ class RoleTemplateService
             $role->update(['scope' => (string) $definition['scope']]);
         }
 
-        $permissionIds = Permission::query()
-            ->whereIn('permission_code', (array) ($definition['permissions'] ?? []))
-            ->pluck('id');
+        $permissionIds = app(PermissionCatalog::class)
+            ->idsForCodes((array) ($definition['permissions'] ?? []));
 
         foreach ($permissionIds as $permissionId) {
             DB::table('role_permissions')->insertOrIgnore([
@@ -257,9 +255,8 @@ class RoleTemplateService
             return;
         }
 
-        $permissionIds = Permission::query()
-            ->whereIn('permission_code', (array) ($warehouse['permissions'] ?? []))
-            ->pluck('id');
+        $permissionIds = app(PermissionCatalog::class)
+            ->idsForCodes((array) ($warehouse['permissions'] ?? []));
 
         foreach ($permissionIds as $permissionId) {
             DB::table('role_permissions')->insertOrIgnore([

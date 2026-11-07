@@ -7,6 +7,7 @@ use App\Models\Role;
 use App\Models\User;
 use App\Services\Auth\RoleTemplateService;
 use App\Services\Cache\CapabilitiesCacheInvalidator;
+use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\IndustryRegistry;
 use App\Services\Erp\PermissionMatrixService;
@@ -160,6 +161,10 @@ class RoleController extends BaseResourceController
         $groups = PermissionMatrixService::groupedForUi($gate, $includeAdmin, $industry);
 
         return response()->json([
+            // Keep SQL ORDER BY so `utf8mb4_0900_ai_ci` (accent- and case-insensitive)
+            // collation is used — PHP's sortBy is binary and would reorder names with
+            // accented / mixed-case characters. The catalog is loaded for other fields
+            // in the same response so there is no savings in moving this to PHP.
             'permissions' => Permission::query()
                 ->orderBy('module')
                 ->orderBy('permission_name')
@@ -180,7 +185,7 @@ class RoleController extends BaseResourceController
         return (bool) $request->attributes->get('acting_organization_id');
     }
 
-    private function industryForRequest(\App\Services\Erp\CapabilityGate $gate): string
+    private function industryForRequest(CapabilityGate $gate): string
     {
         $profile = (string) ($gate->organization()?->deployment_profile ?? 'wholesale_retail');
 
@@ -226,7 +231,7 @@ class RoleController extends BaseResourceController
     /** @return array{role_id: int, permission_ids: list<int>} */
     private function rolePermissionsPayload(
         Role $role,
-        ?\App\Services\Erp\CapabilityGate $gate = null,
+        ?CapabilityGate $gate = null,
         bool $includeAdminWhenDisabled = false,
         ?string $industry = null,
     ): array {

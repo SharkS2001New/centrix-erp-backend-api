@@ -2,8 +2,8 @@
 
 namespace App\Support;
 
-use App\Models\Permission;
 use App\Models\User;
+use App\Services\Auth\PermissionCatalog;
 use Illuminate\Database\Eloquent\Builder;
 
 /**
@@ -37,11 +37,8 @@ class SalesReportUserScope
      */
     public static function applyEligibleSalesReportUsers(Builder $query): void
     {
-        $permissionIds = Permission::query()
-            ->whereIn('permission_code', self::permissionCodes())
-            ->pluck('id')
-            ->map(fn ($id) => (int) $id)
-            ->all();
+        $permissionIds = app(PermissionCatalog::class)
+            ->idsForCodes(self::permissionCodes());
 
         if ($permissionIds === []) {
             $query->whereRaw('0 = 1');

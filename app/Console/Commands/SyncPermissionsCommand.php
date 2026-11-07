@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Models\Permission;
 use App\Services\Erp\PermissionMatrixService;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Cache;
 
 class SyncPermissionsCommand extends Command
 {
@@ -15,13 +16,14 @@ class SyncPermissionsCommand extends Command
 
     public function handle(): int
     {
+        // ensure() flushes PermissionCatalog in its own finally — no need to repeat here.
         PermissionMatrixService::ensure();
         // Allow the next login/capabilities request to re-check admin/HR heals after an
         // explicit sync (registry version may be unchanged when only DB rows were fixed).
-        \Illuminate\Support\Facades\Cache::forget(
+        Cache::forget(
             'erp:permission_matrix:login_heal_done:'.PermissionMatrixService::registryCacheVersion()
         );
-        \Illuminate\Support\Facades\Cache::forget(
+        Cache::forget(
             'erp:permission_matrix:ensure_done:'.PermissionMatrixService::registryCacheVersion()
         );
 

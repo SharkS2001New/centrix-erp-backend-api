@@ -2,17 +2,33 @@
 
 namespace App\Services\Auth;
 
+use App\Models\Organization;
 use App\Models\Permission;
+use App\Models\PlatformSubscription;
 use App\Models\User;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\PermissionMatrixService;
+use App\Services\Platform\BillingPolicy;
+use App\Services\Platform\FreePlanAccess;
+use App\Services\Platform\OrganizationLicenseService;
+use App\Services\Platform\PackageFeatureCatalog;
 use App\Support\SalesOrderQueuePermissions;
+use App\Support\ShopDebtorsPermissions;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class UserPermissionService
 {
+    /**
+     * Request-scoped permission catalog. Resolved lazily via app() so existing
+     * `new UserPermissionService()` call sites (if any) keep working.
+     */
+    private function catalog(): PermissionCatalog
+    {
+        return app(PermissionCatalog::class);
+    }
+
     /** @return list<int> */
     public function rolePermissionIds(?int $roleId): array
     {
@@ -74,7 +90,7 @@ class UserPermissionService
         // Platform super-admins bypass RBAC. Org admins (`is_admin`) do not — their
         // feature access comes from the role matrix (plus Administration auto-grants).
         if ($user->is_super_admin) {
-            return Permission::query()->pluck('id')->map(fn ($id) => (int) $id)->all();
+            return $this->catalog()->allIds();
         }
 
         $roleIds = collect($this->rolePermissionIds($user->role_id));
@@ -99,8 +115,8 @@ class UserPermissionService
         // Org admins always retain Administration access so they can fix roles/users.
         // Operational Backoffice / POS / etc. require an explicit role grant.
         if ($user->is_admin && $this->orgAdminAutoGrantsPermission($permissionCode, $gate)) {
-                return true;
-            }
+            return true;
+        }
 
         if ($this->hasDirectPermission($user, $permissionCode)) {
             return $this->permissionAllowedByGate($permissionCode, $gate);
@@ -165,9 +181,7 @@ class UserPermissionService
             return false;
         }
 
-        $permission = Permission::query()
-            ->where('permission_code', $permissionCode)
-            ->first();
+        $permission = $this->catalog()->byCode($permissionCode);
 
         if (! $permission) {
             return false;
@@ -216,9 +230,7 @@ class UserPermissionService
             return true;
         }
 
-        $permission = Permission::query()
-            ->where('permission_code', $permissionCode)
-            ->first();
+        $permission = $this->catalog()->byCode($permissionCode);
 
         if (! $permission) {
             return true;
@@ -231,7 +243,7 @@ class UserPermissionService
         );
     }
 
-  /** Whether the user holds a feature permission on their role/overrides (no capability aliases). */
+    /** Whether the user holds a feature permission on their role/overrides (no capability aliases). */
     public function hasAssignedPermission(User $user, string $permissionCode): bool
     {
         return $this->hasRoleAssignedPermission($user, $permissionCode);
@@ -239,15 +251,13 @@ class UserPermissionService
 
     public function hasRoleAssignedPermission(User $user, string $permissionCode): bool
     {
-        $permissionId = Permission::query()
-            ->where('permission_code', $permissionCode)
-            ->value('id');
+        $permissionId = $this->catalog()->idByCode($permissionCode);
 
         if (! $permissionId) {
             return false;
         }
 
-        return in_array((int) $permissionId, $this->roleAssignedPermissionIds($user), true);
+        return in_array($permissionId, $this->roleAssignedPermissionIds($user), true);
     }
 
     /** Managers who may approve or reject sales order cancellation requests. */
@@ -468,20 +478,21 @@ class UserPermissionService
 
     protected function hasDirectPermission(User $user, string $permissionCode): bool
     {
-        $permissionId = Permission::query()
-            ->where('permission_code', $permissionCode)
-            ->value('id');
+        // Route through byCode() rather than idByCode() so the model is cached.
+        // The gated call site (permissionAllowedByGate -> catalog->byCode) hits
+        // the same cache entry in the same request without a second query.
+        $permission = $this->catalog()->byCode($permissionCode);
 
-        if (! $permissionId) {
+        if ($permission === null) {
             return false;
         }
 
-        return in_array((int) $permissionId, $this->effectivePermissionIds($user), true);
+        return in_array((int) $permission->id, $this->effectivePermissionIds($user), true);
     }
 
     protected function hasLegacyShopDebtorsGrant(User $user, string $bucket): bool
     {
-        $bucket = \App\Support\ShopDebtorsPermissions::normalizeBucket($bucket);
+        $bucket = ShopDebtorsPermissions::normalizeBucket($bucket);
         $legacyCodes = [
             'customers.shop_debtors.view',
             'customers.shop_debtors_unpaid.view',
@@ -502,26 +513,24 @@ class UserPermissionService
     /** @return array<string, bool> Feature permission codes assigned to the user (no capability alias expansion). */
     public function directPermissionMapForUser(User $user, ?CapabilityGate $gate = null): array
     {
-        $permissions = Permission::query()
-            ->whereIn('id', $this->roleAssignedPermissionIds($user))
-            ->get();
+        $permissions = $this->catalog()->forIds($this->roleAssignedPermissionIds($user));
 
-            if ($gate !== null) {
-                $permissions = $permissions->filter(
-                    fn (Permission $permission) => PermissionMatrixService::isRegistryModuleEnabled(
-                        (string) $permission->module,
-                        $gate,
-                    ),
-                );
-            }
-
-            $map = [];
-            foreach ($permissions as $permission) {
-                $map[(string) $permission->permission_code] = true;
-            }
-
-            return $map;
+        if ($gate !== null) {
+            $permissions = $permissions->filter(
+                fn (Permission $permission) => PermissionMatrixService::isRegistryModuleEnabled(
+                    (string) $permission->module,
+                    $gate,
+                ),
+            );
         }
+
+        $map = [];
+        foreach ($permissions as $permission) {
+            $map[(string) $permission->permission_code] = true;
+        }
+
+        return $map;
+    }
 
     /** @return array<string, bool> Role-assigned feature codes for accurate sidebar / nav visibility. */
     public function navigationPermissionMapForUser(User $user, ?CapabilityGate $gate = null): array
@@ -589,14 +598,14 @@ class UserPermissionService
      * @param  array<string, bool>  $map
      * @return array<string, bool>
      */
-    protected function applyPackageFeatureCeiling(array $map, \App\Models\Organization $org): array
+    protected function applyPackageFeatureCeiling(array $map, Organization $org): array
     {
-        $catalog = app(\App\Services\Platform\PackageFeatureCatalog::class);
-        $licenses = app(\App\Services\Platform\OrganizationLicenseService::class);
+        $catalog = app(PackageFeatureCatalog::class);
+        $licenses = app(OrganizationLicenseService::class);
         $mode = $this->packageCeilingMode($licenses, $org);
         if (in_array($mode, ['free', 'expired'], true)) {
-            $industry = app(\App\Services\Platform\FreePlanAccess::class)->industryFor($org);
-            $features = app(\App\Services\Platform\FreePlanAccess::class)->stored()[$industry]['feature_keys'] ?? [];
+            $industry = app(FreePlanAccess::class)->industryFor($org);
+            $features = app(FreePlanAccess::class)->stored()[$industry]['feature_keys'] ?? [];
             $allowed = [];
             foreach (is_array($features) ? $features : [] as $featureIds) {
                 foreach ((array) $featureIds as $featureId) {
@@ -614,20 +623,20 @@ class UserPermissionService
         return $catalog->filterPermissionMap($map, $org);
     }
 
-    protected function packageCeilingMode(\App\Services\Platform\OrganizationLicenseService $licenses, \App\Models\Organization $org): string
+    protected function packageCeilingMode(OrganizationLicenseService $licenses, Organization $org): string
     {
         if ($licenses->isPlatformOrganization($org)) {
             return 'full';
         }
 
-        $subscription = \App\Models\PlatformSubscription::query()->where('organization_id', $org->id)->first();
+        $subscription = PlatformSubscription::query()->where('organization_id', $org->id)->first();
         $license = [
             'status' => $subscription?->status ?: 'missing',
             'is_trial' => (bool) ($subscription?->is_trial),
             'starts_at' => $subscription?->starts_at,
             'expires_at' => $subscription?->expires_at,
             'token_balance' => $licenses->tokenBalanceFor($org),
-            'tokens_enabled' => app(\App\Services\Platform\BillingPolicy::class)->tokensEnabled(),
+            'tokens_enabled' => app(BillingPolicy::class)->tokensEnabled(),
         ];
 
         return $licenses->accessMode($license);
@@ -699,7 +708,7 @@ class UserPermissionService
      */
     protected function grantOrgAdminEnabledModulePermissions(array $map, CapabilityGate $gate): array
     {
-        foreach (Permission::query()->get() as $permission) {
+        foreach ($this->catalog()->all() as $permission) {
             if (! PermissionMatrixService::permissionModuleEnabled(
                 (string) $permission->permission_code,
                 (string) $permission->module,
@@ -730,7 +739,7 @@ class UserPermissionService
             return $map;
         }
 
-        foreach (Permission::query()->where('module', 'admin')->get() as $permission) {
+        foreach ($this->catalog()->forModule('admin') as $permission) {
             $code = (string) $permission->permission_code;
             if (str_ends_with($code, '.approve')) {
                 continue;
@@ -764,7 +773,7 @@ class UserPermissionService
             return $map;
         }
 
-        foreach (Permission::query()->where('module', 'centrix_payments')->get() as $permission) {
+        foreach ($this->catalog()->forModule('centrix_payments') as $permission) {
             $code = (string) $permission->permission_code;
             if (! PermissionMatrixService::permissionModuleEnabled($code, 'centrix_payments', $gate)) {
                 continue;
@@ -834,8 +843,8 @@ class UserPermissionService
             return $map;
         }
 
-        foreach (Permission::query()->where('module', 'mobile_manager')->pluck('permission_code') as $code) {
-            $map[(string) $code] = true;
+        foreach ($this->catalog()->codesForModule('mobile_manager') as $code) {
+            $map[$code] = true;
         }
 
         $aliases = config('permission_aliases', []);
