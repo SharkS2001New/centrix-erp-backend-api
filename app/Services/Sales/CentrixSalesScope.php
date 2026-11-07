@@ -2,7 +2,9 @@
 
 namespace App\Services\Sales;
 
+use App\Support\EffectiveSaleDate;
 use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 
 /**
@@ -50,7 +52,7 @@ class CentrixSalesScope
      */
     public static function reportSaleDateSql(string $alias = 's'): string
     {
-        if (\App\Support\EffectiveSaleDate::columnExists()) {
+        if (EffectiveSaleDate::columnExists()) {
             return "{$alias}.effective_sale_date";
         }
 
@@ -77,33 +79,52 @@ class CentrixSalesScope
     }
 
     /**
-     * @param  EloquentBuilder<\Illuminate\Database\Eloquent\Model>|QueryBuilder  $query
-     * @return EloquentBuilder<\Illuminate\Database\Eloquent\Model>|QueryBuilder
+     * @param  EloquentBuilder<Model>|QueryBuilder  $query
+     * @return EloquentBuilder<Model>|QueryBuilder
      */
     public static function excludeLegacyMaterialized(EloquentBuilder|QueryBuilder $query, ?string $tableAlias = null): EloquentBuilder|QueryBuilder
     {
-        $prefix = $tableAlias ? "{$tableAlias}." : '';
+        // Resolves via the VIRTUAL INVISIBLE `legacy_materialized` column
+        // added in 2026_06_19_000001, indexed by 2026_11_07_000006. The
+        // generated-column CASE expression matches CentrixSalesScope::isLegacyImportFlag()
+        // exactly — PHP true / 1 / "1" / "true" count as legacy; everything
+        // else is live. Replaces the previous unindexable JSON predicate.
+        $column = $tableAlias ? "{$tableAlias}.legacy_materialized" : 'legacy_materialized';
 
-        return $query->where(function ($sub) use ($prefix) {
-            $sub->whereNull("{$prefix}fulfillment_meta")
-                ->orWhereNull("{$prefix}fulfillment_meta->legacy_import")
-                ->orWhere("{$prefix}fulfillment_meta->legacy_import", '!=', true);
-        });
+        return $query->where($column, 0);
     }
 
     /** SQL predicate for MySQL views (e.g. alias `s`). */
     public static function legacyExcludeSql(string $alias = 's'): string
     {
-        $column = "{$alias}.fulfillment_meta";
+        return "{$alias}.legacy_materialized = 0";
+    }
 
-        return "({$column} IS NULL OR JSON_EXTRACT({$column}, '$.legacy_import') IS NULL OR JSON_EXTRACT({$column}, '$.legacy_import') = false OR JSON_UNQUOTE(JSON_EXTRACT({$column}, '$.legacy_import')) = 'false')";
+    /**
+     * Canonical flag-value check for fulfillment_meta.legacy_import. Mirrors
+     * the generated `sales.legacy_materialized` column's CASE expression
+     * exactly: only PHP `true`, int `1`, string `"1"`, and string `"true"`
+     * count as "legacy". Everything else — `false`, int `0`, int `2`,
+     * `null`, missing key, arrays, objects, string `"TRUE"`, etc. — is
+     * treated as live.
+     *
+     * Use this at every PHP read site that formerly cast `(bool) $meta['legacy_import']`.
+     * The broad bool cast accepted int 2, string "TRUE", etc. as truthy —
+     * SQL never would. Aligning here keeps PHP and MySQL in lockstep.
+     */
+    public static function isLegacyImportFlag(mixed $value): bool
+    {
+        return $value === true
+            || $value === 1
+            || $value === '1'
+            || $value === 'true';
     }
 
     /**
      * Restrict a query builder to sales pipeline statuses used by reports.
      *
-     * @param  EloquentBuilder<\Illuminate\Database\Eloquent\Model>|QueryBuilder  $query
-     * @return EloquentBuilder<\Illuminate\Database\Eloquent\Model>|QueryBuilder
+     * @param  EloquentBuilder<Model>|QueryBuilder  $query
+     * @return EloquentBuilder<Model>|QueryBuilder
      */
     public static function whereReportPipelineStatus(EloquentBuilder|QueryBuilder $query, string $column = 'status'): EloquentBuilder|QueryBuilder
     {

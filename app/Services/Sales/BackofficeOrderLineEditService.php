@@ -14,10 +14,6 @@ use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
 use App\Services\Kra\SalesVatCalculator;
-use App\Services\Sales\DiscountApprovalService;
-use App\Services\Sales\MobileRouteMarkupCheckoutService;
-use App\Services\Sales\PosCashRounding;
-use App\Services\Sales\PosCashRoundingSettings;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
@@ -94,7 +90,7 @@ class BackofficeOrderLineEditService
             throw new InvalidArgumentException('This order cannot be edited.');
         }
 
-        if ((bool) (($sale->fulfillment_meta ?? [])['legacy_import'] ?? false)) {
+        if (CentrixSalesScope::isLegacyImportFlag(($sale->fulfillment_meta ?? [])['legacy_import'] ?? null)) {
             throw new InvalidArgumentException('Legacy orders cannot be edited.');
         }
 

@@ -1,17 +1,20 @@
 <?php
+
 namespace App\Models;
 
 use App\Models\Concerns\BelongsToOrganizationCustomer;
-use Illuminate\Database\Eloquent\Model;
+use App\Services\Sales\CentrixSalesScope;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Sale extends Model
 {
-    use HasFactory;
     use BelongsToOrganizationCustomer;
+    use HasFactory;
 
     protected $table = 'sales';
+
     const UPDATED_AT = null;
 
     public function items()
@@ -73,6 +76,7 @@ class Sale extends Model
         'comments', 'archived', 'deleted_by', 'deleted_at', 'completed_at',
         'cancelled_at', 'cancelled_by', 'expired_at', 'expired_by',
     ];
+
     protected $casts = [
         'fulfillment_meta' => 'array',
         'amount_paid' => 'decimal:2',
@@ -140,11 +144,18 @@ class Sale extends Model
 
     public function scopeCentrixMetrics($query)
     {
-        return \App\Services\Sales\CentrixSalesScope::excludeLegacyMaterialized($query);
+        return CentrixSalesScope::excludeLegacyMaterialized($query);
     }
 
     public function scopeLegacyMaterialized($query)
     {
-        return $query->where('fulfillment_meta->legacy_import', true);
+        // Column added in 2026_06_19_000001; composite index
+        // idx_sales_legacy_pipeline added in 2026_11_07_000006 (split from the
+        // column migration because the index references effective_sale_date,
+        // which was added later). The VIRTUAL INVISIBLE `legacy_materialized`
+        // column encodes the same truthiness as
+        // CentrixSalesScope::isLegacyImportFlag(), so this query is the exact
+        // inverse of excludeLegacyMaterialized.
+        return $query->where('legacy_materialized', 1);
     }
 }

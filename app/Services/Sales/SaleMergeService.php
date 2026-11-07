@@ -14,6 +14,7 @@ use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
 use App\Services\Notifications\ActionRequestService;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -150,7 +151,7 @@ class SaleMergeService
             throw new InvalidArgumentException("Order #{$sale->order_num} cannot be merged.");
         }
 
-        if ((bool) (($sale->fulfillment_meta ?? [])['legacy_import'] ?? false)) {
+        if (CentrixSalesScope::isLegacyImportFlag(($sale->fulfillment_meta ?? [])['legacy_import'] ?? null)) {
             throw new InvalidArgumentException("Legacy order #{$sale->order_num} cannot be merged.");
         }
 
@@ -175,7 +176,7 @@ class SaleMergeService
         }
     }
 
-    /** @param  \Illuminate\Support\Collection<int, Sale>  $sales */
+    /** @param  Collection<int, Sale>  $sales */
     protected function assertSameCustomerAndRoute($sales): void
     {
         $customerNums = $sales->map(fn (Sale $sale) => (int) ($sale->customer_num ?? 0))->unique()->values();
@@ -197,7 +198,7 @@ class SaleMergeService
         return $channel === 'mobile' || $source === 'mobile';
     }
 
-    /** @param  \Illuminate\Support\Collection<int, Sale>  $sales */
+    /** @param  Collection<int, Sale>  $sales */
     protected function resolveTarget($sales, ?int $targetSaleId): Sale
     {
         if ($targetSaleId) {

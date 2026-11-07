@@ -2,6 +2,7 @@
 
 namespace App\Services\Sales;
 
+use App\Models\CustomerReturn;
 use App\Models\KraResponse;
 use App\Models\Sale;
 use App\Models\User;
@@ -71,13 +72,12 @@ class PosOrderEditService
         User $user,
         CapabilityGate $gate,
         ?string $requestDeviceId = null,
-    ): void
-    {
+    ): void {
         if ($sale->status === 'cancelled' || (int) ($sale->archived ?? 0) === 1) {
             throw new InvalidArgumentException('This order cannot be edited.');
         }
 
-        if ((bool) (($sale->fulfillment_meta ?? [])['legacy_import'] ?? false)) {
+        if (CentrixSalesScope::isLegacyImportFlag(($sale->fulfillment_meta ?? [])['legacy_import'] ?? null)) {
             throw new InvalidArgumentException('Legacy materialized orders cannot be edited from POS.');
         }
 
@@ -132,8 +132,7 @@ class PosOrderEditService
         User $user,
         CapabilityGate $gate,
         ?string $requestDeviceId = null,
-    ): bool
-    {
+    ): bool {
         try {
             $this->assertSaleEditable($sale, $user, $gate, $requestDeviceId);
 
@@ -177,7 +176,7 @@ class PosOrderEditService
         }
 
         // Already voided for a prior restore attempt — skip KRA/device round-trip.
-        if (\App\Models\CustomerReturn::query()
+        if (CustomerReturn::query()
             ->where('sale_id', $sale->id)
             ->where('return_kind', 'pos_edit')
             ->where('status', 'approved')
