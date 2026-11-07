@@ -11,18 +11,21 @@ use App\Models\Role;
 use App\Models\User;
 use App\Services\Accounting\FiscalPeriodService;
 use App\Services\Accounting\StandardChartOfAccounts;
+use App\Services\Auth\RoleTemplateService;
+use App\Services\Auth\SecuritySettingsResolver;
+use App\Services\Auth\UserLoginChannelPolicy;
+use App\Services\Auth\UserLoginChannelService;
+use App\Services\Auth\UserMobileLoginValidator;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\IndustryRegistry;
 use App\Services\Erp\ModuleRegistry;
 use App\Services\Erp\PermissionMatrixService;
+use App\Services\Organization\OrganizationCompanyCodeService;
 use App\Services\Organization\OrganizationReferenceDataService;
-use App\Services\OrganizationPlatformConfigService;
-use App\Services\Auth\RoleTemplateService;
-use App\Services\Auth\UserLoginChannelPolicy;
-use App\Services\Auth\UserLoginChannelService;
-use App\Services\Auth\UserMobileLoginValidator;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\ValidationException;
 
 class OrganizationProvisioningService
 {
@@ -37,20 +40,48 @@ class OrganizationProvisioningService
             $registrationSource = 'platform_created';
         }
 
+        // Normalized uniqueness is enforced at the DB level by the UNIQUE index
+        // on company_code_normalized (migration 2026_11_07_000004). Validator
+        // rules at both entry points (OrganizationProvisionController,
+        // PublicFreeSignupService) only check exact company_code uniqueness —
+        // `MOON-CO` would pass validation while `MOON_CO` exists and then
+        // explode as a 500 at insert time. Run the same canonical check the
+        // rename flow uses, before create, to return a clean 422.
+        app(OrganizationCompanyCodeService::class)->assertCodeAvailable(
+            (string) ($data['company_code'] ?? ''),
+        );
+
         return DB::transaction(function () use ($data, $registrationSource) {
-            $org = Organization::create([
-                'company_code' => strtoupper($data['company_code']),
-                'org_name' => $data['org_name'],
-                'org_email' => $data['org_email'],
-                'primary_tel' => $data['primary_tel'],
-                'org_address' => $data['org_address'],
-                'org_pin' => $data['org_pin'] ?? null,
-                'vat_regno' => $data['vat_regno'] ?? null,
-                'deployment_profile' => $data['deployment_profile'],
-                'registration_source' => $registrationSource,
-                'enabled_modules' => $this->normalizeEnabledModules($data['enabled_modules'] ?? null),
-                'module_settings' => $this->defaultModuleSettingsForProfile((string) $data['deployment_profile']),
-            ]);
+            // Catch is scoped to the organization insert only. The surrounding
+            // transaction rolls back automatically when ValidationException
+            // propagates. Narrowing here (not around the whole transaction)
+            // means a unique-constraint violation on any other table —
+            // branches, users, role_permissions, platform configuration —
+            // keeps its original type and does not get mis-reported as a
+            // company_code error.
+            try {
+                $org = Organization::create([
+                    'company_code' => strtoupper($data['company_code']),
+                    'org_name' => $data['org_name'],
+                    'org_email' => $data['org_email'],
+                    'primary_tel' => $data['primary_tel'],
+                    'org_address' => $data['org_address'],
+                    'org_pin' => $data['org_pin'] ?? null,
+                    'vat_regno' => $data['vat_regno'] ?? null,
+                    'deployment_profile' => $data['deployment_profile'],
+                    'registration_source' => $registrationSource,
+                    'enabled_modules' => $this->normalizeEnabledModules($data['enabled_modules'] ?? null),
+                    'module_settings' => $this->defaultModuleSettingsForProfile((string) $data['deployment_profile']),
+                ]);
+            } catch (UniqueConstraintViolationException $e) {
+                // Race: assertCodeAvailable() passed and then a concurrent
+                // request committed a colliding primary code or a normalized
+                // collision. Translate to the same 422 users/admins already
+                // get from the pre-check path.
+                throw ValidationException::withMessages([
+                    'company_code' => ["Company code [{$data['company_code']}] is already used by another organization."],
+                ]);
+            }
 
             $org = $this->syncModuleSettingsFromEnabledModules($org);
 
@@ -179,7 +210,7 @@ class OrganizationProvisioningService
      */
     protected function defaultModuleSettingsForProfile(string $profile): array
     {
-        $security = \App\Services\Auth\SecuritySettingsResolver::normalize(
+        $security = SecuritySettingsResolver::normalize(
             config('erp.module_settings_defaults.security', []),
         );
 

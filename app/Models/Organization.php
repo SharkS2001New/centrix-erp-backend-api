@@ -1,8 +1,12 @@
 <?php
+
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
+use App\Services\Cache\OrganizationCache;
+use App\Services\Erp\ErpContext;
+use App\Support\OrganizationPublicStorage;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\DB;
 
@@ -14,7 +18,7 @@ class Organization extends Model
     {
         static::updated(function (self $organization): void {
             if ($organization->wasChanged('module_settings')) {
-                \App\Services\Cache\OrganizationCache::forget(
+                OrganizationCache::forget(
                     (int) $organization->getKey(),
                     'kra.comstore_api_key',
                 );
@@ -23,12 +27,14 @@ class Organization extends Model
     }
 
     protected $table = 'organizations';
+
     protected $fillable = [
         'company_code', 'company_code_aliases', 'logo', 'primary_color', 'org_name', 'org_email', 'primary_tel',
         'secondary_tel', 'addn_tel1', 'addn_tel2', 'org_address', 'org_pin', 'vat_regno',
         'deployment_profile', 'enabled_modules', 'module_settings', 'is_active',
         'registration_source',
     ];
+
     protected $casts = [
         'company_code_aliases' => 'array',
         'enabled_modules' => 'array',
@@ -38,7 +44,12 @@ class Organization extends Model
 
     public static function normalizeCompanyCodeIdentifier(string $code): string
     {
-        return strtoupper(preg_replace('/[^A-Z0-9]/', '', trim($code)) ?? '');
+        // Strip BOTH cases before uppercasing — the previous regex only kept
+        // uppercase ASCII, so `moon-co` collapsed to '' and `Moon.Co` to 'MC'.
+        // The SQL side (REGEXP_REPLACE with [^A-Za-z0-9]) always produced
+        // MOONCO for the same input, so prior lowercase callers silently
+        // routed through the aliases fallback. Fixing both sides to match.
+        return strtoupper(preg_replace('/[^A-Za-z0-9]/', '', trim($code)) ?? '');
     }
 
     public static function findByCompanyCodeIdentifier(string $code): ?self
@@ -48,11 +59,12 @@ class Organization extends Model
             return null;
         }
 
+        // Fast path: hits uq_organizations_company_code_normalized (added in
+        // 2026_11_07_000004). The column is a STORED generated column whose
+        // expression matches normalizeCompanyCodeIdentifier() exactly, so this
+        // and the PHP normalizer always agree.
         $primary = static::query()
-            ->whereRaw(
-                "UPPER(REPLACE(REPLACE(REPLACE(company_code, '-', ''), ' ', ''), '_', '')) = ?",
-                [$normalized],
-            )
+            ->where('company_code_normalized', $normalized)
             ->first();
 
         if ($primary) {
@@ -122,7 +134,7 @@ class Organization extends Model
 
     public static function logoIsStoredFile(?string $logo): bool
     {
-        return \App\Support\OrganizationPublicStorage::isOrgScopedPath($logo);
+        return OrganizationPublicStorage::isOrgScopedPath($logo);
     }
 
     /**
@@ -153,7 +165,7 @@ class Organization extends Model
 
         // Settings PATCH responses re-read via CapabilityGate; drop request-scoped
         // org/gate caches so the same request sees these updates.
-        app(\App\Services\Erp\ErpContext::class)->forgetOrganizationCache((int) $this->getKey());
+        app(ErpContext::class)->forgetOrganizationCache((int) $this->getKey());
 
         return $this;
     }
