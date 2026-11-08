@@ -87,6 +87,15 @@ class UserMobileOrderScopeService
      */
     public function assignedRouteIds(User $user): array
     {
+        $attrKey = 'mobile_assigned_route_ids:'.(int) $user->id;
+        $request = app()->bound('request') ? request() : null;
+        if ($request !== null && $request->attributes->has($attrKey)) {
+            /** @var list<int> $cached */
+            $cached = $request->attributes->get($attrKey);
+
+            return $cached;
+        }
+
         $ids = [];
         if ($this->hasUserAssignedRoutesTable()) {
             if ($user->relationLoaded('assignedRoutes')) {
@@ -106,7 +115,10 @@ class UserMobileOrderScopeService
             $ids = [(int) $user->assigned_route_id];
         }
 
-        return array_values(array_unique(array_filter($ids, fn ($id) => $id > 0)));
+        $ids = array_values(array_unique(array_filter($ids, fn ($id) => $id > 0)));
+        $request?->attributes->set($attrKey, $ids);
+
+        return $ids;
     }
 
     /**

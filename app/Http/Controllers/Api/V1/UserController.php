@@ -335,7 +335,7 @@ class UserController extends BaseResourceController
 
     public function permissions(string $id, ?string $nestedId = null)
     {
-        PermissionMatrixService::ensure();
+        PermissionMatrixService::ensureCached();
 
         return response()->json(
             app(UserPermissionService::class)->describeForUser(
@@ -449,19 +449,18 @@ class UserController extends BaseResourceController
         }
 
         $perPage = min((int) $request->input('per_page', 25), 200);
-        $paginator = $query->orderBy('full_name')->paginate($perPage);
+        // Eager-load route allowlists so list rows do not N+1 on assignedRoutes().
+        $paginator = $query->with('assignedRoutes')->orderBy('full_name')->paginate($perPage);
         $expiryService = app(PasswordExpiryService::class);
+        $scopeService = app(UserMobileOrderScopeService::class);
         $tillByCashier = \App\Models\Till::query()
             ->whereIn('cashier_id', $paginator->getCollection()->pluck('id')->filter()->all())
             ->pluck('id', 'cashier_id');
-        $paginator->through(function (User $user) use ($expiryService, $tillByCashier) {
+        $paginator->through(function (User $user) use ($expiryService, $tillByCashier, $scopeService) {
             $user = $this->withPasswordLockFlag($user, $expiryService);
             $tillId = $tillByCashier->get($user->id);
             $user->setAttribute('till_id', $tillId ? (int) $tillId : null);
-            $user->setAttribute(
-                'assigned_route_ids',
-                app(UserMobileOrderScopeService::class)->assignedRouteIds($user),
-            );
+            $user->setAttribute('assigned_route_ids', $scopeService->assignedRouteIds($user));
 
             return $user;
         });

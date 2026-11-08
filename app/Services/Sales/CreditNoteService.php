@@ -9,6 +9,7 @@ use App\Models\Organization;
 use App\Models\Sale;
 use App\Models\User;
 use App\Services\Erp\CapabilityGate;
+use App\Services\Kra\KraAutoRetryPolicy;
 use App\Services\Kra\KraDeviceErrorTranslator;
 use App\Services\Kra\KraDeviceFailure;
 use App\Services\Kra\KraDeviceService;
@@ -222,11 +223,34 @@ class CreditNoteService
                 continue;
             }
 
+            $retryMeta = KraAutoRetryPolicy::initializePayload(
+                is_array($creditNote->kra_response_payload) ? $creditNote->kra_response_payload : [],
+            );
+            if (! KraAutoRetryPolicy::shouldAutoRetry($retryMeta)) {
+                $stats['skipped']++;
+                if (KraAutoRetryPolicy::isExhausted($retryMeta)) {
+                    $creditNote->update([
+                        'kra_response_payload' => array_merge($retryMeta, ['auto_retry_exhausted' => true]),
+                    ]);
+                }
+                continue;
+            }
+
+            $retryMeta = KraAutoRetryPolicy::markAttempt($retryMeta);
+            $creditNote->update(['kra_response_payload' => $retryMeta]);
+
             $stats['attempted']++;
-            $updated = $this->attemptKraForCreditNote($creditNote);
+            $updated = $this->attemptKraForCreditNote($creditNote->fresh() ?? $creditNote);
             if ((string) $updated->kra_status === 'success') {
                 $stats['succeeded']++;
             } else {
+                $payload = is_array($updated->kra_response_payload) ? $updated->kra_response_payload : [];
+                foreach (['auto_retry_count', 'auto_retry_last_at', 'auto_retry_exhausted', 'auto_retry_exhausted_at'] as $key) {
+                    if (array_key_exists($key, $retryMeta)) {
+                        $payload[$key] = $retryMeta[$key];
+                    }
+                }
+                $updated->update(['kra_response_payload' => $payload]);
                 $stats['still_pending']++;
             }
         }
@@ -250,6 +274,12 @@ class CreditNoteService
                 continue;
             }
 
+            $attemptPayload = KraAutoRetryPolicy::initializePayload($attemptPayload);
+            if (! KraAutoRetryPolicy::shouldAutoRetry($attemptPayload)) {
+                $stats['skipped']++;
+                continue;
+            }
+
             $sale = Sale::query()
                 ->with(['items.product.vat', 'customer'])
                 ->find((int) $attemptRow->sale_id);
@@ -266,6 +296,10 @@ class CreditNoteService
                 $stats['skipped']++;
                 continue;
             }
+
+            $attemptPayload = KraAutoRetryPolicy::markAttempt($attemptPayload);
+            $attemptRow->response_payload = $attemptPayload;
+            $attemptRow->save();
 
             $stats['attempted']++;
             try {
@@ -543,11 +577,16 @@ class CreditNoteService
         ?array $requestPayload,
         ?array $responsePayload,
     ): CreditNote {
+        $payload = is_array($responsePayload) ? $responsePayload : [];
+        if (in_array($status, ['pending', 'failed'], true)) {
+            $payload = KraAutoRetryPolicy::initializePayload($payload);
+        }
+
         $creditNote->update([
             'kra_status' => $status,
             'kra_relevant_invoice_number' => $relevantInvoice,
             'kra_request_payload' => $requestPayload,
-            'kra_response_payload' => $responsePayload,
+            'kra_response_payload' => $payload !== [] ? $payload : $responsePayload,
             'kra_error_message' => $message,
         ]);
 
@@ -701,13 +740,8 @@ class CreditNoteService
             ? $existingTraderNumber
             : app(KraTraderInvoiceAllocator::class)->forOrganization((int) $sale->organization_id);
 
-        $orderItems = $sale->items->map(fn ($line) => [
-            'product_name' => $line->resolvedProductName(),
-            'product_code' => $line->product_code,
-            'quantity' => (float) $line->quantity,
-            'amount' => (float) $line->amount,
-            'product_vat' => (float) ($line->product_vat ?? 0),
-        ])->all();
+        // Match original payable total (post order_discount) so credit = what eTIMS booked.
+        $orderItems = \App\Services\Kra\KraSaleFiscalBuilder::orderItemsFromSale($sale);
 
         $buyerPin = trim((string) ($sale->customer?->kra_pin ?? ''));
         $buyerPin = $buyerPin !== '' ? $buyerPin : null;

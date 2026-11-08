@@ -274,17 +274,29 @@ class CartOperationsController extends Controller
     public function updateLine(UpdateCartLineRequest $request, int|string $cartId, string $lineRef)
     {
         $user = $request->user();
-        $cart = $this->findOwnedCart($cartId, $user);
+        $cart = $this->findOwnedCart($cartId, $user, withLines: false);
         $gate = $this->erp->gateForUser($user);
         $validated = $request->validated();
+        $isMobile = $this->isMobileChannelCart($cart);
 
-        DB::transaction(function () use ($cart, $lineRef, $validated, $user, $gate) {
+        $updatedCart = DB::transaction(function () use ($cart, $lineRef, $validated, $user, $gate) {
             $locked = TemporaryCart::query()->whereKey($cart->id)->lockForUpdate()->first();
             if (! $locked) {
                 throw new InvalidArgumentException('Cart not found.');
             }
             $this->updateCartLine($locked, $lineRef, $validated, $user, $gate);
+
+            return $locked;
         }, 5);
+
+        // Match addLine: mobile only needs update_no — full cart present is a scroll killer.
+        if ($isMobile) {
+            return response()->json([
+                'id' => (int) $updatedCart->id,
+                'update_no' => (int) $updatedCart->update_no,
+                'update_code' => (string) $lineRef,
+            ]);
+        }
 
         return $this->cartResponse($this->freshOwnedCart($cart), $user, includeNextOrderNum: false);
     }

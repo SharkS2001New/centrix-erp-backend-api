@@ -118,6 +118,10 @@ trait HandlesInventory
                 'created_by' => $data['created_by'],
             ]);
 
+            // Keep current_stock in lockstep with quantity_after even when the DB
+            // trigger is missing (schema expects trg_sync_stock AFTER INSERT).
+            $this->applyLedgerBalanceToCurrentStock($productCode, $branchId, (string) $location, $after);
+
             $this->syncProductStockTotals($productCode, $branchId);
 
             return $txn;
@@ -134,6 +138,48 @@ trait HandlesInventory
     protected function syncProductStockTotals(string $productCode, int $branchId): void
     {
         app(ProductStockDenormService::class)->syncFromCurrentStock($productCode, $branchId);
+    }
+
+    /**
+     * Mirror inventory_transactions.quantity_after onto current_stock for the location.
+     * Safe to call alongside trg_sync_stock — both write the same absolute balance.
+     */
+    protected function applyLedgerBalanceToCurrentStock(
+        string $productCode,
+        int $branchId,
+        string $location,
+        float $quantityAfter,
+    ): void {
+        $column = $location === 'store' ? 'store_quantity' : 'shop_quantity';
+
+        $updated = CurrentStock::query()
+            ->where('product_code', $productCode)
+            ->where('branch_id', $branchId)
+            ->update([
+                $column => $quantityAfter,
+                'last_updated' => now(),
+            ]);
+
+        if ($updated > 0) {
+            return;
+        }
+
+        try {
+            CurrentStock::query()->insert([
+                'product_code' => $productCode,
+                'branch_id' => $branchId,
+                'shop_quantity' => $location === 'shop' ? $quantityAfter : 0,
+                'store_quantity' => $location === 'store' ? $quantityAfter : 0,
+            ]);
+        } catch (QueryException) {
+            CurrentStock::query()
+                ->where('product_code', $productCode)
+                ->where('branch_id', $branchId)
+                ->update([
+                    $column => $quantityAfter,
+                    'last_updated' => now(),
+                ]);
+        }
     }
 
     protected function reverseSaleStockDeductions(Sale $sale, User $user): void

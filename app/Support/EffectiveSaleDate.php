@@ -5,6 +5,7 @@ namespace App\Support;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
 use Illuminate\Database\Query\Builder as QueryBuilder;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schema;
 
 class EffectiveSaleDate
@@ -22,10 +23,16 @@ class EffectiveSaleDate
 
     public static function columnExists(): bool
     {
-        if (self::$columnExists === null) {
-            self::$columnExists = Schema::hasTable('sales')
-                && Schema::hasColumn('sales', 'effective_sale_date');
+        if (self::$columnExists !== null) {
+            return self::$columnExists;
         }
+
+        self::$columnExists = (bool) Cache::remember(
+            'schema.sales.effective_sale_date',
+            86400,
+            fn () => Schema::hasTable('sales')
+                && Schema::hasColumn('sales', 'effective_sale_date'),
+        );
 
         return self::$columnExists;
     }

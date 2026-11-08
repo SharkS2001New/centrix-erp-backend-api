@@ -50,7 +50,13 @@ RUN docker-php-ext-configure gd --with-freetype=/usr/include/ --with-jpeg=/usr/i
 ENV APACHE_DOCUMENT_ROOT=/var/www/html/public
 RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-available/*.conf \
     && sed -ri -e 's!/var/www/!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/apache2.conf /etc/apache2/conf-available/*.conf \
-    && a2enmod rewrite headers \
+    && a2enmod rewrite headers deflate \
+    && printf '%s\n' \
+        '<IfModule mod_deflate.c>' \
+        '  AddOutputFilterByType DEFLATE application/json text/plain text/html text/xml text/css application/javascript application/x-javascript' \
+        '</IfModule>' \
+        > /etc/apache2/conf-available/deflate-json.conf \
+    && a2enconf deflate-json \
     && sed -i 's/Listen 80/Listen 8001/' /etc/apache2/ports.conf \
     && sed -i 's/:80/:8001/' /etc/apache2/sites-available/*.conf \
     && echo "ServerName localhost" >> /etc/apache2/apache2.conf

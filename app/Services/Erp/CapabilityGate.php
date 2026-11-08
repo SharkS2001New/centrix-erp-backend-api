@@ -843,6 +843,12 @@ class CapabilityGate
             return true;
         }
 
+        // Hard deduct on this checkout — soft holds are not the checkout outcome.
+        // (Checkout still transfers cart holds via pendingStockDeduct before deduct.)
+        if ($this->shouldDeductStockAtCheckout($workflow, $orderStatus, $channel)) {
+            return false;
+        }
+
         return $this->shouldReserveStockOnCheckout($workflow, $orderStatus, $channel);
     }
 

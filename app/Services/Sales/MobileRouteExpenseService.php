@@ -60,7 +60,7 @@ class MobileRouteExpenseService
             $query->where('expense_date', '<=', $toDate);
         }
 
-        return $query->limit(200)->get()->map(fn (MobileRouteExpense $row) => $this->serialize($row))->all();
+        return $query->limit(75)->get()->map(fn (MobileRouteExpense $row) => $this->serialize($row))->all();
     }
 
     /**
@@ -123,7 +123,7 @@ class MobileRouteExpenseService
             ->where('status', MobileRouteExpense::STATUS_PENDING)
             ->orderByDesc('id');
 
-        return $query->limit(200)->get()->map(fn (MobileRouteExpense $row) => $this->serialize($row))->all();
+        return $query->limit(75)->get()->map(fn (MobileRouteExpense $row) => $this->serialize($row))->all();
     }
 
     /**
@@ -154,7 +154,7 @@ class MobileRouteExpenseService
             });
         }
 
-        return $query->limit(200)->get()->map(fn (MobileRouteExpense $row) => $this->serialize($row))->all();
+        return $query->limit(75)->get()->map(fn (MobileRouteExpense $row) => $this->serialize($row))->all();
     }
 
     /**
@@ -379,6 +379,17 @@ class MobileRouteExpenseService
 
     protected function tableReady(): bool
     {
-        return \Illuminate\Support\Facades\Schema::hasTable('mobile_route_expenses');
+        static $ready = null;
+        if ($ready !== null) {
+            return $ready;
+        }
+
+        $ready = (bool) \Illuminate\Support\Facades\Cache::remember(
+            'schema.table:mobile_route_expenses',
+            86400,
+            fn () => \Illuminate\Support\Facades\Schema::hasTable('mobile_route_expenses'),
+        );
+
+        return $ready;
     }
 }

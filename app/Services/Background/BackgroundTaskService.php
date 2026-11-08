@@ -125,6 +125,33 @@ class BackgroundTaskService
         return true;
     }
 
+    /**
+     * Reset a running task to pending so Laravel job retries can claim it again
+     * (used for capped KRA product-registration auto-retries).
+     */
+    public function requeueForAutoRetry(BackgroundTask $task, int $attempt, ?string $message = null): void
+    {
+        if ($this->isTerminal($task)) {
+            return;
+        }
+
+        $payload = is_array($task->payload) ? $task->payload : [];
+        $payload['auto_retry_count'] = max((int) ($payload['auto_retry_count'] ?? 0), $attempt);
+        $payload['auto_retry_last_at'] = now()->toIso8601String();
+        $payload['progress_message'] = $message
+            ?: "Auto-retry {$attempt}/".\App\Services\Kra\KraAutoRetryPolicy::maxAttempts().' scheduled…';
+
+        BackgroundTask::query()->whereKey($task->id)->update([
+            'status' => 'pending',
+            'progress' => 0,
+            'started_at' => null,
+            'finished_at' => null,
+            'error_message' => null,
+            'payload' => $payload,
+        ]);
+        $task->refresh();
+    }
+
     public function updateProgress(BackgroundTask $task, int $progress, ?string $message = null, ?int $processed = null, ?int $total = null): void
     {
         if ($this->isCancelled($task)) {
@@ -232,17 +259,22 @@ class BackgroundTaskService
         ]);
     }
 
-    public function markFailed(BackgroundTask $task, string $message): void
+    public function markFailed(BackgroundTask $task, string $message, array $result = []): void
     {
         if ($this->isTerminal($task)) {
             return;
         }
 
-        $task->update([
+        $updates = [
             'status' => 'failed',
             'error_message' => $message,
             'finished_at' => now(),
-        ]);
+        ];
+        if ($result !== []) {
+            $updates['result'] = $result;
+        }
+
+        $task->update($updates);
     }
 
     public function findForUser(string $id, User $user): ?BackgroundTask
@@ -354,17 +386,22 @@ class BackgroundTaskService
             );
         }
 
+        $longMinutes = max(
+            (int) config('background.stale_export_running_minutes', 150),
+            (int) config('background.stale_long_running_minutes', 150),
+        );
+
         if (
             str_contains($type, 'export')
             || str_contains($type, 'report')
             || str_contains($type, 'paginated')
             || str_contains($type, 'backup')
             || str_contains($type, 'stock_take')
+            || str_contains($type, 'kra')
+            || str_contains($type, 'payroll')
+            || str_contains($type, 'accounting')
         ) {
-            return max(
-                $default,
-                (int) config('background.stale_export_running_minutes', 75),
-            );
+            return max($default, $longMinutes);
         }
 
         return $default;

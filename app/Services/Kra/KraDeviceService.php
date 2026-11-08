@@ -235,6 +235,21 @@ class KraDeviceService
             return $result;
         }
 
+        // Checkout must return the signed receipt (QR) immediately. A second agent hop to
+        // /api/invoices/manually-upload can add several seconds after signing — defer that to
+        // erp:retry-pending-kra-invoice-uploads so POS/mobile stay snappy.
+        if (! empty($context['checkout'])) {
+            $response['online_upload_status'] = 'pending';
+            $response['online_upload_deferred'] = true;
+            if ($deviceStatus === '' || str_contains($deviceStatus, 'not yet')) {
+                $response['transmit_status'] = 'Signed — eTIMS upload queued in background.';
+            }
+            $response = KraAutoRetryPolicy::initializePayload($response);
+            $result['response'] = $response;
+
+            return $result;
+        }
+
         $uploadContext = $context;
         unset($uploadContext['tenders']);
         $uploadContext['agent_wait_seconds'] = min(
@@ -249,6 +264,8 @@ class KraDeviceService
             : (string) ($upload['message'] ?? 'Could not queue invoice for eTIMS upload.');
         if ($response['online_upload_status'] === 'queued') {
             $response['transmit_status'] = 'Invoices queued for manual upload to eTIMS.';
+        } else {
+            $response = KraAutoRetryPolicy::initializePayload($response);
         }
         $result['response'] = $response;
 
@@ -273,9 +290,14 @@ class KraDeviceService
      * A device or connection failure stops the upload, because every item would fail the same way.
      *
      * @param  iterable<int, object>  $products
+     * @param  null|callable(int $processed, int $total, int $registered, int $skipped): void  $onProgress
      */
-    public function registerProducts(iterable $products, string $path = '/api/register-plu', array $financeSettings = []): array
-    {
+    public function registerProducts(
+        iterable $products,
+        string $path = '/api/register-plu',
+        array $financeSettings = [],
+        ?callable $onProgress = null,
+    ): array {
         $this->assertDeviceConfigured();
 
         $items = is_array($products) ? $products : iterator_to_array($products);
@@ -298,6 +320,15 @@ class KraDeviceService
         $skipped = 0;
         $skippedProducts = [];
         $lastResponse = null;
+        $total = count($items);
+        $processed = 0;
+
+        $reportProgress = function () use ($onProgress, &$processed, $total, &$registered, &$skipped): void {
+            if ($onProgress === null) {
+                return;
+            }
+            $onProgress($processed, $total, $registered, $skipped);
+        };
 
         if ($this->usesUploadPluDataPayload($path)) {
             $batchSize = max(1, (int) (
@@ -309,11 +340,15 @@ class KraDeviceService
             foreach ($chunks as $index => $chunk) {
                 $outcome = $this->uploadPluChunk($chunk, $path, $index + 1);
                 if (! ($outcome['success'] ?? false)) {
+                    $processed += (int) ($outcome['registered_count'] ?? 0)
+                        + (int) ($outcome['skipped_count'] ?? 0);
+                    $reportProgress();
+
                     return array_merge($outcome, [
                         'registered_count' => $registered + (int) ($outcome['registered_count'] ?? 0),
                         'skipped_count' => $skipped + (int) ($outcome['skipped_count'] ?? 0),
                         'skipped_products' => array_merge($skippedProducts, $outcome['skipped_products'] ?? []),
-                        'product_count' => count($items),
+                        'product_count' => $total,
                         'batch' => $index + 1,
                     ]);
                 }
@@ -322,6 +357,8 @@ class KraDeviceService
                 $skipped += (int) ($outcome['skipped_count'] ?? 0);
                 $skippedProducts = array_merge($skippedProducts, $outcome['skipped_products'] ?? []);
                 $lastResponse = $outcome['response'] ?? $lastResponse;
+                $processed += count($chunk);
+                $reportProgress();
             }
         } else {
             $chunks = array_chunk($items, 200);
@@ -329,11 +366,15 @@ class KraDeviceService
             foreach ($chunks as $index => $chunk) {
                 $outcome = $this->registerPluChunk($chunk, $path, $index + 1);
                 if (! ($outcome['success'] ?? false)) {
+                    $processed += (int) ($outcome['registered_count'] ?? 0)
+                        + (int) ($outcome['skipped_count'] ?? 0);
+                    $reportProgress();
+
                     return array_merge($outcome, [
                         'registered_count' => $registered + (int) ($outcome['registered_count'] ?? 0),
                         'skipped_count' => $skipped + (int) ($outcome['skipped_count'] ?? 0),
                         'skipped_products' => array_merge($skippedProducts, $outcome['skipped_products'] ?? []),
-                        'product_count' => count($items),
+                        'product_count' => $total,
                         'batch' => $index + 1,
                     ]);
                 }
@@ -342,6 +383,8 @@ class KraDeviceService
                 $skipped += (int) ($outcome['skipped_count'] ?? 0);
                 $skippedProducts = array_merge($skippedProducts, $outcome['skipped_products'] ?? []);
                 $lastResponse = $outcome['response'] ?? $lastResponse;
+                $processed += count($chunk);
+                $reportProgress();
             }
         }
 
@@ -351,7 +394,7 @@ class KraDeviceService
             'registered_count' => $registered,
             'skipped_count' => $skipped,
             'skipped_products' => $skippedProducts,
-            'product_count' => count($items),
+            'product_count' => $total,
             'response' => $lastResponse,
         ];
     }
@@ -1110,6 +1153,20 @@ class KraDeviceService
             $cashAmt = round($cashAmt + $tenderShortfall, 2);
         } elseif ($tenders === null && abs($tenderShortfall) > 0.009) {
             $cashAmt = $pluLineTotal;
+        } elseif ($tenderShortfall < -0.009) {
+            // Overpay vs fiscal gross — trim cash first, then card, then cheque.
+            $overpay = abs($tenderShortfall);
+            $cashCut = min($cashAmt, $overpay);
+            $cashAmt = round($cashAmt - $cashCut, 2);
+            $overpay = round($overpay - $cashCut, 2);
+            if ($overpay > 0.009) {
+                $cardCut = min($cardAmt, $overpay);
+                $cardAmt = round($cardAmt - $cardCut, 2);
+                $overpay = round($overpay - $cardCut, 2);
+            }
+            if ($overpay > 0.009) {
+                $checkAmt = round(max(0.0, $checkAmt - $overpay), 2);
+            }
         }
 
         $isCreditNote = $invoiceType === 'credit';

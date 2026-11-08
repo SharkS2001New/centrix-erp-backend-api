@@ -13,6 +13,7 @@ use App\Services\Mobile\ManagerAppModuleAccessService;
 use App\Models\UserDeviceToken;
 use App\Services\Mobile\UserDeviceTokenService;
 use App\Services\Mobile\ManagerReportCatalogService;
+use App\Services\Cache\OrganizationCache;
 use App\Services\Sales\MobileManagerService;
 use App\Support\SqlLikeSearch;
 use Illuminate\Http\Request;
@@ -51,17 +52,25 @@ class MobileManagerController extends Controller
         $orgId = (int) ($this->access->organizationId($user, $request) ?? 0);
         abort_if($orgId <= 0, 403, 'Organization context is required.');
 
-        $query = Branch::query()
-            ->where('organization_id', $orgId)
-            ->where('is_active', true)
-            ->orderBy('branch_name');
+        $scope = (string) ($user->access_scope ?? 'org');
+        $branchLimit = ($scope === 'branch' && $user->branch_id) ? (int) $user->branch_id : 0;
+        $cacheKey = sprintf('manager.branches:u%d:b%d', (int) $user->id, $branchLimit);
 
-        if (($user->access_scope ?? 'org') === 'branch' && $user->branch_id) {
-            $query->whereKey($user->branch_id);
-        }
+        $data = OrganizationCache::remember($orgId, $cacheKey, 600, function () use ($orgId, $branchLimit) {
+            $query = Branch::query()
+                ->where('organization_id', $orgId)
+                ->where('is_active', true)
+                ->orderBy('branch_name');
+
+            if ($branchLimit > 0) {
+                $query->whereKey($branchLimit);
+            }
+
+            return $query->get(['id', 'branch_code', 'branch_name', 'branch_type'])->all();
+        });
 
         return response()->json([
-            'data' => $query->get(['id', 'branch_code', 'branch_name', 'branch_type']),
+            'data' => $data,
         ]);
     }
 

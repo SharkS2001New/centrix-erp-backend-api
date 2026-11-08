@@ -298,6 +298,107 @@ class ReportController extends Controller
     }
 
     /**
+     * Lean sales trend for manager / mobile charts — two grouped SUM queries only.
+     * Avoids rebuilding inventory, receivables, top products, and channel KPIs.
+     *
+     * @return list<array{date: string, label: string, current: float, previous: float}>
+     */
+    public function leanSalesTrend(
+        ?int $orgId,
+        ?int $branchId,
+        Carbon $from,
+        Carbon $to,
+    ): array {
+        $fromDay = $from->copy()->startOfDay();
+        $toDay = $to->copy()->startOfDay();
+        if ($fromDay->gt($toDay)) {
+            [$fromDay, $toDay] = [$toDay, $fromDay];
+        }
+
+        $build = function () use ($orgId, $branchId, $fromDay, $toDay): array {
+            $metricStatuses = app(OrderWorkflowService::class)->metricSaleStatuses();
+            $dayExpr = EffectiveSaleDate::daySqlExpression();
+            $days = max(1, $fromDay->diffInDays($toDay) + 1);
+            $prevTo = $fromDay->copy()->subDay();
+            $prevFrom = $prevTo->copy()->subDays($days - 1);
+
+            $salesBase = function (Carbon $start, Carbon $end) use ($branchId, $orgId, $metricStatuses) {
+                $query = DB::table('sales')
+                    ->whereIn('status', $metricStatuses)
+                    ->where('archived', 0)
+                    ->when($orgId, fn ($q) => $q->where('organization_id', $orgId))
+                    ->when($branchId, fn ($q) => $q->where('branch_id', $branchId));
+
+                EffectiveSaleDate::applyFromToDateFilter(
+                    $query,
+                    $start->toDateString(),
+                    $end->toDateString(),
+                );
+
+                return CentrixSalesScope::excludeLegacyMaterialized($query);
+            };
+
+            $dailyCurrent = $salesBase($fromDay, $toDay)
+                ->selectRaw("{$dayExpr} as day, SUM(order_total) as total")
+                ->groupBy('day')
+                ->orderBy('day')
+                ->get()
+                ->mapWithKeys(function ($row) {
+                    $key = Carbon::parse((string) $row->day)->toDateString();
+
+                    return [$key => (float) ($row->total ?? 0)];
+                });
+
+            $dailyPrevious = $salesBase($prevFrom, $prevTo)
+                ->selectRaw("{$dayExpr} as day, SUM(order_total) as total")
+                ->groupBy('day')
+                ->orderBy('day')
+                ->get()
+                ->mapWithKeys(function ($row) {
+                    $key = Carbon::parse((string) $row->day)->toDateString();
+
+                    return [$key => (float) ($row->total ?? 0)];
+                });
+
+            $salesTrend = [];
+            $cursor = $fromDay->copy();
+            $previousCursor = $prevFrom->copy();
+            while ($cursor->lte($toDay)) {
+                $dayKey = $cursor->toDateString();
+                $previousDayKey = $previousCursor->toDateString();
+                $salesTrend[] = [
+                    'date' => $dayKey,
+                    'label' => $cursor->format('M j'),
+                    'current' => (float) ($dailyCurrent[$dayKey] ?? 0),
+                    'previous' => (float) ($dailyPrevious[$previousDayKey] ?? 0),
+                ];
+                $cursor->addDay();
+                $previousCursor->addDay();
+            }
+
+            return $salesTrend;
+        };
+
+        $cacheOrgId = (int) ($orgId ?? 0);
+        if ($cacheOrgId <= 0) {
+            return $build();
+        }
+
+        return OrganizationCache::remember(
+            $cacheOrgId,
+            sprintf(
+                'reports.sales_trend:v%d:b%d:%s:%s',
+                OrganizationCache::reportsDashboardVersion($cacheOrgId),
+                (int) $branchId,
+                $fromDay->toDateString(),
+                $toDay->toDateString(),
+            ),
+            120,
+            $build,
+        );
+    }
+
+    /**
      * @param  list<string>  $metricStatuses
      * @return array<string, mixed>
      */
@@ -2661,7 +2762,12 @@ class ReportController extends Controller
             },
             [
                 'select' => $listColumns,
+                // Footer / KPI money = eTIMS portal uploads only (success + live, not test).
                 'lean_summary' => ['order_total', 'amount_paid', 'total_vat'],
+                'lean_summary_money_scope' => [
+                    'status' => 'success',
+                    'is_test' => 0,
+                ],
                 // Prefer timestamp range so (organization_id, created_at) can be used.
                 'prefer_timestamp_date_column' => 'receipt_at',
             ],
@@ -3163,11 +3269,22 @@ class ReportController extends Controller
         $q = $this->buildFilteredReportViewQuery($view, $filters, $allowedCols, $options);
 
         // Full-filter aggregates for KPI / footer cards (not just the current page).
+        // Prefer lean COUNT/SUM (no sample-row materialization) — heavy views with
+        // JSON columns were paying for limit(1) before every summary.
         $leanSummary = $options['lean_summary'] ?? null;
+        if ($leanSummary === null && empty($options['force_sample_summary'])) {
+            $leanSummary = $this->summableColumnsForView($view);
+        }
         if (is_array($leanSummary)) {
-            $summary = $this->aggregateLeanReportSummary(clone $q, $leanSummary);
+            $summary = $this->aggregateLeanReportSummary(
+                clone $q,
+                $leanSummary,
+                is_array($options['lean_summary_money_scope'] ?? null)
+                    ? $options['lean_summary_money_scope']
+                    : null,
+            );
         } else {
-        $summary = $this->aggregateFilteredReportSummary(clone $q, $view);
+            $summary = $this->aggregateFilteredReportSummary(clone $q, $view);
         }
 
         if ($orderBy) {
@@ -3227,11 +3344,16 @@ class ReportController extends Controller
      * Cheap COUNT + SUM for known money columns (avoids loading a full sample row
      * that may include large JSON payload columns).
      *
+     * When $moneyScope is set (e.g. KRA eTIMS: status=success, is_test=0), money
+     * columns and etims_invoice_count use that subset; row_count stays on the full
+     * filtered list so pagination is unchanged.
+     *
      * @param  \Illuminate\Database\Query\Builder  $query
      * @param  list<string>  $sumCols
+     * @param  array<string, mixed>|null  $moneyScope
      * @return array<string, float|int>
      */
-    protected function aggregateLeanReportSummary($query, array $sumCols): array
+    protected function aggregateLeanReportSummary($query, array $sumCols, ?array $moneyScope = null): array
     {
         try {
             $query->reorder();
@@ -3239,15 +3361,41 @@ class ReportController extends Controller
             // continue
         }
 
-        $selects = ['COUNT(*) as row_count'];
+        if (! is_array($moneyScope) || $moneyScope === []) {
+            $selects = ['COUNT(*) as row_count'];
+            foreach ($sumCols as $col) {
+                $escaped = str_replace('`', '``', (string) $col);
+                $selects[] = "COALESCE(SUM(`{$escaped}`), 0) as `{$escaped}`";
+            }
+
+            $agg = (clone $query)->selectRaw(implode(', ', $selects))->first();
+            $summary = [
+                'row_count' => (int) ($agg->row_count ?? 0),
+            ];
+            foreach ($sumCols as $col) {
+                $summary[$col] = round((float) ($agg->{$col} ?? 0), 4);
+            }
+
+            return $summary;
+        }
+
+        // Scoped money totals (KRA eTIMS): list COUNT stays unscoped for pagination.
+        $countAgg = (clone $query)->selectRaw('COUNT(*) as row_count')->first();
+        $moneyQuery = clone $query;
+        foreach ($moneyScope as $column => $value) {
+            $moneyQuery->where((string) $column, $value);
+        }
+
+        $selects = ['COUNT(*) as etims_invoice_count'];
         foreach ($sumCols as $col) {
             $escaped = str_replace('`', '``', (string) $col);
             $selects[] = "COALESCE(SUM(`{$escaped}`), 0) as `{$escaped}`";
         }
 
-        $agg = (clone $query)->selectRaw(implode(', ', $selects))->first();
+        $agg = $moneyQuery->selectRaw(implode(', ', $selects))->first();
         $summary = [
-            'row_count' => (int) ($agg->row_count ?? 0),
+            'row_count' => (int) ($countAgg->row_count ?? 0),
+            'etims_invoice_count' => (int) ($agg->etims_invoice_count ?? 0),
         ];
         foreach ($sumCols as $col) {
             $summary[$col] = round((float) ($agg->{$col} ?? 0), 4);
@@ -3393,26 +3541,34 @@ class ReportController extends Controller
      */
     protected function summableColumnsForView(string $view): array
     {
-        static $cache = [];
-        if (isset($cache[$view])) {
-            return $cache[$view];
+        static $requestCache = [];
+        if (isset($requestCache[$view])) {
+            return $requestCache[$view];
         }
 
-        $names = collect(DB::select(
-            'SELECT column_name AS name
-             FROM information_schema.columns
-             WHERE table_schema = DATABASE() AND table_name = ?',
-            [$view],
-        ))->pluck('name')->map(fn ($n) => (string) $n)->all();
+        $sumCols = \Illuminate\Support\Facades\Cache::remember(
+            "schema.summable:{$view}",
+            86400,
+            function () use ($view) {
+                $names = collect(DB::select(
+                    'SELECT column_name AS name
+                     FROM information_schema.columns
+                     WHERE table_schema = DATABASE() AND table_name = ?',
+                    [$view],
+                ))->pluck('name')->map(fn ($n) => (string) $n)->all();
 
-        $sumCols = [];
-        foreach ($names as $col) {
-            if ($this->isSummableReportColumn($col)) {
-                $sumCols[] = $col;
-            }
-        }
+                $cols = [];
+                foreach ($names as $col) {
+                    if ($this->isSummableReportColumn($col)) {
+                        $cols[] = $col;
+                    }
+                }
 
-        return $cache[$view] = $sumCols;
+                return $cols;
+            },
+        );
+
+        return $requestCache[$view] = $sumCols;
     }
 
     /** Add ERP-style PO numbers to LPO report rows (open LPO, purchases by supplier). */
@@ -4026,19 +4182,26 @@ class ReportController extends Controller
 
     protected function viewColumnExists(string $view, string $column): bool
     {
-        static $cache = [];
+        static $requestCache = [];
 
         $key = "{$view}.{$column}";
-        if (! array_key_exists($key, $cache)) {
-            $cache[$key] = collect(DB::select(
+        if (array_key_exists($key, $requestCache)) {
+            return $requestCache[$key];
+        }
+
+        // Persist across prefork workers — information_schema probes were 10–30× per report.
+        $requestCache[$key] = (bool) \Illuminate\Support\Facades\Cache::remember(
+            "schema.col:{$view}.{$column}",
+            86400,
+            fn () => collect(DB::select(
                 'SELECT 1 FROM information_schema.columns
                  WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?
                  LIMIT 1',
                 [$view, $column],
-            ))->isNotEmpty();
-        }
+            ))->isNotEmpty(),
+        );
 
-        return $cache[$key];
+        return $requestCache[$key];
     }
 
     protected function resolveReportBranchId(Request $request, ?int $requestedBranchId = null): ?int

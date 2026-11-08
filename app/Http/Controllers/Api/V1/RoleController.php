@@ -6,6 +6,7 @@ use App\Models\Permission;
 use App\Models\Role;
 use App\Models\User;
 use App\Services\Auth\RoleTemplateService;
+use App\Services\Auth\UserPermissionService;
 use App\Services\Cache\CapabilitiesCacheInvalidator;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\IndustryRegistry;
@@ -132,6 +133,7 @@ class RoleController extends BaseResourceController
             }
         });
 
+        app(UserPermissionService::class)->forgetRolePermissionCache((int) $role->id);
         CapabilitiesCacheInvalidator::forRole($role->fresh());
 
         return response()->json($this->rolePermissionsPayload($role, $gate, $includeAdmin, $industry));
@@ -139,7 +141,7 @@ class RoleController extends BaseResourceController
 
     public function permissionMatrix(Request $request)
     {
-        PermissionMatrixService::ensure();
+        PermissionMatrixService::ensureCached();
 
         $gate = app(ErpContext::class)->gateForRequest($request);
         $includeAdmin = $this->includeAdminPermissionsWhenActing($request);
@@ -194,6 +196,7 @@ class RoleController extends BaseResourceController
         }
 
         DB::table('role_permissions')->where('role_id', $role->id)->delete();
+        app(UserPermissionService::class)->forgetRolePermissionCache((int) $role->id);
         $role->delete();
 
         return response()->json(null, 204);

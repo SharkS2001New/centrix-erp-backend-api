@@ -58,4 +58,13 @@ class RecordResponseTime
 
         return $response;
     }
+
+    public function terminate(Request $request, Response $response): void
+    {
+        try {
+            app(PlatformSpeedMetricsRecorder::class)->flush();
+        } catch (\Throwable) {
+            // Never break the response for metrics.
+        }
+    }
 }

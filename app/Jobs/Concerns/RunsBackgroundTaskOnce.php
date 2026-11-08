@@ -63,6 +63,14 @@ trait RunsBackgroundTaskOnce
 
     protected function formatBackgroundTaskErrorMessage(\Throwable $e): string
     {
+        if (
+            $e instanceof \Illuminate\Queue\TimeoutExceededException
+            || str_contains($e::class, 'TimeoutExceeded')
+            || str_contains(strtolower($e->getMessage()), 'has timed out')
+        ) {
+            return 'This background job took longer than the worker allows. It was stopped safely — retry with a smaller batch, or ask an admin to raise the queue worker timeout for large catalogues/reports.';
+        }
+
         $parts = [];
         $current = $e;
         $depth = 0;

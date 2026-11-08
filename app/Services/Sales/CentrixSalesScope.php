@@ -84,6 +84,10 @@ class CentrixSalesScope
     {
         $prefix = $tableAlias ? "{$tableAlias}." : '';
 
+        if (\App\Support\SchemaProbe::hasColumn('sales', 'is_legacy_import')) {
+            return $query->where("{$prefix}is_legacy_import", 0);
+        }
+
         return $query->where(function ($sub) use ($prefix) {
             $sub->whereNull("{$prefix}fulfillment_meta")
                 ->orWhereNull("{$prefix}fulfillment_meta->legacy_import")
@@ -94,6 +98,10 @@ class CentrixSalesScope
     /** SQL predicate for MySQL views (e.g. alias `s`). */
     public static function legacyExcludeSql(string $alias = 's'): string
     {
+        if (\App\Support\SchemaProbe::hasColumn('sales', 'is_legacy_import')) {
+            return "({$alias}.is_legacy_import = 0)";
+        }
+
         $column = "{$alias}.fulfillment_meta";
 
         return "({$column} IS NULL OR JSON_EXTRACT({$column}, '$.legacy_import') IS NULL OR JSON_EXTRACT({$column}, '$.legacy_import') = false OR JSON_UNQUOTE(JSON_EXTRACT({$column}, '$.legacy_import')) = 'false')";

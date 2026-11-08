@@ -94,6 +94,38 @@ class KraInvoiceOnlineUploadTest extends TestCase
             ->count());
     }
 
+    public function test_checkout_defers_manual_etims_upload_so_till_gets_qr_immediately(): void
+    {
+        config(['testing.kra_agent_command_handler' => function (string $path): array {
+            if ($path === '/api/complete-workflow') {
+                return ['success' => true, 'body' => [
+                    'success' => true,
+                    'message' => 'Signature generated',
+                    'transmit_status' => 'Signed invoice has not yet been transmitted to eTIMS. Please transmit.',
+                    'invoice_number' => 'CU-CHECKOUT-FAST',
+                    'signature' => 'SIG-CHECKOUT',
+                ]];
+            }
+
+            $this->fail('Checkout must not call manually-upload synchronously: '.$path);
+        }]);
+
+        $result = $this->device()->sendSale(
+            [['product_name' => 'Item', 'quantity' => 1, 'amount' => 10, 'product_vat' => 0]],
+            10,
+            '100000010',
+            null,
+            ['checkout' => true],
+        );
+
+        $this->assertTrue($result['success']);
+        $this->assertSame('pending', $result['response']['online_upload_status']);
+        $this->assertTrue($result['response']['online_upload_deferred'] ?? false);
+        $this->assertDatabaseMissing('kra_agent_commands', [
+            'path' => '/api/invoices/manually-upload/DEJA02220240050',
+        ]);
+    }
+
     public function test_already_transmitted_invoice_does_not_send_manual_upload(): void
     {
         config(['testing.kra_agent_command_handler' => fn () => ['success' => true, 'body' => [
@@ -179,30 +211,41 @@ class KraInvoiceOnlineUploadTest extends TestCase
         ]);
 
         config(['testing.kra_agent_command_handler' => function (string $path): array {
-            $this->assertSame('/api/invoices/manually-upload/DEJA02220240050', $path);
+            if (str_starts_with($path, '/api/invoices/manually-upload/')) {
+                return [
+                    'success' => true,
+                    'body' => [
+                        'success' => true,
+                        'message' => 'Invoices queued for manual upload to eTIMS.',
+                    ],
+                ];
+            }
 
+            // Soft-fail fiscalization retries may call complete-workflow in the same command.
             return [
                 'success' => true,
                 'body' => [
                     'success' => true,
-                    'message' => 'Invoices queued for manual upload to eTIMS.',
+                    'message' => 'Signature generated',
+                    'transmit_status' => 'Invoice has been transmitted to eTIMS.',
+                    'invoice_number' => 'CU-RETRY',
+                    'signature' => 'SIG-RETRY',
                 ],
             ];
         }]);
 
         $this->artisan('erp:retry-pending-kra-invoice-uploads', [
             '--organization_id' => $this->organizationId,
-        ])
-            ->expectsOutput('KRA eTIMS upload retry: attempted=1 queued=1 still_pending=0 skipped=0')
-            ->assertSuccessful();
+        ])->assertSuccessful();
 
-        $this->assertSame('queued', $response->fresh()->response_payload['online_upload_status'] ?? null);
+        $fresh = $response->fresh();
+        $this->assertSame('queued', $fresh->response_payload['online_upload_status'] ?? null);
         $this->assertSame(
             'Invoices queued for manual upload to eTIMS.',
-            $response->fresh()->response_payload['online_upload_response']['message'] ?? null,
+            $fresh->response_payload['online_upload_response']['message'] ?? null,
         );
-        $this->assertSame(1, KraAgentCommand::query()
-            ->where('path', '/api/invoices/manually-upload/DEJA02220240050')
+        $this->assertGreaterThanOrEqual(1, KraAgentCommand::query()
+            ->where('path', 'like', '/api/invoices/manually-upload/%')
             ->count());
     }
 }

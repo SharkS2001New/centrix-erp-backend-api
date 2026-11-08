@@ -54,20 +54,30 @@ class MobileLoadingSheetService
 
     protected function loadingDateExpression(): string
     {
+        if (\App\Support\SchemaProbe::hasColumn('sales', 'loading_date')) {
+            return 'sales.loading_date';
+        }
+
         return 'COALESCE(DATE(sales.delivery_date), DATE(sales.created_at))';
     }
 
     /**
      * Sargable day filter equivalent to COALESCE(DATE(delivery_date), DATE(created_at)).
-     * Prefer range predicates so MySQL can use delivery_date / created_at indexes.
+     * Prefer the generated loading_date column when present.
      *
      * @param  Builder<Sale>  $query
      */
     protected function applyLoadingDateEquals(Builder $query, string $listDate): void
     {
+        if (\App\Support\SchemaProbe::hasColumn('sales', 'loading_date')) {
+            $query->where('sales.loading_date', $listDate);
+
+            return;
+        }
+
         $start = $listDate.' 00:00:00';
         $end = $listDate.' 23:59:59';
-        $query->where(function ($outer) use ($listDate, $start, $end) {
+        $query->where(function ($outer) use ($start, $end) {
             $outer->where(function ($withDelivery) use ($start, $end) {
                 $withDelivery->whereNotNull('sales.delivery_date')
                     ->whereBetween('sales.delivery_date', [$start, $end]);
@@ -84,6 +94,17 @@ class MobileLoadingSheetService
     protected function applyLoadingDateRange(Builder $query, ?string $from, ?string $to): void
     {
         if ($from === null && $to === null) {
+            return;
+        }
+
+        if (\App\Support\SchemaProbe::hasColumn('sales', 'loading_date')) {
+            if ($from !== null) {
+                $query->where('sales.loading_date', '>=', $from);
+            }
+            if ($to !== null) {
+                $query->where('sales.loading_date', '<=', $to);
+            }
+
             return;
         }
 

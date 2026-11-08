@@ -28,6 +28,10 @@ class ModelChangeAuditor
         'notifications',
         'password_reset_tokens',
         'migrations',
+        // High-churn cart / hold tables — sync audit inserts dominated mobile add-line & checkout.
+        'temporary_carts',
+        'temporary_cart_items',
+        'stock_reservations',
     ];
 
     /** @var list<string> */

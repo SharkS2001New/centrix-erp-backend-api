@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Models\UserDeviceToken;
 use App\Services\Mobile\FcmPushSettingsResolver;
 use Firebase\JWT\JWT;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -205,6 +206,12 @@ class FcmPushNotificationService
             return null;
         }
 
+        $cacheKey = 'fcm.oauth:'.md5($path.':'.(string) @filemtime($path));
+        $cached = Cache::get($cacheKey);
+        if (is_string($cached) && $cached !== '') {
+            return $cached;
+        }
+
         $json = json_decode((string) file_get_contents($path), true);
         if (! is_array($json)) {
             return null;
@@ -240,7 +247,13 @@ class FcmPushNotificationService
             return null;
         }
 
-        return $response->json('access_token');
+        $token = $response->json('access_token');
+        if (is_string($token) && $token !== '') {
+            // Google tokens last ~1h; refresh a few minutes early.
+            Cache::put($cacheKey, $token, 55 * 60);
+        }
+
+        return is_string($token) ? $token : null;
     }
 
     /** @return array<string, mixed> */

@@ -53,6 +53,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('branches', [MobileManagerController::class, 'branches']);
         Route::get('reports/catalog', [MobileManagerController::class, 'reportsCatalog'])
             ->middleware('erp.permission:mobile_manager.reports.view');
+        Route::get('customers/search', [MobileManagerController::class, 'searchCustomers']);
+        Route::get('suppliers/search', [MobileManagerController::class, 'searchSuppliers']);
         Route::post('device-tokens', [MobileManagerController::class, 'registerDeviceToken']);
         Route::delete('device-tokens', [MobileManagerController::class, 'unregisterDeviceToken']);
 

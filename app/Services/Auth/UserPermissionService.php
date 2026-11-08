@@ -8,6 +8,7 @@ use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\PermissionMatrixService;
 use App\Support\SalesOrderQueuePermissions;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -21,12 +22,16 @@ class UserPermissionService
         }
 
         return $this->rememberRequest('role_permission_ids.'.$roleId, function () use ($roleId) {
-            return DB::table('role_permissions')
-                ->where('role_id', $roleId)
-                ->pluck('permission_id')
-                ->map(fn ($id) => (int) $id)
-                ->values()
-                ->all();
+            return Cache::remember(
+                'role_permission_ids:'.$roleId,
+                300,
+                fn () => DB::table('role_permissions')
+                    ->where('role_id', $roleId)
+                    ->pluck('permission_id')
+                    ->map(fn ($id) => (int) $id)
+                    ->values()
+                    ->all(),
+            );
         });
     }
 
@@ -46,13 +51,17 @@ class UserPermissionService
     protected function overrideIds(int $userId, string $effect): array
     {
         return $this->rememberRequest('user_permission_overrides.'.$userId.'.'.$effect, function () use ($userId, $effect) {
-            return DB::table('user_permission_overrides')
-                ->where('user_id', $userId)
-                ->where('effect', $effect)
-                ->pluck('permission_id')
-                ->map(fn ($id) => (int) $id)
-                ->values()
-                ->all();
+            return Cache::remember(
+                'user_permission_overrides:'.$userId.':'.$effect,
+                120,
+                fn () => DB::table('user_permission_overrides')
+                    ->where('user_id', $userId)
+                    ->where('effect', $effect)
+                    ->pluck('permission_id')
+                    ->map(fn ($id) => (int) $id)
+                    ->values()
+                    ->all(),
+            );
         });
     }
 
@@ -1187,6 +1196,16 @@ class UserPermissionService
                 ]);
             }
         });
+
+        Cache::forget('user_permission_overrides:'.$userId.':grant');
+        Cache::forget('user_permission_overrides:'.$userId.':deny');
+    }
+
+    public function forgetRolePermissionCache(?int $roleId): void
+    {
+        if ($roleId) {
+            Cache::forget('role_permission_ids:'.$roleId);
+        }
     }
 
     /** @return Collection<int, User> */

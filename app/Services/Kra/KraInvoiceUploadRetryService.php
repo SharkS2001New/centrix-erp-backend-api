@@ -45,6 +45,11 @@ class KraInvoiceUploadRetryService
                 continue;
             }
 
+            if (! KraAutoRetryPolicy::shouldAutoRetry($failurePayload)) {
+                $stats['skipped']++;
+                continue;
+            }
+
             $sale = Sale::query()->find((int) $response->sale_id);
             $organization = $sale
                 ? Organization::query()->find((int) $sale->organization_id)
@@ -67,6 +72,10 @@ class KraInvoiceUploadRetryService
                     ->value('kra_pin')
                 : null;
 
+            // Consume one auto-retry slot before calling the device.
+            $response->response_payload = KraAutoRetryPolicy::markAttempt($failurePayload);
+            $response->save();
+
             $stats['attempted']++;
             try {
                 $retried = app(CheckoutKraSubmissionService::class)->submitForSale(
@@ -83,9 +92,11 @@ class KraInvoiceUploadRetryService
                         $stats['still_pending']++;
                     }
                 } else {
+                    $this->persistRetryMetaOnLatestFailure($sale, $response->response_payload);
                     $stats['still_pending']++;
                 }
             } catch (\Throwable $e) {
+                $this->persistRetryMetaOnLatestFailure($sale, $response->response_payload);
                 $stats['still_pending']++;
                 Log::warning('KRA sale fiscalization retry failed', [
                     'sale_id' => $sale->id,
@@ -95,10 +106,23 @@ class KraInvoiceUploadRetryService
             }
         }
 
+        // Prefer JSON_EXTRACT over whereIn(json path) — MySQL whereIn on JSON paths
+        // can silently drop rows depending on driver/version.
         $responses = KraResponse::query()
             ->where('status', 'success')
-            ->where('response_payload->online_upload_status', 'pending')
-            ->whereIn('response_payload->document_type', ['sale', 'credit_note'])
+            ->where(function ($query) {
+                $query->where('response_payload->online_upload_status', 'pending')
+                    ->orWhereRaw(
+                        "JSON_UNQUOTE(JSON_EXTRACT(response_payload, '$.online_upload_status')) = 'pending'",
+                    );
+            })
+            ->where(function ($query) {
+                $query->where('response_payload->document_type', 'sale')
+                    ->orWhere('response_payload->document_type', 'credit_note')
+                    ->orWhereRaw(
+                        "JSON_UNQUOTE(JSON_EXTRACT(response_payload, '$.document_type')) IN ('sale','credit_note')",
+                    );
+            })
             ->when($organizationId, fn ($query) => $query->where('organization_id', $organizationId))
             ->orderBy('id')
             ->limit(max(1, $limit) * 4)
@@ -113,6 +137,17 @@ class KraInvoiceUploadRetryService
                 continue;
             }
 
+            $payload = KraAutoRetryPolicy::initializePayload($payload);
+            if (! KraAutoRetryPolicy::shouldAutoRetry($payload)) {
+                $stats['skipped']++;
+                if (KraAutoRetryPolicy::isExhausted($payload)
+                    && empty($response->response_payload['auto_retry_exhausted'])) {
+                    $response->response_payload = array_merge($payload, ['auto_retry_exhausted' => true]);
+                    $response->save();
+                }
+                continue;
+            }
+
             $organization = Organization::query()->find((int) $response->organization_id);
             if (! $organization) {
                 $stats['skipped']++;
@@ -124,6 +159,7 @@ class KraInvoiceUploadRetryService
                 continue;
             }
 
+            $payload = KraAutoRetryPolicy::markAttempt($payload);
             $stats['attempted']++;
             try {
                 $device = KraDeviceService::fromSettings($finance, (int) $organization->id);
@@ -163,5 +199,31 @@ class KraInvoiceUploadRetryService
         }
 
         return $stats;
+    }
+
+    /**
+     * Carry auto-retry counters onto the latest failed kra_responses row after a soft-fail retry.
+     *
+     * @param  array<string, mixed>  $retryMeta
+     */
+    protected function persistRetryMetaOnLatestFailure(Sale $sale, array $retryMeta): void
+    {
+        $latest = KraResponse::query()
+            ->where('sale_id', $sale->id)
+            ->where('status', 'failed')
+            ->orderByDesc('id')
+            ->first();
+        if (! $latest) {
+            return;
+        }
+
+        $payload = is_array($latest->response_payload) ? $latest->response_payload : [];
+        foreach (['auto_retry_count', 'auto_retry_last_at', 'auto_retry_exhausted', 'auto_retry_exhausted_at'] as $key) {
+            if (array_key_exists($key, $retryMeta)) {
+                $payload[$key] = $retryMeta[$key];
+            }
+        }
+        $latest->response_payload = $payload;
+        $latest->save();
     }
 }

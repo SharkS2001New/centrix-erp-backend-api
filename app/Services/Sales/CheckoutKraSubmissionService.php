@@ -31,41 +31,11 @@ class CheckoutKraSubmissionService
             return $sale->kraResponse()->where('status', 'success')->latest('id')->first();
         }
 
-        $sale->loadMissing(['items.product.vat']);
-        $lines = $sale->items;
-        if ($lines->isEmpty()) {
+        $orderItems = \App\Services\Kra\KraSaleFiscalBuilder::orderItemsFromSale($sale);
+        if ($orderItems === []) {
             return null;
         }
-
-        $orderItems = $lines->map(fn ($line) => [
-            'product_name' => $line->resolvedProductName(),
-            'product_code' => $line->product_code,
-            'quantity' => (float) $line->quantity,
-            'amount' => (float) $line->amount,
-            'product_vat' => (float) ($line->product_vat ?? 0),
-            'vat_rate' => \App\Services\Kra\SalesVatCalculator::vatRateFromProduct($line->product),
-        ])->all();
-        $sale->loadMissing('payments.paymentMethod');
-        $tenders = ['cash' => 0.0, 'check' => 0.0, 'card' => 0.0];
-        foreach ($sale->payments as $payment) {
-            $code = strtoupper(trim((string) ($payment->paymentMethod?->method_code ?? '')));
-            if (in_array($code, ['CHEQUE', 'CHECK'], true)) {
-                $tenders['check'] += (float) $payment->amount;
-            } elseif ($code === 'CASH') {
-                $tenders['cash'] += (float) $payment->amount;
-            } else {
-                $tenders['card'] += (float) $payment->amount;
-            }
-        }
-        if ($sale->payments->isEmpty()) {
-            $tenders = [
-                'cash' => (float) ($sale->cash ?? 0),
-                'check' => 0.0,
-                'card' => (float) ($sale->mpesa_amount ?? 0)
-                    + (float) ($sale->equity_amount ?? 0)
-                    + (float) ($sale->kcb_amount ?? 0),
-            ];
-        }
+        $tenders = \App\Services\Kra\KraSaleFiscalBuilder::tendersFromSale($sale);
         // Sale-scoped placeholder — never POS-{order_num}. Order edits reuse the
         // customer-facing order # while the superseded sale keeps its kra_responses row;
         // that collision is Duplicate entry 'org-POS-16423' on uq_org_kra_invoice_number.
@@ -182,14 +152,14 @@ class CheckoutKraSubmissionService
                 'request_payload' => $result['payload'] ?? null,
                 'response_payload' => array_merge(
                     is_array($result['response'] ?? null) ? $result['response'] : [],
-                    [
+                    \App\Services\Kra\KraAutoRetryPolicy::initializePayload([
                         'document_type' => 'sale',
                         'soft_failed' => true,
                         'online_upload_status' => 'not_signed',
                         // Keep raw device text so the failure dialog can highlight the exact PLU.
                         'technical_message' => $result['technical_message'] ?? null,
                         'error_code' => $result['error_code'] ?? null,
-                    ],
+                    ]),
                 ),
                 'status' => 'failed',
                 'error_message' => $message,
@@ -197,8 +167,14 @@ class CheckoutKraSubmissionService
         }
 
         $mapped = $result['response'] ?? [];
+        $onlineStatus = $mapped['online_upload_status']
+            ?? ((is_string($mapped['transmit_status'] ?? null)
+                && str_contains(strtolower($mapped['transmit_status']), 'transmitted to etims'))
+                && ! str_contains(strtolower($mapped['transmit_status']), 'not yet')
+                ? 'transmitted'
+                : 'pending');
 
-        return $this->persistResponse($sale, [
+        $persisted = $this->persistResponse($sale, [
             'order_no' => $this->displayOrderNo($sale),
             'invoice_number' => $mapped['invoice_number'] ?? $invoiceNumber,
             'receipt_signature' => $mapped['receipt_signature'] ?? $mapped['signature'] ?? null,
@@ -208,17 +184,31 @@ class CheckoutKraSubmissionService
             'request_payload' => $result['payload'] ?? null,
             'response_payload' => array_merge(is_array($mapped) ? $mapped : [], [
                 'document_type' => 'sale',
-                    'transmit_status' => $mapped['transmit_status'] ?? null,
-                'online_upload_status' => $mapped['online_upload_status']
-                    ?? ((is_string($mapped['transmit_status'] ?? null)
-                        && str_contains(strtolower($mapped['transmit_status']), 'transmitted to etims'))
-                        && ! str_contains(strtolower($mapped['transmit_status']), 'not yet')
-                        ? 'transmitted'
-                        : 'pending'),
+                'transmit_status' => $mapped['transmit_status'] ?? null,
+                'online_upload_status' => $onlineStatus,
             ]),
             'status' => 'success',
             'error_message' => null,
         ]);
+
+        // Checkout skipped the blocking manually-upload hop — push to eTIMS after the till
+        // already has its signed receipt / response (same request terminating, or next cron).
+        if ($onlineStatus === 'pending' && $sale->organization_id) {
+            $organizationId = (int) $sale->organization_id;
+            dispatch(static function () use ($organizationId): void {
+                try {
+                    app(\App\Services\Kra\KraInvoiceUploadRetryService::class)
+                        ->retryPending(10, $organizationId);
+                } catch (\Throwable $e) {
+                    Log::warning('KRA deferred eTIMS upload after checkout failed', [
+                        'organization_id' => $organizationId,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            })->afterResponse();
+        }
+
+        return $persisted;
     }
 
     /**

@@ -274,6 +274,17 @@ class OrderNumberAllocator
 
     protected function watermarkTableReady(): bool
     {
-        return Schema::hasTable('sales_order_num_watermarks');
+        static $ready = null;
+        if ($ready !== null) {
+            return $ready;
+        }
+
+        $ready = (bool) \Illuminate\Support\Facades\Cache::remember(
+            'schema.table:sales_order_num_watermarks',
+            86400,
+            fn () => Schema::hasTable('sales_order_num_watermarks'),
+        );
+
+        return $ready;
     }
 }

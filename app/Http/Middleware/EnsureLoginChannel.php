@@ -4,9 +4,9 @@ namespace App\Http\Middleware;
 
 use App\Models\User;
 use App\Services\Auth\UserLoginChannelService;
+use App\Support\SanctumTokenResolver;
 use Closure;
 use Illuminate\Http\Request;
-use Laravel\Sanctum\Sanctum;
 use Symfony\Component\HttpFoundation\Response;
 
 class EnsureLoginChannel
@@ -21,12 +21,7 @@ class EnsureLoginChannel
             return $next($request);
         }
 
-        $plainTextToken = $request->bearerToken();
-        if (! $plainTextToken) {
-            return $next($request);
-        }
-
-        $accessToken = Sanctum::personalAccessTokenModel()::findToken($plainTextToken);
+        $accessToken = SanctumTokenResolver::fromRequest($request);
         if (! $accessToken) {
             return $next($request);
         }

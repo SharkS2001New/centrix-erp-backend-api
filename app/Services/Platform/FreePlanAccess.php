@@ -7,6 +7,7 @@ use App\Models\PlatformBillingSetting;
 use App\Services\Erp\ApplicationProvisioner;
 use App\Services\Erp\BackofficeSections;
 use App\Services\Erp\IndustryRegistry;
+use App\Support\SchemaProbe;
 use Illuminate\Support\Facades\Schema;
 
 /**
@@ -70,9 +71,21 @@ class FreePlanAccess
      */
     public function stored(): array
     {
-        if (! Schema::hasTable('platform_billing_settings') || ! Schema::hasColumn('platform_billing_settings', 'free_plan_access')) {
+        try {
+            $request = request();
+            if ($request->attributes->has('free_plan_access.stored')) {
+                return $request->attributes->get('free_plan_access.stored');
+            }
+        } catch (\Throwable) {
+            $request = null;
+        }
+
+        if (! SchemaProbe::hasTable('platform_billing_settings') || ! SchemaProbe::hasColumn('platform_billing_settings', 'free_plan_access')) {
             $out = $this->normalize([]);
             $out['name'] = $this->name([]);
+            if ($request) {
+                $request->attributes->set('free_plan_access.stored', $out);
+            }
 
             return $out;
         }
@@ -81,6 +94,9 @@ class FreePlanAccess
         $raw = is_array($raw) ? $raw : [];
         $out = $this->normalize($raw);
         $out['name'] = $this->name($raw);
+        if ($request) {
+            $request->attributes->set('free_plan_access.stored', $out);
+        }
 
         return $out;
     }
@@ -89,7 +105,7 @@ class FreePlanAccess
     public function name(?array $raw = null): string
     {
         if ($raw === null) {
-            if (! Schema::hasTable('platform_billing_settings') || ! Schema::hasColumn('platform_billing_settings', 'free_plan_access')) {
+            if (! SchemaProbe::hasTable('platform_billing_settings') || ! SchemaProbe::hasColumn('platform_billing_settings', 'free_plan_access')) {
                 return (string) config('free_plan_access.name', 'Package 1');
             }
             $raw = PlatformBillingSetting::current()?->free_plan_access;

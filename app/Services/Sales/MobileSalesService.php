@@ -143,19 +143,44 @@ class MobileSalesService
             )
             ->first();
 
-        $customerCount = Customer::query()
-            ->whereNull('deleted_at')
-            ->when(
-                $user->organization_id,
-                fn (Builder $q) => $q->where('organization_id', $user->organization_id),
-            );
-        $this->access->scopeBranchIfLimited($customerCount, $user);
-        $this->mobileScope->applyCustomerScope($customerCount, $user);
+        $orgId = (int) ($user->organization_id ?? 0);
+        $customerCount = $orgId > 0
+            ? (int) OrganizationCache::remember(
+                $orgId,
+                sprintf(
+                    'mobile-customer-count:u%d:b%s',
+                    (int) $user->id,
+                    (string) ($user->branch_id ?? 'all'),
+                ),
+                300,
+                function () use ($user) {
+                    $customerCountQuery = Customer::query()
+                        ->whereNull('deleted_at')
+                        ->when(
+                            $user->organization_id,
+                            fn (Builder $q) => $q->where('organization_id', $user->organization_id),
+                        );
+                    $this->access->scopeBranchIfLimited($customerCountQuery, $user);
+                    $this->mobileScope->applyCustomerScope($customerCountQuery, $user);
+
+                    return (int) $customerCountQuery->count();
+                },
+            )
+            : 0;
 
         $trendFrom = $to->copy()->subDays(29);
+        // Loads sales + approved expenses by day once — reused for weekly/monthly charts and summary.
         $trendRows = $this->trendSalesRows($user, $trendFrom, $to, $allChannels);
         $weekStart = $to->copy()->subDays(6)->toDateString();
-        $expenseTotal = $this->routeExpenses()->approvedTotalForUserBetween($user, $from, $to);
+        $fromKey = $from->toDateString();
+        $toKey = $to->toDateString();
+        $expenseTotal = round((float) $trendRows
+            ->filter(function ($row) use ($fromKey, $toKey) {
+                $day = Carbon::parse($row->sale_day)->toDateString();
+
+                return $day >= $fromKey && $day <= $toKey;
+            })
+            ->sum(fn ($row) => (float) ($row->expense_amount ?? 0)), 2);
 
         return [
             'mobile_context' => $this->mobileScope->mobileContext($user),
@@ -165,7 +190,7 @@ class MobileSalesService
                 'orderTotals' => round((float) ($summaryRow->order_total ?? 0) - $expenseTotal, 2),
                 'expenseTotals' => $expenseTotal,
                 'noofPaidOrders' => (int) ($summaryRow->paid_count ?? 0),
-                'noofCustomers' => (int) $customerCount->count(),
+                'noofCustomers' => $customerCount,
             ], $this->workflowQueueCounts($user, $allChannels)),
             'recent_orders' => $this->recentOrders($user, $from, $to, $allChannels),
             'weekly_sales' => $this->formatTrendSales(
@@ -1036,7 +1061,9 @@ class MobileSalesService
     protected function workflowQueueCounts(User $user, bool $allChannels = false): array
     {
         // Cap queue scans — older workflow rows are not actionable for mobile ops.
+        // Filter statuses first so the query can use (cashier/org, status, created_at) indexes.
         $row = $this->mobileSalesQuery($user, $allChannels)
+            ->whereIn('status', ['pending_approval', 'editable'])
             ->where('sales.created_at', '>=', now()->subDays(90)->startOfDay()->toDateTimeString())
             ->selectRaw("COALESCE(SUM(CASE WHEN status = 'pending_approval' THEN 1 ELSE 0 END), 0) as pending_approval_count")
             ->selectRaw("COALESCE(SUM(CASE WHEN status = 'editable' THEN 1 ELSE 0 END), 0) as editable_count")

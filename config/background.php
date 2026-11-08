@@ -8,14 +8,26 @@ return [
     */
     'stale_pending_minutes' => (int) env('BACKGROUND_STALE_PENDING_MINUTES', 15),
     /**
-     * Must exceed typical report/export job timeouts (often 3600s) or recoverStale*
-     * marks healthy long jobs failed mid-run.
+     * Must exceed typical short job runtimes or recoverStale* marks healthy jobs failed.
      */
     'stale_running_minutes' => (int) env('BACKGROUND_STALE_RUNNING_MINUTES', 70),
     /** Longer threshold for catalog import tasks that may run up to an hour. */
     'stale_import_running_minutes' => (int) env('BACKGROUND_STALE_IMPORT_RUNNING_MINUTES', 90),
-    /** Report export / paginated fetch / backup — align with queue:work --timeout=3600. */
-    'stale_export_running_minutes' => (int) env('BACKGROUND_STALE_EXPORT_RUNNING_MINUTES', 75),
+    /**
+     * Report export / paginated fetch / backup / KRA bulk work.
+     * Must stay above queue:work --timeout and the longest job $timeout (7200s).
+     */
+    'stale_export_running_minutes' => (int) env('BACKGROUND_STALE_EXPORT_RUNNING_MINUTES', 150),
+    /** Explicit long-runner ceiling (KRA PLU / live re-fiscalize / huge exports). */
+    'stale_long_running_minutes' => (int) env('BACKGROUND_STALE_LONG_RUNNING_MINUTES', 150),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Job timeouts (seconds) — keep ≤ queue worker --timeout
+    |--------------------------------------------------------------------------
+    */
+    'job_timeout_seconds' => (int) env('BACKGROUND_JOB_TIMEOUT_SECONDS', 3600),
+    'job_timeout_long_seconds' => (int) env('BACKGROUND_JOB_TIMEOUT_LONG_SECONDS', 7200),
 
     /*
     | When true, if a job is still pending after the HTTP response, the API process

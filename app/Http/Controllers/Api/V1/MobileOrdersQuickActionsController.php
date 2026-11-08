@@ -45,7 +45,7 @@ class MobileOrdersQuickActionsController extends Controller
 
         $this->access->scopeBranchIfLimited($query, $user);
 
-        $rows = $query->orderByDesc('id')->limit(200)->get()
+        $rows = $query->orderByDesc('id')->limit(75)->get()
             ->map(fn (CustomerReturn $return) => $this->returns->withActionFlags($return, $user));
 
         return response()->json(['data' => $rows]);
@@ -86,7 +86,7 @@ class MobileOrdersQuickActionsController extends Controller
 
         $this->access->scopeBranchIfLimited($query, $user);
 
-        $rows = $query->orderByDesc('id')->limit(200)->get()
+        $rows = $query->orderByDesc('id')->limit(75)->get()
             ->map(fn (CustomerReturn $return) => $this->returns->withActionFlags($return, $user));
 
         return response()->json(['data' => $rows]);

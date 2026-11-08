@@ -2,19 +2,19 @@
 
 namespace App\Jobs;
 
+use App\Jobs\Concerns\RunsBackgroundTaskOnce;
 use App\Models\BackgroundTask;
-use App\Models\User;
 use App\Services\Accounting\JournalExportService;
 use App\Services\Background\BackgroundTaskService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
-use Illuminate\Support\Facades\Log;
 
 class ProcessAccountingExportsJob implements ShouldQueue
 {
     use Queueable;
+    use RunsBackgroundTaskOnce;
 
-    public int $timeout = 900;
+    public int $timeout = 3600;
 
     public function __construct(
         public string $taskId,
@@ -25,7 +25,7 @@ class ProcessAccountingExportsJob implements ShouldQueue
         JournalExportService $exports,
     ): void {
         $task = BackgroundTask::query()->find($this->taskId);
-        if ($task === null || ! $tasks->markRunning($task)) {
+        if ($this->shouldSkipBackgroundTask($task) || ! $tasks->markRunning($task)) {
             return;
         }
 
@@ -39,12 +39,7 @@ class ProcessAccountingExportsJob implements ShouldQueue
                 : $exports->processPending($organizationId, $provider);
             $tasks->markCompleted($task, $result);
         } catch (\Throwable $e) {
-            Log::warning('ProcessAccountingExportsJob failed', [
-                'task_id' => $this->taskId,
-                'error' => $e->getMessage(),
-            ]);
-            $tasks->markFailed($task, $e->getMessage());
-            throw $e;
+            $this->failBackgroundTask($tasks, $task, $e, 'ProcessAccountingExportsJob');
         }
     }
 }

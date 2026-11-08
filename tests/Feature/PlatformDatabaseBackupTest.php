@@ -91,7 +91,9 @@ class PlatformDatabaseBackupTest extends TestCase
 
         $this->app->instance(DatabaseBackupService::class, $mock);
 
-        $this->postJson('/api/v1/admin/database-backups')
+        // Force sync so this unit-style test exercises runBackupCycle directly
+        // (default store path now prefers async queue when background_tasks exists).
+        $this->postJson('/api/v1/admin/database-backups', ['async' => false])
             ->assertCreated()
             ->assertJsonPath('data.filename', 'pos_erp_2026-06-20.sql.gz');
     }
@@ -110,7 +112,7 @@ class PlatformDatabaseBackupTest extends TestCase
 
         $this->app->instance(DatabaseBackupService::class, $mock);
 
-        $this->postJson('/api/v1/admin/database-backups')
+        $this->postJson('/api/v1/admin/database-backups', ['async' => false])
             ->assertStatus(500)
             ->assertJsonPath('code', 'mysqldump_failed')
             ->assertJsonPath('detail', 'Could not reach the database server from the API pod.');
