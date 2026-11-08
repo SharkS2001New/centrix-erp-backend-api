@@ -150,7 +150,7 @@ class KraAgentBridge
                 && $agent->comstore_reachable !== false
                 && $agent->device_reachable === false,
             'poll_interval_seconds' => 0.05,
-            'long_poll_ms' => 400,
+            'long_poll_ms' => 200,
             'online_ttl_seconds' => $this->onlineTtlSeconds(),
         ];
     }
@@ -423,9 +423,9 @@ class KraAgentBridge
                 );
             }
 
-            // Poll faster at first so QR returns as soon as the agent posts; ease off later.
+            // Poll aggressively at first so QR returns as soon as the agent posts.
             $elapsed = microtime(true) - ($deadline - $waitSeconds);
-            usleep($elapsed < 2.0 ? 10_000 : 20_000);
+            usleep($elapsed < 3.0 ? 5_000 : 12_000);
         } while (microtime(true) < $deadline);
 
         KraAgentCommand::query()

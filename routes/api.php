@@ -92,6 +92,7 @@ use App\Http\Controllers\Api\V1\PlatformPaybillController;
 use App\Http\Controllers\Api\V1\SetupProfileMenuController;
 use App\Http\Controllers\Api\V1\PlatformSubscriptionController;
 use App\Http\Controllers\Api\V1\PlatformDatabaseBackupController;
+use App\Http\Controllers\Api\V1\PlatformPublicMediaStorageController;
 use App\Http\Controllers\Api\V1\RetailPackageImportController;
 use App\Http\Controllers\Api\V1\PlatformSystemIssueReportController;
 use App\Http\Controllers\Api\V1\PlatformWhatsNewController;
@@ -593,6 +594,14 @@ Route::prefix('v1')->group(function () {
         Route::post('admin/database-backup-settings/test-connection', [PlatformDatabaseBackupController::class, 'testR2Connection'])
             ->middleware(['erp.super_admin']);
         Route::post('admin/database-backup-settings/test-upload', [PlatformDatabaseBackupController::class, 'testR2Upload'])
+            ->middleware(['erp.super_admin']);
+        Route::get('admin/public-media-storage-settings', [PlatformPublicMediaStorageController::class, 'show'])
+            ->middleware(['erp.super_admin']);
+        Route::put('admin/public-media-storage-settings', [PlatformPublicMediaStorageController::class, 'update'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/public-media-storage-settings/test-connection', [PlatformPublicMediaStorageController::class, 'testConnection'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/public-media-storage-settings/test-upload', [PlatformPublicMediaStorageController::class, 'testUpload'])
             ->middleware(['erp.super_admin']);
         Route::get('admin/slow-queries', [\App\Http\Controllers\Api\V1\PlatformSlowQueryController::class, 'index'])
             ->middleware(['erp.super_admin']);

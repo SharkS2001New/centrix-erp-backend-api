@@ -4,6 +4,16 @@ return [
 
     'default' => env('QUEUE_CONNECTION', 'database'),
 
+    /**
+     * Named queues so long KRA/export work does not stall checkout side-effects.
+     * Workers: `queue:work --queue=checkout,kra,exports,default`
+     */
+    'names' => [
+        'checkout' => env('QUEUE_CHECKOUT', 'checkout'),
+        'kra' => env('QUEUE_KRA', 'kra'),
+        'exports' => env('QUEUE_EXPORTS', 'exports'),
+    ],
+
     'connections' => [
 
         'sync' => [

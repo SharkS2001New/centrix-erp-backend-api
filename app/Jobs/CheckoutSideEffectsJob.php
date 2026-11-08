@@ -30,7 +30,9 @@ class CheckoutSideEffectsJob implements ShouldQueue
     public function __construct(
         public int $saleId,
         public int $userId,
-    ) {}
+    ) {
+        $this->onQueue((string) config('queue.names.checkout', 'checkout'));
+    }
 
     public function handle(): void
     {

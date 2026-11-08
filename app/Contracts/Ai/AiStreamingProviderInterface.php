@@ -3,7 +3,8 @@
 namespace App\Contracts\Ai;
 
 /**
- * Optional streaming for OpenAI-compatible providers (DeepSeek, Groq, OpenAI, …).
+ * Optional streaming for OpenAI-compatible providers (DeepSeek, Groq, OpenAI, …)
+ * and Gemini (:streamGenerateContent?alt=sse).
  *
  * @phpstan-type AiStreamEvent array{
  *   type: 'delta'|'usage'|'complete',
@@ -12,6 +13,8 @@ namespace App\Contracts\Ai;
  *   text?: ?string,
  *   tool_calls?: list<array{id: string, name: string, arguments: array<string, mixed>}>,
  *   model?: string,
+ *   model_content?: array{role?: string, parts: list<array<string, mixed>>}|null,
+ *   finish_reason?: ?string,
  * }
  */
 interface AiStreamingProviderInterface

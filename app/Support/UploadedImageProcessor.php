@@ -80,18 +80,56 @@ class UploadedImageProcessor
             throw new RuntimeException('Unable to create a temporary image file.');
         }
 
-        if (! imagejpeg($image, $tmp, $this->jpegQuality)) {
-            imagedestroy($image);
-            @unlink($tmp);
-            throw new RuntimeException('Unable to save the optimized image.');
+        // Encode once at configured quality, then step down if still large.
+        $quality = $this->jpegQuality;
+        $bytes = null;
+        $targetMax = $this->targetMaxBytes();
+        while ($quality >= 42) {
+            if (! imagejpeg($image, $tmp, $quality)) {
+                imagedestroy($image);
+                @unlink($tmp);
+                throw new RuntimeException('Unable to save the optimized image.');
+            }
+            $encoded = file_get_contents($tmp);
+            if ($encoded === false) {
+                imagedestroy($image);
+                @unlink($tmp);
+                throw new RuntimeException('Unable to read the optimized image.');
+            }
+            $bytes = $encoded;
+            if (strlen($bytes) <= $targetMax) {
+                break;
+            }
+            $quality -= 8;
         }
 
         imagedestroy($image);
-
-        $bytes = file_get_contents($tmp);
         @unlink($tmp);
-        if ($bytes === false) {
+
+        if ($bytes === false || $bytes === null) {
             throw new RuntimeException('Unable to read the optimized image.');
+        }
+
+        // Always keep the smaller payload: if re-encode grew a tiny JPEG, store the original.
+        $originalSize = (int) $file->getSize();
+        $originalMime = strtolower((string) $file->getMimeType());
+        $preferOriginal = $originalSize > 0
+            && strlen($bytes) >= $originalSize
+            && in_array($originalMime, ['image/jpeg', 'image/jpg'], true)
+            && $originalSize <= $targetMax;
+
+        if ($preferOriginal) {
+            $ext = 'jpg';
+            $filename = Str::uuid()->toString().'.'.$ext;
+            $path = $directory.'/'.$filename;
+            $disk->put($path, file_get_contents($file->getRealPath()) ?: $bytes);
+
+            return [
+                'path' => $path,
+                'mime_type' => 'image/jpeg',
+                'size' => $originalSize,
+                'file_name' => preg_replace('/\.\w+$/', '.jpg', $file->getClientOriginalName()) ?: $filename,
+            ];
         }
 
         $disk->put($path, $bytes);
@@ -102,6 +140,19 @@ class UploadedImageProcessor
             'size' => strlen($bytes),
             'file_name' => preg_replace('/\.\w+$/', '.jpg', $file->getClientOriginalName()) ?: $filename,
         ];
+    }
+
+    protected function targetMaxBytes(): int
+    {
+        // Rough budgets aligned with frontend IMAGE_COMPRESS_PRESETS.
+        if ($this->maxWidth <= 800) {
+            return 220_000;
+        }
+        if ($this->maxWidth >= 1400) {
+            return 600_000;
+        }
+
+        return 450_000;
     }
 
     public function storePublicImagePath(UploadedFile $file, string $directory): string

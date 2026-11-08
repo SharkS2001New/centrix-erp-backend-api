@@ -68,7 +68,9 @@ class ProductImageApiTest extends TestCase
         $this->assertNotNull($row, 'Lean product list should include the photographed item.');
         $this->assertTrue((bool) ($row['has_image'] ?? false));
         $this->assertNotEmpty($row['image_url'] ?? null);
+        $this->assertNotEmpty($row['image_version'] ?? null);
         $this->assertStringContainsString('/image/file', (string) $row['image_url']);
+        $this->assertStringContainsString('v='.$row['image_version'], (string) $row['image_url']);
     }
 
     public function test_hotel_product_image_file_can_be_downloaded(): void
@@ -81,6 +83,37 @@ class ProductImageApiTest extends TestCase
         $this->get('/api/v1/products/'.$product->product_code.'/image/file?download=1')
             ->assertOk()
             ->assertHeader('content-disposition', 'attachment; filename="'.$product->product_code.'.'.$ext.'"');
+    }
+
+    public function test_hotel_image_file_recovers_relative_path_from_legacy_storage_url(): void
+    {
+        $this->enableHotelIndustry();
+        $product = $this->productWithStoredPhoto();
+        $relative = (string) $product->image_path;
+
+        $product->forceFill([
+            'image_path' => 'https://old-host.example/storage/'.$relative,
+        ])->save();
+
+        $this->get('/api/v1/products/'.$product->product_code.'/image/file')
+            ->assertOk();
+
+        $this->assertSame($relative, $product->fresh()->image_path);
+    }
+
+    public function test_hotel_image_file_returns_404_when_photo_bytes_missing(): void
+    {
+        $this->enableHotelIndustry();
+        $product = Product::query()
+            ->where('organization_id', $this->org->id)
+            ->orderBy('product_code')
+            ->firstOrFail();
+        $product->forceFill([
+            'image_path' => 'orgs/missing/products/no-such-file.jpg',
+        ])->save();
+
+        $this->get('/api/v1/products/'.$product->product_code.'/image/file')
+            ->assertNotFound();
     }
 
     protected function enableHotelIndustry(): void

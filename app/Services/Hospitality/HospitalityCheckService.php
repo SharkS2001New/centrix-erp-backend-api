@@ -1188,7 +1188,10 @@ class HospitalityCheckService
                     ->where('organization_id', $check->organization_id)
                     ->whereIn('product_code', $codes)
                     ->get(['product_code', 'image_path'])
-                    ->mapWithKeys(fn (Product $p) => [(string) $p->product_code => $p->image_url])
+                    ->mapWithKeys(fn (Product $p) => [(string) $p->product_code => [
+                        'image_url' => $p->image_url,
+                        'image_version' => $p->image_version,
+                    ]])
                     ->all();
             }
         }
@@ -1284,7 +1287,8 @@ class HospitalityCheckService
                 'line_total' => (float) $line->line_total,
                 'vat_amount' => (float) $line->vat_amount,
                 'sort_order' => (int) $line->sort_order,
-                'image_url' => $imageByCode[(string) $line->product_code] ?? null,
+                'image_url' => $imageByCode[(string) $line->product_code]['image_url'] ?? null,
+                'image_version' => $imageByCode[(string) $line->product_code]['image_version'] ?? null,
             ])->values()->all(),
             'payments' => $payments->map(fn (HospitalityCheckPayment $p) => [
                 'id' => $p->id,

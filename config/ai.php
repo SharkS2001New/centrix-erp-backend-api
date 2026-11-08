@@ -60,8 +60,12 @@ return [
      */
     'fast_mode' => filter_var(env('AI_FAST_MODE', true), FILTER_VALIDATE_BOOLEAN),
     'fast_mode_max_tool_rounds' => (int) env('AI_FAST_MODE_MAX_TOOL_ROUNDS', 2),
+    /** Cap completion length in fast mode (tables still fit; long essays finish sooner). */
+    'fast_mode_max_output_tokens' => (int) env('AI_FAST_MODE_MAX_OUTPUT_TOKENS', 3072),
+    /** Shorter chat memory in fast mode (client also sends a trimmed window). */
+    'fast_mode_history_limit' => (int) env('AI_FAST_MODE_HISTORY_LIMIT', 6),
 
-    /** Stream token deltas to the web assistant via POST /ai/chat/stream (OpenAI-compatible providers). */
+    /** Stream token deltas to the web assistant via POST /ai/chat/stream (OpenAI + Gemini). */
     'stream_responses' => filter_var(env('AI_STREAM_RESPONSES', true), FILTER_VALIDATE_BOOLEAN),
 
     /** Dedicated speech-to-text (optional). Use when chat is DeepSeek/other chat-only APIs. */

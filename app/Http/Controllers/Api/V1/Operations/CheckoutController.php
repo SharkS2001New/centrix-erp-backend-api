@@ -107,6 +107,8 @@ class CheckoutController extends Controller
 
         // Previous-order edit: finish deferred restore side-effects before re-fiscalizing
         // or deducting stock for the revision (background job may still be in flight).
+        // Mobile: stamp stock_reverse_pending and reverse in FinalizeSaleAfterCheckoutJob so
+        // confirm stays instant; POS still reverses sync before thermal print / re-fiscalize.
         $priorSaleId = (int) (($sale->fulfillment_meta['supersedes_sale_id'] ?? 0));
         if ($priorSaleId > 0) {
             $priorStarted = microtime(true);
@@ -114,23 +116,28 @@ class CheckoutController extends Controller
             if ($priorSale) {
                 $priorMeta = is_array($priorSale->fulfillment_meta) ? $priorSale->fulfillment_meta : [];
                 if ($priorSale->stock_balanced || ! empty($priorMeta['stock_reverse_pending'])) {
-                    try {
-                        app(SaleInventoryRestorer::class)->reverseForPosEdit($priorSale, $request->user());
-                        unset($priorMeta['stock_reverse_pending']);
-                        $priorSale->update([
-                            'stock_balanced' => 0,
-                            'fulfillment_meta' => $priorMeta,
-                        ]);
-                    } catch (\Throwable $e) {
-                        report($e);
-                        throw new \InvalidArgumentException(
-                            'Could not reverse stock for the previous order before applying this edit. Retry once the prior sale stock is restored.',
-                            0,
-                            $e,
-                        );
+                    if ($channel === 'mobile') {
+                        $priorMeta['stock_reverse_pending'] = true;
+                        $priorSale->update(['fulfillment_meta' => $priorMeta]);
+                    } else {
+                        try {
+                            app(SaleInventoryRestorer::class)->reverseForPosEdit($priorSale, $request->user());
+                            unset($priorMeta['stock_reverse_pending']);
+                            $priorSale->update([
+                                'stock_balanced' => 0,
+                                'fulfillment_meta' => $priorMeta,
+                            ]);
+                        } catch (\Throwable $e) {
+                            report($e);
+                            throw new \InvalidArgumentException(
+                                'Could not reverse stock for the previous order before applying this edit. Retry once the prior sale stock is restored.',
+                                0,
+                                $e,
+                            );
+                        }
                     }
                 }
-                if ($pendingKra) {
+                if ($pendingKra && $channel !== 'mobile') {
                     app(PosOrderEditService::class)->fiscalVoidBeforeEdit($priorSale->fresh() ?? $priorSale, $request->user(), $gate);
                 }
             }
@@ -146,11 +153,16 @@ class CheckoutController extends Controller
             $kraStarted = microtime(true);
             if ($channel === 'mobile') {
                 $timing['kra_mode'] = 'deferred';
-                SubmitSaleKraAfterCheckoutJob::dispatch(
+                // Real queue → push now so a worker fiscalizes while the HTTP reply flushes.
+                // Sync driver → afterResponse so the mobile confirm stays instant.
+                $kraJob = SubmitSaleKraAfterCheckoutJob::dispatch(
                     (int) $sale->id,
                     (int) $request->user()->id,
                     $buyerPin,
-                )->afterResponse();
+                );
+                if (config('queue.default') === 'sync') {
+                    $kraJob->afterResponse();
+                }
             } else {
                 $timing['kra_mode'] = 'sync';
                 $persistedKra = app(CheckoutKraSubmissionService::class)
@@ -481,7 +493,20 @@ class CheckoutController extends Controller
             if ($appendPriorSale) {
                 $appendStarted = microtime(true);
                 app(PosOrderEditService::class)->fiscalVoidBeforeEdit($appendPriorSale, $user, $gate);
-                if ($appendPriorSale->stock_balanced) {
+                $appendChannel = (string) ($cart->channel ?? '');
+                if ($appendChannel === 'mobile') {
+                    // Defer ledger reverse to FinalizeSaleAfterCheckoutJob (after HTTP).
+                    if ($appendPriorSale->stock_balanced) {
+                        $appendMeta = is_array($appendPriorSale->fulfillment_meta)
+                            ? $appendPriorSale->fulfillment_meta
+                            : [];
+                        $appendMeta['stock_reverse_pending'] = true;
+                        $appendPriorSale->fulfillment_meta = $appendMeta;
+                        $appendPriorSale->save();
+                    } else {
+                        $this->releaseSaleReservations((int) $appendPriorSale->id);
+                    }
+                } elseif ($appendPriorSale->stock_balanced) {
                     $this->reverseSaleStockDeductions($appendPriorSale, $user);
                 } else {
                     $this->releaseSaleReservations((int) $appendPriorSale->id);

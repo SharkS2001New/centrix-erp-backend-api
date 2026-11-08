@@ -5,14 +5,26 @@ namespace App\Services\Sales;
 use App\Http\Controllers\Api\V1\Operations\ReportController;
 use App\Models\User;
 use App\Services\Auth\UserPermissionService;
+use App\Services\Cache\OrganizationCache;
 use App\Services\Erp\CapabilityGate;
+use App\Services\Inventory\StockValuationService;
 use App\Services\Notifications\InAppNotificationService;
-use Illuminate\Http\Request;
+use App\Services\Inventory\StockCostCalculation;
+use App\Support\AppTimezone;
+use App\Support\EffectiveSaleDate;
+use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
 
 class MobileManagerService
 {
     /** Days of sales_trend embedded in /manager/dashboard (matches manager app home chart). */
     public const SALES_TREND_DAYS = 10;
+
+    /** Inventory valuation is heavy — refresh less often than sales KPIs. */
+    public const INVENTORY_CACHE_SECONDS = 900;
+
+    /** Lean home KPI cache (sales + receivables; inventory nested separately). */
+    public const HOME_KPI_CACHE_SECONDS = 90;
 
     public function __construct(
         protected UserPermissionService $permissions,
@@ -46,20 +58,20 @@ class MobileManagerService
             $hasAppAccess
             || $this->permissions->hasPermission($user, 'reports.hub.view', $gate)
         )) {
-            $today = \App\Support\AppTimezone::todayDateString();
+            $today = AppTimezone::todayDateString();
             $fromDate = (string) ($filters['from_date'] ?? $today);
             $toDate = (string) ($filters['to_date'] ?? $today);
             $branchId = isset($filters['branch_id']) ? (int) $filters['branch_id'] : null;
 
-            $reportsPayload = $this->cachedReportsDashboard($user, $fromDate, $toDate, $branchId);
+            // Lean home KPIs — never rebuild the full reports dashboard (inventory scan + COGS
+            // joins + top products) just to open the manager app.
+            $reportsPayload = $this->leanHomeReportsPayload($user, $fromDate, $toDate, $branchId);
 
-            // Embed multi-day sales_trend via lean SUM queries — never rebuild the full
-            // dashboard (inventory/receivables/top products) just for the home chart.
             if ($fromDate === $toDate && $fromDate === $today) {
-                $trendFrom = \Carbon\Carbon::parse($today)
+                $trendFrom = Carbon::parse($today)
                     ->subDays(self::SALES_TREND_DAYS - 1)
                     ->startOfDay();
-                $trendTo = \Carbon\Carbon::parse($today)->startOfDay();
+                $trendTo = Carbon::parse($today)->startOfDay();
                 $orgId = (int) ($user->organization_id ?? 0);
                 $resolvedBranch = $branchId;
                 if (($user->access_scope ?? 'org') === 'branch' && $user->branch_id) {
@@ -95,35 +107,254 @@ class MobileManagerService
     }
 
     /**
+     * Fast manager-home payload: sales totals, customer balances, cached inventory.
+     * Skips credit-outstanding exists-subquery, top products, channel breakdown, and COGS joins.
+     *
      * @return array<string, mixed>
      */
-    protected function cachedReportsDashboard(
+    protected function leanHomeReportsPayload(
         User $user,
         string $fromDate,
         string $toDate,
         ?int $branchId,
     ): array {
-        // ReportController::dashboard already OrganizationCache::remember(120s) on the
-        // shared reportsDashboardCacheKey — reuse that (no per-user cache miss storm).
-        return $this->fetchReportsDashboard($user, $fromDate, $toDate, $branchId);
+        $orgId = (int) ($user->organization_id ?? 0);
+        $resolvedBranch = $branchId;
+        if (($user->access_scope ?? 'org') === 'branch' && $user->branch_id) {
+            $resolvedBranch = (int) $user->branch_id;
+        }
+
+        $build = function () use ($orgId, $resolvedBranch, $fromDate, $toDate): array {
+            $from = Carbon::parse($fromDate)->startOfDay();
+            $to = Carbon::parse($toDate)->startOfDay();
+            if ($from->gt($to)) {
+                [$from, $to] = [$to, $from];
+            }
+            $days = max(1, $from->diffInDays($to) + 1);
+            $prevTo = $from->copy()->subDay();
+            $prevFrom = $prevTo->copy()->subDays($days - 1);
+
+            $metricStatuses = app(OrderWorkflowService::class)->metricSaleStatuses();
+            $salesSum = function (Carbon $start, Carbon $end) use ($orgId, $resolvedBranch, $metricStatuses): float {
+                $query = DB::table('sales')
+                    ->whereIn('status', $metricStatuses)
+                    ->where('archived', 0)
+                    ->when($orgId > 0, fn ($q) => $q->where('organization_id', $orgId))
+                    ->when($resolvedBranch, fn ($q) => $q->where('branch_id', $resolvedBranch));
+                EffectiveSaleDate::applyFromToDateFilter(
+                    $query,
+                    $start->toDateString(),
+                    $end->toDateString(),
+                );
+
+                return (float) CentrixSalesScope::excludeLegacyMaterialized($query)->sum('order_total');
+            };
+
+            $totalSales = $salesSum($from, $to);
+            $prevTotalSales = $salesSum($prevFrom, $prevTo);
+
+            // Customer AR only — skip the expensive unpaid-credit exists subquery on home.
+            $receivables = (float) DB::table('customers')
+                ->whereNull('deleted_at')
+                ->when($orgId > 0, fn ($q) => $q->where('organization_id', $orgId))
+                ->when($resolvedBranch, fn ($q) => $q->where('branch_id', $resolvedBranch))
+                ->sum('current_balance');
+
+            $inventory = $this->cachedInventoryValuation(
+                $orgId > 0 ? $orgId : null,
+                $resolvedBranch,
+            );
+            $grossProfit = $this->cachedPeriodGrossProfit(
+                $orgId > 0 ? $orgId : null,
+                $resolvedBranch,
+                $from,
+                $to,
+                $prevFrom,
+                $prevTo,
+                $metricStatuses,
+                $totalSales,
+                $prevTotalSales,
+            );
+
+            return [
+                'period' => [
+                    'from_date' => $from->toDateString(),
+                    'to_date' => $to->toDateString(),
+                    'previous_from_date' => $prevFrom->toDateString(),
+                    'previous_to_date' => $prevTo->toDateString(),
+                ],
+                'kpis' => [
+                    'total_sales' => [
+                        'value' => $totalSales,
+                        'change_pct' => $this->pctChange($totalSales, $prevTotalSales),
+                    ],
+                    'gross_profit' => $grossProfit,
+                    'receivables' => [
+                        'value' => round($receivables, 2),
+                        'change_pct' => 0.0,
+                    ],
+                    'inventory_value' => [
+                        'value' => $inventory['value'],
+                        'shop_value' => $inventory['shop_value'],
+                        'store_value' => $inventory['store_value'],
+                        'change_pct' => 0.0,
+                    ],
+                ],
+                'sales_trend' => [],
+                'top_products' => [],
+                'sales_by_channel' => [],
+                'lean_home' => true,
+            ];
+        };
+
+        if ($orgId <= 0) {
+            return $build();
+        }
+
+        return OrganizationCache::remember(
+            $orgId,
+            sprintf(
+                'manager.home_kpis:v%d:b%d:%s:%s',
+                OrganizationCache::reportsDashboardVersion($orgId),
+                (int) $resolvedBranch,
+                $fromDate,
+                $toDate,
+            ),
+            self::HOME_KPI_CACHE_SECONDS,
+            $build,
+        );
     }
 
     /**
-     * @return array<string, mixed>
+     * @return array{value: float, shop_value: float, store_value: float}
      */
-    protected function fetchReportsDashboard(
-        User $user,
-        string $fromDate,
-        string $toDate,
-        ?int $branchId,
-    ): array {
-        $reportsRequest = Request::create('/api/v1/reports/dashboard', 'GET', array_filter([
-            'from_date' => $fromDate,
-            'to_date' => $toDate,
-            'branch_id' => $branchId,
-        ], fn ($value) => $value !== null && $value !== ''));
-        $reportsRequest->setUserResolver(fn () => $user);
+    protected function cachedInventoryValuation(?int $orgId, ?int $branchId): array
+    {
+        $empty = ['value' => 0.0, 'shop_value' => 0.0, 'store_value' => 0.0];
+        if (! $orgId || $orgId <= 0) {
+            $summary = app(StockValuationService::class)->summarize($orgId, $branchId);
 
-        return app(ReportController::class)->dashboard($reportsRequest)->getData(true);
+            return [
+                'value' => (float) ($summary['value'] ?? 0),
+                'shop_value' => (float) ($summary['shop_value'] ?? 0),
+                'store_value' => (float) ($summary['store_value'] ?? 0),
+            ];
+        }
+
+        return OrganizationCache::remember(
+            $orgId,
+            sprintf('manager.inventory_value:b%d', (int) $branchId),
+            self::INVENTORY_CACHE_SECONDS,
+            function () use ($orgId, $branchId, $empty) {
+                try {
+                    $summary = app(StockValuationService::class)->summarize($orgId, $branchId);
+
+                    return [
+                        'value' => (float) ($summary['value'] ?? 0),
+                        'shop_value' => (float) ($summary['shop_value'] ?? 0),
+                        'store_value' => (float) ($summary['store_value'] ?? 0),
+                    ];
+                } catch (\Throwable) {
+                    return $empty;
+                }
+            },
+        );
+    }
+
+    /**
+     * Gross profit (sales − COGS) cached separately — COGS join is the slow part.
+     *
+     * @param  list<string>  $metricStatuses
+     * @return array{value: float, change_pct: float}
+     */
+    protected function cachedPeriodGrossProfit(
+        ?int $orgId,
+        ?int $branchId,
+        Carbon $from,
+        Carbon $to,
+        Carbon $prevFrom,
+        Carbon $prevTo,
+        array $metricStatuses,
+        float $totalSales,
+        float $prevTotalSales,
+    ): array {
+        $compute = function () use (
+            $orgId,
+            $branchId,
+            $from,
+            $to,
+            $prevFrom,
+            $prevTo,
+            $metricStatuses,
+            $totalSales,
+            $prevTotalSales,
+        ): array {
+            $cogsFor = function (Carbon $start, Carbon $end) use ($orgId, $branchId, $metricStatuses): float {
+                return (float) DB::table('sale_items as si')
+                    ->join('sales as cs', 'cs.id', '=', 'si.sale_id')
+                    ->join('products as p', function ($join) {
+                        $join->on('p.product_code', '=', 'si.product_code')
+                            ->on('p.organization_id', '=', 'cs.organization_id');
+                    })
+                    ->leftJoin('uoms as uom', 'uom.id', '=', 'p.unit_id')
+                    ->whereIn('cs.status', $metricStatuses)
+                    ->where('cs.archived', 0)
+                    ->when($orgId, fn ($q) => $q->where('cs.organization_id', $orgId))
+                    ->when($branchId, fn ($q) => $q->where('cs.branch_id', $branchId))
+                    ->tap(fn ($q) => EffectiveSaleDate::applyFromToDateFilter(
+                        $q,
+                        $start->toDateString(),
+                        $end->toDateString(),
+                        'cs',
+                    ))
+                    ->tap(fn ($q) => CentrixSalesScope::excludeLegacyMaterialized($q, 'cs'))
+                    ->selectRaw(
+                        'COALESCE(SUM(' . StockCostCalculation::costValueSqlExpression(
+                            'si.quantity',
+                            'COALESCE(p.last_cost_price, 0)',
+                            'uom',
+                        ) . '), 0) as total_cost',
+                    )
+                    ->value('total_cost');
+            };
+
+            try {
+                $gross = $totalSales - $cogsFor($from, $to);
+                $prevGross = $prevTotalSales - $cogsFor($prevFrom, $prevTo);
+            } catch (\Throwable) {
+                $gross = $totalSales;
+                $prevGross = $prevTotalSales;
+            }
+
+            return [
+                'value' => round($gross, 2),
+                'change_pct' => $this->pctChange($gross, $prevGross),
+            ];
+        };
+
+        if (! $orgId || $orgId <= 0) {
+            return $compute();
+        }
+
+        return OrganizationCache::remember(
+            $orgId,
+            sprintf(
+                'manager.gross_profit:b%d:%s:%s',
+                (int) $branchId,
+                $from->toDateString(),
+                $to->toDateString(),
+            ),
+            300,
+            $compute,
+        );
+    }
+
+    protected function pctChange(float $current, float $previous): float
+    {
+        if (abs($previous) < 0.00001) {
+            return $current > 0 ? 100.0 : 0.0;
+        }
+
+        return round((($current - $previous) / abs($previous)) * 100, 1);
     }
 }

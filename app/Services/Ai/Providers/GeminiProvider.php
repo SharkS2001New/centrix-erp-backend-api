@@ -3,6 +3,7 @@
 namespace App\Services\Ai\Providers;
 
 use App\Contracts\Ai\AiProviderInterface;
+use App\Contracts\Ai\AiStreamingProviderInterface;
 use App\Exceptions\Ai\AiProviderException;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
@@ -15,10 +16,13 @@ use Illuminate\Support\Str;
  * Gemini 2.5 / 3.x thinking models attach thoughtSignature on functionCall parts.
  * Those signatures MUST be returned unchanged on the next turn or the API returns 400.
  *
+ * Streaming uses :streamGenerateContent?alt=sse so the web assistant can show tokens
+ * immediately (same path as OpenAI-compatible providers).
+ *
  * @see https://ai.google.dev/gemini-api/docs/function-calling
  * @see https://ai.google.dev/gemini-api/docs/thought-signatures
  */
-class GeminiProvider implements AiProviderInterface
+class GeminiProvider implements AiProviderInterface, AiStreamingProviderInterface
 {
     public function __construct(
         protected string $apiKey,
@@ -41,6 +45,34 @@ class GeminiProvider implements AiProviderInterface
 
     public function continueWithToolResults(array $request): array
     {
+        return $this->generate(
+            $this->buildContinuePayload($request),
+            $request['model'] ?? $this->model,
+        );
+    }
+
+    public function streamChat(array $request): \Generator
+    {
+        yield from $this->streamGenerate(
+            $this->buildGeneratePayload($request),
+            $request['model'] ?? $this->model,
+        );
+    }
+
+    public function streamContinueWithToolResults(array $request): \Generator
+    {
+        yield from $this->streamGenerate(
+            $this->buildContinuePayload($request),
+            $request['model'] ?? $this->model,
+        );
+    }
+
+    /**
+     * @param  array<string, mixed>  $request
+     * @return array<string, mixed>
+     */
+    protected function buildContinuePayload(array $request): array
+    {
         $contents = $this->buildContentsFromHistory($request['messages'] ?? []);
 
         // Prefer the exact model content from the prior turn (preserves thoughtSignature).
@@ -52,8 +84,8 @@ class GeminiProvider implements AiProviderInterface
             ];
         } else {
             $modelParts = $this->rebuildModelPartsFromToolCalls($request['prior_tool_calls'] ?? []);
-        if ($modelParts !== []) {
-            $contents[] = ['role' => 'model', 'parts' => $modelParts];
+            if ($modelParts !== []) {
+                $contents[] = ['role' => 'model', 'parts' => $modelParts];
             }
         }
 
@@ -91,7 +123,174 @@ class GeminiProvider implements AiProviderInterface
             $payload['tools'] = [['functionDeclarations' => $tools]];
         }
 
-        return $this->generate($payload, $request['model'] ?? $this->model);
+        return $payload;
+    }
+
+    /**
+     * Stream generateContent via SSE (?alt=sse). Yields delta + complete events
+     * compatible with AiToolChatService::consumeStreamTurn.
+     *
+     * @param  array<string, mixed>  $payload
+     * @return \Generator<int, array<string, mixed>>
+     */
+    protected function streamGenerate(array $payload, string $model): \Generator
+    {
+        $model = trim($model) !== '' ? trim($model) : $this->model;
+        $url = rtrim($this->baseUrl, '/').'/models/'.rawurlencode($model).':streamGenerateContent?alt=sse';
+
+        try {
+            $response = Http::withHeaders([
+                'Content-Type' => 'application/json',
+                'x-goog-api-key' => $this->apiKey,
+            ])
+                ->timeout($this->timeoutSeconds)
+                ->withOptions(['stream' => true])
+                ->post($url, $payload);
+        } catch (ConnectionException $e) {
+            Log::warning('Gemini stream connection failed', ['message' => $e->getMessage()]);
+            throw AiProviderException::timeout();
+        }
+
+        if ($response->status() === 429) {
+            throw AiProviderException::rateLimited(
+                'Centrix AI is temporarily limited by external provider API rate limits. Wait about a minute and try again, or add your own API key under Administration → Settings → AI.',
+            );
+        }
+        if ($this->isInvalidApiKeyResponse($response)) {
+            throw AiProviderException::unauthorized();
+        }
+        if (in_array($response->status(), [401, 403], true)) {
+            throw AiProviderException::unauthorized();
+        }
+        if ($response->status() >= 500) {
+            throw AiProviderException::unavailable();
+        }
+        if (! $response->successful()) {
+            Log::warning('Gemini stream request failed', [
+                'status' => $response->status(),
+                'body' => $response->body(),
+                'model' => $model,
+            ]);
+            throw AiProviderException::unavailable();
+        }
+
+        $body = $response->toPsrResponse()->getBody();
+        $buffer = '';
+        $text = '';
+        $parts = [];
+        $toolCalls = [];
+        $finishReason = null;
+        $usage = ['input_tokens' => 0, 'output_tokens' => 0, 'total_tokens' => 0];
+        $contentRole = 'model';
+
+        while (! $body->eof()) {
+            $buffer .= $body->read(2048);
+            while (($boundary = strpos($buffer, "\n")) !== false) {
+                $line = rtrim(substr($buffer, 0, $boundary), "\r");
+                $buffer = substr($buffer, $boundary + 1);
+                if ($line === '' || ! str_starts_with($line, 'data: ')) {
+                    continue;
+                }
+                $data = trim(substr($line, 6));
+                if ($data === '' || $data === '[DONE]') {
+                    continue;
+                }
+                $json = json_decode($data, true);
+                if (! is_array($json)) {
+                    continue;
+                }
+
+                if (is_array($json['usageMetadata'] ?? null)) {
+                    $usageMeta = $json['usageMetadata'];
+                    $usage['input_tokens'] = (int) ($usageMeta['promptTokenCount'] ?? $usage['input_tokens']);
+                    $usage['output_tokens'] = (int) ($usageMeta['candidatesTokenCount']
+                        ?? $usageMeta['responseTokenCount']
+                        ?? $usage['output_tokens']);
+                    $usage['total_tokens'] = (int) ($usageMeta['totalTokenCount']
+                        ?? ($usage['input_tokens'] + $usage['output_tokens']));
+                }
+
+                $candidate = is_array($json['candidates'][0] ?? null) ? $json['candidates'][0] : null;
+                if (! is_array($candidate)) {
+                    continue;
+                }
+                if (! empty($candidate['finishReason'])) {
+                    $finishReason = (string) $candidate['finishReason'];
+                }
+
+                $content = is_array($candidate['content'] ?? null) ? $candidate['content'] : [];
+                if (! empty($content['role'])) {
+                    $contentRole = (string) $content['role'];
+                }
+                $chunkParts = is_array($content['parts'] ?? null) ? $content['parts'] : [];
+                foreach ($chunkParts as $part) {
+                    if (! is_array($part)) {
+                        continue;
+                    }
+                    // Keep every part (incl. thoughtSignature) for the next tool round.
+                    $parts[] = $part;
+
+                    if (! empty($part['thought']) && isset($part['text'])) {
+                        continue;
+                    }
+                    if (isset($part['text']) && is_string($part['text']) && $part['text'] !== '') {
+                        $text .= $part['text'];
+                        yield ['type' => 'delta', 'content' => $part['text']];
+                    }
+                    if (isset($part['functionCall']) && is_array($part['functionCall'])) {
+                        $name = (string) ($part['functionCall']['name'] ?? '');
+                        $args = $part['functionCall']['args'] ?? [];
+                        if (! is_array($args)) {
+                            $args = [];
+                        }
+                        if ($name === '') {
+                            continue;
+                        }
+                        $call = [
+                            'id' => 'call_'.Str::lower(Str::random(12)),
+                            'name' => $name,
+                            'arguments' => $args,
+                        ];
+                        $signature = $part['thoughtSignature'] ?? $part['thought_signature'] ?? null;
+                        if (is_string($signature) && $signature !== '') {
+                            $call['thought_signature'] = $signature;
+                        }
+                        $toolCalls[] = $call;
+                    }
+                }
+            }
+        }
+
+        if ($finishReason === 'MALFORMED_FUNCTION_CALL') {
+            throw new AiProviderException(
+                'The AI could not format a data request correctly. Please try asking again more simply.',
+                'malformed_function_call',
+                502,
+                true,
+            );
+        }
+        if (in_array($finishReason, ['SAFETY', 'RECITATION', 'BLOCKLIST', 'PROHIBITED_CONTENT'], true)) {
+            throw new AiProviderException(
+                'The AI could not answer that request. Please rephrase your question.',
+                'blocked',
+                422,
+                false,
+            );
+        }
+
+        $modelContent = $parts !== []
+            ? ['role' => $contentRole !== '' ? $contentRole : 'model', 'parts' => $parts]
+            : null;
+
+        yield [
+            'type' => 'complete',
+            'text' => trim($text) !== '' ? trim($text) : null,
+            'tool_calls' => $toolCalls,
+            'usage' => $usage,
+            'model' => $model,
+            'finish_reason' => $finishReason,
+            'model_content' => $modelContent,
+        ];
     }
 
     /**

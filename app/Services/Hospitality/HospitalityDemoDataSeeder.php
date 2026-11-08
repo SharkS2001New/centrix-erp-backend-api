@@ -476,6 +476,8 @@ class HospitalityDemoDataSeeder
                 ]),
             );
 
+            // Prefer bundled JPEGs on the public disk (local or R2) so Hotel POS tiles
+            // never depend on Unsplash being reachable from the till.
             SeededProductImage::ensureForProduct(
                 $product->fresh(),
                 $org,
@@ -483,7 +485,7 @@ class HospitalityDemoDataSeeder
                 $item['group'] === 'drinks' ? 'drinks' : 'food',
                 force: true,
                 photoKey: $item['photo'] ?? null,
-                preferRemoteUrl: true,
+                preferRemoteUrl: false,
             );
 
             $codes[] = (string) $product->product_code;

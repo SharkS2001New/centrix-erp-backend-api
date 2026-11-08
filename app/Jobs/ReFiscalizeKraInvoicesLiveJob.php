@@ -22,6 +22,7 @@ class ReFiscalizeKraInvoicesLiveJob implements ShouldQueue
     public function __construct(
         public string $taskId,
     ) {
+        $this->onQueue((string) config('queue.names.kra', 'kra'));
         $this->timeout = max(
             3600,
             (int) config('background.job_timeout_long_seconds', 7200),

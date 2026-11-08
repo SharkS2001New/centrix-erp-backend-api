@@ -179,17 +179,40 @@ class SeededProductImage
             return null;
         }
 
-        $path = resource_path('seed-images/hospitality/'.$key.'.jpg');
-        if (! is_file($path)) {
-            return null;
+        foreach (self::bundledPhotoCandidates($key) as $candidate) {
+            $path = resource_path('seed-images/hospitality/'.$candidate.'.jpg');
+            if (! is_file($path)) {
+                continue;
+            }
+
+            $bytes = @file_get_contents($path);
+            if (is_string($bytes) && strlen($bytes) >= 512) {
+                return $bytes;
+            }
         }
 
-        $bytes = @file_get_contents($path);
-        if (! is_string($bytes) || strlen($bytes) < 512) {
-            return null;
-        }
+        return null;
+    }
 
-        return $bytes;
+    /**
+     * Map commerce / alias photo keys onto the bundled hospitality JPEG set.
+     *
+     * @return list<string>
+     */
+    protected static function bundledPhotoCandidates(string $key): array
+    {
+        $alias = match ($key) {
+            'rice', 'grain', 'grains', 'flour', 'maize', 'sugar', 'soap', 'detergent', 'toothpaste', 'household' => 'retail',
+            'oil', 'cooking-oil' => 'juice',
+            'bread', 'bakery', 'loaf' => 'chapati',
+            'milk', 'dairy' => 'milk-tea',
+            'eggs', 'egg' => 'retail',
+            'banana', 'bananas', 'tomato', 'tomatoes', 'produce' => 'salad',
+            'snack', 'snacks', 'biscuit', 'biscuits' => 'retail',
+            default => $key,
+        };
+
+        return array_values(array_unique(array_filter([$key, $alias])));
     }
 
     /**
@@ -231,6 +254,21 @@ class SeededProductImage
             'salad' => 'salad',
             'pilau' => 'pilau',
             'rice' => 'pilau',
+            'maize flour' => 'retail',
+            'flour' => 'retail',
+            'sugar' => 'retail',
+            'cooking oil' => 'juice',
+            'oil' => 'juice',
+            'bread' => 'chapati',
+            'loaf' => 'chapati',
+            'milk' => 'milk-tea',
+            'egg' => 'retail',
+            'banana' => 'salad',
+            'tomato' => 'salad',
+            'toothpaste' => 'retail',
+            'soap' => 'retail',
+            'detergent' => 'retail',
+            'biscuit' => 'retail',
             'githeri' => 'githeri',
             'nyama' => 'nyama-choma',
             'choma' => 'nyama-choma',

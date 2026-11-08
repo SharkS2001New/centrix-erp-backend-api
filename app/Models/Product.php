@@ -27,7 +27,7 @@ class Product extends Model
         'deleted_at', 'deleted_by',
     ];
 
-    protected $appends = ['image_url'];
+    protected $appends = ['image_url', 'image_version'];
 
     public function unit()
     {
@@ -54,6 +54,19 @@ class Product extends Model
         return $this->branch_id === null ? 'organization' : 'branch';
     }
 
+    /** Fingerprint of image_path — tills use this to keep local caches until the photo changes. */
+    protected function imageVersion(): Attribute
+    {
+        return Attribute::get(function () {
+            $path = is_string($this->image_path) ? trim($this->image_path) : '';
+            if ($path === '') {
+                return null;
+            }
+
+            return substr(hash('sha256', $path), 0, 16);
+        });
+    }
+
     protected function imageUrl(): Attribute
     {
         return Attribute::get(function () {
@@ -61,14 +74,25 @@ class Product extends Model
                 return null;
             }
 
+            $version = $this->image_version;
             if (filter_var($this->image_path, FILTER_VALIDATE_URL)) {
-                return $this->image_path;
+                // Remote catalogue URLs: append v= so browsers/tills bust cache on path change.
+                if (! is_string($version) || $version === '') {
+                    return $this->image_path;
+                }
+                $sep = str_contains((string) $this->image_path, '?') ? '&' : '?';
+
+                return $this->image_path.$sep.'v='.$version;
             }
 
             $base = rtrim((string) config('app.url'), '/');
             $code = rawurlencode((string) $this->product_code);
+            $url = $base.'/api/v1/products/'.$code.'/image/file';
+            if (is_string($version) && $version !== '') {
+                $url .= '?v='.$version;
+            }
 
-            return $base.'/api/v1/products/'.$code.'/image/file';
+            return $url;
         });
     }
 

@@ -332,10 +332,10 @@ class MobileSalesService
             $allChannels = false;
         }
 
+        // List cards use order_discount only — skip withSum(items.discount_given).
         $query = $this->mobileSalesQuery($user, $allChannels)
             ->select($this->orderListColumns())
-            ->with(['customer:customer_num,customer_name,organization_id'])
-            ->withSum('items', 'discount_given');
+            ->with(['customer:customer_num,customer_name,organization_id']);
 
         $statusFilter = strtolower(trim((string) ($filters['status'] ?? '')));
         $knownStatuses = [
@@ -619,14 +619,8 @@ class MobileSalesService
             $allChannels = false;
         }
 
-        $sale = $this->mobileSalesQuery($user, $allChannels)
-            ->with([
-                'items.product:product_code,product_name,unit_id,organization_id,sell_on_retail',
-                'items.product.unit:id,conversion_factor,full_name,measure_name,small_packaging_label,middle_packaging_label,middle_factor,uses_small_packaging,uom_type',
-                'cashier:id,username',
-                'customer:customer_num,customer_name,organization_id',
-            ])
-            ->findOrFail($saleId);
+        // Header only first — immutable detail cache can skip the items/product graph.
+        $sale = $this->mobileSalesQuery($user, $allChannels)->findOrFail($saleId);
 
         $cache = app(CompletedSalesCacheService::class);
         if ($cache->isImmutableSale($sale)) {
@@ -636,6 +630,13 @@ class MobileSalesService
                 return $cache->hydrateMobileOrderDetail($cached, $sale, $user);
             }
         }
+
+        $sale->load([
+            'items.product:product_code,product_name,unit_id,organization_id,sell_on_retail',
+            'items.product.unit:id,conversion_factor,full_name,measure_name,small_packaging_label,middle_packaging_label,middle_factor,uses_small_packaging,uom_type',
+            'cashier:id,username',
+            'customer:customer_num,customer_name,organization_id',
+        ]);
 
         $flags = $this->orderCapabilityFlags($sale, $user);
         $detail = array_merge(
@@ -842,15 +843,15 @@ class MobileSalesService
         $presentation = app(SaleOrderPresentationService::class);
         $cancelCaps = $this->cancellationCapabilitiesTemplate($user, $gate);
 
+        // No withSum — home cards only need order_discount; line discounts load on detail.
         return $this->mobileSalesQuery($user, $allChannels)
             ->select($this->orderListColumns())
             ->with(['customer:customer_num,customer_name,organization_id'])
-            ->withSum('items', 'discount_given')
             ->tap(fn (Builder $q) => $this->applyCreatedAtDayRange($q, $from, $to))
             ->where('status', '!=', 'cancelled')
             ->whereNotIn('status', ['pending_approval', 'editable'])
             ->orderByDesc('id')
-            ->limit(20)
+            ->limit(12)
             ->get()
             ->map(fn (Sale $sale) => array_merge(
                 $this->presentOrderSummary($sale, $user, $presentation),

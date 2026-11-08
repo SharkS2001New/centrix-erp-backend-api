@@ -352,7 +352,7 @@ class PlatformDemoDataService
             return [
                 'profile' => $profile,
                 'message' => sprintf(
-                    'Seeded %d menu products and %d tables for this hotel.',
+                    'Seeded %d Hotel & Bar menu items with photos, plus %d floor tables for POS testing.',
                     $result['products'] ?? 0,
                     $result['tables'] ?? 0,
                 ),
@@ -364,13 +364,16 @@ class PlatformDemoDataService
         if (data_get(config('erp.profiles.'.$profile), 'industry') === 'commerce') {
             $result = app(CommerceDemoDataSeeder::class)->seedForOrganization($org, $branch, $admin);
             $this->stampOrganization($org, $profile);
+            $catalogue = (string) ($result['catalogue'] ?? 'commerce samples');
 
             return [
                 'profile' => $profile,
                 'message' => sprintf(
-                    'Seeded %d sample products with %d representative images and opening stock.',
+                    'Seeded %d %s with %d product photos and opening stock for this %s organisation.',
                     $result['products'],
+                    $catalogue,
                     $result['images'],
+                    config('erp.profiles.'.$profile.'.label') ?: $profile,
                 ),
                 ...$result,
                 ...$this->organizationStatus($org),
@@ -382,7 +385,7 @@ class PlatformDemoDataService
 
             return [
                 'profile' => $profile,
-                'message' => 'SPA & Kinyozi sample appointments, services, and clients are available in its browser-based demo workspace. Day-to-day settings stay in Administration.',
+                'message' => 'SPA & Kinyozi keeps sample appointments, services, and clients in its browser workspace (open the SPA app once to load them). This organisation profile does not use product photos.',
                 ...$this->organizationStatus($org),
             ];
         }

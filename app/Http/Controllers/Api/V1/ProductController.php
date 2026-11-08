@@ -73,7 +73,7 @@ class ProductController extends BaseResourceController
         if ($this->isHospitalityRequest($request)) {
             $data['has_image'] = filled($product->image_path);
         } else {
-            unset($data['image_path'], $data['image_url'], $data['has_image']);
+            unset($data['image_path'], $data['image_url'], $data['image_version'], $data['has_image']);
         }
 
         if ($skipBranchOverlay || ! $request) {
@@ -927,21 +927,98 @@ class ProductController extends BaseResourceController
         $this->assertHospitalityProductImages($request);
         $model = $this->findScopedModel($request, $product);
 
-        if (! StoredPublicFile::exists($model->image_path)) {
-            abort(Response::HTTP_NOT_FOUND);
-        }
-
         $headers = [];
         if ($request->boolean('download')) {
             $safe = preg_replace('/[^A-Za-z0-9._-]+/', '_', (string) $model->product_code) ?: 'product';
-            $ext = strtolower((string) pathinfo((string) $model->image_path, PATHINFO_EXTENSION));
-            if ($ext === '') {
+            $ext = strtolower((string) pathinfo((string) ($model->image_path ?? ''), PATHINFO_EXTENSION));
+            if ($ext === '' || strlen($ext) > 5) {
                 $ext = 'jpg';
             }
             $headers['Content-Disposition'] = 'attachment; filename="'.$safe.'.'.$ext.'"';
         }
+        // Versioned URLs (?v= fingerprint of image_path) are safe for long-lived PC/browser cache.
+        if ($request->filled('v')) {
+            $headers['Cache-Control'] = 'private, max-age=31536000, immutable';
+        }
 
-        return StoredPublicFile::response($model->image_path, 'image/jpeg', $headers);
+        $resolved = $this->resolveProductImageStoragePath($model);
+        if ($resolved !== null) {
+            return StoredPublicFile::response($resolved, 'image/jpeg', $headers);
+        }
+
+        abort(Response::HTTP_NOT_FOUND);
+    }
+
+    /**
+     * Resolve a readable public-disk path for the product photo.
+     * Handles local files, /storage/… URLs after host moves, and remote catalogue URLs
+     * (downloads once onto the public disk so tills can cache /image/file).
+     */
+    protected function resolveProductImageStoragePath(Product $model): ?string
+    {
+        $path = is_string($model->image_path) ? trim($model->image_path) : '';
+        if ($path === '') {
+            return null;
+        }
+
+        if (StoredPublicFile::exists($path)) {
+            return $path;
+        }
+
+        // Full public URL from an older host → try the relative key under /storage/.
+        $fromStorageUrl = $this->relativePathFromPublicStorageUrl($path);
+        if ($fromStorageUrl !== null && StoredPublicFile::exists($fromStorageUrl)) {
+            $model->forceFill(['image_path' => $fromStorageUrl])->save();
+
+            return $fromStorageUrl;
+        }
+
+        if (! filter_var($path, FILTER_VALIDATE_URL)) {
+            return null;
+        }
+
+        // Remote / catalogue URL — pull onto this server's public disk once.
+        try {
+            $directory = OrganizationPublicStorage::path(
+                $model->organization_id,
+                'products',
+                (string) $model->product_code,
+            );
+            $stored = (new RemoteProductImageImporter)->import($path, $directory);
+            $model->forceFill(['image_path' => $stored['path']])->save();
+
+            return $stored['path'];
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    protected function relativePathFromPublicStorageUrl(string $url): ?string
+    {
+        if (! filter_var($url, FILTER_VALIDATE_URL)) {
+            return null;
+        }
+
+        $parts = parse_url($url);
+        $urlPath = is_array($parts) ? (string) ($parts['path'] ?? '') : '';
+        if ($urlPath === '') {
+            return null;
+        }
+
+        $markers = ['/storage/', '/public/storage/'];
+        foreach ($markers as $marker) {
+            $pos = stripos($urlPath, $marker);
+            if ($pos === false) {
+                continue;
+            }
+            $relative = rawurldecode(substr($urlPath, $pos + strlen($marker)));
+            $relative = ltrim(str_replace('\\', '/', $relative), '/');
+            if ($relative !== '' && ! str_contains($relative, '..')) {
+                return $relative;
+            }
+        }
+
+        return null;
     }
 
     /** POST /products/{product}/image — multipart product photo */

@@ -8,6 +8,7 @@ use App\Models\Product;
 use App\Models\User;
 use App\Services\Hospitality\HospitalityDemoDataSeeder;
 use App\Support\StoredPublicFile;
+use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
@@ -71,8 +72,17 @@ class HospitalityDemoDataSeedTest extends TestCase
         foreach ($products as $product) {
             $this->assertNotEmpty($product->image_path, "Missing image_path for {$product->product_code}");
             $this->assertNotEmpty($product->image_url);
-            $this->assertSame($product->image_path, $product->image_url);
-            $this->assertStringStartsWith('https://', $product->image_url);
+            $this->assertNotEmpty($product->image_version);
+            $this->assertFalse(
+                (bool) filter_var($product->image_path, FILTER_VALIDATE_URL),
+                "Demo photo for {$product->product_code} should be stored on the public disk, not a remote URL",
+            );
+            $this->assertTrue(
+                Storage::disk('public')->exists($product->image_path),
+                "Missing stored demo photo bytes for {$product->product_code}",
+            );
+            $this->assertStringContainsString('/image/file', (string) $product->image_url);
+            $this->assertStringContainsString('v='.$product->image_version, (string) $product->image_url);
         }
 
         $again = app(HospitalityDemoDataSeeder::class)->seedForOrganization($org);
@@ -111,8 +121,10 @@ class HospitalityDemoDataSeedTest extends TestCase
             ->where('organization_id', $org->id)
             ->where('product_code', 'like', 'HTL-%')
             ->firstOrFail();
-        $this->assertSame($product->image_path, $product->image_url);
-        $this->assertStringStartsWith('https://', $product->image_url);
+        $this->assertFalse((bool) filter_var($product->image_path, FILTER_VALIDATE_URL));
+        $this->assertTrue(Storage::disk('public')->exists($product->image_path));
+        $this->assertStringContainsString('/image/file', (string) $product->image_url);
+        $this->assertStringContainsString('v='.$product->image_version, (string) $product->image_url);
     }
 
     public function test_seed_rejects_non_hotel_bar_orgs(): void

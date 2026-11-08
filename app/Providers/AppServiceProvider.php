@@ -53,6 +53,7 @@ class AppServiceProvider extends ServiceProvider
         $this->configureCorsFromRuntimeEnv();
         $this->enforceProductionSafety();
         $this->reportFailedQueueJobs();
+        $this->applyPlatformPublicMediaStorage();
 
         if (
             $this->app->environment('production')
@@ -323,5 +324,18 @@ class AppServiceProvider extends ServiceProvider
         }
 
         return null;
+    }
+
+    /**
+     * When Platform → Cloudflare R2 media storage is enabled, point the public disk at R2.
+     * Fail soft during migrate/boot before the platform org exists.
+     */
+    protected function applyPlatformPublicMediaStorage(): void
+    {
+        try {
+            \App\Services\Storage\PublicMediaR2SettingsResolver::applyToRuntime();
+        } catch (\Throwable) {
+            // Ignore — local disk remains until settings are available.
+        }
     }
 }

@@ -266,6 +266,7 @@ class HospitalityPosCatalogService
                         ? (string) $product->subCategory->category->category_name
                         : null,
                     'image_url' => $product->image_url,
+                    'image_version' => $product->image_version,
                     'has_image' => ! empty($product->image_path),
                 ];
             })

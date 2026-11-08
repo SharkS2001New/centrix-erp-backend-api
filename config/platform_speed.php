@@ -9,8 +9,8 @@ return [
     /** Listen to DB::listen for query fingerprints on each request. */
     'db_listen' => filter_var(env('PLATFORM_SPEED_DB_LISTEN', true), FILTER_VALIDATE_BOOL),
 
-    /** Fraction of queries to record (1.0 = all). Applied after buffering. */
-    'sample_rate' => max(0.0, min(1.0, (float) env('PLATFORM_SPEED_SAMPLE_RATE', 1.0))),
+    /** Fraction of queries to record (1.0 = all). Applied after buffering. Keep low in prod. */
+    'sample_rate' => max(0.0, min(1.0, (float) env('PLATFORM_SPEED_SAMPLE_RATE', 0.15))),
 
     /** Queries slower than this (ms) are counted in query fingerprint aggregates. */
     'slow_query_ms' => (int) env('PLATFORM_SPEED_SLOW_QUERY_MS', 500),

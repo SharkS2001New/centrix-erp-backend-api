@@ -18,7 +18,9 @@ class ProcessAccountingExportsJob implements ShouldQueue
 
     public function __construct(
         public string $taskId,
-    ) {}
+    ) {
+        $this->onQueue((string) config('queue.names.exports', 'exports'));
+    }
 
     public function handle(
         BackgroundTaskService $tasks,

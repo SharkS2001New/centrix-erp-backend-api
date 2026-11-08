@@ -122,7 +122,19 @@ class HospitalityOpsMvpTest extends TestCase
         $this->assertSame('checked_out', $folioId ? $this->getJson("/api/v1/hospitality/folios/{$folioId}")->json('folio.status') : null);
 
         $this->getJson('/api/v1/hospitality/dashboard')->assertOk()
-            ->assertJsonStructure(['rooms', 'arrivals_today', 'open_folios', 'fnb_today']);
+            ->assertJsonStructure([
+                'rooms',
+                'kpis',
+                'arrivals_today',
+                'departures_today',
+                'arrivals',
+                'departures',
+                'open_folios',
+                'open_folios_list',
+                'fnb_today',
+                'fnb_by_outlet',
+                'open_checks',
+            ]);
 
         $this->getJson('/api/v1/reports/hospitality-occupancy')->assertOk();
     }
