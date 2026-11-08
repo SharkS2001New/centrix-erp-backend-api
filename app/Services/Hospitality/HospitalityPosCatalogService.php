@@ -249,7 +249,7 @@ class HospitalityPosCatalogService
             $bindings = [];
             // Cap CASE size — top sellers drive ranking; the rest sort by name.
             arsort($soldQtyByCode, SORT_NUMERIC);
-            $topSold = array_slice($soldQtyByCode, 0, 400, true);
+            $topSold = array_slice($soldQtyByCode, 0, 80, true);
             foreach ($topSold as $code => $qty) {
                 $cases[] = 'WHEN ? THEN ?';
                 $bindings[] = (string) $code;

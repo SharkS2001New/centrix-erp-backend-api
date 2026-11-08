@@ -22,7 +22,7 @@ class HospitalityHousekeepingController extends Controller
         $org = $this->org($request);
         $this->assertEnabled($org);
 
-        return response()->json($this->housekeeping->board($org));
+        return response()->json($this->housekeeping->board($org, $request));
     }
 
     public function setStatus(Request $request, int $roomId)

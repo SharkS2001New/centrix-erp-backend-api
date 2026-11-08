@@ -29,6 +29,7 @@ class HospitalityNightAuditService
             ->first();
 
         $candidates = $this->candidates($org, $date);
+        // Slim KPIs for preview — full manager flash only when posting.
         $flash = $this->reports->run($org, 'hospitality-manager-flash', $date, $date);
 
         return [
@@ -134,24 +135,95 @@ class HospitalityNightAuditService
     protected function candidates(Organization $org, string $date): array
     {
         $folios = HospitalityFolio::query()
-            ->with(['room.roomType'])
+            ->with(['room.roomType:id,base_rate,name,code'])
             ->where('organization_id', $org->id)
             ->where('status', 'open')
             ->whereNotNull('room_id')
             ->get();
 
+        if ($folios->isEmpty()) {
+            return [];
+        }
+
+        $folioIds = $folios->pluck('id')->map(fn ($id) => (int) $id)->all();
+
+        $alreadyPosted = HospitalityFolioCharge::query()
+            ->whereIn('folio_id', $folioIds)
+            ->where('charge_type', 'room')
+            ->whereDate('business_date', $date)
+            ->pluck('folio_id')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->flip()
+            ->all();
+
+        $reservations = HospitalityReservation::query()
+            ->where('organization_id', $org->id)
+            ->whereIn('folio_id', $folioIds)
+            ->get(['folio_id', 'rate_plan_id'])
+            ->keyBy(fn (HospitalityReservation $r) => (int) $r->folio_id);
+
+        $ratePlanIds = $reservations
+            ->pluck('rate_plan_id')
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        $plansById = $ratePlanIds === []
+            ? collect()
+            : HospitalityRatePlan::query()
+                ->whereIn('id', $ratePlanIds)
+                ->get(['id', 'amount'])
+                ->keyBy('id');
+
+        $roomTypeIds = $folios
+            ->map(fn (HospitalityFolio $f) => $f->room?->room_type_id)
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        $defaultPlansByType = $roomTypeIds === []
+            ? []
+            : HospitalityRatePlan::query()
+                ->where('organization_id', $org->id)
+                ->whereIn('room_type_id', $roomTypeIds)
+                ->where('is_default', true)
+                ->where('is_active', true)
+                ->get(['room_type_id', 'amount'])
+                ->mapWithKeys(fn (HospitalityRatePlan $p) => [
+                    (int) $p->room_type_id => round((float) $p->amount, 2),
+                ])
+                ->all();
+
         $out = [];
         foreach ($folios as $folio) {
-            $already = HospitalityFolioCharge::query()
-                ->where('folio_id', $folio->id)
-                ->where('charge_type', 'room')
-                ->whereDate('business_date', $date)
-                ->exists();
-            if ($already) {
+            $folioId = (int) $folio->id;
+            if (isset($alreadyPosted[$folioId])) {
                 continue;
             }
 
-            $amount = $this->nightlyRate($org, $folio);
+            $amount = 0.0;
+            $reservation = $reservations->get($folioId);
+            if ($reservation?->rate_plan_id) {
+                $plan = $plansById->get((int) $reservation->rate_plan_id);
+                if ($plan) {
+                    $amount = round((float) $plan->amount, 2);
+                }
+            }
+
+            if ($amount <= 0) {
+                $roomTypeId = $folio->room?->room_type_id ? (int) $folio->room->room_type_id : null;
+                if ($roomTypeId && array_key_exists($roomTypeId, $defaultPlansByType)) {
+                    $amount = $defaultPlansByType[$roomTypeId];
+                } else {
+                    $amount = round((float) ($folio->room?->roomType?->base_rate ?? 0), 2);
+                }
+            }
+
             if ($amount <= 0) {
                 continue;
             }
@@ -167,35 +239,5 @@ class HospitalityNightAuditService
         }
 
         return $out;
-    }
-
-    protected function nightlyRate(Organization $org, HospitalityFolio $folio): float
-    {
-        $reservation = HospitalityReservation::query()
-            ->where('organization_id', $org->id)
-            ->where('folio_id', $folio->id)
-            ->first();
-
-        if ($reservation?->rate_plan_id) {
-            $plan = HospitalityRatePlan::query()->find($reservation->rate_plan_id);
-            if ($plan) {
-                return round((float) $plan->amount, 2);
-            }
-        }
-
-        $roomTypeId = $folio->room?->room_type_id;
-        if ($roomTypeId) {
-            $defaultPlan = HospitalityRatePlan::query()
-                ->where('organization_id', $org->id)
-                ->where('room_type_id', $roomTypeId)
-                ->where('is_default', true)
-                ->where('is_active', true)
-                ->first();
-            if ($defaultPlan) {
-                return round((float) $defaultPlan->amount, 2);
-            }
-        }
-
-        return round((float) ($folio->room?->roomType?->base_rate ?? 0), 2);
     }
 }

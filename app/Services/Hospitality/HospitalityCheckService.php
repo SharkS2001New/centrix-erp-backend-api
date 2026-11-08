@@ -1117,6 +1117,8 @@ class HospitalityCheckService
             ->with([
                 'lines' => fn ($q) => $q->orderBy('sort_order')->orderBy('id'),
                 'floorTable:id,code,label',
+                'outlet:id,code,name,outlet_type',
+                'payments:id,check_id,method_code,amount,reference,created_at',
             ])
             ->where('organization_id', $organizationId)
             ->whereIn('status', self::COLLECTIBLE_STATUSES)
