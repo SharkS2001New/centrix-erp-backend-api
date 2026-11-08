@@ -148,6 +148,25 @@ class HospitalityOpsMvpTest extends TestCase
         $this->getJson('/api/v1/reports/hospitality-occupancy')->assertOk();
     }
 
+    public function test_dashboard_accepts_from_and_to_date_filters(): void
+    {
+        $today = $this->getJson('/api/v1/hospitality/dashboard')
+            ->assertOk()
+            ->json();
+        $this->assertSame(now()->toDateString(), $today['from_date']);
+        $this->assertSame(now()->toDateString(), $today['to_date']);
+        $this->assertSame(1, (int) $today['period_days']);
+
+        $range = $this->getJson('/api/v1/hospitality/dashboard?from_date=2024-06-01&to_date=2024-06-10')
+            ->assertOk()
+            ->json();
+        $this->assertSame('2024-06-01', $range['from_date']);
+        $this->assertSame('2024-06-10', $range['to_date']);
+        $this->assertSame(10, (int) $range['period_days']);
+        $this->assertArrayHasKey('kpis', $range);
+        $this->assertArrayHasKey('fnb_today', $range);
+    }
+
     public function test_front_desk_check_in_without_folios_occupies_room(): void
     {
         $settings = $this->org->module_settings ?? [];
