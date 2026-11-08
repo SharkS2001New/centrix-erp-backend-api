@@ -175,8 +175,9 @@ class ApplicationProvisionerTest extends TestCase
                 'hotel_bar_pos' => true,
                 'hospitality_backoffice' => true,
                 'distribution' => false,
-                'accounting' => true,
-                'hr' => true,
+                // Accounting / HR stay optional (Platform can tick); not on by default.
+                'accounting' => false,
+                'hr' => false,
                 'admin' => true,
             ]],
         ];
