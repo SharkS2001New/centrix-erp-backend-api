@@ -7,9 +7,24 @@ return [
     |--------------------------------------------------------------------------
     */
     'stale_pending_minutes' => (int) env('BACKGROUND_STALE_PENDING_MINUTES', 15),
-    'stale_running_minutes' => (int) env('BACKGROUND_STALE_RUNNING_MINUTES', 35),
+    /**
+     * Must exceed typical report/export job timeouts (often 3600s) or recoverStale*
+     * marks healthy long jobs failed mid-run.
+     */
+    'stale_running_minutes' => (int) env('BACKGROUND_STALE_RUNNING_MINUTES', 70),
     /** Longer threshold for catalog import tasks that may run up to an hour. */
     'stale_import_running_minutes' => (int) env('BACKGROUND_STALE_IMPORT_RUNNING_MINUTES', 90),
+    /** Report export / paginated fetch / backup — align with queue:work --timeout=3600. */
+    'stale_export_running_minutes' => (int) env('BACKGROUND_STALE_EXPORT_RUNNING_MINUTES', 75),
+
+    /*
+    | When true, if a job is still pending after the HTTP response, the API process
+    | runs it with dispatchSync. Useful without a worker (sync/local). Dangerous in
+    | production Redis fleets — large jobs exhaust PHP-FPM and look like "offline".
+    | null = enable only when QUEUE_CONNECTION=sync.
+    */
+    'inline_fallback' => env('BACKGROUND_INLINE_FALLBACK'),
+    'inline_fallback_delay_ms' => (int) env('BACKGROUND_INLINE_FALLBACK_DELAY_MS', 750),
 
     /*
     |--------------------------------------------------------------------------
