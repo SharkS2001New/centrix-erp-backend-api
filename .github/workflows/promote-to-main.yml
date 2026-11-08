@@ -1,0 +1,70 @@
+# Promote develop (master) → production branch (main) after CI succeeds.
+# New server / production tracks `main`. Local develop continues on `master`.
+name: Promote to main
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+concurrency:
+  group: promote-to-main
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Merge master into main
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'master'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          # Need a token that can push to main (branch protection may require a PAT).
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Promote master → main
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin master main
+
+          # Only promote the exact commit CI validated.
+          if [[ "$(git rev-parse origin/master)" != "${HEAD_SHA}" ]]; then
+            echo "origin/master moved since CI ran (${HEAD_SHA}); skipping promote."
+            exit 0
+          fi
+
+          git checkout -B main origin/main
+
+          if git merge-base --is-ancestor "${HEAD_SHA}" HEAD; then
+            echo "main already contains ${HEAD_SHA}; nothing to promote."
+            exit 0
+          fi
+
+          if git merge --ff-only "${HEAD_SHA}"; then
+            echo "Fast-forwarded main to ${HEAD_SHA}"
+          else
+            echo "Fast-forward not possible; creating merge commit."
+            git merge --no-ff --no-edit "${HEAD_SHA}" \
+              -m "chore: promote master ${HEAD_SHA:0:7} to main after CI"
+          fi
+
+          git push origin main
+          echo "Promoted master → main at $(git rev-parse HEAD)"

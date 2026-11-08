@@ -83,8 +83,10 @@ jobs:
           build-args: |
             GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}
 
+      # Production Helm charts track `main` (new server). Image builds still run on
+      # master for develop previews, but only main opens the deploy PR.
       - name: Check out pitchpredk3ssetup
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/checkout@v5
         with:
           repository: ${{ github.repository_owner }}/pitchpredk3ssetup
@@ -92,7 +94,7 @@ jobs:
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
       - name: Update Helm image tags
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         run: |
           TAG="${{ steps.image_tag.outputs.value }}"
           for file in \
@@ -107,7 +109,7 @@ jobs:
           done
 
       - name: Create Helm image update pull request
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
@@ -121,5 +123,5 @@ jobs:
             centrix-erp-reverb/values.yaml
           commit-message: "chore(centrix-erp-backend-api): bump image tag to ${{ steps.image_tag.outputs.value }}"
           title: "chore(centrix-erp-backend-api): bump image tag to ${{ steps.image_tag.outputs.value }}"
-          body: "Updates the Centrix ERP API, scheduler, queue-worker, and Reverb Helm charts to the newly published image."
+          body: "Updates the Centrix ERP API, scheduler, queue-worker, and Reverb Helm charts to the newly published image (from main)."
           base: master

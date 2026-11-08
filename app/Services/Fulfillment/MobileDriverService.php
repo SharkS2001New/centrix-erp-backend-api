@@ -63,17 +63,23 @@ class MobileDriverService
         $carryOverFrom = now()->subDays(self::CARRY_OVER_LOOKBACK_DAYS)->toDateString();
 
         $todayTrips = $this->driverTripsQuery($driver)
-            ->whereDate('scheduled_date', $today)
+            ->where('scheduled_date', $today)
             ->whereNotIn('status', ['cancelled'])
             ->orderByRaw("FIELD(status, 'in_transit', 'loading', 'draft', 'completed')")
             ->orderBy('id')
             ->get();
 
         $carryOverTrips = $this->driverTripsQuery($driver)
-            ->whereDate('scheduled_date', '<', $today)
-            ->whereDate('scheduled_date', '>=', $carryOverFrom)
+            ->where('scheduled_date', '<', $today)
+            ->where('scheduled_date', '>=', $carryOverFrom)
             ->whereNotIn('status', ['cancelled'])
-            ->whereHas('sales', fn ($q) => $q->where('status', 'processed'))
+            ->whereExists(function ($q) {
+                $q->selectRaw('1')
+                    ->from('dispatch_trip_sales as dts')
+                    ->join('sales as s', 's.id', '=', 'dts.sale_id')
+                    ->whereColumn('dts.trip_id', 'dispatch_trips.id')
+                    ->where('s.status', 'processed');
+            })
             ->orderByDesc('scheduled_date')
             ->orderBy('id')
             ->get();
@@ -105,7 +111,7 @@ class MobileDriverService
         $today = now()->toDateString();
 
         $trips = $this->driverTripsQuery($driver)
-            ->whereDate('scheduled_date', '>', $today)
+            ->where('scheduled_date', '>', $today)
             ->whereNotIn('status', ['cancelled', 'completed'])
             ->orderBy('scheduled_date')
             ->orderBy('id')
@@ -121,7 +127,7 @@ class MobileDriverService
         $parsed = \Carbon\Carbon::parse($date)->toDateString();
 
         $trips = $this->driverTripsQuery($driver)
-            ->whereDate('scheduled_date', $parsed)
+            ->where('scheduled_date', $parsed)
             ->whereNotIn('status', ['cancelled'])
             ->orderByRaw("FIELD(status, 'in_transit', 'loading', 'draft', 'completed')")
             ->orderBy('id')
@@ -136,9 +142,10 @@ class MobileDriverService
      */
     protected function presentTripsPayload(Driver $driver, $trips, ?string $scheduledDate): array
     {
+        // List cards do not need COGS/product lines — that eager-load dominated trip lists.
         $summaries = $this->financials->summarizeForTripIds(
             $trips->pluck('id')->map(fn ($id) => (int) $id)->all(),
-            true,
+            false,
         );
 
         return [

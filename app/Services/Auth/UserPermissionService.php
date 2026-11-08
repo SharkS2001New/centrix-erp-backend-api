@@ -20,12 +20,14 @@ class UserPermissionService
             return [];
         }
 
-        return DB::table('role_permissions')
-            ->where('role_id', $roleId)
-            ->pluck('permission_id')
-            ->map(fn ($id) => (int) $id)
-            ->values()
-            ->all();
+        return $this->rememberRequest('role_permission_ids.'.$roleId, function () use ($roleId) {
+            return DB::table('role_permissions')
+                ->where('role_id', $roleId)
+                ->pluck('permission_id')
+                ->map(fn ($id) => (int) $id)
+                ->values()
+                ->all();
+        });
     }
 
     /** @return list<int> */
@@ -43,51 +45,104 @@ class UserPermissionService
     /** @return list<int> */
     protected function overrideIds(int $userId, string $effect): array
     {
-        return DB::table('user_permission_overrides')
-            ->where('user_id', $userId)
-            ->where('effect', $effect)
-            ->pluck('permission_id')
-            ->map(fn ($id) => (int) $id)
-            ->values()
-            ->all();
+        return $this->rememberRequest('user_permission_overrides.'.$userId.'.'.$effect, function () use ($userId, $effect) {
+            return DB::table('user_permission_overrides')
+                ->where('user_id', $userId)
+                ->where('effect', $effect)
+                ->pluck('permission_id')
+                ->map(fn ($id) => (int) $id)
+                ->values()
+                ->all();
+        });
     }
 
     /** @return list<int> */
     public function roleAssignedPermissionIds(User $user): array
     {
-        $roleIds = collect($this->rolePermissionIds($user->role_id));
-        $grants = collect($this->grantIds((int) $user->id));
-        $denies = collect($this->denyIds((int) $user->id));
+        return $this->rememberRequest('role_assigned_permission_ids.'.$user->id, function () use ($user) {
+            $roleIds = collect($this->rolePermissionIds($user->role_id));
+            $grants = collect($this->grantIds((int) $user->id));
+            $denies = collect($this->denyIds((int) $user->id));
 
-        return $roleIds
-            ->merge($grants)
-            ->diff($denies)
-            ->unique()
-            ->values()
-            ->map(fn ($id) => (int) $id)
-            ->all();
+            return $roleIds
+                ->merge($grants)
+                ->diff($denies)
+                ->unique()
+                ->values()
+                ->map(fn ($id) => (int) $id)
+                ->all();
+        });
     }
 
     /** @return list<int> */
     public function effectivePermissionIds(User $user): array
     {
-        // Platform super-admins bypass RBAC. Org admins (`is_admin`) do not — their
-        // feature access comes from the role matrix (plus Administration auto-grants).
-        if ($user->is_super_admin) {
-            return Permission::query()->pluck('id')->map(fn ($id) => (int) $id)->all();
+        return $this->rememberRequest('effective_permission_ids.'.$user->id, function () use ($user) {
+            // Platform super-admins bypass RBAC. Org admins (`is_admin`) do not — their
+            // feature access comes from the role matrix (plus Administration auto-grants).
+            if ($user->is_super_admin) {
+                return Permission::query()->pluck('id')->map(fn ($id) => (int) $id)->all();
+            }
+
+            $roleIds = collect($this->rolePermissionIds($user->role_id));
+            $grants = collect($this->grantIds((int) $user->id));
+            $denies = collect($this->denyIds((int) $user->id));
+
+            return $roleIds
+                ->merge($grants)
+                ->diff($denies)
+                ->unique()
+                ->values()
+                ->map(fn ($id) => (int) $id)
+                ->all();
+        });
+    }
+
+    /**
+     * @template T
+     * @param  callable(): T  $callback
+     * @return T
+     */
+    protected function rememberRequest(string $key, callable $callback): mixed
+    {
+        $attrKey = 'user_permission_service.'.$key;
+        try {
+            $request = request();
+            if ($request->attributes->has($attrKey)) {
+                return $request->attributes->get($attrKey);
+            }
+            $value = $callback();
+            $request->attributes->set($attrKey, $value);
+
+            return $value;
+        } catch (\Throwable) {
+            return $callback();
         }
+    }
 
-        $roleIds = collect($this->rolePermissionIds($user->role_id));
-        $grants = collect($this->grantIds((int) $user->id));
-        $denies = collect($this->denyIds((int) $user->id));
+    protected function permissionIdByCode(string $permissionCode): ?int
+    {
+        $map = $this->rememberRequest('permission_id_by_code', function () {
+            return Permission::query()
+                ->pluck('id', 'permission_code')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+        });
 
-        return $roleIds
-            ->merge($grants)
-            ->diff($denies)
-            ->unique()
-            ->values()
-            ->map(fn ($id) => (int) $id)
-            ->all();
+        $id = $map[$permissionCode] ?? null;
+
+        return $id !== null ? (int) $id : null;
+    }
+
+    protected function permissionByCode(string $permissionCode): ?Permission
+    {
+        $map = $this->rememberRequest('permission_model_by_code', function () {
+            return Permission::query()->get()->keyBy('permission_code');
+        });
+
+        $permission = $map[$permissionCode] ?? null;
+
+        return $permission instanceof Permission ? $permission : null;
     }
 
     public function hasPermission(User $user, string $permissionCode, ?CapabilityGate $gate = null): bool
@@ -165,10 +220,7 @@ class UserPermissionService
             return false;
         }
 
-        $permission = Permission::query()
-            ->where('permission_code', $permissionCode)
-            ->first();
-
+        $permission = $this->permissionByCode($permissionCode);
         if (! $permission) {
             return false;
         }
@@ -216,10 +268,7 @@ class UserPermissionService
             return true;
         }
 
-        $permission = Permission::query()
-            ->where('permission_code', $permissionCode)
-            ->first();
-
+        $permission = $this->permissionByCode($permissionCode);
         if (! $permission) {
             return true;
         }
@@ -239,15 +288,12 @@ class UserPermissionService
 
     public function hasRoleAssignedPermission(User $user, string $permissionCode): bool
     {
-        $permissionId = Permission::query()
-            ->where('permission_code', $permissionCode)
-            ->value('id');
-
+        $permissionId = $this->permissionIdByCode($permissionCode);
         if (! $permissionId) {
             return false;
         }
 
-        return in_array((int) $permissionId, $this->roleAssignedPermissionIds($user), true);
+        return in_array($permissionId, $this->roleAssignedPermissionIds($user), true);
     }
 
     /** Managers who may approve or reject sales order cancellation requests. */
@@ -468,15 +514,12 @@ class UserPermissionService
 
     protected function hasDirectPermission(User $user, string $permissionCode): bool
     {
-        $permissionId = Permission::query()
-            ->where('permission_code', $permissionCode)
-            ->value('id');
-
+        $permissionId = $this->permissionIdByCode($permissionCode);
         if (! $permissionId) {
             return false;
         }
 
-        return in_array((int) $permissionId, $this->effectivePermissionIds($user), true);
+        return in_array($permissionId, $this->effectivePermissionIds($user), true);
     }
 
     protected function hasLegacyShopDebtorsGrant(User $user, string $bucket): bool

@@ -236,7 +236,6 @@ class SaleController extends BaseResourceController
             || $request->filled('required_date_from')
             || $request->filled('required_date_to');
 
-        $deliveryDateExpr = 'COALESCE(sales.required_date, sales.delivery_date, DATE(sales.created_at))';
         $deliveryFrom = null;
         $deliveryTo = null;
         if ($request->filled('required_date')) {
@@ -325,12 +324,24 @@ class SaleController extends BaseResourceController
         }
 
         if ($deliveryFrom !== null && $deliveryTo !== null) {
-            if ($deliveryFrom === $deliveryTo) {
-                $query->whereDate(DB::raw($deliveryDateExpr), $deliveryFrom);
-            } else {
-                $query->whereDate(DB::raw($deliveryDateExpr), '>=', $deliveryFrom)
-                    ->whereDate(DB::raw($deliveryDateExpr), '<=', $deliveryTo);
-            }
+            // Sargable OR of date ranges instead of whereDate(COALESCE(...)) which
+            // wraps columns and blocks indexes on required_date / delivery_date / created_at.
+            $fromStart = $deliveryFrom.' 00:00:00';
+            $toEnd = $deliveryTo.' 23:59:59';
+            $query->where(function ($outer) use ($deliveryFrom, $deliveryTo, $fromStart, $toEnd) {
+                $outer->where(function ($required) use ($deliveryFrom, $deliveryTo) {
+                    $required->whereNotNull('sales.required_date')
+                        ->whereBetween('sales.required_date', [$deliveryFrom, $deliveryTo]);
+                })->orWhere(function ($delivery) use ($fromStart, $toEnd) {
+                    $delivery->whereNull('sales.required_date')
+                        ->whereNotNull('sales.delivery_date')
+                        ->whereBetween('sales.delivery_date', [$fromStart, $toEnd]);
+                })->orWhere(function ($created) use ($fromStart, $toEnd) {
+                    $created->whereNull('sales.required_date')
+                        ->whereNull('sales.delivery_date')
+                        ->whereBetween('sales.created_at', [$fromStart, $toEnd]);
+                });
+            });
         }
 
         if ($request->filled('route_id')) {
@@ -437,7 +448,20 @@ class SaleController extends BaseResourceController
         $sort = $this->resolveOrdersListSort($request, $gate);
         $this->applyOrdersListSort($query, $sort);
 
-        $paginator = $query->paginate($perPage);
+        // Reuse summary COUNT — avoids Laravel paginate()'s second full-filter COUNT(*).
+        $page = max(1, (int) $request->input('page', 1));
+        $filteredTotal = (int) ($summary['filtered_total'] ?? $summary['total'] ?? 0);
+        $paginator = new \Illuminate\Pagination\LengthAwarePaginator(
+            (clone $query)->forPage($page, $perPage)->get(),
+            $filteredTotal,
+            $perPage,
+            $page,
+            [
+                'path' => $request->url(),
+                'query' => $request->query(),
+            ],
+        );
+        unset($summary['filtered_total']);
         $editService = app(PosOrderEditService::class);
         $lineEditService = app(BackofficeOrderLineEditService::class);
         $presentation = app(SaleOrderPresentationService::class);
@@ -497,6 +521,7 @@ class SaleController extends BaseResourceController
         $base = (clone $query)->cloneWithout(['columns', 'orders']);
         $row = (clone $base)
             ->selectRaw("
+                COUNT(*) as filtered_total,
                 SUM(CASE WHEN {$active} THEN 1 ELSE 0 END) as total,
                 SUM(CASE WHEN {$active} THEN COALESCE(sales.order_total, 0) ELSE 0 END) as revenue,
                 SUM(CASE WHEN sales.status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
@@ -513,6 +538,7 @@ class SaleController extends BaseResourceController
             : $this->paymentBucketsFromSettlementsQuery((clone $base)->whereRaw($active));
 
         return [
+            'filtered_total' => (int) ($row->filtered_total ?? 0),
             'total' => (int) ($row->total ?? 0),
             'revenue' => round((float) ($row->revenue ?? 0), 2),
             'unpaid' => $paymentBuckets['unpaid'],

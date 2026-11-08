@@ -4,7 +4,7 @@ namespace App\Services\Auth;
 
 use App\Models\Organization;
 use App\Models\User;
-use App\Services\Erp\CapabilityGate;
+use App\Services\Erp\ErpContext;
 use App\Services\Mobile\ManagerAppModuleAccessService;
 use App\Services\Mobile\MobileAppModuleAccessService;
 use Illuminate\Validation\ValidationException;
@@ -145,13 +145,10 @@ class UserLoginChannelService
             return false;
         }
 
-        $organization = $user->organization ?? Organization::query()->find($user->organization_id);
-        if (! $organization) {
+        $modules = $this->mobileModulesForUser($user);
+        if ($modules === null) {
             return false;
         }
-
-        $gate = app(CapabilityGate::class)->forOrganization($organization);
-        $modules = app(MobileAppModuleAccessService::class)->capabilitiesForUser($user, $gate);
         $salesOk = (bool) ($modules['modules']['sales']['accessible'] ?? false);
         $driverOk = (bool) ($modules['modules']['driver']['accessible'] ?? false);
 
@@ -198,15 +195,59 @@ class UserLoginChannelService
             return false;
         }
 
-        $organization = $user->organization ?? Organization::query()->find($user->organization_id);
-        if (! $organization) {
-            return false;
-        }
-
-        $gate = app(CapabilityGate::class)->forOrganization($organization);
-        $module = app(ManagerAppModuleAccessService::class)->capabilitiesForUser($user, $gate);
+        $module = $this->managerModuleForUser($user);
 
         return (bool) ($module['accessible'] ?? false);
+    }
+
+    /** @return array<string, mixed>|null */
+    protected function mobileModulesForUser(User $user): ?array
+    {
+        $attrKey = 'login_channel.mobile_modules.'.$user->id;
+        try {
+            $request = request();
+            if ($request->attributes->has($attrKey)) {
+                return $request->attributes->get($attrKey);
+            }
+        } catch (\Throwable) {
+            $request = null;
+        }
+
+        $organization = $user->organization ?? Organization::query()->find($user->organization_id);
+        if (! $organization) {
+            return null;
+        }
+
+        $gate = app(ErpContext::class)->gateForOrganization($organization);
+        $modules = app(MobileAppModuleAccessService::class)->capabilitiesForUser($user, $gate);
+        $request?->attributes->set($attrKey, $modules);
+
+        return $modules;
+    }
+
+    /** @return array<string, mixed> */
+    protected function managerModuleForUser(User $user): array
+    {
+        $attrKey = 'login_channel.manager_module.'.$user->id;
+        try {
+            $request = request();
+            if ($request->attributes->has($attrKey)) {
+                return $request->attributes->get($attrKey);
+            }
+        } catch (\Throwable) {
+            $request = null;
+        }
+
+        $organization = $user->organization ?? Organization::query()->find($user->organization_id);
+        if (! $organization) {
+            return ['accessible' => false];
+        }
+
+        $gate = app(ErpContext::class)->gateForOrganization($organization);
+        $module = app(ManagerAppModuleAccessService::class)->capabilitiesForUser($user, $gate);
+        $request?->attributes->set($attrKey, $module);
+
+        return $module;
     }
 
     public function isPlatformSuperAdmin(User $user): bool

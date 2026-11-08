@@ -156,7 +156,7 @@ class BranchStockService
      * @param  Collection<int, array<string, mixed>>  $items
      * @return Collection<int, array<string, mixed>>
      */
-    public function overlayCollection(Collection $items, int $branchId): Collection
+    public function overlayCollection(Collection $items, int $branchId, bool $releaseExpired = true): Collection
     {
         $codes = $items->pluck('product_code')->filter()->unique()->values()->all();
         if ($codes === []) {
@@ -169,7 +169,8 @@ class BranchStockService
             ->get()
             ->keyBy('product_code');
 
-        $reservedByCode = $this->activeReservedQtyMap($codes, $branchId);
+        // Mobile/POS catalogue scrolls: skip write-on-read expiry stamping (minute job handles it).
+        $reservedByCode = $this->activeReservedQtyMap($codes, $branchId, $releaseExpired);
 
         return $items->map(function (array $item) use ($rows, $reservedByCode, $branchId) {
             $row = $rows->get($item['product_code'] ?? '');
@@ -454,7 +455,7 @@ class BranchStockService
      * @param  list<string>  $productCodes
      * @return array<string, array{shop: float, store: float}>
      */
-    protected function activeReservedQtyMap(array $productCodes, int $branchId): array
+    protected function activeReservedQtyMap(array $productCodes, int $branchId, bool $releaseExpired = true): array
     {
         $productCodes = array_values(array_unique(array_filter($productCodes)));
         if ($productCodes === []) {
@@ -462,28 +463,25 @@ class BranchStockService
         }
 
         // Stamp released_at on timed-out cart holds so live available updates immediately
-        // (not only after the every-minute release job). Retry MySQL 1213 — this UPDATE
-        // races POS reserveStock / releaseExpiredReservations on the same index.
-        $codes = $productCodes;
-        sort($codes);
-        DB::transaction(function () use ($branchId, $codes): void {
-            // Same lock order as HandlesInventory::reserveStock (current_stock first).
-            foreach ($codes as $code) {
-                CurrentStock::query()
-                    ->where('product_code', $code)
+        // (not only after the every-minute release job). Do NOT lock current_stock here —
+        // catalogue / report list overlays can cover 100+ SKUs and row locks contended with
+        // POS reserve/release. Available qty already excludes expired rows in the SELECT
+        // below, so this UPDATE is a best-effort persistence side-effect only.
+        if ($releaseExpired) {
+            $codes = $productCodes;
+            sort($codes);
+            try {
+                DB::table('stock_reservations')
                     ->where('branch_id', $branchId)
-                    ->lockForUpdate()
-                    ->first();
+                    ->whereIn('product_code', $codes)
+                    ->whereNull('released_at')
+                    ->whereNotNull('expires_at')
+                    ->where('expires_at', '<=', now())
+                    ->update(['released_at' => now()]);
+            } catch (\Throwable) {
+                // Ignore transient write races; the aggregate SELECT still excludes expired holds.
             }
-
-            DB::table('stock_reservations')
-                ->where('branch_id', $branchId)
-                ->whereIn('product_code', $codes)
-                ->whereNull('released_at')
-                ->whereNotNull('expires_at')
-                ->where('expires_at', '<=', now())
-                ->update(['released_at' => now()]);
-        }, 5);
+        }
 
         $rows = DB::table('stock_reservations')
             ->whereNull('released_at')

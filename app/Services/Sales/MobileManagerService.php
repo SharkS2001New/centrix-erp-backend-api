@@ -45,13 +45,29 @@ class MobileManagerService
             || $this->permissions->hasPermission($user, 'mobile_manager.app.access', $gate)
         )) {
             $today = \App\Support\AppTimezone::todayDateString();
-            $reportsRequest = Request::create('/api/v1/reports/dashboard', 'GET', array_filter([
-                'from_date' => $filters['from_date'] ?? $today,
-                'to_date' => $filters['to_date'] ?? $today,
-                'branch_id' => $filters['branch_id'] ?? null,
-            ], fn ($value) => $value !== null && $value !== ''));
-            $reportsRequest->setUserResolver(fn () => $user);
-            $reportsPayload = app(ReportController::class)->dashboard($reportsRequest)->getData(true);
+            $fromDate = (string) ($filters['from_date'] ?? $today);
+            $toDate = (string) ($filters['to_date'] ?? $today);
+            $branchId = isset($filters['branch_id']) ? (int) $filters['branch_id'] : null;
+            $orgId = (int) ($user->organization_id ?? 0);
+
+            $reportsPayload = $orgId > 0
+                ? \App\Services\Cache\OrganizationCache::remember(
+                    $orgId,
+                    'mobile_manager_dashboard:'.$fromDate.':'.$toDate.':'.($branchId ?? 0).':u'.$user->id,
+                    60,
+                    function () use ($user, $fromDate, $toDate, $branchId) {
+                        $reportsRequest = Request::create('/api/v1/reports/dashboard', 'GET', array_filter([
+                            'from_date' => $fromDate,
+                            'to_date' => $toDate,
+                            'branch_id' => $branchId,
+                        ], fn ($value) => $value !== null && $value !== ''));
+                        $reportsRequest->setUserResolver(fn () => $user);
+
+                        return app(ReportController::class)->dashboard($reportsRequest)->getData(true);
+                    },
+                )
+                : [];
+
             $payload['reports_dashboard'] = $reportsPayload;
             $kpis = is_array($reportsPayload['kpis'] ?? null) ? $reportsPayload['kpis'] : [];
             $payload['summary'] = [

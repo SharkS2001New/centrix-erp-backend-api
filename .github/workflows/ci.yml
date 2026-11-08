@@ -1,4 +1,5 @@
-# Security audit only — PHPUnit runs locally (`php artisan test`), never in CI or Docker builds.
+# CI gates promote-to-main. Feature PHPUnit (MySQL + demo seed) still runs locally
+# via `php artisan test`. CI runs Composer audit + Unit suite.
 name: CI
 
 on:
@@ -46,3 +47,58 @@ jobs:
 
       - name: Composer security audit
         run: composer audit
+
+  unit:
+    name: Unit tests
+    if: >-
+      github.event_name == 'pull_request' ||
+      !contains(github.event.head_commit.message, '[skip ci]')
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: pos_erp_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          coverage: none
+          extensions: mbstring, pdo_mysql, tokenizer, xml, ctype, json, bcmath
+          tools: composer:v2
+
+      - name: Install dependencies
+        env:
+          COMPOSER_CAFILE: /etc/ssl/certs/ca-certificates.crt
+        run: |
+          composer config --no-plugins --no-interaction use-github-api false
+          composer config --no-plugins --no-interaction github-oauth.github.com "${{ secrets.GITHUB_TOKEN }}"
+          composer install --no-interaction --prefer-dist
+
+      - name: Run unit tests
+        env:
+          APP_ENV: testing
+          APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          DB_CONNECTION: mysql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: pos_erp_test
+          DB_USERNAME: root
+          DB_PASSWORD: root
+          CACHE_STORE: array
+          QUEUE_CONNECTION: sync
+          SESSION_DRIVER: array
+          MAIL_MAILER: array
+        run: php artisan test --testsuite=Unit --stop-on-failure

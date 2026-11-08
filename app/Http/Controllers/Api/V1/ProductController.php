@@ -343,7 +343,9 @@ class ProductController extends BaseResourceController
         $leanSalesList = in_array($this->salesLoginChannel($request), ['mobile', 'pos'], true);
         $fields = strtolower(trim((string) $request->input('fields', '')));
         $leanOptIn = $fields === 'lean' || $request->boolean('lightweight');
-        $useLeanSelect = $leanSalesList || $leanOptIn;
+        // Default list payloads to lean columns (100-row pages were serializing products.*).
+        // Pass fields=full when the client needs every column + branch relation.
+        $useLeanSelect = $leanSalesList || $leanOptIn || $fields !== 'full';
         $select = $useLeanSelect
             ? [
                 'products.product_code',
@@ -352,6 +354,7 @@ class ProductController extends BaseResourceController
                 'products.vat_id',
                 'products.unit_price',
                 'products.last_cost_price',
+                'products.last_selling_price',
                 'products.sell_on_retail',
                 'products.sell_on_bar',
                 'products.sell_on_hotel',
@@ -363,6 +366,7 @@ class ProductController extends BaseResourceController
                 'products.subcategory_id',
                 'products.supplier_id',
                 'products.reorder_point',
+                'products.low_stock_alert_enabled',
                 'products.product_weight',
                 'products.shelf_location',
                 'products.stock_in_shop',
@@ -394,7 +398,12 @@ class ProductController extends BaseResourceController
         );
 
         if ($branchId !== null) {
-            $presented = $this->branchStock->overlayCollection($presented, $branchId);
+            // Mobile/POS lists: read-only overlay (skip reservation expiry writes on every scroll).
+            $presented = $this->branchStock->overlayCollection(
+                $presented,
+                $branchId,
+                releaseExpired: ! $leanSalesList,
+            );
             if ($this->shouldUseSalesConsumerStock($request)) {
                 $saleLocation = $this->salesConsumerStockLocation($request);
                 $splitShopStore = $this->salesConsumerStockSplitEnabled($request);
@@ -408,9 +417,10 @@ class ProductController extends BaseResourceController
             }
         }
 
-        // Embed UOM / VAT / retail pack helpers on lean sales lists so mobile
+        // Embed UOM / VAT / retail pack helpers on sales-channel lean lists so mobile
         // does not need separate /uoms /vats /retail-package-settings fan-out.
-        if ($useLeanSelect) {
+        // Backoffice catalogue uses lean columns by default but skips this embed.
+        if ($leanSalesList || $leanOptIn) {
             $presented = $this->embedSalesHelpers($presented);
         }
 

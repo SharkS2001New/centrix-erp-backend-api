@@ -28,6 +28,7 @@ use App\Support\SalesChannelLabels;
 use App\Support\SalesReportUserScope;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -1525,7 +1526,8 @@ class ReportController extends Controller
             MAX(COALESCE(completed_at, created_at)) as last_sale_at
         ')->first();
 
-        $lineDiscountQuery = CentrixSalesScope::excludeLegacyMaterialized(
+        // One sale_items scan for line discounts + items sold (was two full joins).
+        $lineAggQuery = CentrixSalesScope::excludeLegacyMaterialized(
             DB::table('sale_items as si')
                 ->join('sales as s', 'si.sale_id', '=', 's.id')
                 ->whereIn('s.status', $metricStatuses)
@@ -1534,33 +1536,19 @@ class ReportController extends Controller
                 ->when($floatSessionId, fn ($q) => $q->where('s.float_session_id', $floatSessionId)),
             's',
         );
-        $tillMetrics->applyCollectedSalesFilter($lineDiscountQuery, 's');
-        $this->applySalesTenantScope($lineDiscountQuery, $orgId, $branchId, 's');
-        $lineDiscountQuery
-            ->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) >= ?', [$periodStartDate])
-            ->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) <= ?', [$periodEndDate]);
-        $lineDiscounts = (float) $lineDiscountQuery->sum('si.discount_given');
+        $tillMetrics->applyCollectedSalesFilter($lineAggQuery, 's');
+        $this->applySalesTenantScope($lineAggQuery, $orgId, $branchId, 's');
+        EffectiveSaleDate::applyFromToDateFilter($lineAggQuery, $periodStartDate, $periodEndDate, 's');
+        $lineAgg = $lineAggQuery->selectRaw('
+            COALESCE(SUM(si.discount_given), 0) as line_discounts,
+            COALESCE(SUM(si.quantity), 0) as items_sold
+        ')->first();
+        $lineDiscounts = (float) ($lineAgg->line_discounts ?? 0);
+        $itemsSold = (float) ($lineAgg->items_sold ?? 0);
 
-        $itemsSoldQuery = CentrixSalesScope::excludeLegacyMaterialized(
-            DB::table('sale_items as si')
-                ->join('sales as s', 'si.sale_id', '=', 's.id')
-                ->whereIn('s.status', $metricStatuses)
-                ->where('s.archived', 0)
-                ->when($cashierId, fn ($q) => $q->where('s.cashier_id', $cashierId))
-                ->when($floatSessionId, fn ($q) => $q->where('s.float_session_id', $floatSessionId)),
-            's',
-        );
-        $tillMetrics->applyCollectedSalesFilter($itemsSoldQuery, 's');
-        $this->applySalesTenantScope($itemsSoldQuery, $orgId, $branchId, 's');
-        $itemsSoldQuery
-            ->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) >= ?', [$periodStartDate])
-            ->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) <= ?', [$periodEndDate]);
-        $itemsSold = (float) $itemsSoldQuery->sum('si.quantity');
-
-        $saleIds = (clone $salesBase)->pluck('id');
-        $refunds = $saleIds->isEmpty()
-            ? 0
-            : (float) DB::table('returns')->whereIn('sale_id', $saleIds)->sum('amount');
+        // Subquery instead of plucking every sale id into PHP (was O(n) memory + two whereIn scans).
+        $saleIdSub = (clone $salesBase)->select('id');
+        $refunds = (float) DB::table('returns')->whereIn('sale_id', $saleIdSub)->sum('amount');
 
         $voidedQuery = DB::table('sales')
             ->where('status', 'cancelled');
@@ -1575,9 +1563,9 @@ class ReportController extends Controller
 
         $gross = (float) ($agg->gross_sales ?? 0);
         $headerVat = round((float) ($agg->total_vat ?? 0), 2);
-        $lineVat = $saleIds->isEmpty()
-            ? 0.0
-            : round((float) DB::table('sale_items')->whereIn('sale_id', $saleIds)->sum('product_vat'), 2);
+        $lineVat = round((float) DB::table('sale_items')
+            ->whereIn('sale_id', (clone $salesBase)->select('id'))
+            ->sum('product_vat'), 2);
         $totalVat = max($headerVat, $lineVat);
         $totalDiscounts = (float) ($agg->order_discounts ?? 0) + $lineDiscounts;
         // Gross / net sales = SUM(order_total). Top-ups and returns already revise
@@ -1871,37 +1859,64 @@ class ReportController extends Controller
                 DB::raw('COALESCE(SUM(s.kcb_amount), 0) as kcb_collected'),
                 DB::raw('COALESCE(SUM(s.equity_amount), 0) + COALESCE(SUM(s.kcb_amount), 0) as bank_collected'),
             )
-            ->get()
-            ->map(function ($row) use ($date, $branchId, $orgId, $isMonthly, $periodStartDate, $periodEndDate, $floatSessionId, $tillMetrics) {
-                $floatQuery = DB::table('till_float_sessions')
-                    ->where('cashier_id', $row->cashier_id);
-                if ($floatSessionId) {
-                    $floatQuery->where('id', $floatSessionId);
-                } elseif ($isMonthly) {
-                    $floatQuery->whereBetween('session_date', [$periodStartDate, $periodEndDate]);
-                } else {
-                    $floatQuery->whereDate('session_date', $date);
-                }
-                $this->applyBranchTenantScope($floatQuery, $orgId, $branchId);
-                $row->opening_float = (float) $floatQuery->sum('working_amount');
+            ->get();
 
-                $debtorQ = DB::table('sale_payments as sp')
-                    ->join('sales as s', 's.id', '=', 'sp.sale_id')
-                    ->join('till_float_sessions as tfs', 'tfs.id', '=', 'sp.float_session_id')
-                    ->where('tfs.cashier_id', $row->cashier_id);
-                if ($floatSessionId) {
-                    $debtorQ->where('tfs.id', $floatSessionId);
-                } elseif ($isMonthly) {
-                    $debtorQ->whereBetween('tfs.session_date', [$periodStartDate, $periodEndDate]);
-                } else {
-                    $debtorQ->whereDate('tfs.session_date', $date);
-                }
-                $this->applyBranchTenantScope($debtorQ, $orgId, $branchId, 'tfs.branch_id');
-                $tillMetrics->applyDebtorCollectionFilter($debtorQ);
-                $row->paid_debtors = round((float) $debtorQ->sum('sp.amount'), 2);
+        // Batch float + debtor totals for all cashiers (was N+1 per cashier).
+        $cashierIds = $cashierRows
+            ->pluck('cashier_id')
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
+        $floatByCashier = [];
+        $debtorByCashier = [];
+        if ($cashierIds !== []) {
+            $floatBatch = DB::table('till_float_sessions')
+                ->whereIn('cashier_id', $cashierIds);
+            if ($floatSessionId) {
+                $floatBatch->where('id', $floatSessionId);
+            } elseif ($isMonthly) {
+                $floatBatch->whereBetween('session_date', [$periodStartDate, $periodEndDate]);
+            } else {
+                $floatBatch->whereDate('session_date', $date);
+            }
+            $this->applyBranchTenantScope($floatBatch, $orgId, $branchId);
+            $floatByCashier = $floatBatch
+                ->groupBy('cashier_id')
+                ->select('cashier_id', DB::raw('COALESCE(SUM(working_amount), 0) as opening_float'))
+                ->pluck('opening_float', 'cashier_id')
+                ->map(fn ($v) => (float) $v)
+                ->all();
 
-                return $row;
-            });
+            $debtorBatch = DB::table('sale_payments as sp')
+                ->join('sales as s', 's.id', '=', 'sp.sale_id')
+                ->join('till_float_sessions as tfs', 'tfs.id', '=', 'sp.float_session_id')
+                ->whereIn('tfs.cashier_id', $cashierIds);
+            if ($floatSessionId) {
+                $debtorBatch->where('tfs.id', $floatSessionId);
+            } elseif ($isMonthly) {
+                $debtorBatch->whereBetween('tfs.session_date', [$periodStartDate, $periodEndDate]);
+            } else {
+                $debtorBatch->whereDate('tfs.session_date', $date);
+            }
+            $this->applyBranchTenantScope($debtorBatch, $orgId, $branchId, 'tfs.branch_id');
+            $tillMetrics->applyDebtorCollectionFilter($debtorBatch);
+            $debtorByCashier = $debtorBatch
+                ->groupBy('tfs.cashier_id')
+                ->selectRaw('tfs.cashier_id as cashier_id, COALESCE(SUM(sp.amount), 0) as paid_debtors')
+                ->pluck('paid_debtors', 'cashier_id')
+                ->map(fn ($v) => round((float) $v, 2))
+                ->all();
+        }
+
+        $cashierRows = $cashierRows->map(function ($row) use ($floatByCashier, $debtorByCashier) {
+            $cid = (int) $row->cashier_id;
+            $row->opening_float = (float) ($floatByCashier[$cid] ?? 0);
+            $row->paid_debtors = (float) ($debtorByCashier[$cid] ?? 0);
+
+            return $row;
+        });
 
         // Cashiers who only collected debtors (no ORDTTL cash sales) still appear in Cashier maths.
         $cashierById = $cashierRows->keyBy(fn ($row) => (int) $row->cashier_id);
@@ -2074,15 +2089,16 @@ class ReportController extends Controller
             $tillMetrics->applyCollectedSalesFilter($dailyBreakdown);
             $this->applySalesTenantScope($dailyBreakdown, $orgId, $branchId);
             EffectiveSaleDate::applyFromToDateFilter($dailyBreakdown, $periodStartDate, $periodEndDate);
+            $dayExpr = EffectiveSaleDate::daySqlExpression('sales');
             $dailyBreakdown = $dailyBreakdown
-                ->selectRaw('
-                    DATE(COALESCE(completed_at, created_at)) as sale_date,
+                ->selectRaw("
+                    {$dayExpr} as sale_date,
                     COUNT(*) as transactions,
                     COALESCE(SUM(order_total), 0) as gross_sales,
                     COALESCE(SUM(total_vat), 0) as total_vat,
                     COALESCE(SUM(cash), 0) as cash_collected
-                ')
-                ->groupBy(DB::raw('DATE(COALESCE(completed_at, created_at))'))
+                ")
+                ->groupBy(DB::raw($dayExpr))
                 ->orderBy('sale_date')
                 ->get()
                 ->map(fn ($row) => [
@@ -2930,12 +2946,22 @@ class ReportController extends Controller
         if (! $skipDateGuard) {
             $defaultDays = null;
             if ($user?->organization_id) {
-                $org = \App\Models\Organization::query()->find($user->organization_id);
-                if ($org) {
-                    $gate = app(\App\Services\Erp\CapabilityGate::class)->forOrganization($org);
-                    $sales = $gate->moduleSettings('sales');
-                    $defaultDays = (int) ($sales['reports_default_date_range_days'] ?? 0) ?: null;
-                }
+                $orgId = (int) $user->organization_id;
+                $defaultDays = OrganizationCache::remember(
+                    $orgId,
+                    'reports_default_date_range_days',
+                    300,
+                    function () use ($orgId) {
+                        $org = \App\Models\Organization::query()->find($orgId);
+                        if (! $org) {
+                            return null;
+                        }
+                        $gate = app(\App\Services\Erp\CapabilityGate::class)->forOrganization($org);
+                        $sales = $gate->moduleSettings('sales');
+
+                        return (int) ($sales['reports_default_date_range_days'] ?? 0) ?: null;
+                    },
+                );
             }
 
             $filters = \App\Support\ReportDateRangeGuard::enforce($filters, $defaultDays);
@@ -3020,7 +3046,11 @@ class ReportController extends Controller
             $view,
             $effectiveSumColumns,
         );
-        $paginator = $aggregated->paginate(min((int) ($filters['per_page'] ?? 20), 200));
+        $paginator = $this->paginateReportQueryWithKnownTotal(
+            $aggregated,
+            $filters,
+            (int) ($summary['row_count'] ?? 0),
+        );
 
         return array_merge($paginator->toArray(), [
             'summary' => $summary,
@@ -3093,8 +3123,8 @@ class ReportController extends Controller
                         if (in_array($col, ['order_total', 'amount_paid'], true)) {
                             $escaped = str_replace('`', '``', $col);
                             if ($amountNeedle !== null) {
+                                // Exact numeric match — skip CAST(... LIKE) which defeats indexes.
                                 $inner->{$method}($col, $amountNeedle);
-                                $inner->orWhereRaw("CAST(`{$escaped}` AS CHAR) LIKE ?", ['%'.$search.'%']);
                             } else {
                                 $inner->{$method.'Raw'}("CAST(`{$escaped}` AS CHAR) LIKE ?", ['%'.$search.'%']);
                             }
@@ -3155,11 +3185,42 @@ class ReportController extends Controller
             }
         }
 
-        $paginator = $q->paginate(min((int) ($filters['per_page'] ?? 20), 200));
+        $paginator = $this->paginateReportQueryWithKnownTotal(
+            $q,
+            $filters,
+            (int) ($summary['row_count'] ?? 0),
+        );
 
         return array_merge($paginator->toArray(), [
             'summary' => $summary,
         ]);
+    }
+
+    /**
+     * Build a length-aware paginator using a total already computed by the report summary.
+     * Avoids Laravel paginate()'s second full-filter COUNT(*) on heavy SQL views.
+     *
+     * @param  \Illuminate\Database\Query\Builder  $query
+     * @param  array<string, mixed>  $filters
+     */
+    protected function paginateReportQueryWithKnownTotal($query, array $filters, int $total): LengthAwarePaginator
+    {
+        $perPage = min(max(1, (int) ($filters['per_page'] ?? 20)), 200);
+        $page = max(1, (int) ($filters['page'] ?? request()->input('page', 1)));
+        $total = max(0, $total);
+
+        $items = (clone $query)->forPage($page, $perPage)->get();
+
+        return new LengthAwarePaginator(
+            $items,
+            $total,
+            $perPage,
+            $page,
+            [
+                'path' => request()->url(),
+                'query' => request()->query(),
+            ],
+        );
     }
 
     /**

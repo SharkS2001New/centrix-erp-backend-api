@@ -46,6 +46,29 @@ class OrganizationLicenseService
             return null;
         }
 
+        // Module switches + erp.module middleware call this repeatedly in one request
+        // (license middleware, CapabilityGate::package, capabilities runtime). Memoize.
+        $cacheKey = 'organization_license.resolve.'.$org->id;
+        try {
+            $request = request();
+            if ($request->attributes->has($cacheKey)) {
+                return $request->attributes->get($cacheKey);
+            }
+        } catch (\Throwable) {
+            $request = null;
+        }
+
+        $license = $this->buildLicensePayload($org);
+        if ($request) {
+            $request->attributes->set($cacheKey, $license);
+        }
+
+        return $license;
+    }
+
+    /** @return array<string, mixed> */
+    protected function buildLicensePayload(Organization $org): array
+    {
         /** @var PlatformSubscription|null $sub */
         $sub = PlatformSubscription::query()
             ->with(['plan', 'contract'])
@@ -108,6 +131,20 @@ class OrganizationLicenseService
         $license['duration_discount'] = $durationDiscount;
 
         return $license;
+    }
+
+    /** Drop request-memoized license after subscription/payment mutations. */
+    public function forgetResolvedLicense(?int $organizationId): void
+    {
+        if (! $organizationId) {
+            return;
+        }
+
+        try {
+            request()->attributes->remove('organization_license.resolve.'.$organizationId);
+        } catch (\Throwable) {
+            // no request context
+        }
     }
 
     /** True when the org must be locked out (no usable active subscription). */

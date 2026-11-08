@@ -19,6 +19,7 @@ use App\Services\Inventory\StockUomDisplayService;
 use App\Support\SqlLikeSearch;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class MobileSalesService
@@ -346,12 +347,25 @@ class MobileSalesService
         $summaryQuery = clone $query;
         $requestedPage = max(1, (int) ($filters['page'] ?? 1));
         $isLaterPage = $requestedPage > 1;
-        $page = $isLaterPage
-            ? $query->simplePaginate($perPage)
-            : $query->paginate($perPage);
-        $listSummary = $isLaterPage
-            ? []
-            : $this->buildOrderListSummary(
+        // Page 1: one COUNT+SUM aggregate then forPage — avoid Laravel paginate()'s second COUNT.
+        if ($isLaterPage) {
+            $page = $query->simplePaginate($perPage);
+            $listSummary = [];
+        } else {
+            $agg = (clone $summaryQuery)->cloneWithout(['columns', 'orders'])
+                ->selectRaw('COUNT(*) as order_count, COALESCE(SUM(sales.order_total), 0) as gross_total')
+                ->first();
+            $orderCount = (int) ($agg->order_count ?? 0);
+            $grossTotal = round((float) ($agg->gross_total ?? 0), 2);
+            $items = $query->forPage(1, $perPage)->get();
+            $page = new \Illuminate\Pagination\LengthAwarePaginator(
+                $items,
+                $orderCount,
+                $perPage,
+                1,
+                ['path' => request()->url(), 'query' => request()->query()],
+            );
+            $listSummary = $this->buildOrderListSummary(
                 $summaryQuery,
                 $search,
                 (int) ($user->organization_id ?? 0),
@@ -359,8 +373,10 @@ class MobileSalesService
                 $from,
                 $to,
                 $dateScoped && $search === '',
-                (int) $page->total(),
+                $orderCount,
+                $grossTotal,
             );
+        }
         $gate = $this->erp->gateForUser($user);
         $presentation = app(SaleOrderPresentationService::class);
         $cancelCaps = $this->cancellationCapabilitiesTemplate($user, $gate);
@@ -444,8 +460,11 @@ class MobileSalesService
         Carbon $to,
         bool $deductExpenses,
         int $orderCount,
+        ?float $precomputedGrossTotal = null,
     ): array {
-        $grossTotal = round((float) (clone $query)->sum('sales.order_total'), 2);
+        $grossTotal = $precomputedGrossTotal !== null
+            ? round($precomputedGrossTotal, 2)
+            : round((float) (clone $query)->sum('sales.order_total'), 2);
         $expenseTotal = $deductExpenses
             ? $this->routeExpenses()->approvedTotalForUserBetween($user, $from, $to)
             : 0.0;
@@ -830,12 +849,16 @@ class MobileSalesService
         $rows = $this->mobileSalesQuery($user, $allChannels);
         $this->applyCreatedAtDayRange($rows, $from, $to);
 
+        // Prefer indexed date column when present (avoids DATE(created_at) wrap on group).
+        $dayExpr = \App\Support\EffectiveSaleDate::columnExists()
+            ? 'sales.effective_sale_date'
+            : 'DATE(sales.created_at)';
         $salesRows = $rows
             ->where('status', '!=', 'cancelled')
-            ->selectRaw('DATE(created_at) as sale_day')
+            ->selectRaw("{$dayExpr} as sale_day")
             ->selectRaw('COUNT(*) as order_count')
             ->selectRaw('COALESCE(ROUND(SUM(order_total), 2), 0) as total_amount')
-            ->groupBy('sale_day')
+            ->groupBy(DB::raw($dayExpr))
             ->orderBy('sale_day')
             ->get();
 
@@ -899,12 +922,15 @@ class MobileSalesService
     ): array {
         $rowsQuery = $this->mobileSalesQuery($user, $allChannels);
         $this->applyCreatedAtDayRange($rowsQuery, $from, $to);
+        $dayExpr = \App\Support\EffectiveSaleDate::columnExists()
+            ? 'sales.effective_sale_date'
+            : 'DATE(sales.created_at)';
         $rows = $rowsQuery
             ->where('status', '!=', 'cancelled')
-            ->selectRaw('DATE(created_at) as sale_day')
+            ->selectRaw("{$dayExpr} as sale_day")
             ->selectRaw('COUNT(*) as order_count')
             ->selectRaw('COALESCE(ROUND(SUM(order_total), 2), 0) as total_amount')
-            ->groupBy('sale_day')
+            ->groupBy(DB::raw($dayExpr))
             ->orderBy('sale_day')
             ->get()
             ->keyBy(fn ($row) => Carbon::parse($row->sale_day)->toDateString());
