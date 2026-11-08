@@ -36,20 +36,44 @@ class HospitalityPosRoomSaleService
             ->where('is_active', true)
             ->whereIn('status', ['vacant', 'clean'])
             ->whereNull('sold_check_id')
-            ->orderBy('room_number');
+            ->orderBy('room_number')
+            ->limit(200);
 
         if ($q = trim((string) $q)) {
-            $query->where(function ($inner) use ($q) {
-                $inner->where('room_number', 'like', "%{$q}%")
-                    ->orWhere('floor', 'like', "%{$q}%")
-                    ->orWhereHas('roomType', function ($t) use ($q) {
-                        $t->where('name', 'like', "%{$q}%")
-                            ->orWhere('code', 'like', "%{$q}%");
+            $like = '%'.$q.'%';
+            $query->where(function ($inner) use ($like) {
+                $inner->where('room_number', 'like', $like)
+                    ->orWhere('floor', 'like', $like)
+                    ->orWhereHas('roomType', function ($t) use ($like) {
+                        $t->where('name', 'like', $like)
+                            ->orWhere('code', 'like', $like);
                     });
             });
         }
 
-        return $query->get()->map(fn (HospitalityRoom $room) => $this->roomToSellableArray($org, $room))->all();
+        $rooms = $query->get();
+        $typeIds = $rooms->pluck('room_type_id')->filter()->unique()->values()->all();
+        $defaultRatesByType = $typeIds === []
+            ? []
+            : HospitalityRatePlan::query()
+                ->where('organization_id', $org->id)
+                ->whereIn('room_type_id', $typeIds)
+                ->where('is_default', true)
+                ->where('is_active', true)
+                ->get(['room_type_id', 'amount'])
+                ->mapWithKeys(fn (HospitalityRatePlan $plan) => [
+                    (int) $plan->room_type_id => round((float) $plan->amount, 2),
+                ])
+                ->all();
+
+        return $rooms->map(function (HospitalityRoom $room) use ($org, $defaultRatesByType) {
+            $typeId = $room->room_type_id ? (int) $room->room_type_id : null;
+            $rate = $typeId && array_key_exists($typeId, $defaultRatesByType)
+                ? $defaultRatesByType[$typeId]
+                : round((float) ($room->roomType?->base_rate ?? 0), 2);
+
+            return $this->roomToSellableArray($org, $room, $rate);
+        })->all();
     }
 
     public function addRoomStayLine(
@@ -378,9 +402,9 @@ class HospitalityPosRoomSaleService
     /**
      * @return array<string, mixed>
      */
-    public function roomToSellableArray(Organization $org, HospitalityRoom $room): array
+    public function roomToSellableArray(Organization $org, HospitalityRoom $room, ?float $nightlyRate = null): array
     {
-        $rate = $this->nightlyRateForRoom($org, $room);
+        $rate = $nightlyRate ?? $this->nightlyRateForRoom($org, $room);
 
         return [
             'id' => $room->id,

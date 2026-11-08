@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Operations;
 
 use App\Http\Controllers\Controller;
 use App\Services\Accounting\BankReconciliationService;
+use App\Services\Accounting\BankStatementImportService;
 use App\Services\Notifications\AdminNotificationService;
 use App\Services\Notifications\InAppNotificationEvents;
 use Illuminate\Http\Request;
@@ -13,6 +14,7 @@ class BankReconciliationController extends Controller
 {
     public function __construct(
         protected BankReconciliationService $reconciliations,
+        protected BankStatementImportService $statementImports,
     ) {}
 
     public function bankAccounts(Request $request)
@@ -42,6 +44,36 @@ class BankReconciliationController extends Controller
         );
     }
 
+    /**
+     * Parse a statement file/CSV without writing — review grid + tie-out.
+     */
+    public function previewStatement(Request $request)
+    {
+        $request->validate([
+            'file' => 'nullable|file|max:12288',
+            'csv' => 'nullable|string',
+            'format' => 'nullable|in:csv,pdf,ofx,qfx',
+        ]);
+
+        if (! $request->hasFile('file') && ! $request->filled('csv')) {
+            return response()->json(['message' => 'Upload a statement file or paste CSV text.'], 422);
+        }
+
+        try {
+            $preview = $this->statementImports->previewFromUpload(
+                file: $request->file('file'),
+                csv: $request->input('csv'),
+                formatHint: $request->input('format'),
+                organizationId: (int) $request->user()->organization_id,
+                storeFile: false,
+            );
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($preview);
+    }
+
     public function store(Request $request)
     {
         $data = $request->validate([
@@ -62,16 +94,45 @@ class BankReconciliationController extends Controller
             'statement_lines.*.debit' => 'nullable|numeric',
             'statement_lines.*.credit' => 'nullable|numeric',
             'csv' => 'nullable|string',
+            'file' => 'nullable|file|max:12288',
+            'format' => 'nullable|in:csv,pdf,ofx,qfx',
+            'confirm_unbalanced' => 'nullable|boolean',
         ]);
 
         $lines = $data['statement_lines'] ?? [];
-        if (! empty($data['csv'])) {
-            $parsed = $this->reconciliations->parseCsvRows($data['csv']);
-            $this->reconciliations->assertCsvParsed($data['csv'], $parsed);
-            $lines = array_merge($lines, $parsed);
-        }
+        $filename = $data['imported_filename'] ?? null;
+        $requireTieOut = ! $request->boolean('confirm_unbalanced');
 
         try {
+            if ($request->hasFile('file') || ! empty($data['csv'])) {
+                $preview = $this->statementImports->previewFromUpload(
+                    file: $request->file('file'),
+                    csv: $data['csv'] ?? null,
+                    formatHint: $data['format'] ?? null,
+                    organizationId: (int) $request->user()->organization_id,
+                    storeFile: $request->hasFile('file'),
+                );
+                $lines = array_merge(
+                    $lines,
+                    $this->statementImports->linesFromPreview($preview, $requireTieOut),
+                );
+                $filename = $filename ?: ($preview['filename'] ?? null);
+                if (! empty($preview['closing_balance']) && ! $request->filled('statement_balance')) {
+                    $data['statement_balance'] = $preview['closing_balance'];
+                }
+                if (! empty($preview['opening_balance']) && ! isset($data['opening_balance'])) {
+                    $data['opening_balance'] = $preview['opening_balance'];
+                }
+                if (! empty($preview['period_end']) && empty($data['period_end'])) {
+                    $data['period_end'] = $preview['period_end'];
+                }
+            } elseif (! empty($data['csv'])) {
+                $parsed = $this->reconciliations->parseCsvRows($data['csv']);
+                $this->reconciliations->assertCsvParsed($data['csv'], $parsed);
+                $lines = array_merge($lines, $parsed);
+            }
+
+            $data['imported_filename'] = $filename;
             $reconciliation = $this->reconciliations->create($request->user(), $data, $lines);
         } catch (InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
@@ -102,6 +163,30 @@ class BankReconciliationController extends Controller
         }
 
         return response()->json($reconciliation);
+    }
+
+    public function applySuggestedMatches(Request $request, int $reconciliationId)
+    {
+        $data = $request->validate([
+            'min_confidence' => 'nullable|integer|min:0|max:100',
+        ]);
+
+        try {
+            $result = $this->reconciliations->applySuggestedMatches(
+                (int) $request->user()->organization_id,
+                $reconciliationId,
+                $request->user(),
+                (int) ($data['min_confidence'] ?? 70),
+            );
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json([
+            'applied' => $result['applied'],
+            'skipped' => $result['skipped'],
+            ...$result['payload'],
+        ]);
     }
 
     public function removeMatch(Request $request, int $reconciliationId, int $matchId)
@@ -206,14 +291,43 @@ class BankReconciliationController extends Controller
             'statement_lines.*.debit' => 'nullable|numeric',
             'statement_lines.*.credit' => 'nullable|numeric',
             'csv' => 'nullable|string',
+            'file' => 'nullable|file|max:12288',
+            'format' => 'nullable|in:csv,pdf,ofx,qfx',
+            'confirm_unbalanced' => 'nullable|boolean',
+            'imported_filename' => 'nullable|string|max:255',
         ]);
 
+        $lines = $data['statement_lines'] ?? [];
+        $requireTieOut = ! $request->boolean('confirm_unbalanced');
+        $orgId = (int) $request->user()->organization_id;
+
         try {
+            if ($request->hasFile('file')) {
+                $preview = $this->statementImports->previewFromUpload(
+                    file: $request->file('file'),
+                    csv: null,
+                    formatHint: $data['format'] ?? null,
+                    organizationId: $orgId,
+                    storeFile: true,
+                );
+                $lines = array_merge(
+                    $lines,
+                    $this->statementImports->linesFromPreview($preview, $requireTieOut),
+                );
+                $filename = $data['imported_filename'] ?? ($preview['filename'] ?? null);
+                if ($filename) {
+                    \App\Models\BankReconciliation::query()
+                        ->where('organization_id', $orgId)
+                        ->where('id', $reconciliationId)
+                        ->update(['imported_filename' => $filename]);
+                }
+            }
+
             $payload = $this->reconciliations->importStatement(
-                (int) $request->user()->organization_id,
+                $orgId,
                 $reconciliationId,
-                $data['statement_lines'] ?? [],
-                $data['csv'] ?? null,
+                $lines,
+                $request->hasFile('file') ? null : ($data['csv'] ?? null),
             );
         } catch (InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);

@@ -398,11 +398,11 @@ class ProductController extends BaseResourceController
         );
 
         if ($branchId !== null) {
-            // Mobile/POS lists: read-only overlay (skip reservation expiry writes on every scroll).
+            // List browse is read-only — never expire reservations on every page scroll.
             $presented = $this->branchStock->overlayCollection(
                 $presented,
                 $branchId,
-                releaseExpired: ! $leanSalesList,
+                releaseExpired: false,
             );
             if ($this->shouldUseSalesConsumerStock($request)) {
                 $saleLocation = $this->salesConsumerStockLocation($request);
@@ -946,6 +946,12 @@ class ProductController extends BaseResourceController
             return StoredPublicFile::response($resolved, 'image/jpeg', $headers);
         }
 
+        // Remote catalogue URL still importing — let the browser load it directly.
+        $path = is_string($model->image_path) ? trim($model->image_path) : '';
+        if ($path !== '' && filter_var($path, FILTER_VALIDATE_URL)) {
+            return redirect()->away($path);
+        }
+
         abort(Response::HTTP_NOT_FOUND);
     }
 
@@ -977,20 +983,35 @@ class ProductController extends BaseResourceController
             return null;
         }
 
-        // Remote / catalogue URL — pull onto this server's public disk once.
-        try {
-            $directory = OrganizationPublicStorage::path(
-                $model->organization_id,
-                'products',
-                (string) $model->product_code,
-            );
-            $stored = (new RemoteProductImageImporter)->import($path, $directory);
-            $model->forceFill(['image_path' => $stored['path']])->save();
+        // Do not block tills on first image hit — import after the response.
+        $productCode = (string) $model->product_code;
+        $organizationId = $model->organization_id;
+        $remoteUrl = $path;
+        dispatch(function () use ($organizationId, $productCode, $remoteUrl) {
+            $fresh = Product::query()
+                ->where('organization_id', $organizationId)
+                ->where('product_code', $productCode)
+                ->first();
+            if (! $fresh || ! is_string($fresh->image_path) || ! filter_var($fresh->image_path, FILTER_VALIDATE_URL)) {
+                return;
+            }
+            if (StoredPublicFile::exists($fresh->image_path)) {
+                return;
+            }
+            try {
+                $directory = OrganizationPublicStorage::path(
+                    $fresh->organization_id,
+                    'products',
+                    (string) $fresh->product_code,
+                );
+                $stored = (new RemoteProductImageImporter)->import($remoteUrl, $directory);
+                $fresh->forceFill(['image_path' => $stored['path']])->save();
+            } catch (\Throwable) {
+                // Keep remote URL; next request can retry import.
+            }
+        })->afterResponse();
 
-            return $stored['path'];
-        } catch (\Throwable) {
-            return null;
-        }
+        return null;
     }
 
     protected function relativePathFromPublicStorageUrl(string $url): ?string

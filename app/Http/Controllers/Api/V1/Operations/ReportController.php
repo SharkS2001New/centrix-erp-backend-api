@@ -529,8 +529,8 @@ class ReportController extends Controller
 
         $prevReceivables = max(0, $receivables - $creditIssued + $paymentsCollected);
 
-        // Stock value = on-hand qty × selling price (expected revenue from remaining stock).
-        $inventorySummary = app(StockValuationService::class)->summarize($orgId, $branchId);
+        // Stock value = on-hand qty × selling price (shared cache with manager home KPIs).
+        $inventorySummary = app(StockValuationService::class)->summarizeCached($orgId, $branchId);
         $shopInventoryValue = $inventorySummary['shop_value'];
         $storeInventoryValue = $inventorySummary['store_value'];
         $inventoryValue = $inventorySummary['value'];
@@ -1253,7 +1253,7 @@ class ReportController extends Controller
             $access->assertBranchInOrganization($request->user(), $branchId, $request);
         }
 
-        return response()->json(app(StockValuationService::class)->summarize($orgId, $branchId));
+        return response()->json(app(StockValuationService::class)->summarizeCached($orgId, $branchId));
     }
 
     public function stockReservations(Request $request)

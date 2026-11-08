@@ -721,18 +721,18 @@ class BankReconciliationService
             ->orderBy('line_date')
             ->get();
 
-        $suggestions = [];
-        $usedBookIds = [];
+        $candidates = [];
 
         foreach ($statementLines as $statementLine) {
-            $targetAmount = abs((float) $statementLine->amount);
+            $statementAmount = (float) $statementLine->amount;
+            $targetAmount = abs($statementAmount);
             $targetDate = (string) $statementLine->line_date;
+            $statementSign = $statementAmount >= 0 ? 1 : -1;
 
             foreach ($bookItems as $bookItem) {
                 $bookId = (int) $bookItem['journal_entry_line_id'];
-                if (isset($usedBookIds[$bookId])) {
-                    continue;
-                }
+                $bookSigned = (float) $bookItem['signed_amount'];
+                $bookSign = $bookSigned >= 0 ? 1 : -1;
 
                 if (abs((float) $bookItem['amount'] - $targetAmount) > 0.02) {
                     continue;
@@ -742,21 +742,92 @@ class BankReconciliationService
                     continue;
                 }
 
-                $suggestions[] = [
+                // Prefer same direction (deposit↔receipt, withdrawal↔payment).
+                if ($statementSign !== $bookSign) {
+                    continue;
+                }
+
+                $confidence = $this->referenceScore($statementLine, $bookItem);
+                $candidates[] = [
                     'bank_statement_line_id' => (int) $statementLine->id,
                     'journal_entry_line_id' => $bookId,
-                    'statement_amount' => (float) $statementLine->amount,
-                    'book_amount' => (float) $bookItem['signed_amount'],
-                    'confidence' => $this->referenceScore($statementLine, $bookItem),
+                    'statement_amount' => $statementAmount,
+                    'book_amount' => $bookSigned,
+                    'statement_description' => (string) ($statementLine->description ?? ''),
+                    'statement_reference' => (string) ($statementLine->reference ?? ''),
+                    'book_description' => (string) ($bookItem['description'] ?? ''),
+                    'book_entry_date' => (string) ($bookItem['entry_date'] ?? ''),
+                    'confidence' => $confidence,
                 ];
-                $usedBookIds[$bookId] = true;
-                break;
             }
         }
 
-        usort($suggestions, fn ($a, $b) => ($b['confidence'] <=> $a['confidence']));
+        usort($candidates, function ($a, $b) {
+            if ($a['confidence'] !== $b['confidence']) {
+                return $b['confidence'] <=> $a['confidence'];
+            }
+
+            return $a['bank_statement_line_id'] <=> $b['bank_statement_line_id'];
+        });
+
+        $suggestions = [];
+        $usedStatements = [];
+        $usedBooks = [];
+        foreach ($candidates as $candidate) {
+            $sid = (int) $candidate['bank_statement_line_id'];
+            $bid = (int) $candidate['journal_entry_line_id'];
+            if (isset($usedStatements[$sid]) || isset($usedBooks[$bid])) {
+                continue;
+            }
+            $usedStatements[$sid] = true;
+            $usedBooks[$bid] = true;
+            $suggestions[] = $candidate;
+        }
 
         return $suggestions;
+    }
+
+    /**
+     * Apply all current suggestions at or above a confidence floor.
+     *
+     * @return array{applied: int, skipped: int, reconciliation: array<string, mixed>}
+     */
+    public function applySuggestedMatches(
+        int $organizationId,
+        int $reconciliationId,
+        User $user,
+        int $minConfidence = 70,
+    ): array {
+        $detail = $this->show($organizationId, $reconciliationId);
+        $suggestions = $detail['suggestions'] ?? [];
+        $applied = 0;
+        $skipped = 0;
+
+        foreach ($suggestions as $suggestion) {
+            if ((int) ($suggestion['confidence'] ?? 0) < $minConfidence) {
+                $skipped++;
+                continue;
+            }
+            try {
+                $this->applyMatch(
+                    $organizationId,
+                    $reconciliationId,
+                    (int) $suggestion['bank_statement_line_id'],
+                    (int) $suggestion['journal_entry_line_id'],
+                    $user,
+                    'auto',
+                );
+                $applied++;
+            } catch (InvalidArgumentException) {
+                $skipped++;
+            }
+        }
+
+        return [
+            'applied' => $applied,
+            'skipped' => $skipped,
+            'payload' => $this->show($organizationId, $reconciliationId),
+        ];
     }
 
     protected function referenceScore(BankStatementLine $statementLine, array $bookItem): int
@@ -765,15 +836,25 @@ class BankReconciliationService
         $reference = strtolower(trim((string) $statementLine->reference));
         $description = strtolower(trim((string) $statementLine->description));
         $haystack = strtolower(trim((string) ($bookItem['description'] ?? '')));
+        $entryNumber = strtolower(trim((string) ($bookItem['entry_number'] ?? '')));
+        $bookRefId = strtolower(trim((string) ($bookItem['reference_id'] ?? '')));
 
-        if ($reference !== '' && str_contains($haystack, $reference)) {
-            $score += 30;
+        if ($reference !== '') {
+            if (str_contains($haystack, $reference)
+                || ($entryNumber !== '' && str_contains($entryNumber, $reference))
+                || ($bookRefId !== '' && $bookRefId === $reference)) {
+                $score += 30;
+            }
         }
         if ($description !== '' && str_contains($haystack, substr($description, 0, 12))) {
             $score += 10;
         }
+        // Exact same calendar day is stronger than the ±7 window alone.
+        if ((string) $statementLine->line_date === (string) ($bookItem['entry_date'] ?? '')) {
+            $score += 10;
+        }
 
-        return $score;
+        return min(100, $score);
     }
 
     protected function datesWithinTolerance(string $left, string $right, int $days): bool

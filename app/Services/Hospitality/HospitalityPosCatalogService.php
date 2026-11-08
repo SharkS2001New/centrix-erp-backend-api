@@ -7,6 +7,7 @@ use App\Models\Organization;
 use App\Models\PriceHistory;
 use App\Models\Product;
 use App\Models\User;
+use App\Services\Cache\OrganizationCache;
 use App\Services\Catalog\CatalogPricingBroadcastService;
 use App\Services\Catalog\ProductCatalogScopeService;
 use App\Support\SqlLikeSearch;
@@ -19,6 +20,9 @@ use Illuminate\Validation\ValidationException;
 class HospitalityPosCatalogService
 {
     public const POPULAR_DAYS_DEFAULT = 5;
+
+    /** Popularity map / join subquery — refresh often enough for tills without scanning every request. */
+    public const SOLD_QTY_CACHE_SECONDS = 300;
 
     public function __construct(
         protected ProductCatalogScopeService $catalogScope,
@@ -219,7 +223,9 @@ class HospitalityPosCatalogService
             }
         }
 
-        $soldQtyByCode = $this->soldQuantitiesByCode((int) $org->id, $days);
+        $orgId = (int) $org->id;
+        $soldQtyByCode = $this->soldQuantitiesByCode($orgId, $days);
+        $total = (clone $query)->toBase()->getCountForPagination();
 
         $select = [
             'products.id',
@@ -237,12 +243,31 @@ class HospitalityPosCatalogService
             $select[] = 'products.image_path';
         }
 
+        // Rank by cached popularity in SQL so we only hydrate the current page.
+        if ($soldQtyByCode !== []) {
+            $cases = [];
+            $bindings = [];
+            // Cap CASE size — top sellers drive ranking; the rest sort by name.
+            arsort($soldQtyByCode, SORT_NUMERIC);
+            $topSold = array_slice($soldQtyByCode, 0, 400, true);
+            foreach ($topSold as $code => $qty) {
+                $cases[] = 'WHEN ? THEN ?';
+                $bindings[] = (string) $code;
+                $bindings[] = round((float) $qty, 4);
+            }
+            $query->orderByRaw(
+                'CASE products.product_code '.implode(' ', $cases).' ELSE 0 END DESC',
+                $bindings,
+            );
+        }
+        $query->orderBy('products.product_name');
+
         $products = $query
-            ->orderBy('products.product_name')
-            ->limit(2000)
+            ->offset($offset)
+            ->limit($perPage)
             ->get($select);
 
-        $ranked = $products
+        $items = $products
             ->map(function (Product $product) use ($soldQtyByCode) {
                 $code = (string) $product->product_code;
                 $vatPct = (float) ($product->vat?->vat_percentage ?? 0);
@@ -270,18 +295,9 @@ class HospitalityPosCatalogService
                     'has_image' => ! empty($product->image_path),
                 ];
             })
-            ->sort(function (array $a, array $b) {
-                $soldCmp = $b['sold_qty'] <=> $a['sold_qty'];
-                if ($soldCmp !== 0) {
-                    return $soldCmp;
-                }
+            ->values()
+            ->all();
 
-                return strcasecmp($a['product_name'], $b['product_name']);
-            })
-            ->values();
-
-        $total = $ranked->count();
-        $items = $ranked->slice($offset, $perPage)->values()->all();
         $nextOffset = $offset + count($items);
         $hasMore = $nextOffset < $total;
 
@@ -377,61 +393,68 @@ class HospitalityPosCatalogService
      */
     protected function soldQuantitiesByCode(int $organizationId, int $days): array
     {
-        $since = Carbon::now()->subDays($days)->startOfDay();
-        $totals = [];
+        return OrganizationCache::remember(
+            $organizationId,
+            sprintf('hotel_pos.sold_qty:d%d', $days),
+            self::SOLD_QTY_CACHE_SECONDS,
+            function () use ($organizationId, $days) {
+                $since = Carbon::now()->subDays($days)->startOfDay();
+                $totals = [];
 
-        if (Schema::hasTable('sale_items') && Schema::hasTable('sales')) {
-            $rows = DB::table('sale_items as si')
-                ->join('sales as s', 's.id', '=', 'si.sale_id')
-                ->where('s.organization_id', $organizationId)
-                ->where('s.archived', 0)
-                ->whereNotIn('s.status', ['cancelled', 'void', 'superseded'])
-                ->where(function ($q) use ($since) {
-                    $q->where('s.completed_at', '>=', $since)
-                        ->orWhere(function ($inner) use ($since) {
-                            $inner->whereNull('s.completed_at')
-                                ->where('s.created_at', '>=', $since);
-                        });
-                })
-                ->groupBy('si.product_code')
-                ->selectRaw('si.product_code, SUM(si.quantity) as qty')
-                ->get();
+                if (Schema::hasTable('sale_items') && Schema::hasTable('sales')) {
+                    $rows = DB::table('sale_items as si')
+                        ->join('sales as s', 's.id', '=', 'si.sale_id')
+                        ->where('s.organization_id', $organizationId)
+                        ->where('s.archived', 0)
+                        ->whereNotIn('s.status', ['cancelled', 'void', 'superseded'])
+                        ->where(function ($q) use ($since) {
+                            $q->where('s.completed_at', '>=', $since)
+                                ->orWhere(function ($inner) use ($since) {
+                                    $inner->whereNull('s.completed_at')
+                                        ->where('s.created_at', '>=', $since);
+                                });
+                        })
+                        ->groupBy('si.product_code')
+                        ->selectRaw('si.product_code, SUM(si.quantity) as qty')
+                        ->get();
 
-            foreach ($rows as $row) {
-                $code = (string) $row->product_code;
-                if ($code === '') {
-                    continue;
+                    foreach ($rows as $row) {
+                        $code = (string) $row->product_code;
+                        if ($code === '') {
+                            continue;
+                        }
+                        $totals[$code] = ($totals[$code] ?? 0) + (float) $row->qty;
+                    }
                 }
-                $totals[$code] = ($totals[$code] ?? 0) + (float) $row->qty;
-            }
-        }
 
-        if (Schema::hasTable('hospitality_check_lines') && Schema::hasTable('hospitality_checks')) {
-            $rows = DB::table('hospitality_check_lines as hcl')
-                ->join('hospitality_checks as hc', 'hc.id', '=', 'hcl.check_id')
-                ->where('hc.organization_id', $organizationId)
-                ->whereIn('hc.status', ['paid', 'settled', 'posted_to_folio'])
-                ->where(function ($q) use ($since) {
-                    $q->where('hc.closed_at', '>=', $since)
-                        ->orWhere(function ($inner) use ($since) {
-                            $inner->whereNull('hc.closed_at')
-                                ->where('hc.updated_at', '>=', $since);
-                        });
-                })
-                ->whereNotNull('hcl.product_code')
-                ->groupBy('hcl.product_code')
-                ->selectRaw('hcl.product_code, SUM(hcl.qty) as qty')
-                ->get();
+                if (Schema::hasTable('hospitality_check_lines') && Schema::hasTable('hospitality_checks')) {
+                    $rows = DB::table('hospitality_check_lines as hcl')
+                        ->join('hospitality_checks as hc', 'hc.id', '=', 'hcl.check_id')
+                        ->where('hc.organization_id', $organizationId)
+                        ->whereIn('hc.status', ['paid', 'settled', 'posted_to_folio'])
+                        ->where(function ($q) use ($since) {
+                            $q->where('hc.closed_at', '>=', $since)
+                                ->orWhere(function ($inner) use ($since) {
+                                    $inner->whereNull('hc.closed_at')
+                                        ->where('hc.updated_at', '>=', $since);
+                                });
+                        })
+                        ->whereNotNull('hcl.product_code')
+                        ->groupBy('hcl.product_code')
+                        ->selectRaw('hcl.product_code, SUM(hcl.qty) as qty')
+                        ->get();
 
-            foreach ($rows as $row) {
-                $code = (string) $row->product_code;
-                if ($code === '') {
-                    continue;
+                    foreach ($rows as $row) {
+                        $code = (string) $row->product_code;
+                        if ($code === '') {
+                            continue;
+                        }
+                        $totals[$code] = ($totals[$code] ?? 0) + (float) $row->qty;
+                    }
                 }
-                $totals[$code] = ($totals[$code] ?? 0) + (float) $row->qty;
-            }
-        }
 
-        return $totals;
+                return $totals;
+            },
+        );
     }
 }

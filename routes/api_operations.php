@@ -291,8 +291,10 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('export-queue', [ExternalAccountingController::class, 'exportQueue']);
         Route::post('export-queue/process', [ExternalAccountingController::class, 'processExportQueue']);
         Route::post('export-queue/retry-failed', [ExternalAccountingController::class, 'retryFailedExports']);
+        Route::post('bank-statement-preview', [BankReconciliationController::class, 'previewStatement']);
         Route::post('bank-reconciliations', [BankReconciliationController::class, 'store']);
         Route::post('bank-reconciliations/{reconciliationId}/statement-lines', [BankReconciliationController::class, 'importStatement']);
+        Route::post('bank-reconciliations/{reconciliationId}/matches/apply-suggestions', [BankReconciliationController::class, 'applySuggestedMatches']);
         Route::post('bank-reconciliations/{reconciliationId}/matches', [BankReconciliationController::class, 'applyMatch']);
         Route::delete('bank-reconciliations/{reconciliationId}/matches/{matchId}', [BankReconciliationController::class, 'removeMatch']);
         Route::post('bank-reconciliations/{reconciliationId}/statement-lines/{statementLineId}/exclude', [BankReconciliationController::class, 'excludeStatementLine']);
@@ -720,6 +722,8 @@ Route::middleware('auth:sanctum')->group(function () {
             ->middleware('erp.permission:hospitality.folios.edit')
             ->whereNumber('id');
 
+        Route::get('front-desk/board', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityFrontDeskController::class, 'board'])
+            ->middleware('erp.permission:hospitality.frontdesk.view');
         Route::get('front-desk/arrivals', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityFrontDeskController::class, 'arrivals'])
             ->middleware('erp.permission:hospitality.frontdesk.view');
         Route::get('front-desk/departures', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityFrontDeskController::class, 'departures'])

@@ -231,34 +231,21 @@ class MobileManagerService
     protected function cachedInventoryValuation(?int $orgId, ?int $branchId): array
     {
         $empty = ['value' => 0.0, 'shop_value' => 0.0, 'store_value' => 0.0];
-        if (! $orgId || $orgId <= 0) {
-            $summary = app(StockValuationService::class)->summarize($orgId, $branchId);
+        try {
+            $summary = app(StockValuationService::class)->summarizeCached(
+                $orgId,
+                $branchId,
+                self::INVENTORY_CACHE_SECONDS,
+            );
 
             return [
                 'value' => (float) ($summary['value'] ?? 0),
                 'shop_value' => (float) ($summary['shop_value'] ?? 0),
                 'store_value' => (float) ($summary['store_value'] ?? 0),
             ];
+        } catch (\Throwable) {
+            return $empty;
         }
-
-        return OrganizationCache::remember(
-            $orgId,
-            sprintf('manager.inventory_value:b%d', (int) $branchId),
-            self::INVENTORY_CACHE_SECONDS,
-            function () use ($orgId, $branchId, $empty) {
-                try {
-                    $summary = app(StockValuationService::class)->summarize($orgId, $branchId);
-
-                    return [
-                        'value' => (float) ($summary['value'] ?? 0),
-                        'shop_value' => (float) ($summary['shop_value'] ?? 0),
-                        'store_value' => (float) ($summary['store_value'] ?? 0),
-                    ];
-                } catch (\Throwable) {
-                    return $empty;
-                }
-            },
-        );
     }
 
     /**

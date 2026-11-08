@@ -17,6 +17,16 @@ class HospitalityFrontDeskController extends Controller
         protected HospitalityFrontDeskService $frontDesk,
     ) {}
 
+    public function board(Request $request)
+    {
+        $org = $this->org($request);
+        $this->assertEnabled($org);
+
+        return response()->json(
+            $this->frontDesk->board($org, $request->input('date'))
+        );
+    }
+
     public function arrivals(Request $request)
     {
         $org = $this->org($request);
