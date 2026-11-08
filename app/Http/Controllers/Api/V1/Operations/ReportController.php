@@ -71,8 +71,8 @@ class ReportController extends Controller
         }
 
         // Create-order / POS / mobile-sales permission holders only (not stock/HR-only).
-        SalesReportUserScope::applyEligibleSalesReportUsers($query);
-        $query->where('is_active', true);
+        // Also drops inactive users and users linked to inactive employees.
+        SalesReportUserScope::applySalesPickerUsers($query);
 
         $q = trim((string) $request->input('q', ''));
         if ($q !== '') {

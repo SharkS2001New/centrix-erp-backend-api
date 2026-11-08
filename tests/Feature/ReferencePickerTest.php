@@ -128,6 +128,32 @@ class ReferencePickerTest extends TestCase
         }
     }
 
+    public function test_reference_users_active_only_excludes_inactive_logins(): void
+    {
+        PermissionMatrixService::ensure();
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $this->seedLicense($admin);
+        Sanctum::actingAs($admin);
+
+        $inactive = User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $admin->role_id,
+            'username' => 'inactive_ref_'.uniqid(),
+            'password' => Hash::make('password'),
+            'full_name' => 'Inactive Ref User',
+            'access_scope' => 'branch',
+            'login_channels' => ['backoffice'],
+            'is_active' => false,
+        ]);
+
+        $activeOnly = $this->getJson('/api/v1/reference/users?active_only=1&per_page=200')
+            ->assertOk();
+        $ids = collect($activeOnly->json('data'))->pluck('id')->map(fn ($id) => (int) $id);
+        $this->assertFalse($ids->contains((int) $inactive->id));
+        $this->assertTrue($ids->contains((int) $admin->id));
+    }
+
     public function test_reference_users_excludes_centrix_agent_service_accounts(): void
     {
         PermissionMatrixService::ensure();

@@ -26,6 +26,7 @@ class SetupProfileMenuController extends Controller
                     'default_payroll_platform' => $this->platformConfig->defaultPayrollPlatformConfig($profile['key']),
                 ]))
                 ->values(),
+            'business_type_catalog' => $this->menus->businessTypeCatalog(),
         ]);
     }
 
@@ -139,6 +140,8 @@ class SetupProfileMenuController extends Controller
             'accounting.*' => 'sometimes|boolean',
             'applications' => 'sometimes|array',
             'applications.*' => 'sometimes|boolean',
+            'business_types' => 'sometimes|array',
+            'business_types.*' => 'sometimes|string|max:100',
             'label' => 'sometimes|string|max:80',
         ]));
 
@@ -156,6 +159,7 @@ class SetupProfileMenuController extends Controller
                 'custom' => $saved['custom'],
                 'menu_groups' => $saved['menu_groups'],
                 'applications' => $saved['applications'],
+                'business_types' => $saved['business_types'] ?? [],
                 'sales_platform' => $saved['sales_platform'],
                 'payroll_platform' => $saved['payroll_platform'],
             ],

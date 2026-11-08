@@ -50,6 +50,7 @@ return [
         'small_shop' => [
             'label' => 'Small shop (backoffice sales only)',
             'industry' => 'commerce',
+            'business_types' => ['Pharmacy', 'Hardware', 'Retail shop'],
             'application_ids' => ['pos', 'backoffice', 'accounting', 'hr', 'admin'],
             'modules' => array_merge($allModulesFalse, [
                 'sales' => true,
@@ -69,6 +70,7 @@ return [
         'wholesale_retail' => [
             'label' => 'Wholesale & retail (full stack)',
             'industry' => 'commerce',
+            'business_types' => ['Wholesale shop', 'Retail shop'],
             'application_ids' => ['pos', 'backoffice', 'distribution', 'accounting', 'hr', 'admin'],
             'modules' => array_merge($allModulesFalse, [
                 'sales' => true,
@@ -96,6 +98,7 @@ return [
         'supermarket' => [
             'label' => 'Supermarket (POS retail)',
             'industry' => 'commerce',
+            'business_types' => ['Supermarket'],
             'application_ids' => ['pos', 'backoffice', 'accounting', 'hr', 'admin'],
             'modules' => array_merge($allModulesFalse, [
                 'sales' => true,
@@ -122,6 +125,7 @@ return [
         'custom' => [
             'label' => 'Custom setup',
             'industry' => 'commerce',
+            'business_types' => [],
             // Blank slate within Retail & Distribution only (no hospitality apps).
             'application_ids' => ['pos', 'backoffice', 'distribution', 'accounting', 'hr', 'admin'],
             'modules' => $allModulesFalse,
@@ -130,6 +134,7 @@ return [
         'distribution' => [
             'label' => 'Distribution / warehouse',
             'industry' => 'commerce',
+            'business_types' => ['Wholesale shop'],
             'application_ids' => ['pos', 'backoffice', 'distribution', 'accounting', 'hr', 'admin'],
             'modules' => array_merge($allModulesFalse, [
                 'sales' => true,
@@ -159,7 +164,8 @@ return [
         'hotel_bar' => [
             'label' => 'Hotel & Bar',
             'industry' => 'hospitality',
-            // Hotel POS + Hotel Backoffice; shared Admin / HR / Accounting.
+            'business_types' => ['Hotel', 'Lodge', 'Bar / restaurant'],
+            // Hotel POS + Hotel Backoffice + Admin. Accounting / HR stay optional for Platform to tick.
             // Retail POS / Backoffice / Distribution stay off for this industry.
             'application_ids' => [
                 'hotel_bar_pos',
@@ -180,20 +186,15 @@ return [
                 'customers_suppliers' => true,
                 'customers_suppliers.reports' => true,
                 'admin' => true,
-                'accounting' => true,
-                'payments' => true,
-                'accounting.dashboard' => true,
-                'accounting.reports' => true,
-                'hr_payroll' => true,
-                'hr_payroll.dashboard' => true,
-                'hr_payroll.reports' => true,
             ]),
             'default_channels' => ['backend'],
         ],
         'spa_kinyozi' => [
             'label' => 'SPA & Kinyozi',
             'industry' => 'spa',
-            'application_ids' => ['spa', 'accounting', 'hr', 'admin'],
+            'business_types' => ['SPA / Salon / Kinyozi'],
+            // Lean salon workspace — Accounting / HR are not part of this setup.
+            'application_ids' => ['spa', 'admin'],
             'modules' => array_merge($allModulesFalse, [
                 'spa' => true,
                 'admin' => true,
@@ -203,6 +204,7 @@ return [
         'driving_school' => [
             'label' => 'Driving School',
             'industry' => 'driving',
+            'business_types' => ['Driving school'],
             'application_ids' => ['driving', 'admin'],
             'modules' => array_merge($allModulesFalse, [
                 'driving' => true,

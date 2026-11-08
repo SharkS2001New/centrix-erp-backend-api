@@ -297,10 +297,76 @@ class SetupProfileMenuService
     {
         return match ($industry) {
             'hospitality' => ['hotel_bar_pos', 'hospitality_backoffice', 'accounting', 'hr', 'admin'],
-            'spa' => ['spa', 'accounting', 'hr', 'admin'],
+            'spa' => ['spa', 'admin'],
             'driving' => ['driving', 'admin'],
             default => ['pos', 'backoffice', 'distribution', 'accounting', 'hr', 'admin'],
         };
+    }
+
+    /**
+     * Business types (marketing / trial signup) this setup may appear under.
+     * Empty list = any business type in the industry.
+     *
+     * @return list<string>
+     */
+    public function businessTypesForProfile(string $profileKey): array
+    {
+        $stored = $this->storedDocument($profileKey);
+        if (is_array($stored) && array_key_exists('business_types', $stored)) {
+            return $this->normalizeBusinessTypes($stored['business_types']);
+        }
+
+        $fromConfig = config('erp.profiles.'.$profileKey.'.business_types');
+
+        return $this->normalizeBusinessTypes(is_array($fromConfig) ? $fromConfig : null);
+    }
+
+    /**
+     * Catalog of known business types for Platform UI and public signup.
+     *
+     * @return list<array{value: string, label: string, industry: string}>
+     */
+    public function businessTypeCatalog(): array
+    {
+        return [
+            ['value' => 'Pharmacy', 'label' => 'Pharmacy', 'industry' => 'commerce'],
+            ['value' => 'Hardware', 'label' => 'Hardware', 'industry' => 'commerce'],
+            ['value' => 'Retail shop', 'label' => 'Retail shop', 'industry' => 'commerce'],
+            ['value' => 'Wholesale shop', 'label' => 'Wholesale shop', 'industry' => 'commerce'],
+            ['value' => 'Supermarket', 'label' => 'Supermarket', 'industry' => 'commerce'],
+            ['value' => 'Hotel', 'label' => 'Hotel', 'industry' => 'hospitality'],
+            ['value' => 'Lodge', 'label' => 'Lodge', 'industry' => 'hospitality'],
+            ['value' => 'Bar / restaurant', 'label' => 'Bar / restaurant', 'industry' => 'hospitality'],
+            ['value' => 'SPA / Salon / Kinyozi', 'label' => 'SPA / Salon / Kinyozi', 'industry' => 'spa'],
+            ['value' => 'Driving school', 'label' => 'Driving school', 'industry' => 'driving'],
+            ['value' => 'Other', 'label' => 'Other', 'industry' => 'commerce'],
+        ];
+    }
+
+    /**
+     * @param  mixed  $raw
+     * @return list<string>
+     */
+    public function normalizeBusinessTypes(mixed $raw): array
+    {
+        if (! is_array($raw)) {
+            return [];
+        }
+
+        $allowed = array_fill_keys(
+            array_column($this->businessTypeCatalog(), 'value'),
+            true,
+        );
+        $out = [];
+        foreach ($raw as $value) {
+            $label = trim((string) $value);
+            if ($label === '' || ! isset($allowed[$label]) || in_array($label, $out, true)) {
+                continue;
+            }
+            $out[] = $label;
+        }
+
+        return $out;
     }
 
     /**
@@ -353,12 +419,30 @@ class SetupProfileMenuService
 
         $key = $this->uniqueCustomKey($name);
         $applications = array_fill_keys($this->applicationIdsForIndustry($industry), false);
+        // Turn on the primary industry app so the setup is usable for trial signup immediately.
+        foreach ($this->applicationIdsForIndustry($industry) as $appId) {
+            if (! in_array($appId, ['accounting', 'hr', 'admin', 'distribution'], true)) {
+                $applications[$appId] = true;
+                break;
+            }
+        }
+        if (array_key_exists('admin', $applications)) {
+            $applications['admin'] = true;
+        }
         $menu = $this->applyApplicationGate($this->normalize(null), $applications);
+        $businessTypes = array_values(array_map(
+            static fn (array $row): string => $row['value'],
+            array_filter(
+                $this->businessTypeCatalog(),
+                static fn (array $row): bool => $row['industry'] === $industry && $row['value'] !== 'Other',
+            ),
+        ));
 
         PlatformSetupProfile::query()->create([
             'profile_key' => $key,
             'menu_groups' => array_merge($menu, [
                 'applications' => $applications,
+                'business_types' => $businessTypes,
                 'label' => $name,
                 'industry' => $industry,
                 'custom' => true,
@@ -412,6 +496,10 @@ class SetupProfileMenuService
             ? $this->storedIndustry($profileKey)
             : (config('erp.profiles.'.$profileKey.'.industry') ?? null);
 
+        $businessTypes = array_key_exists('business_types', $payload)
+            ? $this->normalizeBusinessTypes($payload['business_types'])
+            : $this->businessTypesForProfile($profileKey);
+
         $salesPlatform = array_replace(
             $this->salesPlatformSettingsForProfile($profileKey),
             is_array($payload['sales_platform'] ?? null)
@@ -429,6 +517,7 @@ class SetupProfileMenuService
         );
         $document = array_merge($menu, [
             'applications' => $applications,
+            'business_types' => $businessTypes,
             'sales_platform' => $salesPlatform,
             'payroll_platform' => $payrollPlatform,
         ]);
@@ -448,6 +537,7 @@ class SetupProfileMenuService
         return [
             'menu_groups' => $menu,
             'applications' => $applications,
+            'business_types' => $businessTypes,
             'sales_platform' => $salesPlatform,
             'payroll_platform' => $payrollPlatform,
             'label' => $label,
@@ -541,6 +631,7 @@ class SetupProfileMenuService
             'custom' => $custom,
             'application_ids' => $this->applicationIdsForProfile($key),
             'applications' => $this->applicationsForProfile($key),
+            'business_types' => $this->businessTypesForProfile($key),
             'menu_groups' => $this->forProfile($key),
         ];
     }

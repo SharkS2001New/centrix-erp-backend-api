@@ -154,6 +154,20 @@ class PublicFreeSignupService
         if ($businessType === '') {
             $businessType = IndustryRegistry::labelForIndustry($industry);
         }
+        if ($setupTypeOption !== null) {
+            $allowedBusinessTypes = is_array($setupTypeOption['business_types'] ?? null)
+                ? $setupTypeOption['business_types']
+                : [];
+            if (
+                $allowedBusinessTypes !== []
+                && $businessType !== 'Other'
+                && ! in_array($businessType, $allowedBusinessTypes, true)
+            ) {
+                throw ValidationException::withMessages([
+                    'setup_type' => ['Choose a setup type that matches this type of business.'],
+                ]);
+            }
+        }
 
         $orgName = trim((string) $input['org_name']);
         $orgEmail = strtolower(trim((string) $input['org_email']));
@@ -222,7 +236,9 @@ class PublicFreeSignupService
         return $out;
     }
 
-    /** @return list<array{id: string, label: string, industry: string, industry_label: string}> */
+    /**
+     * @return list<array{id: string, label: string, industry: string, industry_label: string, business_types: list<string>}>
+     */
     public function setupTypeOptions(): array
     {
         $availableIndustries = array_fill_keys(
@@ -251,10 +267,20 @@ class PublicFreeSignupService
                 'label' => (string) ($profile['label'] ?? $key),
                 'industry' => $industry,
                 'industry_label' => IndustryRegistry::labelForIndustry($industry),
+                'business_types' => array_values(array_map(
+                    'strval',
+                    is_array($profile['business_types'] ?? null) ? $profile['business_types'] : [],
+                )),
             ];
         }
 
         return $out;
+    }
+
+    /** @return list<array{value: string, label: string, industry: string}> */
+    public function businessTypeOptions(): array
+    {
+        return $this->setupProfiles->businessTypeCatalog();
     }
 
     protected function allocateCompanyCode(string $orgName): string

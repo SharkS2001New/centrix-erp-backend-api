@@ -71,15 +71,43 @@ class PublicFreeSignupTest extends TestCase
     {
         config(['erp.allow_public_free_signup' => true]);
 
-        $this->getJson('/api/v1/public/free-signup')
+        $response = $this->getJson('/api/v1/public/free-signup')
             ->assertOk()
             ->assertJsonPath('enabled', true)
-            ->assertJsonStructure(['industries', 'setup_types', 'free_plan_name', 'login_url'])
+            ->assertJsonStructure([
+                'industries',
+                'setup_types',
+                'business_types',
+                'free_plan_name',
+                'login_url',
+            ])
             ->assertJsonFragment([
                 'id' => 'small_shop',
                 'label' => 'Small shop (backoffice sales only)',
                 'industry' => 'commerce',
             ]);
+
+        $smallShop = collect($response->json('setup_types'))->firstWhere('id', 'small_shop');
+        $this->assertNotNull($smallShop);
+        $this->assertContains('Pharmacy', $smallShop['business_types'] ?? []);
+        $this->assertContains('SPA / Salon / Kinyozi', collect($response->json('business_types'))->pluck('value')->all());
+    }
+
+    public function test_public_free_signup_rejects_business_type_outside_setup(): void
+    {
+        config(['erp.allow_public_free_signup' => true]);
+
+        $this->postJson('/api/v1/public/free-signup', [
+            'org_name' => 'Wrong Type Shop',
+            'org_email' => 'owner@wrongtype.test',
+            'primary_tel' => '0712345678',
+            'industry' => 'commerce',
+            'setup_type' => 'supermarket',
+            'business_type' => 'Pharmacy',
+            'admin_full_name' => 'Anne Owner',
+            'admin_password' => 'SecurePass1',
+        ])->assertUnprocessable()
+            ->assertJsonValidationErrors('setup_type');
     }
 
     public function test_public_free_signup_rejects_a_setup_type_from_a_different_industry(): void

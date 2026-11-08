@@ -26,6 +26,7 @@ class PublicFreeSignupController extends Controller
             'free_plan_name' => $freePlan->name(),
             'industries' => $signups->industryOptions(),
             'setup_types' => $signups->setupTypeOptions(),
+            'business_types' => $signups->businessTypeOptions(),
             'login_url' => rtrim((string) config('erp.frontend_url'), '/').'/login',
         ]);
     }

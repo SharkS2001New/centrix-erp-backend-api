@@ -66,8 +66,6 @@ return [
             ],
             'permission_application_ids' => [
                 'spa',
-                'accounting',
-                'hr',
                 'admin',
             ],
         ],

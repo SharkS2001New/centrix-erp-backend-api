@@ -88,6 +88,7 @@ class OrganizationProvisionController extends Controller
                 'default_payroll_platform' => $this->platformConfig->defaultPayrollPlatformConfig($key),
                 'modules' => $profile['modules'] ?? [],
                 'applications' => $setupMenus->applicationsForProfile($key),
+                'business_types' => $setupMenus->businessTypesForProfile($key),
                 'menu_groups' => $setupMenus->forProfile($key),
                 'application_ids' => array_key_exists('application_ids', $profile)
                     ? $profile['application_ids']
@@ -107,6 +108,7 @@ class OrganizationProvisionController extends Controller
                 'default_payroll_platform' => $this->platformConfig->defaultPayrollPlatformConfig($row['key']),
                 'modules' => [],
                 'applications' => $row['applications'],
+                'business_types' => $row['business_types'] ?? [],
                 'menu_groups' => $row['menu_groups'],
                 'application_ids' => $row['application_ids'],
             ])
