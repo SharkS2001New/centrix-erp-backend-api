@@ -87,6 +87,14 @@ jobs:
           composer config --no-plugins --no-interaction github-oauth.github.com "${{ secrets.GITHUB_TOKEN }}"
           composer install --no-interaction --prefer-dist
 
+      # EnvironmentSettings prefers DB_*_TEST (then DB_*_LOCAL) over DB_*.
+      # Never rely on a checked-in .env — CI MySQL is root/root only.
+      - name: Prepare test environment
+        run: |
+          rm -f .env
+          cp .env.example .env
+          php -r "file_put_contents('.env', preg_replace('/^APP_KEY=.*/m', 'APP_KEY=base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=', file_get_contents('.env')));"
+
       - name: Run unit tests
         env:
           APP_ENV: testing
@@ -97,6 +105,14 @@ jobs:
           DB_DATABASE: pos_erp_test
           DB_USERNAME: root
           DB_PASSWORD: root
+          DB_HOST_TEST: 127.0.0.1
+          DB_PORT_TEST: 3306
+          DB_DATABASE_TEST: pos_erp_test
+          DB_USERNAME_TEST: root
+          DB_PASSWORD_TEST: root
+          DB_HOST_LOCAL: 127.0.0.1
+          DB_USERNAME_LOCAL: root
+          DB_PASSWORD_LOCAL: root
           CACHE_STORE: array
           QUEUE_CONNECTION: sync
           SESSION_DRIVER: array
