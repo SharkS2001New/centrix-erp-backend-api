@@ -2,6 +2,7 @@
 
 namespace App\Services\Hospitality;
 
+use App\Models\HospitalityCheck;
 use App\Models\HospitalityFolio;
 use App\Models\HospitalityFolioCharge;
 use App\Models\HospitalityNightAudit;
@@ -29,8 +30,6 @@ class HospitalityNightAuditService
             ->first();
 
         $candidates = $this->candidates($org, $date);
-        // Slim KPIs for preview — full manager flash only when posting.
-        $flash = $this->reports->run($org, 'hospitality-manager-flash', $date, $date);
 
         return [
             'business_date' => $date,
@@ -43,7 +42,42 @@ class HospitalityNightAuditService
             'candidates' => $candidates,
             'total_amount' => round(array_sum(array_column($candidates, 'amount')), 2),
             'rooms_count' => count($candidates),
-            'manager_flash' => $flash,
+            // Cheap snapshot only — full manager flash runs on post / reports hub.
+            'snapshot' => $this->previewSnapshot($org, $date),
+        ];
+    }
+
+    /**
+     * Light board counts for preview UI (no occupancy/FnB/EOD flash queries).
+     *
+     * @return array<string, int|float|string>
+     */
+    protected function previewSnapshot(Organization $org, string $date): array
+    {
+        return [
+            'business_date' => $date,
+            'arrivals' => HospitalityReservation::query()
+                ->where('organization_id', $org->id)
+                ->whereDate('arrival_date', $date)
+                ->whereNotIn('status', ['cancelled', 'no_show'])
+                ->count(),
+            'departures' => HospitalityReservation::query()
+                ->where('organization_id', $org->id)
+                ->whereDate('departure_date', $date)
+                ->whereNotIn('status', ['cancelled', 'no_show'])
+                ->count(),
+            'open_folios' => HospitalityFolio::query()
+                ->where('organization_id', $org->id)
+                ->where('status', 'open')
+                ->count(),
+            'open_folio_balance' => round((float) HospitalityFolio::query()
+                ->where('organization_id', $org->id)
+                ->where('status', 'open')
+                ->sum('balance'), 2),
+            'open_fnb_checks' => HospitalityCheck::query()
+                ->where('organization_id', $org->id)
+                ->whereIn('status', ['unpaid', 'partially_paid', 'held', 'open'])
+                ->count(),
         ];
     }
 

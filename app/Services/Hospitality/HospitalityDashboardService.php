@@ -9,15 +9,21 @@ use App\Models\HospitalityReservation;
 use App\Models\HospitalityRoom;
 use App\Models\Organization;
 use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 class HospitalityDashboardService
 {
-    public function summary(Organization $org): array
+    /**
+     * @param  array{from_date?: string|null, to_date?: string|null}  $filters
+     */
+    public function summary(Organization $org, array $filters = []): array
     {
-        $today = now()->toDateString();
-        $yesterday = now()->subDay()->toDateString();
+        [$from, $to] = $this->resolveDateRange($filters);
+        $isSingleDay = $from === $to;
+        $isToday = $isSingleDay && $from === now()->toDateString();
+        $priorDay = Carbon::parse($from)->subDay()->toDateString();
 
         $roomCounts = HospitalityRoom::query()
             ->where('organization_id', $org->id)
@@ -37,17 +43,17 @@ class HospitalityDashboardService
         $arrivalsQuery = HospitalityReservation::query()
             ->with(['room:id,room_number', 'roomType:id,name'])
             ->where('organization_id', $org->id)
-            ->whereDate('arrival_date', $today)
             ->whereNotIn('status', ['cancelled', 'no_show', 'checked_out']);
+        $this->constrainDateColumn($arrivalsQuery, 'arrival_date', $from, $to);
 
         $departuresQuery = HospitalityReservation::query()
             ->with(['room:id,room_number', 'roomType:id,name'])
             ->where('organization_id', $org->id)
-            ->whereDate('departure_date', $today)
             ->whereIn('status', ['checked_in', 'booked']);
+        $this->constrainDateColumn($departuresQuery, 'departure_date', $from, $to);
 
-        $arrivalsToday = (clone $arrivalsQuery)->count();
-        $departuresToday = (clone $departuresQuery)->count();
+        $arrivalsCount = (clone $arrivalsQuery)->count();
+        $departuresCount = (clone $departuresQuery)->count();
 
         $arrivalsList = $arrivalsQuery
             ->orderBy('arrival_date')
@@ -90,10 +96,11 @@ class HospitalityDashboardService
             ])
             ->all();
 
-        $fnbToday = HospitalityCheck::query()
+        $fnbPaidQuery = HospitalityCheck::query()
             ->where('organization_id', $org->id)
-            ->whereIn('status', HospitalityCheckService::PAID_STATUSES)
-            ->whereDate('closed_at', $today)
+            ->whereIn('status', HospitalityCheckService::PAID_STATUSES);
+        $this->constrainDateColumn($fnbPaidQuery, 'closed_at', $from, $to);
+        $fnbPeriod = $fnbPaidQuery
             ->selectRaw('COUNT(*) as cnt, COALESCE(SUM(total),0) as revenue, COALESCE(SUM(amount_paid),0) as collected')
             ->first();
 
@@ -121,11 +128,17 @@ class HospitalityDashboardService
             ])
             ->all();
 
-        $fnbByOutlet = DB::table('hospitality_checks as c')
+        $fnbByOutletQuery = DB::table('hospitality_checks as c')
             ->leftJoin('hospitality_outlets as o', 'o.id', '=', 'c.outlet_id')
             ->where('c.organization_id', $org->id)
-            ->whereIn('c.status', ['paid', 'settled', 'partially_paid'])
-            ->whereDate(DB::raw('COALESCE(c.closed_at, c.updated_at)'), $today)
+            ->whereIn('c.status', ['paid', 'settled', 'partially_paid']);
+        $this->constrainRawDate(
+            $fnbByOutletQuery,
+            'COALESCE(c.closed_at, c.updated_at)',
+            $from,
+            $to,
+        );
+        $fnbByOutlet = $fnbByOutletQuery
             ->groupBy('o.id', 'o.code', 'o.name')
             ->orderByDesc(DB::raw('SUM(c.total)'))
             ->selectRaw('COALESCE(o.code, \'MAIN\') as outlet_code')
@@ -144,30 +157,35 @@ class HospitalityDashboardService
             ])
             ->all();
 
-        $roomRevenueToday = 0.0;
-        $roomNightsToday = 0;
+        $roomRevenue = 0.0;
+        $roomNights = 0;
         if (Schema::hasTable('hospitality_folio_charges')) {
-            $roomNightsToday = (int) DB::table('hospitality_folio_charges')
+            $roomChargeQuery = DB::table('hospitality_folio_charges')
                 ->where('organization_id', $org->id)
-                ->where('charge_type', 'room')
-                ->whereDate(DB::raw('COALESCE(business_date, posted_at, created_at)'), $today)
-                ->count();
-            $roomRevenueToday = (float) DB::table('hospitality_folio_charges')
-                ->where('organization_id', $org->id)
-                ->where('charge_type', 'room')
-                ->whereDate(DB::raw('COALESCE(business_date, posted_at, created_at)'), $today)
-                ->sum('amount');
+                ->where('charge_type', 'room');
+            $this->constrainRawDate(
+                $roomChargeQuery,
+                'COALESCE(business_date, posted_at, created_at)',
+                $from,
+                $to,
+            );
+            $roomNights = (int) (clone $roomChargeQuery)->count();
+            $roomRevenue = (float) (clone $roomChargeQuery)->sum('amount');
         }
-        if ($roomNightsToday <= 0) {
-            $roomNightsToday = (int) HospitalityFolio::query()
+        // Live open-folio proxy only when viewing today and night audit has not posted yet.
+        if ($roomNights <= 0 && $isToday) {
+            $roomNights = (int) HospitalityFolio::query()
                 ->where('organization_id', $org->id)
                 ->where('status', 'open')
                 ->whereNotNull('room_id')
                 ->count();
         }
 
-        $adr = $roomNightsToday > 0 ? round($roomRevenueToday / $roomNightsToday, 2) : 0.0;
-        $revpar = $sellable > 0 ? round($roomRevenueToday / $sellable, 2) : 0.0;
+        $periodDays = max(1, Carbon::parse($from)->diffInDays(Carbon::parse($to)) + 1);
+        $adr = $roomNights > 0 ? round($roomRevenue / $roomNights, 2) : 0.0;
+        $revpar = $sellable > 0
+            ? round($roomRevenue / ($sellable * $periodDays), 2)
+            : 0.0;
         $occupancyPct = $totalRooms > 0 ? round(($occupied / $totalRooms) * 100, 1) : 0.0;
 
         $nightAudit = null;
@@ -176,13 +194,13 @@ class HospitalityDashboardService
                 ->where('organization_id', $org->id)
                 ->orderByDesc('business_date')
                 ->first();
-            $yesterdayDone = HospitalityNightAudit::query()
+            $priorComplete = HospitalityNightAudit::query()
                 ->where('organization_id', $org->id)
-                ->whereDate('business_date', $yesterday)
+                ->whereDate('business_date', $priorDay)
                 ->exists();
             $nightAudit = [
-                'yesterday_date' => $yesterday,
-                'yesterday_complete' => $yesterdayDone,
+                'yesterday_date' => $priorDay,
+                'yesterday_complete' => $priorComplete,
                 'last_business_date' => optional($last?->business_date)?->toDateString(),
                 'last_rooms_posted' => $last ? (int) $last->rooms_posted : null,
                 'last_amount_posted' => $last ? round((float) $last->amount_posted, 2) : null,
@@ -194,12 +212,15 @@ class HospitalityDashboardService
             ->where('status', 'checked_in')
             ->count();
 
-        $fnbRevenue = round((float) ($fnbToday->revenue ?? 0), 2);
-        $fnbCollected = round((float) ($fnbToday->collected ?? 0), 2);
+        $fnbRevenue = round((float) ($fnbPeriod->revenue ?? 0), 2);
+        $fnbCollected = round((float) ($fnbPeriod->collected ?? 0), 2);
 
         return [
             'as_of' => Carbon::now()->toIso8601String(),
-            'business_date' => $today,
+            'from_date' => $from,
+            'to_date' => $to,
+            'business_date' => $to,
+            'period_days' => $periodDays,
             'rooms' => [
                 'total' => $totalRooms,
                 'sellable' => $sellable,
@@ -214,22 +235,22 @@ class HospitalityDashboardService
                 'occupancy_pct' => $occupancyPct,
                 'adr' => $adr,
                 'revpar' => $revpar,
-                'room_revenue' => round($roomRevenueToday, 2),
-                'room_nights' => $roomNightsToday,
+                'room_revenue' => round($roomRevenue, 2),
+                'room_nights' => $roomNights,
                 'fnb_revenue' => $fnbRevenue,
                 'fnb_collected' => $fnbCollected,
-                'total_revenue' => round($roomRevenueToday + $fnbCollected, 2),
+                'total_revenue' => round($roomRevenue + $fnbCollected, 2),
                 'in_house' => $inHouse,
             ],
-            'arrivals_today' => $arrivalsToday,
-            'departures_today' => $departuresToday,
+            'arrivals_today' => $arrivalsCount,
+            'departures_today' => $departuresCount,
             'arrivals' => $arrivalsList,
             'departures' => $departuresList,
             'open_folios' => $openFolios,
             'open_folio_balance' => round($folioBalance, 2),
             'open_folios_list' => $openFoliosList,
             'fnb_today' => [
-                'checks' => (int) ($fnbToday->cnt ?? 0),
+                'checks' => (int) ($fnbPeriod->cnt ?? 0),
                 'revenue' => $fnbRevenue,
                 'collected' => $fnbCollected,
                 'open_checks' => (int) ($openFnb->cnt ?? 0),
@@ -240,6 +261,63 @@ class HospitalityDashboardService
             'open_checks' => $openChecksList,
             'night_audit' => $nightAudit,
         ];
+    }
+
+    /**
+     * @param  array{from_date?: string|null, to_date?: string|null}  $filters
+     * @return array{0: string, 1: string}
+     */
+    protected function resolveDateRange(array $filters): array
+    {
+        $today = now()->toDateString();
+        $fromRaw = trim((string) ($filters['from_date'] ?? ''));
+        $toRaw = trim((string) ($filters['to_date'] ?? ''));
+
+        try {
+            $from = $fromRaw !== '' ? Carbon::parse($fromRaw)->toDateString() : $today;
+        } catch (\Throwable) {
+            $from = $today;
+        }
+
+        try {
+            $to = $toRaw !== '' ? Carbon::parse($toRaw)->toDateString() : ($fromRaw !== '' ? $from : $today);
+        } catch (\Throwable) {
+            $to = $from;
+        }
+
+        if ($from > $to) {
+            [$from, $to] = [$to, $from];
+        }
+
+        // Cap range to 93 days so overview queries stay snappy.
+        $maxTo = Carbon::parse($from)->addDays(92)->toDateString();
+        if ($to > $maxTo) {
+            $to = $maxTo;
+        }
+
+        return [$from, $to];
+    }
+
+    protected function constrainDateColumn(Builder $query, string $column, string $from, string $to): void
+    {
+        if ($from === $to) {
+            $query->whereDate($column, $from);
+
+            return;
+        }
+
+        $query->whereDate($column, '>=', $from)->whereDate($column, '<=', $to);
+    }
+
+    protected function constrainRawDate($query, string $expression, string $from, string $to): void
+    {
+        if ($from === $to) {
+            $query->whereDate(DB::raw($expression), $from);
+
+            return;
+        }
+
+        $query->whereBetween(DB::raw('DATE('.$expression.')'), [$from, $to]);
     }
 
     /** @return array<string, mixed> */

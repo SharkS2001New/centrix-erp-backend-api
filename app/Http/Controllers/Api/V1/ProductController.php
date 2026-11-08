@@ -983,35 +983,22 @@ class ProductController extends BaseResourceController
             return null;
         }
 
-        // Do not block tills on first image hit — import after the response.
-        $productCode = (string) $model->product_code;
-        $organizationId = $model->organization_id;
-        $remoteUrl = $path;
-        dispatch(function () use ($organizationId, $productCode, $remoteUrl) {
-            $fresh = Product::query()
-                ->where('organization_id', $organizationId)
-                ->where('product_code', $productCode)
-                ->first();
-            if (! $fresh || ! is_string($fresh->image_path) || ! filter_var($fresh->image_path, FILTER_VALIDATE_URL)) {
-                return;
-            }
-            if (StoredPublicFile::exists($fresh->image_path)) {
-                return;
-            }
-            try {
-                $directory = OrganizationPublicStorage::path(
-                    $fresh->organization_id,
-                    'products',
-                    (string) $fresh->product_code,
-                );
-                $stored = (new RemoteProductImageImporter)->import($remoteUrl, $directory);
-                $fresh->forceFill(['image_path' => $stored['path']])->save();
-            } catch (\Throwable) {
-                // Keep remote URL; next request can retry import.
-            }
-        })->afterResponse();
+        // Sync-import so authenticated /image/file returns bytes (not a cross-origin 302).
+        // Tills fetch with Authorization; browsers cannot read redirected CDN/R2 bodies via CORS.
+        try {
+            $directory = OrganizationPublicStorage::path(
+                $model->organization_id,
+                'products',
+                (string) $model->product_code,
+            );
+            $stored = (new RemoteProductImageImporter)->import($path, $directory);
+            $model->forceFill(['image_path' => $stored['path']])->save();
 
-        return null;
+            return $stored['path'];
+        } catch (\Throwable) {
+            // Keep remote URL and retry on a later request.
+            return null;
+        }
     }
 
     protected function relativePathFromPublicStorageUrl(string $url): ?string
@@ -1026,6 +1013,19 @@ class ProductController extends BaseResourceController
             return null;
         }
 
+        // Cloudflare R2 / S3 public base URL → object key (orgs/…).
+        $publicBase = rtrim((string) (config('filesystems.disks.public.url') ?? ''), '/');
+        if ($publicBase !== '' && str_starts_with($url, $publicBase.'/')) {
+            $relative = rawurldecode(substr($url, strlen($publicBase) + 1));
+            $relative = ltrim(str_replace('\\', '/', $relative), '/');
+            if ($relative !== '' && ! str_contains($relative, '..')) {
+                // Drop query/signature if somehow included after the key.
+                $relative = explode('?', $relative, 2)[0];
+
+                return $relative !== '' ? $relative : null;
+            }
+        }
+
         $markers = ['/storage/', '/public/storage/'];
         foreach ($markers as $marker) {
             $pos = stripos($urlPath, $marker);
@@ -1033,6 +1033,15 @@ class ProductController extends BaseResourceController
                 continue;
             }
             $relative = rawurldecode(substr($urlPath, $pos + strlen($marker)));
+            $relative = ltrim(str_replace('\\', '/', $relative), '/');
+            if ($relative !== '' && ! str_contains($relative, '..')) {
+                return $relative;
+            }
+        }
+
+        // Public R2/S3 URLs often look like https://host/orgs/CODE/products/…
+        if (preg_match('#/(orgs/[A-Za-z0-9_-]+/.+)$#', $urlPath, $match) === 1) {
+            $relative = rawurldecode($match[1]);
             $relative = ltrim(str_replace('\\', '/', $relative), '/');
             if ($relative !== '' && ! str_contains($relative, '..')) {
                 return $relative;

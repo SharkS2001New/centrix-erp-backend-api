@@ -26,6 +26,7 @@ class HospitalityFolioController extends Controller
             'status' => $request->input('status'),
             'q' => $request->input('q'),
             'per_page' => $request->input('per_page', 50),
+            'page' => $request->input('page', 1),
         ]));
     }
 

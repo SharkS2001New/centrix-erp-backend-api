@@ -7,6 +7,8 @@ use App\Models\Organization;
 use App\Models\Product;
 use App\Models\User;
 use App\Support\StoredPublicFile;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
@@ -114,6 +116,66 @@ class ProductImageApiTest extends TestCase
 
         $this->get('/api/v1/products/'.$product->product_code.'/image/file')
             ->assertNotFound();
+    }
+
+    public function test_hotel_image_file_imports_remote_url_onto_public_disk(): void
+    {
+        $this->enableHotelIndustry();
+        Storage::fake('public');
+
+        $product = Product::query()
+            ->where('organization_id', $this->org->id)
+            ->orderBy('product_code')
+            ->firstOrFail();
+
+        $remote = 'https://cdn.example.com/bar-drink.jpg';
+        $product->forceFill(['image_path' => $remote])->save();
+
+        $this->assertSame($remote, $product->fresh()->image_url);
+
+        Http::fake([
+            $remote => Http::response($this->jpegBytes(), 200, [
+                'Content-Type' => 'image/jpeg',
+            ]),
+        ]);
+
+        $this->get('/api/v1/products/'.$product->product_code.'/image/file')
+            ->assertOk()
+            ->assertHeader('content-type', 'image/jpeg');
+
+        $fresh = $product->fresh();
+        $this->assertNotSame($remote, $fresh->image_path);
+        $this->assertTrue(StoredPublicFile::exists($fresh->image_path));
+        $this->assertStringContainsString('/image/file', (string) $fresh->image_url);
+    }
+
+    public function test_hotel_remote_image_url_is_not_mutated_with_cache_buster(): void
+    {
+        $this->enableHotelIndustry();
+        $product = Product::query()
+            ->where('organization_id', $this->org->id)
+            ->orderBy('product_code')
+            ->firstOrFail();
+
+        $remote = 'https://cdn.example.com/signed.jpg?X-Amz-Signature=abc&X-Amz-Expires=3600';
+        $product->forceFill(['image_path' => $remote])->save();
+
+        $fresh = $product->fresh();
+        $this->assertSame($remote, $fresh->image_url);
+        $this->assertNotEmpty($fresh->image_version);
+        $this->assertStringNotContainsString('v='.$fresh->image_version, (string) $fresh->image_url);
+    }
+
+    protected function jpegBytes(): string
+    {
+        $image = imagecreatetruecolor(24, 24);
+        $fill = imagecolorallocate($image, 24, 95, 165);
+        imagefill($image, 0, 0, $fill);
+        ob_start();
+        imagejpeg($image, null, 80);
+        imagedestroy($image);
+
+        return (string) ob_get_clean();
     }
 
     protected function enableHotelIndustry(): void

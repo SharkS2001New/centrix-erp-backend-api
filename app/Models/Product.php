@@ -76,13 +76,9 @@ class Product extends Model
 
             $version = $this->image_version;
             if (filter_var($this->image_path, FILTER_VALIDATE_URL)) {
-                // Remote catalogue URLs: append v= so browsers/tills bust cache on path change.
-                if (! is_string($version) || $version === '') {
-                    return $this->image_path;
-                }
-                $sep = str_contains((string) $this->image_path, '?') ? '&' : '?';
-
-                return $this->image_path.$sep.'v='.$version;
+                // Keep remote/CDN/R2 URLs intact. Appending ?v= breaks signed query strings
+                // and some hotlink rules; tills already cache-bust via image_version.
+                return $this->image_path;
             }
 
             $base = rtrim((string) config('app.url'), '/');

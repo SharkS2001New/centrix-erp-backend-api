@@ -125,6 +125,8 @@ class HospitalityOpsMvpTest extends TestCase
             ->assertJsonStructure([
                 'rooms',
                 'kpis',
+                'from_date',
+                'to_date',
                 'arrivals_today',
                 'departures_today',
                 'arrivals',
@@ -135,6 +137,13 @@ class HospitalityOpsMvpTest extends TestCase
                 'fnb_by_outlet',
                 'open_checks',
             ]);
+
+        $range = $this->getJson('/api/v1/hospitality/dashboard?from_date=2020-01-01&to_date=2020-01-07')
+            ->assertOk()
+            ->json();
+        $this->assertSame('2020-01-01', $range['from_date']);
+        $this->assertSame('2020-01-07', $range['to_date']);
+        $this->assertSame(7, (int) $range['period_days']);
 
         $this->getJson('/api/v1/reports/hospitality-occupancy')->assertOk();
     }
