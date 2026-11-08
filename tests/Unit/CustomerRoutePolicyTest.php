@@ -10,9 +10,21 @@ use Tests\TestCase;
 
 class CustomerRoutePolicyTest extends TestCase
 {
+    /**
+     * Unsaved DEMO orgs resolve as unpaid/free and package entitlements hide distribution.
+     * Use the platform company code so these tests cover module-map behaviour only.
+     */
+    protected function organization(array $attributes): Organization
+    {
+        return new Organization(array_merge([
+            'company_code' => (string) config('erp.platform_company_code', 'PLATFORM'),
+            'module_settings' => [],
+        ], $attributes));
+    }
+
     public function test_distribution_organization_requires_route_customers(): void
     {
-        $org = new Organization([
+        $org = $this->organization([
             'enabled_modules' => ['distribution' => true, 'customers_suppliers' => true],
             'module_settings' => ['sales' => ['enable_credit_payment' => false]],
         ]);
@@ -40,7 +52,7 @@ class CustomerRoutePolicyTest extends TestCase
 
     public function test_distribution_with_external_pos_allows_shop_debtors(): void
     {
-        $org = new Organization([
+        $org = $this->organization([
             'enabled_modules' => [
                 'distribution' => true,
                 'customers_suppliers' => true,
@@ -63,7 +75,7 @@ class CustomerRoutePolicyTest extends TestCase
 
     public function test_non_distribution_organization_allows_debtor_customers(): void
     {
-        $org = new Organization([
+        $org = $this->organization([
             'enabled_modules' => ['customers_suppliers' => true],
         ]);
         $gate = (new CapabilityGate($org))->forOrganization($org);
