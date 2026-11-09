@@ -17,6 +17,7 @@ use App\Services\Kra\SalesVatCalculator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
+use App\Services\Sales\CentrixSalesScope;
 
 class BackofficeOrderLineEditService
 {

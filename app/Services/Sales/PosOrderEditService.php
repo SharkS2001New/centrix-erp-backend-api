@@ -10,6 +10,7 @@ use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\OrderWorkflowService;
 use InvalidArgumentException;
+use App\Services\Sales\CentrixSalesScope;
 
 class PosOrderEditService
 {

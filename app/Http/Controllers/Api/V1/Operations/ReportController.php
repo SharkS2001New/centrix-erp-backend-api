@@ -46,7 +46,7 @@ use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
+use App\Support\SchemaProbe;
 
 class ReportController extends Controller
 {
@@ -1373,7 +1373,7 @@ class ReportController extends Controller
 
         $expenseQuery = DB::table('expenses')->whereNull('deleted_at');
         $this->applyBranchTenantScope($expenseQuery, $orgId, $branchId);
-        if ($orgId && Schema::hasColumn('expenses', 'organization_id')) {
+        if ($orgId && SchemaProbe::hasColumn('expenses', 'organization_id')) {
             $expenseQuery->where('organization_id', $orgId);
         }
         if ($from) {
@@ -2423,7 +2423,7 @@ class ReportController extends Controller
             ->join('users as u', 'u.id', '=', 'cip.received_by')
             ->leftJoin('customers as c', function ($join) use ($orgId) {
                 $join->on('c.customer_num', '=', 'cip.customer_num');
-                if ($orgId && Schema::hasColumn('customers', 'organization_id')) {
+                if ($orgId && SchemaProbe::hasColumn('customers', 'organization_id')) {
                     $join->where('c.organization_id', '=', $orgId);
                 }
             })
@@ -2441,7 +2441,7 @@ class ReportController extends Controller
                 'cip.reference_number',
             ]);
 
-        if (Schema::hasColumn('customer_invoice_payments', 'organization_id')) {
+        if (SchemaProbe::hasColumn('customer_invoice_payments', 'organization_id')) {
             $q->addSelect('cip.organization_id');
             if ($orgId) {
                 $q->where('cip.organization_id', $orgId);
@@ -2455,7 +2455,7 @@ class ReportController extends Controller
             });
         }
 
-        if (Schema::hasColumn('customer_invoices', 'deleted_at')) {
+        if (SchemaProbe::hasColumn('customer_invoices', 'deleted_at')) {
             $q->whereNull('ci.deleted_at');
         }
 
@@ -2580,7 +2580,7 @@ class ReportController extends Controller
      */
     protected function expensesLinesReport(Request $request, array $filters): array
     {
-        abort_unless(Schema::hasTable('expenses'), 404);
+        abort_unless(SchemaProbe::hasTable('expenses'), 404);
 
         $access = app(UserAccessService::class);
         $user = $request->user();
@@ -2854,7 +2854,7 @@ class ReportController extends Controller
         $filters = $this->filters($request);
         $q = DB::table('audit_logs');
         $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
-        if ($orgId && Schema::hasColumn('audit_logs', 'organization_id')) {
+        if ($orgId && SchemaProbe::hasColumn('audit_logs', 'organization_id')) {
             $q->where('organization_id', $orgId);
         }
 
@@ -3125,59 +3125,93 @@ class ReportController extends Controller
         array $maxColumns = [],
         ?callable $orderBy = null,
     ): array {
-        $filtered = $this->buildFilteredReportViewQuery($view, $filters, $allowedCols);
+        $request = request();
+        $orgId = (int) (app(UserAccessService::class)->organizationId($request->user(), $request) ?? 0);
+        $fromDate = trim((string) ($filters['from_date'] ?? ''));
+        $toDate = trim((string) ($filters['to_date'] ?? ''));
 
-        $aggregated = DB::query()->fromSub($filtered, 'filtered_daily_rows');
-        foreach ($groupBy as $col) {
-            if ($this->viewColumnExists($view, $col)) {
-                $aggregated->addSelect($col);
+        $build = function () use ($view, $filters, $allowedCols, $groupBy, $sumColumns, $maxColumns, $orderBy): array {
+            $filtered = $this->buildFilteredReportViewQuery($view, $filters, $allowedCols);
+
+            $aggregated = DB::query()->fromSub($filtered, 'filtered_daily_rows');
+            foreach ($groupBy as $col) {
+                if ($this->viewColumnExists($view, $col)) {
+                    $aggregated->addSelect($col);
+                }
             }
-        }
-        $effectiveSumColumns = [];
-        foreach ($sumColumns as $col) {
-            if ($this->viewColumnExists($view, $col)) {
-                $escaped = str_replace('`', '``', $col);
-                $aggregated->selectRaw("SUM(`{$escaped}`) as `{$escaped}`");
-                $effectiveSumColumns[] = $col;
+            $effectiveSumColumns = [];
+            foreach ($sumColumns as $col) {
+                if ($this->viewColumnExists($view, $col)) {
+                    $escaped = str_replace('`', '``', $col);
+                    $aggregated->selectRaw("SUM(`{$escaped}`) as `{$escaped}`");
+                    $effectiveSumColumns[] = $col;
+                }
             }
-        }
-        foreach ($maxColumns as $col) {
-            if ($this->viewColumnExists($view, $col)) {
-                $escaped = str_replace('`', '``', $col);
-                $aggregated->selectRaw("MAX(`{$escaped}`) as `{$escaped}`");
+            foreach ($maxColumns as $col) {
+                if ($this->viewColumnExists($view, $col)) {
+                    $escaped = str_replace('`', '``', $col);
+                    $aggregated->selectRaw("MAX(`{$escaped}`) as `{$escaped}`");
+                }
             }
+
+            $groupCols = array_values(array_filter(
+                $groupBy,
+                fn ($col) => $this->viewColumnExists($view, $col),
+            ));
+            if ($groupCols !== []) {
+                $aggregated->groupBy(...$groupCols);
+            }
+
+            if ($orderBy) {
+                $orderBy($aggregated);
+            }
+
+            // Wrap the grouped rows before summarizing. Calling SUM() on a builder that
+            // still has GROUP BY makes ->first() return one group (wrong KPI/footer totals).
+            // Pass only columns selected above — view may have extra summable fields
+            // (e.g. products_sold) that are not projected into this subquery.
+            $summary = $this->aggregateFilteredReportSummary(
+                DB::query()->fromSub(clone $aggregated, 'overall_period_rows'),
+                $view,
+                $effectiveSumColumns,
+            );
+            $paginator = $this->paginateReportQueryWithKnownTotal(
+                $aggregated,
+                $filters,
+                (int) ($summary['row_count'] ?? 0),
+            );
+
+            return array_merge($paginator->toArray(), [
+                'summary' => $summary,
+            ]);
+        };
+
+        // Short TTL for expensive sales-by-* / view aggregates. Invalidated on
+        // checkout via reportsDashboardVersion bump (same as dashboard KPIs).
+        if ($orgId > 0 && $fromDate !== '' && $toDate !== '') {
+            $page = (int) ($filters['page'] ?? $request->input('page', 1));
+            $perPage = (int) ($filters['per_page'] ?? $request->input('per_page', 25));
+            $cacheKey = sprintf(
+                'reports.view:%s:v%d:%s',
+                $view,
+                OrganizationCache::reportsDashboardVersion($orgId),
+                md5(json_encode([
+                    $filters,
+                    $groupBy,
+                    $sumColumns,
+                    $maxColumns,
+                    $request->input('q'),
+                    $page,
+                    $perPage,
+                    $request->input('sort'),
+                    $request->input('sort_dir'),
+                ], JSON_THROW_ON_ERROR)),
+            );
+
+            return OrganizationCache::remember($orgId, $cacheKey, 90, $build);
         }
 
-        $groupCols = array_values(array_filter(
-            $groupBy,
-            fn ($col) => $this->viewColumnExists($view, $col),
-        ));
-        if ($groupCols !== []) {
-            $aggregated->groupBy(...$groupCols);
-        }
-
-        if ($orderBy) {
-            $orderBy($aggregated);
-        }
-
-        // Wrap the grouped rows before summarizing. Calling SUM() on a builder that
-        // still has GROUP BY makes ->first() return one group (wrong KPI/footer totals).
-        // Pass only columns selected above — view may have extra summable fields
-        // (e.g. products_sold) that are not projected into this subquery.
-        $summary = $this->aggregateFilteredReportSummary(
-            DB::query()->fromSub(clone $aggregated, 'overall_period_rows'),
-            $view,
-            $effectiveSumColumns,
-        );
-        $paginator = $this->paginateReportQueryWithKnownTotal(
-            $aggregated,
-            $filters,
-            (int) ($summary['row_count'] ?? 0),
-        );
-
-        return array_merge($paginator->toArray(), [
-            'summary' => $summary,
-        ]);
+        return $build();
     }
 
     /**
@@ -3734,7 +3768,7 @@ class ReportController extends Controller
         // Sync paid totals only for invoices in the statement window that already have payments.
         CustomerInvoice::query()
             ->where('customer_num', $customerNum)
-            ->when($orgId && Schema::hasColumn('customer_invoices', 'organization_id'), fn ($q) => $q->where('organization_id', $orgId))
+            ->when($orgId && SchemaProbe::hasColumn('customer_invoices', 'organization_id'), fn ($q) => $q->where('organization_id', $orgId))
             ->whereNull('deleted_at')
             ->whereDate('invoice_date', '>=', $fromDate)
             ->whereDate('invoice_date', '<=', $toDate)
@@ -3759,7 +3793,7 @@ class ReportController extends Controller
 
         $invoices = DB::table('customer_invoices')
             ->where('customer_num', $customerNum)
-            ->when($orgId && Schema::hasColumn('customer_invoices', 'organization_id'), fn ($q) => $q->where('organization_id', $orgId))
+            ->when($orgId && SchemaProbe::hasColumn('customer_invoices', 'organization_id'), fn ($q) => $q->where('organization_id', $orgId))
             ->whereNull('deleted_at')
             ->whereDate('invoice_date', '>=', $fromDate)
             ->whereDate('invoice_date', '<=', $toDate)
@@ -3768,14 +3802,14 @@ class ReportController extends Controller
 
         $payments = DB::table('customer_invoice_payments')
             ->where('customer_num', $customerNum)
-            ->when($orgId && Schema::hasColumn('customer_invoice_payments', 'organization_id'), fn ($q) => $q->where('organization_id', $orgId))
+            ->when($orgId && SchemaProbe::hasColumn('customer_invoice_payments', 'organization_id'), fn ($q) => $q->where('organization_id', $orgId))
             ->whereDate('date_paid', '>=', $fromDate)
             ->whereDate('date_paid', '<=', $toDate)
             ->orderBy('date_paid')
             ->get();
 
         $creditNotes = collect();
-        if (Schema::hasTable('credit_notes')) {
+        if (SchemaProbe::hasTable('credit_notes')) {
             $creditQuery = DB::table('credit_notes as cn')
                 ->where('cn.customer_num', $customerNum)
                 ->when($orgId, fn ($q) => $q->where('cn.organization_id', $orgId))
@@ -3784,7 +3818,7 @@ class ReportController extends Controller
                 ->orderBy('cn.credit_date')
                 ->orderBy('cn.id');
 
-            if (Schema::hasTable('customer_returns') && Schema::hasColumn('customer_returns', 'return_kind')) {
+            if (SchemaProbe::hasTable('customer_returns') && SchemaProbe::hasColumn('customer_returns', 'return_kind')) {
                 $creditQuery
                     ->leftJoin('customer_returns as cr', 'cr.id', '=', 'cn.customer_return_id')
                     ->where(function ($q) {
@@ -3936,7 +3970,7 @@ class ReportController extends Controller
     ): float {
         $priorInvoices = DB::table('customer_invoices')
             ->where('customer_num', $customerNum)
-            ->when($orgId && Schema::hasColumn('customer_invoices', 'organization_id'), fn ($q) => $q->where('organization_id', $orgId))
+            ->when($orgId && SchemaProbe::hasColumn('customer_invoices', 'organization_id'), fn ($q) => $q->where('organization_id', $orgId))
             ->whereNull('deleted_at')
             ->whereDate('invoice_date', '<', $fromDate)
             ->get();
@@ -3944,13 +3978,13 @@ class ReportController extends Controller
         $invoiced = $priorInvoices->sum(fn ($row) => (float) $row->statement_debit);
 
         $credits = 0.0;
-        if (Schema::hasTable('credit_notes')) {
+        if (SchemaProbe::hasTable('credit_notes')) {
             $credits = (float) DB::table('credit_notes as cn')
                 ->where('cn.customer_num', $customerNum)
                 ->when($orgId, fn ($q) => $q->where('cn.organization_id', $orgId))
                 ->whereDate('cn.credit_date', '<', $fromDate)
                 ->when(
-                    Schema::hasTable('customer_returns') && Schema::hasColumn('customer_returns', 'return_kind'),
+                    SchemaProbe::hasTable('customer_returns') && SchemaProbe::hasColumn('customer_returns', 'return_kind'),
                     function ($q) {
                         $q->leftJoin('customer_returns as cr', 'cr.id', '=', 'cn.customer_return_id')
                             ->where(function ($inner) {
@@ -3965,7 +3999,7 @@ class ReportController extends Controller
 
         $paid = (float) DB::table('customer_invoice_payments')
             ->where('customer_num', $customerNum)
-            ->when($orgId && Schema::hasColumn('customer_invoice_payments', 'organization_id'), fn ($q) => $q->where('organization_id', $orgId))
+            ->when($orgId && SchemaProbe::hasColumn('customer_invoice_payments', 'organization_id'), fn ($q) => $q->where('organization_id', $orgId))
             ->whereDate('date_paid', '<', $fromDate)
             ->sum('amount_paid');
 
@@ -3988,7 +4022,7 @@ class ReportController extends Controller
 
         $open = DB::table('customer_invoices')
             ->where('customer_num', $customerNum)
-            ->when($orgId && Schema::hasColumn('customer_invoices', 'organization_id'), fn ($q) => $q->where('organization_id', $orgId))
+            ->when($orgId && SchemaProbe::hasColumn('customer_invoices', 'organization_id'), fn ($q) => $q->where('organization_id', $orgId))
             ->whereNull('deleted_at')
             ->whereIn('payment_status', [0, 1])
             ->get();
@@ -4179,7 +4213,7 @@ class ReportController extends Controller
     protected function applySalesTenantScope($query, ?int $orgId, ?int $branchId, string $alias = ''): void
     {
         $prefix = $alias !== '' ? "{$alias}." : '';
-        if ($orgId && Schema::hasColumn('sales', 'organization_id')) {
+        if ($orgId && SchemaProbe::hasColumn('sales', 'organization_id')) {
             $query->where("{$prefix}organization_id", $orgId);
         }
         $this->applyBranchTenantScope($query, $orgId, $branchId, "{$prefix}branch_id");

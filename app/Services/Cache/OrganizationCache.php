@@ -190,6 +190,7 @@ class OrganizationCache
             'erp.profiles' => 'Deployment profile definitions (global, long-lived)',
             'accounting.quickbooks_oauth_state' => 'QuickBooks OAuth CSRF state (short-lived, per org)',
             'reports.dashboard' => 'Report dashboard KPIs and charts (org-scoped, ~2 min TTL, version-invalidated on checkout)',
+            'reports.view' => 'Sales-by-* / view-overall report pages (org-scoped, ~90s TTL, version-invalidated on checkout)',
             'inventory.valuation' => 'Inventory valuation KPI snapshots (org/branch, ~15 min TTL, cleared on checkout)',
             'customers.summary' => 'Customer hub summary counts (org-scoped, ~2 min TTL)',
             'completed_sales.detail' => 'Immutable completed sale detail payloads (org-scoped, no expiry)',

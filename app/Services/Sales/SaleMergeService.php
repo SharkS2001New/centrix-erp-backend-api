@@ -17,6 +17,7 @@ use App\Services\Notifications\ActionRequestService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
+use App\Services\Sales\CentrixSalesScope;
 
 /**
  * Merge multiple mobile (field-sales) orders for the same customer into one survivor order.
