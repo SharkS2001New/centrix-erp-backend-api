@@ -111,6 +111,72 @@ class UserLoginChannelTest extends TestCase
         ])->assertOk();
     }
 
+    public function test_hotel_bar_org_allows_backoffice_and_mobile_login_for_staff(): void
+    {
+        $org = Organization::where('company_code', 'DEMO')->firstOrFail();
+        $org->forceFill([
+            'deployment_profile' => 'hotel_bar',
+            // Sparse map — full profile modules as source of truth for Hotel & Bar.
+            'enabled_modules' => config('erp.profiles.hotel_bar.modules'),
+        ])->save();
+        app(\App\Services\Platform\OrganizationLicenseService::class)
+            ->forgetResolvedLicense((int) $org->id);
+
+        $gate = app(\App\Services\Erp\CapabilityGate::class)->forOrganization($org->fresh());
+        $this->assertTrue($gate->mobileSalesEnabled());
+        $this->assertContains('mobile', $gate->allowedLoginChannels());
+        $this->assertContains('backoffice', $gate->allowedLoginChannels());
+        $this->assertNotContains('pos', $gate->allowedLoginChannels());
+
+        // Typical hotel cashier: web/backoffice channels only, signs into AS mobile.
+        $user = $this->makeUser([
+            'login_channels' => ['backoffice'],
+            'is_admin' => true,
+        ]);
+
+        $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'DEMO',
+            'username' => $user->username,
+            'password' => 'password',
+            'client_id' => 'HOTEL_WEB',
+            'login_channel' => 'backoffice',
+            'force_logout' => true,
+        ])->assertOk();
+
+        $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'DEMO',
+            'username' => $user->username,
+            'password' => 'password',
+            'client_id' => 'HOTEL_AS_MOBILE',
+            'login_channel' => 'mobile',
+            'force_logout' => true,
+        ])->assertOk()
+            ->assertJsonPath('user.login_channels', ['backoffice']);
+    }
+
+    public function test_hotel_bar_rejects_external_pos_login_channel(): void
+    {
+        $org = Organization::where('company_code', 'DEMO')->firstOrFail();
+        $org->forceFill([
+            'deployment_profile' => 'hotel_bar',
+            'enabled_modules' => config('erp.profiles.hotel_bar.modules'),
+        ])->save();
+        app(\App\Services\Platform\OrganizationLicenseService::class)
+            ->forgetResolvedLicense((int) $org->id);
+
+        $user = $this->makeUser(['login_channels' => ['pos', 'backoffice']]);
+
+        $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'DEMO',
+            'username' => $user->username,
+            'password' => 'password',
+            'client_id' => 'HOTEL_EXTERNAL_POS',
+            'login_channel' => 'pos',
+        ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['login_channel']);
+    }
+
     public function test_mobile_session_cannot_access_admin_users_api(): void
     {
         $user = $this->makeUser(['login_channels' => ['mobile']]);
@@ -333,18 +399,29 @@ class UserLoginChannelTest extends TestCase
     public function test_user_defaults_to_org_allowed_login_channels_without_pos(): void
     {
         $org = Organization::where('company_code', 'DEMO')->firstOrFail();
+        // Sparse "on" keys only — omit sales.pos entirely. Dense maps that store
+        // sales.pos=false get compacted and can re-enable POS via sales cascade.
         $org->forceFill([
             'deployment_profile' => 'distribution',
-            'enabled_modules' => array_merge(
-                is_array($org->enabled_modules) ? $org->enabled_modules : [],
-                ['sales.pos' => false, 'sales.mobile' => true, 'sales.backend' => true],
-            ),
+            'enabled_modules' => [
+                'sales' => true,
+                'sales.backend' => true,
+                'sales.mobile' => true,
+                'sales.dashboard' => true,
+                'sales.reports' => true,
+                'distribution' => true,
+                'inventory' => true,
+                'admin' => true,
+                'customers_suppliers' => true,
+            ],
         ])->save();
+        app(\App\Services\Platform\OrganizationLicenseService::class)
+            ->forgetResolvedLicense((int) $org->id);
 
         $admin = User::where('username', 'admin')->firstOrFail();
         Sanctum::actingAs($admin);
 
-        $this->postJson('/api/v1/users', [
+        $created = $this->postJson('/api/v1/users', [
             'full_name' => 'Distribution Driver',
             'username' => 'dist_driver',
             'email' => 'dist_driver@example.test',
@@ -352,11 +429,12 @@ class UserLoginChannelTest extends TestCase
             'access_scope' => 'branch',
             'role_id' => $admin->role_id,
             'branch_id' => $admin->branch_id,
-        ])
-            ->assertCreated()
-            ->assertJson(fn ($json) => $json->where('login_channels', fn ($channels) => is_array($channels)
-                && ! in_array('pos', $channels, true)
-                && in_array('backoffice', $channels, true)));
+        ])->assertCreated();
+
+        $channels = $created->json('login_channels');
+        $this->assertIsArray($channels);
+        $this->assertNotContains('pos', $channels);
+        $this->assertContains('backoffice', $channels);
     }
 
     public function test_pos_login_blocked_when_external_pos_disabled_for_organization(): void
