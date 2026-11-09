@@ -102,36 +102,57 @@ class UserPermissionService
     /** @return list<int> */
     public function effectivePermissionIds(User $user): array
     {
-        // Platform super-admins bypass RBAC. Org admins (`is_admin`) do not — their
-        // feature access comes from the role matrix (plus Administration auto-grants).
-        if ($user->is_super_admin) {
-            return $this->catalog()->allIds();
+        return $this->rememberRequest('effective_permission_ids.'.$user->id, function () use ($user) {
+            // Platform super-admins bypass RBAC. Org admins (`is_admin`) do not — their
+            // feature access comes from the role matrix (plus Administration auto-grants).
+            if ($user->is_super_admin) {
+                return $this->catalog()->allIds();
+            }
+
+            $roleIds = collect($this->rolePermissionIds($user->role_id));
+            $grants = collect($this->grantIds((int) $user->id));
+            $denies = collect($this->denyIds((int) $user->id));
+
+            return $roleIds
+                ->merge($grants)
+                ->diff($denies)
+                ->unique()
+                ->values()
+                ->map(fn ($id) => (int) $id)
+                ->all();
+        });
+    }
+
+    /**
+     * @template T
+     * @param  callable(): T  $callback
+     * @return T
+     */
+    protected function rememberRequest(string $key, callable $callback): mixed
+    {
+        $attrKey = 'user_permission_service.'.$key;
+        try {
+            $request = request();
+            if ($request->attributes->has($attrKey)) {
+                return $request->attributes->get($attrKey);
+            }
+            $value = $callback();
+            $request->attributes->set($attrKey, $value);
+
+            return $value;
+        } catch (\Throwable) {
+            return $callback();
         }
     }
 
     protected function permissionIdByCode(string $permissionCode): ?int
     {
-        $map = $this->rememberRequest('permission_id_by_code', function () {
-            return Permission::query()
-                ->pluck('id', 'permission_code')
-                ->map(fn ($id) => (int) $id)
-                ->all();
-        });
-
-        $id = $map[$permissionCode] ?? null;
-
-        return $id !== null ? (int) $id : null;
+        return $this->catalog()->idByCode($permissionCode);
     }
 
     protected function permissionByCode(string $permissionCode): ?Permission
     {
-        $map = $this->rememberRequest('permission_model_by_code', function () {
-            return Permission::query()->get()->keyBy('permission_code');
-        });
-
-        $permission = $map[$permissionCode] ?? null;
-
-        return $permission instanceof Permission ? $permission : null;
+        return $this->catalog()->byCode($permissionCode);
     }
 
     public function hasPermission(User $user, string $permissionCode, ?CapabilityGate $gate = null): bool
