@@ -49,7 +49,7 @@ if [[ "${MASTER_SHA}" == "${MAIN_SHA}" ]]; then
 fi
 
 if git merge-base --is-ancestor "${MASTER_SHA}" "${MAIN_SHA}"; then
-  git push --ff-only origin "${MAIN_SHA}:refs/heads/master"
+  git push origin ":refs/heads/master"
   git checkout master
   git reset --hard "${MAIN_SHA}"
   echo "Synced master → ${MAIN_SHA:0:7} (ff-only; main was ahead)"
@@ -87,7 +87,7 @@ git log --oneline "${MAIN_SHA}..${PROMOTE_SHA}"
 
 git checkout -B main "${MAIN_SHA}"
 git merge --ff-only "${PROMOTE_SHA}"
-git push --ff-only origin main
+git push origin main
 
 git push --force-with-lease=refs/heads/master:"${MASTER_SHA}" \
   origin "${PROMOTE_SHA}:refs/heads/master"
