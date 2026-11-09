@@ -955,6 +955,14 @@ class CapabilityGate
             'mobile_product_list_mode' => $this->mobileSalesEnabled()
                 ? app(MobileProductListSettings::class)->mode($this->moduleSettings('sales'))
                 : MobileProductListSettings::MODE_IN_STOCK_ONLY,
+            'as_mobile_show_images' => (bool) ($this->moduleSettings('sales')['as_mobile_show_images'] ?? true),
+            'as_mobile_post_login_screen' => in_array(
+                (string) ($this->moduleSettings('sales')['as_mobile_post_login_screen'] ?? 'module_home'),
+                ['module_home', 'operations_dashboard'],
+                true,
+            )
+                ? (string) $this->moduleSettings('sales')['as_mobile_post_login_screen']
+                : 'module_home',
             'pos_order_edit_enabled' => $this->posOrderEditEnabled(),
             'backoffice_order_edit_enabled' => $this->backofficeOrderEditEnabled(),
             'platform_mpesa_stk_enabled' => $this->mpesaStkPlatformEnabled(),
