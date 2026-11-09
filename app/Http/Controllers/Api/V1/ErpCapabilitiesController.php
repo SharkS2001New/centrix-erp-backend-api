@@ -113,11 +113,21 @@ class ErpCapabilitiesController extends Controller
             ? app(UserPermissionService::class)->permissionMapForUser($user, $gate)
             : [];
 
+        $platformAdmin = $user?->is_super_admin
+            ? \App\Services\Platform\PlatformAdminPermissions::describeForUser($user)
+            : null;
+
         return array_merge($gate->toArray($user), [
             'is_super_admin' => (bool) $user?->is_super_admin,
             'is_admin' => (bool) $user?->is_admin,
             'access_scope' => $user?->access_scope ?? 'org',
             'branch_id' => $user?->branch_id,
+            'platform_admin' => $platformAdmin,
+            'platform_permissions' => $platformAdmin['areas'] ?? [],
+            'platform_full_access' => (bool) ($platformAdmin['full_access'] ?? false),
+            'platform_two_factor_required' => (bool) $user?->is_super_admin
+                && (bool) config('erp.platform_require_two_factor', true)
+                && ! (bool) ($platformAdmin['two_factor_enabled'] ?? false),
             'permissions' => $permissionMap,
             'assigned_permissions' => $user
                 ? app(UserPermissionService::class)->navigationPermissionMapForUser($user, $gate)
@@ -150,6 +160,19 @@ class ErpCapabilitiesController extends Controller
         $payload['is_admin'] = (bool) $user->is_admin;
         $payload['access_scope'] = $user->access_scope ?? 'org';
         $payload['branch_id'] = $user->branch_id;
+        if ($user->is_super_admin) {
+            $platformAdmin = \App\Services\Platform\PlatformAdminPermissions::describeForUser($user);
+            $payload['platform_admin'] = $platformAdmin;
+            $payload['platform_permissions'] = $platformAdmin['areas'];
+            $payload['platform_full_access'] = $platformAdmin['full_access'];
+            $payload['platform_two_factor_required'] = (bool) config('erp.platform_require_two_factor', true)
+                && ! $platformAdmin['two_factor_enabled'];
+        } else {
+            $payload['platform_admin'] = null;
+            $payload['platform_permissions'] = [];
+            $payload['platform_full_access'] = false;
+            $payload['platform_two_factor_required'] = false;
+        }
         $payload['hospitality_outlet_id'] = $user->hospitality_outlet_id
             ? (int) $user->hospitality_outlet_id
             : null;

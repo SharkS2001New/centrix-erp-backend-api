@@ -290,6 +290,12 @@ class TwoFactorService
             ]);
         }
 
+        if ($user->is_super_admin) {
+            throw ValidationException::withMessages([
+                'password' => ['Platform administrators cannot turn off two-factor authentication.'],
+            ]);
+        }
+
         return $this->forceDisable($user);
     }
 
@@ -298,6 +304,12 @@ class TwoFactorService
      */
     public function forceDisable(User $user): User
     {
+        if ($user->is_super_admin) {
+            throw ValidationException::withMessages([
+                'two_factor' => ['Platform administrators cannot clear two-factor authentication.'],
+            ]);
+        }
+
         $user->forceFill([
             'two_factor_enabled' => false,
             'two_factor_method' => null,

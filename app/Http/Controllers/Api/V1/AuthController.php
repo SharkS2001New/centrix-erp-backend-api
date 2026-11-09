@@ -603,6 +603,13 @@ class AuthController extends Controller
 
         $user = $user->fresh();
         if ($emailChanged && $user->two_factor_enabled && $user->two_factor_method === 'email') {
+            if ($user->is_super_admin) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'email' => [
+                        'Switch two-factor authentication to Google Authenticator before changing the email used for email 2FA. Platform admins cannot turn 2FA off.',
+                    ],
+                ]);
+            }
             app(\App\Services\Auth\TwoFactorService::class)->forceDisable($user);
             $user = $user->fresh();
         }

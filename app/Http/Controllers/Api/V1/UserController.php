@@ -487,6 +487,9 @@ class UserController extends BaseResourceController
         }
 
         $model = $this->findOrgUser($this->resolveResourceId($id, $nestedId));
+        if ($model->is_super_admin) {
+            abort(422, 'Platform administrator accounts must keep two-factor authentication enabled.');
+        }
         $model->forceFill([
             'two_factor_enabled' => false,
             'two_factor_method' => null,

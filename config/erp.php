@@ -26,6 +26,12 @@ return [
     'platform_super_admin_email' => env('PLATFORM_SUPER_ADMIN_EMAIL'),
     'platform_super_admin_password' => env('PLATFORM_SUPER_ADMIN_PASSWORD'),
 
+    /**
+     * When true, platform API routes require the signed-in super admin to have 2FA enabled.
+     * Disabled in phpunit by default so feature tests that mint super admins keep working.
+     */
+    'platform_require_two_factor' => filter_var(env('PLATFORM_REQUIRE_TWO_FACTOR', true), FILTER_VALIDATE_BOOL),
+
     /** Idle API tokens are revoked after this many minutes without a request. */
     'session_idle_minutes' => (int) env('AUTH_SESSION_IDLE_MINUTES', 60),
 

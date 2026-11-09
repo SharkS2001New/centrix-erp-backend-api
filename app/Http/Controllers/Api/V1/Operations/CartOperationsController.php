@@ -29,6 +29,7 @@ use App\Services\Sales\OrderSourceResolver;
 use App\Services\Sales\SaleCancellationService;
 use App\Services\Sales\OrderNumberAllocator;
 use App\Services\Sales\PosLinePricingService;
+use App\Support\DeadlockSafe;
 use App\Support\SalesCheckoutSettings;
 use App\Jobs\FinalizePosOrderEditRestoreJob;
 use App\Services\Sales\PosOrderEditService;
@@ -241,7 +242,8 @@ class CartOperationsController extends Controller
 
         // Lock the cart so concurrent POS adds (qty Enter / F12 convert races) cannot
         // create two TemporaryCart rows for the same SKU + retail/wholesale mode.
-        [$updatedCart, $line] = DB::transaction(function () use ($cart, $request, $user, $gate) {
+        // DeadlockSafe retries MySQL 1213 (cart_lines INSERT vs stock_reservations).
+        [$updatedCart, $line] = DeadlockSafe::transaction(function () use ($cart, $request, $user, $gate) {
             $locked = TemporaryCart::query()->whereKey($cart->id)->lockForUpdate()->first();
             if (! $locked) {
                 throw new InvalidArgumentException('Cart not found.');
@@ -250,7 +252,7 @@ class CartOperationsController extends Controller
             $line = $this->addCartLine($locked, $request->validated(), $user, $gate);
 
             return [$locked, $line];
-        }, 5);
+        }, 8);
 
         // The mobile app needs only the new line reference; avoid reloading and
         // presenting the full cart on this hot path.
@@ -279,7 +281,7 @@ class CartOperationsController extends Controller
         $validated = $request->validated();
         $isMobile = $this->isMobileChannelCart($cart);
 
-        $updatedCart = DB::transaction(function () use ($cart, $lineRef, $validated, $user, $gate) {
+        $updatedCart = DeadlockSafe::transaction(function () use ($cart, $lineRef, $validated, $user, $gate) {
             $locked = TemporaryCart::query()->whereKey($cart->id)->lockForUpdate()->first();
             if (! $locked) {
                 throw new InvalidArgumentException('Cart not found.');
@@ -287,7 +289,7 @@ class CartOperationsController extends Controller
             $this->updateCartLine($locked, $lineRef, $validated, $user, $gate);
 
             return $locked;
-        }, 5);
+        }, 8);
 
         // Match addLine: mobile only needs update_no — full cart present is a scroll killer.
         if ($isMobile) {

@@ -16,7 +16,7 @@ class User extends Authenticatable
     protected $table = 'users';
     protected $fillable = [
         'organization_id', 'branch_id', 'hospitality_outlet_id', 'role_id', 'username', 'email', 'email_verified_at', 'password',
-        'full_name', 'is_admin', 'is_super_admin', 'access_scope', 'is_mobile_user', 'login_channels',
+        'full_name', 'is_admin', 'is_super_admin', 'platform_permissions', 'access_scope', 'is_mobile_user', 'login_channels',
         'mobile_order_scope', 'assigned_route_id', 'is_active', 'must_change_password', 'password_expiry_skip_count',
         'password_changed_at', 'last_login',
         'two_factor_enabled', 'two_factor_method', 'two_factor_secret', 'two_factor_confirmed_at',
@@ -26,6 +26,7 @@ class User extends Authenticatable
     protected $casts = [
         'is_admin' => 'boolean',
         'is_super_admin' => 'boolean',
+        'platform_permissions' => 'array',
         'is_active' => 'boolean',
         'must_change_password' => 'boolean',
         'is_mobile_user' => 'boolean',
@@ -38,6 +39,17 @@ class User extends Authenticatable
         'deleted_at' => 'datetime',
         'can_use_all_channels' => 'boolean',
     ];
+
+    public function hasPlatformPermission(string $area): bool
+    {
+        return \App\Services\Platform\PlatformAdminPermissions::userAllows($this, $area);
+    }
+
+    public function hasUnrestrictedPlatformAccess(): bool
+    {
+        return (bool) $this->is_super_admin
+            && \App\Services\Platform\PlatformAdminPermissions::hasFullAccess($this->platform_permissions);
+    }
 
     protected $appends = [
         'allowed_customer_types',

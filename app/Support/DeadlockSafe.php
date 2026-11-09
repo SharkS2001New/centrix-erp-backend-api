@@ -29,14 +29,30 @@ final class DeadlockSafe
             return $callback();
         }
 
-        return DB::transaction($callback, $attempts);
+        $last = null;
+        for ($try = 1; $try <= $attempts; $try++) {
+            try {
+                return DB::transaction($callback);
+            } catch (Throwable $e) {
+                $last = $e;
+                if ($try >= $attempts || ! self::isRetryableLockFailure($e)) {
+                    throw $e;
+                }
+                // Brief jitter so concurrent POS cashiers don't re-collide immediately.
+                usleep(25_000 * $try + random_int(0, 20_000));
+            }
+        }
+
+        throw $last ?? new \RuntimeException('DeadlockSafe exhausted attempts without an exception.');
     }
 
     public static function isRetryableLockFailure(Throwable $e): bool
     {
         $message = $e->getMessage();
+        $sqlState = method_exists($e, 'getCode') ? (string) $e->getCode() : '';
 
-        return str_contains($message, '1213')
+        return $sqlState === '40001'
+            || str_contains($message, '1213')
             || str_contains($message, '1205')
             || str_contains($message, 'Deadlock found')
             || str_contains($message, 'Lock wait timeout')

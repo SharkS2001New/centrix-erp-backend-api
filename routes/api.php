@@ -83,6 +83,7 @@ use App\Http\Controllers\Api\V1\PayrollLineController;
 use App\Http\Controllers\Api\V1\PayrollRunController;
 use App\Http\Controllers\Api\V1\PermissionController;
 use App\Http\Controllers\Api\V1\PlatformActiveSessionsController;
+use App\Http\Controllers\Api\V1\PlatformAdminUserController;
 use App\Http\Controllers\Api\V1\PlatformAiTrainingController;
 use App\Http\Controllers\Api\V1\PlatformContractController;
 use App\Http\Controllers\Api\V1\PlatformMarketingPortfolioController;
@@ -444,6 +445,22 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.module:hr_payroll', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/hr', [ErpSettingsController::class, 'updateHr'])
             ->middleware(['erp.module:hr_payroll', 'erp.permission:admin.manage']);
+
+        Route::get('admin/platform-admins/permission-catalog', [PlatformAdminUserController::class, 'catalog'])
+            ->middleware(['erp.super_admin:admins']);
+        Route::get('admin/platform-admins', [PlatformAdminUserController::class, 'index'])
+            ->middleware(['erp.super_admin:admins']);
+        Route::post('admin/platform-admins', [PlatformAdminUserController::class, 'store'])
+            ->middleware(['erp.super_admin:admins']);
+        Route::get('admin/platform-admins/{id}', [PlatformAdminUserController::class, 'show'])
+            ->middleware(['erp.super_admin:admins'])
+            ->whereNumber('id');
+        Route::patch('admin/platform-admins/{id}', [PlatformAdminUserController::class, 'update'])
+            ->middleware(['erp.super_admin:admins'])
+            ->whereNumber('id');
+        Route::delete('admin/platform-admins/{id}', [PlatformAdminUserController::class, 'destroy'])
+            ->middleware(['erp.super_admin:admins'])
+            ->whereNumber('id');
 
         Route::get('admin/organizations/provision-options', [OrganizationProvisionController::class, 'options'])
             ->middleware(['erp.super_admin']);
