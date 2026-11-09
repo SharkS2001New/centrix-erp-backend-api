@@ -350,6 +350,10 @@ class UserLoginChannelService
             'sales/customers',
             'sales/orders',
             'sales/loyalty-cards',
+            // AS / shop POS float sessions (declare opening float).
+            'pos/',
+            'tills',
+            'till-float-sessions',
             'branches',
             'customers',
             'products',
@@ -366,6 +370,7 @@ class UserLoginChannelService
             'notifications',
             'action-requests/',
             'system-issue-reports',
+            'erp/settings',
         ];
 
         return $this->pathMatchesAny($path, $prefixes);
