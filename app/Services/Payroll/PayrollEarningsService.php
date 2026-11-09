@@ -430,17 +430,11 @@ class PayrollEarningsService
             return 30.0;
         }
 
-        $count = 0.0;
-        $cursor = Carbon::parse($start)->startOfDay();
+        // calendar = actual days in the pay period (inclusive), not scheduled shift days.
+        $startDay = Carbon::parse($start)->startOfDay();
         $endDay = Carbon::parse($end)->startOfDay();
-        while ($cursor->lte($endDay)) {
-            if ($this->dayPolicy->isScheduledWorkday($employee, $cursor->toDateString())) {
-                $count += 1.0;
-            }
-            $cursor->addDay();
-        }
 
-        return $count;
+        return (float) ($startDay->diffInDays($endDay) + 1);
     }
 
     protected function payrollMonthDaysBasis(int $organizationId): string

@@ -3,6 +3,7 @@
 namespace Tests\Unit;
 
 use App\Models\DispatchTrip;
+use App\Models\Organization;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\SaleItem;
@@ -20,6 +21,16 @@ class PickingListBuilderTest extends TestCase
     {
         $user = User::where('username', 'admin')->firstOrFail();
         Sanctum::actingAs($user);
+        $template = Sale::query()->whereNotNull('route_id')->first()
+            ?? Sale::query()->firstOrFail();
+
+        $org = Organization::query()->findOrFail($user->organization_id);
+        $moduleSettings = $org->module_settings ?? [];
+        $moduleSettings['distribution'] = array_merge(
+            is_array($moduleSettings['distribution'] ?? null) ? $moduleSettings['distribution'] : [],
+            ['enable_product_shelf_location' => true],
+        );
+        $org->update(['module_settings' => $moduleSettings]);
 
         $productA = Product::query()->firstOrFail();
         $productB = Product::query()->where('product_code', '!=', $productA->product_code)->firstOrFail();
@@ -33,6 +44,7 @@ class PickingListBuilderTest extends TestCase
             'scheduled_date' => now()->toDateString(),
             'status' => 'draft',
             'created_by' => $user->id,
+            'route_id' => $template->route_id,
         ]);
 
         $sale = Sale::query()->create([
@@ -41,6 +53,8 @@ class PickingListBuilderTest extends TestCase
             'organization_id' => $user->organization_id,
             'channel' => 'mobile',
             'cashier_id' => $user->id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $template->route_id,
             'status' => 'processed',
             'payment_status' => 'unpaid',
             'order_total' => 1000,
@@ -93,6 +107,8 @@ class PickingListBuilderTest extends TestCase
     {
         $user = User::where('username', 'admin')->firstOrFail();
         Sanctum::actingAs($user);
+        $template = Sale::query()->whereNotNull('route_id')->first()
+            ?? Sale::query()->firstOrFail();
 
         $productA = Product::query()->firstOrFail();
         $productB = Product::query()->where('product_code', '!=', $productA->product_code)->firstOrFail();
@@ -107,6 +123,7 @@ class PickingListBuilderTest extends TestCase
             'scheduled_date' => now()->toDateString(),
             'status' => 'draft',
             'created_by' => $user->id,
+            'route_id' => $template->route_id,
         ]);
 
         $sale = Sale::query()->create([
@@ -115,6 +132,8 @@ class PickingListBuilderTest extends TestCase
             'organization_id' => $user->organization_id,
             'channel' => 'mobile',
             'cashier_id' => $user->id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $template->route_id,
             'status' => 'processed',
             'payment_status' => 'unpaid',
             'order_total' => 1000,
@@ -160,6 +179,8 @@ class PickingListBuilderTest extends TestCase
     {
         $user = User::where('username', 'admin')->firstOrFail();
         Sanctum::actingAs($user);
+        $template = Sale::query()->whereNotNull('route_id')->first()
+            ?? Sale::query()->firstOrFail();
 
         $product = Product::query()->firstOrFail();
         $product->update(['shelf_location' => 'C4']);
@@ -170,6 +191,7 @@ class PickingListBuilderTest extends TestCase
             'scheduled_date' => now()->toDateString(),
             'status' => 'draft',
             'created_by' => $user->id,
+            'route_id' => $template->route_id,
         ]);
 
         $sale = Sale::query()->create([
@@ -178,6 +200,8 @@ class PickingListBuilderTest extends TestCase
             'organization_id' => $user->organization_id,
             'channel' => 'mobile',
             'cashier_id' => $user->id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $template->route_id,
             'status' => 'processed',
             'payment_status' => 'unpaid',
             'order_total' => 1000,

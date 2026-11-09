@@ -61,6 +61,7 @@ class SystemIssueAlertServiceTest extends TestCase
 
     public function test_send_test_email_fails_without_digest_address(): void
     {
+        config(['system_issues.digest_email' => '']);
         SystemIssueAlertSettingsResolver::save([
             'digest_email' => '',
             'instant_email_enabled' => true,
