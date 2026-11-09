@@ -667,7 +667,9 @@ class OrganizationPlatformConfigService
         $defaults = [
             'show_checkout_on_create_order' => true,
             'enable_mobile_orders' => ! in_array($deploymentProfile, ['small_shop', 'supermarket'], true),
-            'as_mobile_show_images' => true,
+            // Hotel & Bar menu/outlet photos on by default; other industries stay off until Platform enables.
+            'as_mobile_show_images' => $deploymentProfile === 'hotel_bar',
+            'require_product_images' => false,
             'as_mobile_post_login_screen' => 'module_home',
             'mobile_enable_field_attendance' => false,
             'mobile_enable_driver_app' => in_array($deploymentProfile, ['distribution', 'wholesale_retail'], true),
@@ -791,7 +793,10 @@ class OrganizationPlatformConfigService
             'enable_mobile_orders_returns_card' => (bool) ($sales['enable_mobile_orders_returns_card'] ?? false),
             'enable_mobile_orders_payments_card' => (bool) ($sales['enable_mobile_orders_payments_card'] ?? false),
             'enable_mobile_orders_expenses_card' => (bool) ($sales['enable_mobile_orders_expenses_card'] ?? false),
-            'as_mobile_show_images' => (bool) ($sales['as_mobile_show_images'] ?? true),
+            'as_mobile_show_images' => array_key_exists('as_mobile_show_images', $customSales)
+                ? (bool) $customSales['as_mobile_show_images']
+                : $gate->asMobileShowImages(),
+            'require_product_images' => (bool) ($sales['require_product_images'] ?? false),
             'as_mobile_post_login_screen' => in_array(
                 (string) ($sales['as_mobile_post_login_screen'] ?? 'module_home'),
                 ['module_home', 'operations_dashboard'],

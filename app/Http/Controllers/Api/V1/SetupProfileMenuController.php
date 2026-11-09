@@ -27,6 +27,7 @@ class SetupProfileMenuController extends Controller
                 ]))
                 ->values(),
             'business_type_catalog' => $this->menus->businessTypeCatalog(),
+            'business_type_owners' => $this->menus->businessTypeOwners(),
         ]);
     }
 
@@ -177,10 +178,16 @@ class SetupProfileMenuController extends Controller
         $data = $request->validate([
             'name' => 'required|string|max:80',
             'industry' => ['required', Rule::in(\App\Services\Erp\IndustryRegistry::ids())],
+            'business_types' => 'sometimes|array',
+            'business_types.*' => 'sometimes|string|max:100',
         ]);
 
         try {
-            $row = $this->menus->create($data['name'], $data['industry']);
+            $row = $this->menus->create(
+                $data['name'],
+                $data['industry'],
+                is_array($data['business_types'] ?? null) ? $data['business_types'] : [],
+            );
         } catch (\InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         } catch (\RuntimeException $e) {

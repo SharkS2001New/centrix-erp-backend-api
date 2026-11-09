@@ -236,6 +236,9 @@ class OrganizationProvisioningService
         }
 
         if ($profile === 'hotel_bar') {
+            $settings['sales'] = [
+                'as_mobile_show_images' => true,
+            ];
             $settings['hospitality'] = [
                 // Legacy enable_* keys (compat) + HospitalityServices map.
                 'enable_rooms' => true,

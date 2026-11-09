@@ -328,6 +328,23 @@ class CapabilityGate
         return false;
     }
 
+    /**
+     * AS mobile catalogue / product image UI.
+     * Explicit org setting wins; otherwise Hotel & Bar enables images by default.
+     */
+    public function asMobileShowImages(): bool
+    {
+        $customSales = is_array($this->organization?->module_settings['sales'] ?? null)
+            ? $this->organization->module_settings['sales']
+            : [];
+
+        if (array_key_exists('as_mobile_show_images', $customSales)) {
+            return (bool) $customSales['as_mobile_show_images'];
+        }
+
+        return IndustryRegistry::isHospitality($this->organization?->deployment_profile);
+    }
+
     /** Centrix Manager app for approvals, reports, and mobile administration. */
     public function managerAppEnabled(): bool
     {
@@ -964,7 +981,8 @@ class CapabilityGate
             'mobile_product_list_mode' => $this->mobileSalesEnabled()
                 ? app(MobileProductListSettings::class)->mode($this->moduleSettings('sales'))
                 : MobileProductListSettings::MODE_IN_STOCK_ONLY,
-            'as_mobile_show_images' => (bool) ($this->moduleSettings('sales')['as_mobile_show_images'] ?? true),
+            'as_mobile_show_images' => $this->asMobileShowImages(),
+            'require_product_images' => (bool) ($this->moduleSettings('sales')['require_product_images'] ?? false),
             'as_mobile_post_login_screen' => in_array(
                 (string) ($this->moduleSettings('sales')['as_mobile_post_login_screen'] ?? 'module_home'),
                 ['module_home', 'operations_dashboard'],

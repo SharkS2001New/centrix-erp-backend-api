@@ -4,7 +4,9 @@ namespace Tests\Feature;
 
 use App\Models\Organization;
 use App\Models\PlatformPlan;
+use App\Models\PlatformSetupProfile;
 use App\Models\PlatformSubscription;
+use App\Services\Erp\SetupProfileMenuService;
 use App\Services\Platform\OrganizationLicenseService;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
@@ -51,6 +53,10 @@ class PublicFreeSignupTest extends TestCase
         $org = Organization::query()->where('company_code', $companyCode)->firstOrFail();
         $this->assertSame('small_shop', $org->deployment_profile);
         $this->assertSame('Pharmacy', $org->business_type);
+        // Instant trial applies the setup type applications (small_shop = backoffice, not POS).
+        $modules = $org->enabled_modules ?? [];
+        $this->assertTrue((bool) ($modules['sales'] ?? false));
+        $this->assertFalse((bool) ($modules['sales.pos'] ?? false));
         $this->assertSame(
             ['booked', 'unpaid', 'pending_payment', 'paid', 'completed'],
             array_column($org->module_settings['sales']['order_workflow']['steps'], 'status'),
@@ -241,5 +247,41 @@ class PublicFreeSignupTest extends TestCase
             'admin_full_name' => 'Blocked User',
             'admin_password' => 'SecurePass1',
         ])->assertStatus(422);
+    }
+
+    public function test_public_free_signup_applies_customized_setup_type_applications(): void
+    {
+        config(['erp.allow_public_free_signup' => true]);
+
+        $menus = app(SetupProfileMenuService::class);
+        $applications = $menus->applicationsForProfile('small_shop');
+        $applications['pos'] = true;
+        $applications['backoffice'] = true;
+        $menus->save('small_shop', [
+            'applications' => $applications,
+            'business_types' => $menus->businessTypesForProfile('small_shop'),
+        ]);
+
+        $this->assertTrue(
+            PlatformSetupProfile::query()->where('profile_key', 'small_shop')->exists()
+        );
+
+        $response = $this->postJson('/api/v1/public/free-signup', [
+            'org_name' => 'POS Pharmacy',
+            'org_email' => 'owner@pospharmacy.test',
+            'primary_tel' => '0712345699',
+            'industry' => 'commerce',
+            'setup_type' => 'small_shop',
+            'business_type' => 'Pharmacy',
+            'admin_full_name' => 'POS Owner',
+            'admin_password' => 'SecurePass1',
+        ])->assertCreated();
+
+        $org = Organization::query()
+            ->where('company_code', $response->json('company_code'))
+            ->firstOrFail();
+        $modules = $org->enabled_modules ?? [];
+        $this->assertTrue((bool) ($modules['sales'] ?? false));
+        $this->assertTrue((bool) ($modules['sales.pos'] ?? false));
     }
 }

@@ -61,7 +61,7 @@ class AiToolChatService
 
         if (! $this->runtimeGuard->acquire()) {
             return $this->failureResult(
-                'Centrix AI model is busy right now, please try again later',
+                'Server is down',
                 'ai_busy',
             );
         }
@@ -115,7 +115,7 @@ class AiToolChatService
 
         if (! $this->runtimeGuard->acquire()) {
             yield $this->streamEvent('error', [
-                'message' => 'Centrix AI model is busy right now, please try again later',
+                'message' => 'Server is down',
                 'error_code' => 'ai_busy',
             ]);
 
@@ -448,7 +448,7 @@ class AiToolChatService
             );
 
             yield $this->streamEvent('error', [
-                'message' => 'Something went wrong while contacting the AI assistant. Please try again.',
+                'message' => 'Server is down',
                 'error_code' => 'internal_error',
                 'conversation_id' => $conversation->id,
                 'usage' => $usageTotal,
@@ -1079,7 +1079,7 @@ class AiToolChatService
             );
 
             return $this->failureResult(
-                'Something went wrong while contacting the AI assistant. Please try again.',
+                'Server is down',
                 'internal_error',
                 $conversation->id,
                 $usageTotal,

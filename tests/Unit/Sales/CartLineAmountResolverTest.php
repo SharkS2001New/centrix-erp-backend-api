@@ -50,6 +50,12 @@ class CartLineAmountResolverTest extends TestCase
         $this->assertSame(220.0, CartLineAmountResolver::resolve(220, 200, 25));
     }
 
+    public function test_accepts_client_net_when_explained_by_line_discount(): void
+    {
+        // Gross 1000, discount 200 → client posts net 800.
+        $this->assertSame(800.0, CartLineAmountResolver::resolve(800, 1000, 1.0, 200));
+    }
+
     public function test_rejects_pack_price_times_base_qty_when_conversion_is_known(): void
     {
         $this->assertSame(3600.0, CartLineAmountResolver::resolve(90000, 3600, 25));

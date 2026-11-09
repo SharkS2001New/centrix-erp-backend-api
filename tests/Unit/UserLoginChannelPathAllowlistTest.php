@@ -39,4 +39,18 @@ class UserLoginChannelPathAllowlistTest extends TestCase
         $this->assertFalse($service->tokenCanAccessPath('mobile', 'api/v1/inventory/transfer'));
         $this->assertFalse($service->tokenCanAccessPath('mobile', 'api/v1/users'));
     }
+
+    public function test_mobile_channel_allows_hotel_bar_pos_paths(): void
+    {
+        $service = app(UserLoginChannelService::class);
+
+        $this->assertTrue($service->tokenCanAccessPath('mobile', 'api/v1/hospitality/pos/catalog'));
+        $this->assertTrue($service->tokenCanAccessPath('mobile', 'api/v1/hospitality/pos/settings'));
+        $this->assertTrue($service->tokenCanAccessPath('mobile', 'api/v1/hospitality/pos/checks'));
+        $this->assertTrue($service->tokenCanAccessPath('mobile', 'api/v1/hospitality/pos/checks/1/settle'));
+        $this->assertTrue($service->tokenCanAccessPath('mobile', 'api/v1/hospitality/floor-tables'));
+        $this->assertTrue($service->tokenCanAccessPath('mobile', 'api/v1/hospitality/folios/open'));
+        $this->assertFalse($service->tokenCanAccessPath('mobile', 'api/v1/hospitality/settings'));
+        $this->assertFalse($service->tokenCanAccessPath('mobile', 'api/v1/hospitality/rooms'));
+    }
 }

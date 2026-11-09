@@ -173,6 +173,19 @@ class ProductImageApiTest extends TestCase
         $this->assertStringNotContainsString('v='.$fresh->image_version, (string) $fresh->image_url);
     }
 
+    public function test_hotel_cannot_delete_product_image_when_org_requires_images(): void
+    {
+        $this->enableHotelIndustry();
+        $this->enableRequireProductImages();
+        $product = $this->productWithStoredPhoto();
+
+        $this->deleteJson('/api/v1/products/'.$product->product_code.'/image')
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['image']);
+
+        $this->assertNotEmpty($product->fresh()->image_path);
+    }
+
     protected function jpegBytes(): string
     {
         $image = imagecreatetruecolor(24, 24);
@@ -189,6 +202,18 @@ class ProductImageApiTest extends TestCase
     {
         $this->org->forceFill(['deployment_profile' => 'hotel_bar'])->save();
         $this->user->unsetRelation('organization');
+    }
+
+    protected function enableRequireProductImages(): void
+    {
+        $settings = is_array($this->org->module_settings) ? $this->org->module_settings : [];
+        $sales = is_array($settings['sales'] ?? null) ? $settings['sales'] : [];
+        $sales['require_product_images'] = true;
+        $settings['sales'] = $sales;
+        $this->org->forceFill(['module_settings' => $settings])->save();
+        $this->user->unsetRelation('organization');
+        app(\App\Services\Platform\OrganizationLicenseService::class)
+            ->forgetResolvedLicense((int) $this->org->id);
     }
 
     protected function productWithStoredPhoto(): Product

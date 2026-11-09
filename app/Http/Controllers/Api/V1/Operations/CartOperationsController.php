@@ -122,7 +122,7 @@ class CartOperationsController extends Controller
                 $keep->update([
                     'quantity' => $qty,
                     'discount_given' => $discount,
-                    'amount' => round((float) $keep->unit_price * $qty, 2),
+                    'amount' => round(max(0, ((float) $keep->unit_price * $qty) - $discount), 2),
                 ]);
                 $changed = true;
             }
@@ -175,12 +175,14 @@ class CartOperationsController extends Controller
         if (array_key_exists('order_discount', $data)) {
             $orderDiscount = max(0, (float) $data['order_discount']);
             $discountService = app(\App\Services\Sales\DiscountApprovalService::class);
-            if ($discountService->allowsOrderDiscount($salesSettings, $request->user())) {
+            $discountChannel = $this->discountChannelForCart($cart);
+            if ($discountService->allowsOrderDiscount($salesSettings, $request->user(), $discountChannel)) {
                 $discountService->assertDirectManualDiscountAllowed(
                     $request->user(),
                     $salesSettings,
                     $orderDiscount,
                     'order_discount',
+                    $cart,
                 );
                 $updates['order_discount'] = $orderDiscount;
             } else {
@@ -1598,7 +1600,10 @@ class CartOperationsController extends Controller
             ? $this->reservationExpiresAtForUser($user, $inventorySettings, (string) $cart->channel)
             : null;
         $discountService = app(\App\Services\Sales\DiscountApprovalService::class);
-        $allowsManualDiscount = $discountService->allowsManualLineDiscount($salesSettings, $cart->order_source);
+        $allowsManualDiscount = $discountService->allowsManualLineDiscount(
+            $salesSettings,
+            $this->discountOrderSourceForCart($cart),
+        );
         $isOrderEdit = $discountService->cartIsOrderEditSession($cart);
 
         $lineNo = (int) CartLine::where('cart_id', $cart->id)->max('line_no');
@@ -1644,7 +1649,10 @@ class CartOperationsController extends Controller
                 array_key_exists('unit_price', $line) && $line['unit_price'] !== null
                     ? (float) $line['unit_price']
                     : null,
-                SalesCheckoutSettings::allowsEditableUnitPrice($salesSettings, $cart->order_source),
+                SalesCheckoutSettings::allowsEditableUnitPrice(
+                    $salesSettings,
+                    $this->discountOrderSourceForCart($cart),
+                ),
             );
 
             [$unitPrice, $amount] = $this->applyAuthoritativeClientLineAmount(
@@ -1760,7 +1768,8 @@ class CartOperationsController extends Controller
             $salesSettings,
             (float) ($line['discount_given'] ?? 0),
         );
-        if (! $discountService->allowsManualLineDiscount($salesSettings, $cart->order_source)) {
+        $discountSource = $this->discountOrderSourceForCart($cart);
+        if (! $discountService->allowsManualLineDiscount($salesSettings, $discountSource)) {
             $discountGiven = 0;
         } elseif (! $allowRestoredOrderDiscounts && ! $discountService->cartIsOrderEditSession($cart)) {
             $discountService->assertDirectManualDiscountAllowed(
@@ -1779,7 +1788,7 @@ class CartOperationsController extends Controller
             $discountGiven,
             app(MobileRouteMarkupCheckoutService::class)->routeIdForCartPricing($cart, $salesSettings),
             array_key_exists('unit_price', $line) ? (float) $line['unit_price'] : null,
-            SalesCheckoutSettings::allowsEditableUnitPrice($salesSettings, $cart->order_source),
+            SalesCheckoutSettings::allowsEditableUnitPrice($salesSettings, $discountSource),
         );
 
         [$unitPrice, $amount] = $this->applyAuthoritativeClientLineAmount(
@@ -1967,7 +1976,8 @@ class CartOperationsController extends Controller
             : $discountGivenSeed;
         $discountGiven = $this->resolveLineDiscountGiven($salesSettings, $discountGiven);
         $discountService = app(\App\Services\Sales\DiscountApprovalService::class);
-        if (! $discountService->allowsManualLineDiscount($salesSettings, $cart->order_source)) {
+        $discountSource = $this->discountOrderSourceForCart($cart);
+        if (! $discountService->allowsManualLineDiscount($salesSettings, $discountSource)) {
             $discountGiven = 0;
         } elseif (array_key_exists('discount_given', $input)
             && ! $discountService->cartIsOrderEditSession($cart)) {
@@ -1987,7 +1997,7 @@ class CartOperationsController extends Controller
             $discountGiven,
             app(MobileRouteMarkupCheckoutService::class)->routeIdForCartPricing($cart, $salesSettings),
             array_key_exists('unit_price', $input) ? (float) $input['unit_price'] : (float) $row->unit_price,
-            SalesCheckoutSettings::allowsEditableUnitPrice($salesSettings, $cart->order_source),
+            SalesCheckoutSettings::allowsEditableUnitPrice($salesSettings, $discountSource),
         );
 
         [$unitPrice, $amount] = $this->applyAuthoritativeClientLineAmount(
@@ -2375,7 +2385,42 @@ class CartOperationsController extends Controller
             $line['amount'],
             $computedAmount,
             $conversionFactor,
+            (float) ($line['discount_given'] ?? 0),
         );
+    }
+
+    /**
+     * AS mobile login creates channel=pos carts with order_source=mobile.
+     * Discount / unit-price toggles must follow the cart channel (POS), not the login source.
+     */
+    protected function discountOrderSourceForCart(TemporaryCart $cart): string
+    {
+        $channel = strtolower(trim((string) ($cart->channel ?? '')));
+        if ($channel === 'pos') {
+            return 'pos';
+        }
+
+        $source = strtolower(trim((string) ($cart->order_source ?? '')));
+        if ($source !== '') {
+            return $source;
+        }
+
+        return $channel !== '' ? $channel : 'backoffice';
+    }
+
+    protected function discountChannelForCart(TemporaryCart $cart): string
+    {
+        $channel = strtolower(trim((string) ($cart->channel ?? '')));
+        if ($channel === 'backoffice' || $channel === 'whatsapp') {
+            return 'backend';
+        }
+        if (in_array($channel, ['pos', 'mobile', 'backend'], true)) {
+            return $channel;
+        }
+
+        $source = $this->discountOrderSourceForCart($cart);
+
+        return in_array($source, ['backoffice', 'whatsapp'], true) ? 'backend' : $source;
     }
 
     /**

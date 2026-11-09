@@ -5,8 +5,10 @@ namespace App\Services\Platform;
 use App\Models\Organization;
 use App\Models\PlatformPlan;
 use App\Models\User;
+use App\Services\Erp\ApplicationProvisioner;
 use App\Services\Erp\IndustryRegistry;
 use App\Services\Erp\SetupProfileMenuService;
+use App\Services\OrganizationPlatformConfigService;
 use App\Services\OrganizationProvisioningService;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
@@ -182,6 +184,25 @@ class PublicFreeSignupService
         $companyCode = $this->allocateCompanyCode($orgName);
         $username = $this->allocateUsername($orgEmail);
 
+        // Mirror platform provisioning: apply the setup type’s applications so Instant trial
+        // tenants get the same modules an admin would when selecting that setup.
+        // Drop non-provisionable ids that may still appear on older setup documents.
+        $applications = array_intersect_key(
+            $this->setupProfiles->applicationsForProfile($profile),
+            array_flip(ApplicationProvisioner::ids()),
+        );
+        $platformConfig = app(OrganizationPlatformConfigService::class);
+        $salesPlatform = $platformConfig->defaultSalesPlatformConfig($profile);
+        $mobileOrders = array_key_exists('enable_mobile_orders', $salesPlatform)
+            ? (bool) $salesPlatform['enable_mobile_orders']
+            : true;
+        $enabledModules = $platformConfig->reconcileEnabledModules(
+            new Organization(['deployment_profile' => $profile]),
+            app(ApplicationProvisioner::class)
+                ->enabledModulesFromApplications($applications, $mobileOrders),
+            $salesPlatform,
+        );
+
         $result = $this->provisioning->provision([
             'company_code' => $companyCode,
             'org_name' => $orgName,
@@ -191,6 +212,10 @@ class PublicFreeSignupService
             'deployment_profile' => $profile,
             'business_type' => $businessType,
             'registration_source' => 'self_registered',
+            'enabled_modules' => $enabledModules,
+            'sales_platform' => $salesPlatform,
+            'payroll_platform' => app(OrganizationPlatformConfigService::class)
+                ->defaultPayrollPlatformConfig($profile),
             'admin_username' => $username,
             'admin_email' => $orgEmail,
             'admin_password' => $password,

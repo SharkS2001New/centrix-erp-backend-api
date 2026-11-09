@@ -16,8 +16,12 @@ final class CartLineAmountResolver
      * (cash rounding / float), a legitimate package markup, or clearly correcting a
      * pack-price × base-qty server blow-up. Otherwise keep the server-computed amount.
      */
-    public static function resolve(mixed $clientAmount, float $computedAmount, float $conversionFactor = 1.0): float
-    {
+    public static function resolve(
+        mixed $clientAmount,
+        float $computedAmount,
+        float $conversionFactor = 1.0,
+        float $discountGiven = 0.0,
+    ): float {
         $computed = round(max(0.0, $computedAmount), 2);
 
         if ($clientAmount === null || $clientAmount === '') {
@@ -31,6 +35,15 @@ final class CartLineAmountResolver
         $tolerance = max(5.0, abs($computed) * 0.02);
         if ($delta <= $tolerance) {
             return $client;
+        }
+
+        $discount = round(max(0.0, $discountGiven), 2);
+        // Net line after an explicit line discount (gross − discount_given).
+        if ($discount > 0.009 && $client < $computed) {
+            $expectedNet = round(max(0.0, $computed - $discount), 2);
+            if (abs($client - $expectedNet) <= max(0.05, abs($expectedNet) * 0.01)) {
+                return $client;
+            }
         }
 
         $factor = max(1.0, $conversionFactor);

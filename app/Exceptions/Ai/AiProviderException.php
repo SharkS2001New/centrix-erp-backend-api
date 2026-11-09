@@ -38,7 +38,7 @@ class AiProviderException extends RuntimeException
     public static function unavailable(string $detail = ''): self
     {
         return new self(
-            'The AI service is temporarily unavailable. Please try again shortly.',
+            'Server is down',
             'unavailable',
             503,
             true,
@@ -48,7 +48,7 @@ class AiProviderException extends RuntimeException
     public static function timeout(): self
     {
         return new self(
-            'The AI request timed out. Please try again.',
+            'Server is down',
             'timeout',
             504,
             true,
@@ -58,7 +58,7 @@ class AiProviderException extends RuntimeException
     public static function malformed(): self
     {
         return new self(
-            'The AI service returned an unexpected response. Please try again.',
+            'Server is down',
             'malformed_response',
             502,
             false,

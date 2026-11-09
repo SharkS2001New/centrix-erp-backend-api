@@ -373,6 +373,51 @@ class SalesCartCheckoutStockTest extends TestCase
             ->assertJsonPath('data.0.id', $heldSale->id);
     }
 
+    public function test_as_mobile_pos_cart_line_discount_checkout_accepts_net_payment(): void
+    {
+        // AS app logs in as mobile but creates channel=pos carts; discount rules must follow POS.
+        $org = \App\Models\Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['sales'] = array_merge($settings['sales'] ?? [], [
+            'allow_pos_edit_line_discount' => true,
+            'allow_discounts' => true,
+            'allow_pos_edit_unit_price' => true,
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        $product = Product::where('product_code', $this->productCode)->firstOrFail();
+        $unitPrice = max(100.0, (float) ($product->selling_price ?? $product->unit_price ?? 100));
+        $discount = round($unitPrice * 0.2, 2);
+        $net = round($unitPrice - $discount, 2);
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'order_source' => 'mobile',
+            'branch_id' => $this->user->branch_id,
+        ])->assertCreated()->json('id');
+
+        $lineCart = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 1,
+            'unit_price' => $unitPrice,
+            'amount' => $net,
+            'discount_given' => $discount,
+        ])->assertCreated()->json();
+
+        $this->assertEqualsWithDelta($net, (float) ($lineCart['lines'][0]['amount'] ?? 0), 0.01);
+        $this->assertEqualsWithDelta($discount, (float) ($lineCart['lines'][0]['discount_given'] ?? 0), 0.01);
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'completed',
+            'payment_method_code' => 'CASH',
+            'pay_now' => $net,
+            'is_credit_sale' => false,
+        ])->assertCreated()->json();
+
+        $this->assertSame('completed', $sale['status']);
+        $this->assertEqualsWithDelta($net, (float) ($sale['order_total'] ?? 0), 0.01);
+    }
+
     public function test_cart_order_discount_reduces_checkout_total(): void
     {
         $org = \App\Models\Organization::findOrFail($this->user->organization_id);

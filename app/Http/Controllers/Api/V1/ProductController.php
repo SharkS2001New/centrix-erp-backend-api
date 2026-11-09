@@ -116,6 +116,27 @@ class ProductController extends BaseResourceController
         }
     }
 
+    protected function requireProductImages(?Request $request = null): bool
+    {
+        $user = $request?->user();
+        if (! $user) {
+            return false;
+        }
+
+        return (bool) ($this->erp->gateForUser($user)->moduleSettings('sales')['require_product_images'] ?? false);
+    }
+
+    protected function assertProductImageNotRequired(Request $request): void
+    {
+        if (! $this->requireProductImages($request)) {
+            return;
+        }
+
+        throw ValidationException::withMessages([
+            'image' => ['This organization requires a product image.'],
+        ]);
+    }
+
     protected function shouldUseSalesConsumerStock(?Request $request): bool
     {
         if (! $request) {
@@ -1110,6 +1131,7 @@ class ProductController extends BaseResourceController
     public function deleteImage(Request $request, string $product)
     {
         $this->assertHospitalityProductImages($request);
+        $this->assertProductImageNotRequired($request);
         $model = $this->findScopedModel($request, $product);
 
         if ($model->image_path) {

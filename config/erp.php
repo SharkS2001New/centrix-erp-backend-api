@@ -97,14 +97,9 @@ return [
         'wholesale_retail' => [
             'label' => 'Wholesale & retail (full stack)',
             'industry' => 'commerce',
+            // Exclusive vs small_shop / supermarket / distribution — one business type per setup.
             'business_types' => [
                 'Wholesale shop',
-                'Retail shop',
-                'Fashion & clothing',
-                'Electronics & phones',
-                'Furniture & home',
-                'Perfumes & cosmetics',
-                'Shoe shop',
             ],
             'application_ids' => ['pos', 'backoffice', 'distribution', 'accounting', 'hr', 'admin'],
             'modules' => array_merge($allModulesFalse, [
@@ -133,7 +128,7 @@ return [
         'supermarket' => [
             'label' => 'Supermarket (POS retail)',
             'industry' => 'commerce',
-            'business_types' => ['Supermarket', 'Mini mart'],
+            'business_types' => ['Supermarket'],
             'application_ids' => ['pos', 'backoffice', 'accounting', 'hr', 'admin'],
             'modules' => array_merge($allModulesFalse, [
                 'sales' => true,
@@ -169,7 +164,7 @@ return [
         'distribution' => [
             'label' => 'Distribution / warehouse',
             'industry' => 'commerce',
-            'business_types' => ['Wholesale shop', 'Distribution', 'Warehouse'],
+            'business_types' => ['Distribution', 'Warehouse'],
             'application_ids' => ['pos', 'backoffice', 'distribution', 'accounting', 'hr', 'admin'],
             'modules' => array_merge($allModulesFalse, [
                 'sales' => true,
@@ -200,13 +195,13 @@ return [
             'label' => 'Hotel & Bar',
             'industry' => 'hospitality',
             'business_types' => ['Hotel', 'Lodge', 'Bar / restaurant', 'Café'],
-            // Hotel POS + Hotel Backoffice + AS mobile shop app + Admin.
+            // Hotel POS + Hotel Backoffice + Admin.
+            // AS mobile shop is provisioned via sales.mobile (login_channel=mobile), not an application id.
             // Accounting / HR stay optional for Platform to tick.
             // Retail POS / Backoffice / Distribution stay off for this industry.
             'application_ids' => [
                 'hotel_bar_pos',
                 'hospitality_backoffice',
-                'mobile',
                 'accounting',
                 'hr',
                 'admin',
@@ -284,6 +279,7 @@ return [
             'enable_mobile_orders_payments_card',
             'enable_mobile_orders_expenses_card',
             'as_mobile_show_images',
+            'require_product_images',
             'as_mobile_post_login_screen',
             'stock_deduct_on',
             'require_pos_till_float',
@@ -598,7 +594,10 @@ return [
             'enable_mobile_orders_returns_card' => false,
             'enable_mobile_orders_payments_card' => false,
             'enable_mobile_orders_expenses_card' => false,
-            'as_mobile_show_images' => true,
+            // Off by default — Platform enables per org when catalogue photos are needed.
+            'as_mobile_show_images' => false,
+            // When true, product create/update must include a photo (AS mobile + API delete blocked).
+            'require_product_images' => false,
             'as_mobile_post_login_screen' => 'module_home',
             'mobile_enable_checkout_location_verification' => false,
             'mobile_allow_offline_orders' => false,

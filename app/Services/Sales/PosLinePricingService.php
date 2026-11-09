@@ -93,8 +93,10 @@ class PosLinePricingService
             && $clientUnitPricePerBase !== null
             && $clientUnitPricePerBase > 0
         ) {
-            $amount = round($clientUnitPricePerBase * $baseQty, 2);
-            $unitPrice = $entryQty > 0 ? round($amount / $entryQty, 4) : $clientUnitPricePerBase;
+            $gross = round($clientUnitPricePerBase * $baseQty, 2);
+            $amount = round(max(0, $gross - max(0, $discountGiven)), 2);
+            // Keep catalog unit from the gross line; amount already reflects discount_given.
+            $unitPrice = $entryQty > 0 ? round($gross / $entryQty, 4) : $clientUnitPricePerBase;
 
             return [$unitPrice, $amount];
         }

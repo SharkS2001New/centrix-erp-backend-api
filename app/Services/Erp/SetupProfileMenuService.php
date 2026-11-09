@@ -305,7 +305,8 @@ class SetupProfileMenuService
 
     /**
      * Business types (marketing / trial signup) this setup may appear under.
-     * Empty list = any business type in the industry.
+     * Empty list = any business type in the industry (Instant trial only).
+     * Assigned types are exclusive: each value may belong to at most one setup type.
      *
      * @return list<string>
      */
@@ -319,6 +320,58 @@ class SetupProfileMenuService
         $fromConfig = config('erp.profiles.'.$profileKey.'.business_types');
 
         return $this->normalizeBusinessTypes(is_array($fromConfig) ? $fromConfig : null);
+    }
+
+    /**
+     * Map of business type value => owning setup {key, label}, excluding one profile.
+     *
+     * @return array<string, array{key: string, label: string}>
+     */
+    public function businessTypeOwners(?string $exceptKey = null): array
+    {
+        $owners = [];
+        foreach ($this->all() as $row) {
+            if ($exceptKey !== null && $row['key'] === $exceptKey) {
+                continue;
+            }
+            foreach ($row['business_types'] ?? [] as $type) {
+                $label = trim((string) $type);
+                if ($label === '' || isset($owners[$label])) {
+                    continue;
+                }
+                $owners[$label] = [
+                    'key' => (string) $row['key'],
+                    'label' => (string) ($row['label'] ?? $row['key']),
+                ];
+            }
+        }
+
+        return $owners;
+    }
+
+    /**
+     * @param  list<string>  $types
+     */
+    public function assertExclusiveBusinessTypes(array $types, ?string $exceptKey = null): void
+    {
+        $types = $this->normalizeBusinessTypes($types);
+        if ($types === []) {
+            return;
+        }
+
+        $owners = $this->businessTypeOwners($exceptKey);
+        $conflicts = [];
+        foreach ($types as $type) {
+            if (! isset($owners[$type])) {
+                continue;
+            }
+            $conflicts[] = "{$type} is already on {$owners[$type]['label']}";
+        }
+        if ($conflicts !== []) {
+            throw new \InvalidArgumentException(
+                'Each business type can only belong to one setup type. '.implode(' ', $conflicts).'.'
+            );
+        }
     }
 
     /**
@@ -416,9 +469,10 @@ class SetupProfileMenuService
     }
 
     /**
+     * @param  list<string>|null  $businessTypes
      * @return array{key: string, label: string, industry: string|null, custom: bool, application_ids: list<string>, applications: array<string, bool>, menu_groups: array<string, mixed>}
      */
-    public function create(string $name, string $industry): array
+    public function create(string $name, string $industry, ?array $businessTypes = null): array
     {
         if (! $this->tableReady()) {
             throw new \RuntimeException('Setup types are not ready yet. Run the latest database migration.');
@@ -438,6 +492,21 @@ class SetupProfileMenuService
             throw new \InvalidArgumentException('A setup type with this name already exists.');
         }
 
+        $normalizedTypes = $this->normalizeBusinessTypes($businessTypes ?? []);
+        $catalogByValue = [];
+        foreach ($this->businessTypeCatalog() as $row) {
+            $catalogByValue[$row['value']] = $row['industry'] ?? null;
+        }
+        foreach ($normalizedTypes as $type) {
+            $catalogIndustry = $catalogByValue[$type] ?? null;
+            if ($catalogIndustry !== null && $catalogIndustry !== $industry) {
+                throw new \InvalidArgumentException(
+                    "{$type} belongs to a different industry than this setup type."
+                );
+            }
+        }
+        $this->assertExclusiveBusinessTypes($normalizedTypes);
+
         $key = $this->uniqueCustomKey($name);
         $applications = array_fill_keys($this->applicationIdsForIndustry($industry), false);
         // Turn on the primary industry app so the setup is usable for trial signup immediately.
@@ -451,19 +520,12 @@ class SetupProfileMenuService
             $applications['admin'] = true;
         }
         $menu = $this->applyApplicationGate($this->normalize(null), $applications);
-        $businessTypes = array_values(array_map(
-            static fn (array $row): string => $row['value'],
-            array_filter(
-                $this->businessTypeCatalog(),
-                static fn (array $row): bool => $row['industry'] === $industry && $row['value'] !== 'Other',
-            ),
-        ));
 
         PlatformSetupProfile::query()->create([
             'profile_key' => $key,
             'menu_groups' => array_merge($menu, [
                 'applications' => $applications,
-                'business_types' => $businessTypes,
+                'business_types' => $normalizedTypes,
                 'label' => $name,
                 'industry' => $industry,
                 'custom' => true,
@@ -520,6 +582,7 @@ class SetupProfileMenuService
         $businessTypes = array_key_exists('business_types', $payload)
             ? $this->normalizeBusinessTypes($payload['business_types'])
             : $this->businessTypesForProfile($profileKey);
+        $this->assertExclusiveBusinessTypes($businessTypes, $profileKey);
 
         $salesPlatform = array_replace(
             $this->salesPlatformSettingsForProfile($profileKey),

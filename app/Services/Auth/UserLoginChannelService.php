@@ -408,6 +408,10 @@ class UserLoginChannelService
             // AS shop expenses (fallback when no open till session).
             'expenses',
             'expense-groups',
+            // Hotel & Bar POS (checks, catalog, tables, room charge folios).
+            'hospitality/pos',
+            'hospitality/floor-tables',
+            'hospitality/folios/open',
         ];
 
         return $this->pathMatchesAny($path, $prefixes);
