@@ -223,10 +223,101 @@ class FreePlanAccess
 
     public function allowsRoute(?Organization $org, string $path): bool
     {
-        $industry = $org ? $this->industryFor($org) : 'commerce';
-        $grant = $this->grantFor($industry, $this->stored()[$industry] ?? []);
+        $grant = $org
+            ? $this->grantForOrganization($org)
+            : $this->grantFor('commerce', $this->stored()['commerce'] ?? []);
 
         return $this->allowsPath($path, $grant);
+    }
+
+    /**
+     * Package 1 grant expanded with applications the organisation has enabled.
+     * Setup type / free plan remain the baseline; org customization stays effective.
+     *
+     * @return array{industry: string, page_keys: list<string>, workspace_keys: list<string>, feature_keys: array<string, list<string>>, pages: list<array{id: string, label: string}>, rules: list<array{path: string, exact: bool}>, api: list<string>, sections: list<string>}
+     */
+    public function grantForOrganization(Organization $org): array
+    {
+        $industry = $this->industryFor($org);
+        $grant = $this->grantFor($industry, $this->stored()[$industry] ?? []);
+        $orgApps = $this->organizationWorkspaceKeys($org);
+        if ($orgApps === []) {
+            return $grant;
+        }
+
+        $workspaceKeys = array_values(array_unique(array_merge($grant['workspace_keys'], $orgApps)));
+        $featureKeys = is_array($grant['feature_keys'] ?? null) ? $grant['feature_keys'] : [];
+        $catalog = app(PackageFeatureCatalog::class);
+        foreach ($orgApps as $appId) {
+            if (array_key_exists($appId, $featureKeys) && $featureKeys[$appId] !== []) {
+                continue;
+            }
+            $ids = $catalog->featureIdsForApplication($appId, $industry);
+            if ($ids !== []) {
+                $featureKeys[$appId] = $ids;
+            }
+        }
+
+        $pages = $this->pagesForFeatures($industry, $featureKeys);
+        if ($pages === []) {
+            $pages = $grant['page_keys'];
+        }
+
+        $definition = $this->industries()[$industry] ?? [];
+        $pageRows = [];
+        $rules = [];
+        $api = [];
+        $sections = [];
+        foreach ((array) ($definition['pages'] ?? []) as $page) {
+            if (! is_array($page) || ! in_array((string) ($page['id'] ?? ''), $pages, true)) {
+                continue;
+            }
+            $pageRows[] = [
+                'id' => (string) $page['id'],
+                'label' => (string) ($page['label'] ?? $page['id']),
+            ];
+            foreach ((array) ($page['exact'] ?? []) as $path) {
+                $rules[] = ['path' => (string) $path, 'exact' => true];
+            }
+            foreach ((array) ($page['paths'] ?? []) as $path) {
+                $rules[] = ['path' => (string) $path, 'exact' => false];
+            }
+            foreach ((array) ($page['api'] ?? []) as $prefix) {
+                $api[] = trim((string) $prefix, '/');
+            }
+            if (! empty($page['section'])) {
+                $sections[] = (string) $page['section'];
+            }
+        }
+        foreach ($this->moduleApiPrefixes($workspaceKeys) as $prefix) {
+            $api[] = $prefix;
+        }
+
+        return [
+            'industry' => $industry,
+            'page_keys' => array_values($pages),
+            'workspace_keys' => $workspaceKeys,
+            'feature_keys' => $featureKeys,
+            'pages' => $pageRows,
+            'rules' => $rules,
+            'api' => array_values(array_unique($api)),
+            'sections' => array_values(array_unique($sections)),
+        ];
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function organizationWorkspaceKeys(Organization $org): array
+    {
+        if (! is_array($org->enabled_modules) || $org->enabled_modules === []) {
+            return [];
+        }
+
+        $applications = app(ApplicationProvisioner::class)
+            ->applicationsFromEnabledModules($org->enabled_modules);
+
+        return array_values(array_keys(array_filter($applications)));
     }
 
     /** @param  array{api?: list<string>}  $grant */
@@ -274,7 +365,8 @@ class FreePlanAccess
      */
     public function maskCapabilities(Organization $org, array $payload): array
     {
-        $grant = $this->grantFor($this->industryFor($org), $this->stored()[$this->industryFor($org)] ?? []);
+        // Union Package 1 with org-configured applications so platform customizations stick.
+        $grant = $this->grantForOrganization($org);
         $applications = array_fill_keys(ApplicationProvisioner::ids(), false);
         foreach ($grant['workspace_keys'] as $id) {
             if (array_key_exists($id, $applications)) {

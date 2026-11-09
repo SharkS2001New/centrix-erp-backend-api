@@ -123,6 +123,10 @@ class PackageFeatureCatalog
             return null;
         }
 
+        if (! \App\Support\SchemaProbe::hasTable('platform_subscriptions')) {
+            return null;
+        }
+
         $subscription = PlatformSubscription::query()
             ->where('organization_id', (int) $organization->id)
             ->whereNotNull('plan_id')
@@ -247,7 +251,58 @@ class PackageFeatureCatalog
             }
         }
 
+        return $this->expandAllowedWithOrganizationApplications($allowed, $org);
+    }
+
+    /**
+     * Platform-admin org application toggles can enable apps beyond the payment
+     * package / setup-type baseline. Include those apps' permission features so
+     * role grants and the matrix stay usable for the customized modules.
+     *
+     * @param  array<string, true>  $allowed
+     * @return array<string, true>
+     */
+    public function expandAllowedWithOrganizationApplications(array $allowed, ?Organization $org): array
+    {
+        if (! $org || ! is_array($org->enabled_modules) || $org->enabled_modules === []) {
+            return $allowed;
+        }
+
+        $applications = app(\App\Services\Erp\ApplicationProvisioner::class)
+            ->applicationsFromEnabledModules($org->enabled_modules);
+        $industry = IndustryRegistry::industryForProfile((string) ($org->deployment_profile ?? ''));
+
+        foreach ($applications as $appId => $on) {
+            if (! $on) {
+                continue;
+            }
+            foreach ($this->featureIdsForApplication((string) $appId, $industry) as $featureId) {
+                $allowed[$featureId] = true;
+            }
+        }
+
         return $allowed;
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function featureIdsForApplication(string $appId, string $industry): array
+    {
+        $ids = [];
+        foreach ($this->forIndustry($industry) as $module) {
+            if ((string) ($module['id'] ?? '') !== $appId) {
+                continue;
+            }
+            foreach ($module['features'] ?? [] as $feature) {
+                $featureId = trim((string) ($feature['id'] ?? ''));
+                if ($featureId !== '') {
+                    $ids[] = $featureId;
+                }
+            }
+        }
+
+        return $ids;
     }
 
     /** @param  array<string, mixed>  $group */

@@ -104,10 +104,13 @@ class OrganizationLicenseService
     protected function buildLicensePayload(Organization $org): array
     {
         /** @var PlatformSubscription|null $sub */
-        $sub = PlatformSubscription::query()
-            ->with(['plan', 'contract'])
-            ->where('organization_id', $org->id)
-            ->first();
+        $sub = null;
+        if ($org->id && SchemaProbe::hasTable('platform_subscriptions')) {
+            $sub = PlatformSubscription::query()
+                ->with(['plan', 'contract'])
+                ->where('organization_id', $org->id)
+                ->first();
+        }
 
         if (! $sub) {
             $missing = [

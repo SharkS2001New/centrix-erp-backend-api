@@ -198,7 +198,7 @@ class PlatformOrganizationSettingsTest extends TestCase
         $this->assertSame(7, $org->module_settings['inventory']['cart_reservation_ttl_minutes']);
     }
 
-    public function test_switching_setup_type_applies_its_applications_and_operational_defaults(): void
+    public function test_switching_setup_type_with_apply_defaults_resets_applications_and_operational_defaults(): void
     {
         config(['erp.allow_org_provisioning' => true]);
 
@@ -225,6 +225,7 @@ class PlatformOrganizationSettingsTest extends TestCase
 
         $response = $this->patchJson("/api/v1/admin/organizations/{$orgId}", [
             'deployment_profile' => 'distribution',
+            'apply_setup_defaults' => true,
         ])->assertOk()
             ->assertJsonPath('organization.deployment_profile', 'distribution')
             ->assertJsonPath('sales_platform.orders_list_default_days', 30);
@@ -237,6 +238,98 @@ class PlatformOrganizationSettingsTest extends TestCase
         $org->refresh();
         $this->assertTrue((bool) ($org->enabled_modules['distribution'] ?? false));
         $this->assertSame(30, $org->module_settings['sales']['orders_list_default_days']);
+    }
+
+    public function test_switching_setup_type_preserves_org_application_customizations_by_default(): void
+    {
+        config(['erp.allow_org_provisioning' => true]);
+
+        Sanctum::actingAs(User::where('username', 'superadmin')->firstOrFail());
+
+        $create = $this->postJson('/api/v1/admin/organizations/provision', [
+            'company_code' => 'SETUPKEEP',
+            'org_name' => 'Setup keep organization',
+            'org_email' => 'setupkeep@org.com',
+            'primary_tel' => '0711000005',
+            'org_address' => 'Nairobi',
+            'deployment_profile' => 'small_shop',
+            'applications' => [
+                'pos' => false,
+                'backoffice' => true,
+                'distribution' => false,
+                'accounting' => true,
+                'hr' => false,
+                'admin' => true,
+            ],
+            'admin_username' => 'setupkeep_admin',
+            'admin_email' => 'setupkeep_admin@org.com',
+            'admin_password' => 'password123',
+            'admin_full_name' => 'Setup Keep Admin',
+        ])->assertCreated();
+
+        $orgId = (int) $create->json('organization.id');
+        $org = Organization::query()->findOrFail($orgId);
+        $this->assertTrue((bool) ($org->enabled_modules['accounting'] ?? false));
+        $this->assertFalse((bool) ($org->enabled_modules['distribution'] ?? false));
+
+        $this->patchJson("/api/v1/admin/organizations/{$orgId}", [
+            'deployment_profile' => 'distribution',
+        ])->assertOk()
+            ->assertJsonPath('organization.deployment_profile', 'distribution');
+
+        $org->refresh();
+        $this->assertTrue((bool) ($org->enabled_modules['accounting'] ?? false));
+        $this->assertFalse((bool) ($org->enabled_modules['distribution'] ?? false));
+    }
+
+    public function test_platform_admin_can_enable_application_beyond_setup_type_baseline(): void
+    {
+        config(['erp.allow_org_provisioning' => true]);
+
+        Sanctum::actingAs(User::where('username', 'superadmin')->firstOrFail());
+
+        $create = $this->postJson('/api/v1/admin/organizations/provision', [
+            'company_code' => 'CUSTAPP',
+            'org_name' => 'Custom apps organization',
+            'org_email' => 'custapp@org.com',
+            'primary_tel' => '0711000006',
+            'org_address' => 'Nairobi',
+            'deployment_profile' => 'small_shop',
+            'applications' => [
+                'pos' => false,
+                'backoffice' => true,
+                'distribution' => false,
+                'accounting' => false,
+                'hr' => false,
+                'admin' => true,
+            ],
+            'admin_username' => 'custapp_admin',
+            'admin_email' => 'custapp_admin@org.com',
+            'admin_password' => 'password123',
+            'admin_full_name' => 'Custom Apps Admin',
+        ])->assertCreated();
+
+        $orgId = (int) $create->json('organization.id');
+
+        $this->patchJson("/api/v1/admin/organizations/{$orgId}", [
+            'applications' => [
+                'pos' => false,
+                'backoffice' => true,
+                'distribution' => false,
+                'accounting' => true,
+                'hr' => true,
+                'admin' => true,
+            ],
+        ])->assertOk();
+
+        $org = Organization::query()->findOrFail($orgId);
+        $this->assertTrue((bool) ($org->enabled_modules['accounting'] ?? false));
+        $this->assertTrue((bool) ($org->enabled_modules['hr_payroll'] ?? false));
+
+        $gate = app(\App\Services\Erp\CapabilityGate::class)->forOrganization($org);
+        $this->assertTrue($gate->enabled('accounting'));
+        $this->assertTrue($gate->enabled('hr_payroll'));
+        $this->assertTrue($gate->enabled('sales.backend'));
     }
 
     public function test_super_admin_can_configure_order_action_status_gates(): void

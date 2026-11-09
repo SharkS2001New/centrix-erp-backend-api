@@ -261,20 +261,26 @@ class OrganizationProvisionController extends Controller
                 'is_active' => 'sometimes|boolean',
                 'enabled_modules' => 'sometimes|array',
                 'enabled_modules.*' => 'boolean',
+                // When true, replace applications / sales / payroll with the setup type baseline.
+                // Default false so per-org customizations survive a setup-type label change.
+                'apply_setup_defaults' => 'sometimes|boolean',
             ],
         ));
         $profileChanged = isset($data['deployment_profile'])
             && $data['deployment_profile'] !== $previousProfile;
-        if ($profileChanged && ! array_key_exists('sales_platform', $data)) {
+        $applySetupDefaults = (bool) ($data['apply_setup_defaults'] ?? false);
+        unset($data['apply_setup_defaults']);
+        if ($profileChanged && $applySetupDefaults && ! array_key_exists('sales_platform', $data)) {
             $data['sales_platform'] = $this->platformConfig
                 ->defaultSalesPlatformConfig((string) $data['deployment_profile']);
         }
-        if ($profileChanged && ! array_key_exists('payroll_platform', $data)) {
+        if ($profileChanged && $applySetupDefaults && ! array_key_exists('payroll_platform', $data)) {
             $data['payroll_platform'] = $this->platformConfig
                 ->defaultPayrollPlatformConfig((string) $data['deployment_profile']);
         }
         if (
             $profileChanged
+            && $applySetupDefaults
             && ! array_key_exists('applications', $data)
             && ! array_key_exists('enabled_modules', $data)
         ) {

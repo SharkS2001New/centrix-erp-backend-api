@@ -112,4 +112,32 @@ class CapabilityGateApplicationOverridesTest extends TestCase
         $this->assertTrue($gate->enabled('customers_suppliers'));
         $this->assertTrue($gate->distributionOpsEnabled());
     }
+
+    public function test_explicit_org_modules_are_not_blocked_by_package_ceiling(): void
+    {
+        // Tenant company code so CapabilityGate evaluates package entitlements.
+        $org = new Organization([
+            'company_code' => 'TENANT1',
+            'deployment_profile' => 'small_shop',
+            'module_settings' => [],
+            'enabled_modules' => [
+                'sales' => true,
+                'sales.backend' => true,
+                'sales.dashboard' => true,
+                'sales.reports' => true,
+                'inventory' => true,
+                'customers_suppliers' => true,
+                'accounting' => true,
+                'accounting.dashboard' => true,
+                'accounting.reports' => true,
+                'admin' => true,
+            ],
+        ]);
+
+        $gate = app(CapabilityGate::class)->forOrganization($org);
+
+        $this->assertTrue($gate->enabled('accounting'));
+        $this->assertTrue($gate->enabled('sales.backend'));
+        $this->assertFalse($gate->enabled('hr_payroll'));
+    }
 }

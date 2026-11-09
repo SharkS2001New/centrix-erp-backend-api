@@ -664,6 +664,8 @@ class UserPermissionService
                     }
                 }
             }
+            // Keep features for applications the org explicitly enabled (beyond Package 1 / setup type).
+            $allowed = $catalog->expandAllowedWithOrganizationApplications($allowed, $org);
             if ($allowed !== []) {
                 return $catalog->filterMapToFeatures($map, $allowed);
             }
@@ -678,12 +680,11 @@ class UserPermissionService
             return 'full';
         }
 
-        $subscription = PlatformSubscription::query()->where('organization_id', $org->id)->first();
-        $license = [
-            'status' => $subscription?->status ?: 'missing',
-            'is_trial' => (bool) ($subscription?->is_trial),
-            'starts_at' => $subscription?->starts_at,
-            'expires_at' => $subscription?->expires_at,
+        $license = $licenses->resolveForOrganization($org) ?? [
+            'status' => 'missing',
+            'is_trial' => false,
+            'starts_at' => null,
+            'expires_at' => null,
             'token_balance' => $licenses->tokenBalanceFor($org),
             'tokens_enabled' => app(BillingPolicy::class)->tokensEnabled(),
         ];

@@ -46,10 +46,10 @@ class CapabilityGate
             return false;
         }
 
+        // Package may force a module on (plan includes it). It must not force a
+        // module off when the org map explicitly enables it — setup type is a
+        // baseline and platform admins customize applications per organisation.
         $decision = $this->packageDecision($moduleKey);
-        if ($decision === false) {
-            return false;
-        }
         if ($decision === true) {
             return true;
         }
@@ -306,8 +306,8 @@ class CapabilityGate
     public function mobileSalesEnabled(): bool
     {
         $package = $this->package();
-        if (is_array($package)) {
-            return in_array('mobile', $package['modules'], true);
+        if (is_array($package) && in_array('mobile', $package['modules'], true)) {
+            return true;
         }
 
         if (! $this->selfEnabled('sales.mobile')) {
@@ -328,8 +328,8 @@ class CapabilityGate
         }
 
         $package = $this->package();
-        if (is_array($package)) {
-            return in_array('manager', $package['modules'], true);
+        if (is_array($package) && in_array('manager', $package['modules'], true)) {
+            return true;
         }
 
         $sales = $this->moduleSettings('sales');
@@ -655,20 +655,30 @@ class CapabilityGate
         $features = is_array($package['features']) ? $package['features'] : [];
 
         if ($section === 'sales') {
-            $merged['enable_mobile_orders'] = isset($modules['mobile']);
-            $merged['enable_manager_app'] = isset($modules['manager']);
+            // Package may turn mobile/manager on; do not force them off when the org enabled them.
+            $merged['enable_mobile_orders'] = isset($modules['mobile'])
+                || (bool) ($merged['enable_mobile_orders'] ?? false)
+                || $this->selfEnabled('sales.mobile');
+            $merged['enable_manager_app'] = isset($modules['manager'])
+                || (bool) ($merged['enable_manager_app'] ?? false);
             $profile = (string) ($this->organization?->deployment_profile ?? 'wholesale_retail');
             $industry = IndustryRegistry::industryForProfile($profile);
-            if ($industry === 'commerce' || isset($modules['backoffice'])) {
+            if ($industry === 'commerce' || isset($modules['backoffice']) || $this->selfEnabled('sales.backend')) {
                 $catalog = app(\App\Services\Platform\PackageFeatureCatalog::class);
                 $on = isset($modules['backoffice'])
                     ? ($catalog->backofficeSections(['backoffice' => $features['backoffice'] ?? []]) ?? [])
                     : [];
+                $existing = is_array($merged['backoffice_sections'] ?? null) ? $merged['backoffice_sections'] : [];
                 $map = BackofficeSections::DEFAULTS;
                 foreach (array_keys($map) as $key) {
-                    $map[$key] = in_array($key, $on, true);
+                    $map[$key] = in_array($key, $on, true) || (bool) ($existing[$key] ?? false);
                 }
-                $merged['backoffice_sections'] = $map;
+                // Org has backoffice enabled beyond package: keep previously configured sections.
+                if ($on === [] && $this->selfEnabled('sales.backend') && $existing !== []) {
+                    $merged['backoffice_sections'] = $existing;
+                } else {
+                    $merged['backoffice_sections'] = $map;
+                }
             }
         }
 
