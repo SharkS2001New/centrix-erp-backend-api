@@ -1,4 +1,6 @@
 # Deploy/promote gate: audit + Smoke (seconds) + Critical (MySQL, must-pass paths).
+# master push → rebase onto main, FF main, sync master to same tip.
+# main push  → after Critical, sync master forward so it is never behind main.
 # Full Unit stays on ci-full.yml (nightly / manual).
 name: CI
 
@@ -24,6 +26,9 @@ on:
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: write
 
 jobs:
   audit:
@@ -202,3 +207,230 @@ jobs:
           php artisan test tests/Feature/SalesCartCheckoutStockTest.php
           --filter='test_create_cart_and_add_line_reserves_stock|test_checkout_completes_sale_and_deducts_ledger|test_clear_cart_releases_reservation|test_inventory_availability_endpoint|test_held_order_can_be_cancelled|test_hold_order_can_be_restored_to_cart|test_checkout_rejects_expired_cart_holds_when_stock_is_gone|test_cart_rejects_unknown_product_code'
           --fail-on-skipped
+
+  # After every successful master push: rebase onto main, FF main, then sync master
+  # to the same tip so master is never left behind. Never force-push main.
+  promote:
+    name: Rebase master onto main and sync
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/master' &&
+      !contains(github.event.head_commit.message, '[skip ci]')
+    needs:
+      - audit
+      - smoke
+      - critical
+    runs-on: ubuntu-latest
+    concurrency:
+      group: sync-main-master
+      cancel-in-progress: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Rebase master → main and sync both branches
+        env:
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin master main
+
+          # Only promote the exact commit this CI run validated.
+          if [[ "$(git rev-parse origin/master)" != "${HEAD_SHA}" ]]; then
+            echo "origin/master moved since this CI run (${HEAD_SHA}); skipping promote."
+            exit 0
+          fi
+
+          MAIN_SHA="$(git rev-parse origin/main)"
+          MASTER_SHA="${HEAD_SHA}"
+          BASE_SHA="$(git merge-base "${MAIN_SHA}" "${MASTER_SHA}")"
+
+          echo "==> Comparing branches before promote"
+          echo "main:   ${MAIN_SHA}"
+          echo "master: ${MASTER_SHA}"
+          echo "base:   ${BASE_SHA}"
+
+          echo ""
+          echo "==> Commits only on main (must be preserved / synced onto master)"
+          git log --oneline "${MASTER_SHA}..${MAIN_SHA}" || true
+
+          echo ""
+          echo "==> Commits only on master (will replay onto main)"
+          git log --oneline "${MAIN_SHA}..${MASTER_SHA}" || true
+
+          sync_master_to() {
+            local TARGET_SHA="$1"
+            local EXPECTED_MASTER="$2"
+            if [[ "$(git rev-parse origin/master)" == "${TARGET_SHA}" ]]; then
+              echo "master already at ${TARGET_SHA}; no master sync needed."
+              return 0
+            fi
+            # Rebase rewrites SHAs when main had unique commits, so master may need
+            # force-with-lease. Never force main.
+            git push --force-with-lease=refs/heads/master:"${EXPECTED_MASTER}" \
+              origin "${TARGET_SHA}:refs/heads/master"
+            echo "Synced master → ${TARGET_SHA}"
+          }
+
+          # Already identical — nothing to do (stops promote↔CI loops after sync).
+          if [[ "${MASTER_SHA}" == "${MAIN_SHA}" ]]; then
+            echo "master and main already aligned at ${MASTER_SHA}."
+            exit 0
+          fi
+
+          # main is strictly ahead and contains master — fast-forward master only.
+          if git merge-base --is-ancestor "${MASTER_SHA}" "${MAIN_SHA}"; then
+            echo "main contains master; fast-forwarding master to main so it is never behind."
+            git push --ff-only origin "${MAIN_SHA}:refs/heads/master"
+            echo "Synced master → ${MAIN_SHA} (ff-only)"
+            exit 0
+          fi
+
+          git checkout -B promote-temp "${MASTER_SHA}"
+
+          if ! git rebase "${MAIN_SHA}"; then
+            git rebase --abort || true
+            echo "::error::Rebase conflict promoting master onto main. Resolve locally: checkout master tip, rebase onto origin/main, push master, then let CI promote."
+            exit 1
+          fi
+
+          PROMOTE_SHA="$(git rev-parse HEAD)"
+
+          if ! git merge-base --is-ancestor "${MAIN_SHA}" "${PROMOTE_SHA}"; then
+            echo "::error::Aborting: rebase result lost commits from main (${MAIN_SHA}). Nothing pushed."
+            exit 1
+          fi
+
+          if [[ "${PROMOTE_SHA}" == "${MAIN_SHA}" ]]; then
+            echo "::error::Aborting: promote tip equals old main; unexpected empty promote."
+            exit 1
+          fi
+
+          echo ""
+          echo "==> Rebase result (main preserved + master replayed)"
+          git log --oneline "${MAIN_SHA}..${PROMOTE_SHA}"
+
+          git checkout -B main "${MAIN_SHA}"
+
+          if ! git merge-base --is-ancestor "${PROMOTE_SHA}" HEAD; then
+            git merge --ff-only "${PROMOTE_SHA}"
+          else
+            echo "main already at promoted tip ${PROMOTE_SHA}."
+          fi
+
+          NEW_MAIN="$(git rev-parse HEAD)"
+          if ! git merge-base --is-ancestor "${MAIN_SHA}" "${NEW_MAIN}"; then
+            echo "::error::Aborting before push: new main would drop previous main tip."
+            exit 1
+          fi
+          if [[ "${NEW_MAIN}" != "${PROMOTE_SHA}" ]]; then
+            echo "::error::Aborting before push: main tip does not match rebased promote tip."
+            exit 1
+          fi
+
+          # main: never force — fast-forward only.
+          if [[ "$(git rev-parse origin/main)" != "${PROMOTE_SHA}" ]]; then
+            git push --ff-only origin main
+            echo "Promoted → main at ${PROMOTE_SHA} (ff-only, no force)"
+          else
+            echo "origin/main already at ${PROMOTE_SHA}"
+          fi
+
+          # master: land on the same tip so it never stays behind main.
+          sync_master_to "${PROMOTE_SHA}" "${MASTER_SHA}"
+          echo "master and main aligned at ${PROMOTE_SHA}"
+
+  # When main moves (hotfix / promote), bring master up so it is never behind.
+  sync-master:
+    name: Sync master from main
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      !contains(github.event.head_commit.message, '[skip ci]')
+    needs:
+      - audit
+      - smoke
+      - critical
+    runs-on: ubuntu-latest
+    concurrency:
+      group: sync-main-master
+      cancel-in-progress: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Fast-forward / rebase master onto main
+        env:
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin master main
+
+          # Only sync from the exact main tip this CI run validated.
+          if [[ "$(git rev-parse origin/main)" != "${HEAD_SHA}" ]]; then
+            echo "origin/main moved since this CI run (${HEAD_SHA}); skipping sync."
+            exit 0
+          fi
+
+          MAIN_SHA="${HEAD_SHA}"
+          MASTER_SHA="$(git rev-parse origin/master)"
+
+          echo "==> Comparing branches"
+          echo "main:   ${MAIN_SHA}"
+          echo "master: ${MASTER_SHA}"
+
+          if [[ "${MASTER_SHA}" == "${MAIN_SHA}" ]]; then
+            echo "master and main already aligned."
+            exit 0
+          fi
+
+          # master already contains this main tip (master ahead) — nothing to pull.
+          if git merge-base --is-ancestor "${MAIN_SHA}" "${MASTER_SHA}"; then
+            echo "master already contains main; leaving master ahead as-is."
+            exit 0
+          fi
+
+          # master is strictly behind — fast-forward only.
+          if git merge-base --is-ancestor "${MASTER_SHA}" "${MAIN_SHA}"; then
+            git push --ff-only origin "${MAIN_SHA}:refs/heads/master"
+            echo "Fast-forwarded master → ${MAIN_SHA}"
+            exit 0
+          fi
+
+          # Diverged: replay master's unique commits onto the new main tip.
+          echo "==> Branches diverged; rebasing master onto main"
+          git log --oneline "${MASTER_SHA}..${MAIN_SHA}" || true
+          git log --oneline "${MAIN_SHA}..${MASTER_SHA}" || true
+
+          git checkout -B sync-temp "${MASTER_SHA}"
+
+          if ! git rebase "${MAIN_SHA}"; then
+            git rebase --abort || true
+            echo "::error::Rebase conflict syncing master onto main. Resolve locally: checkout master, rebase onto origin/main, push master."
+            exit 1
+          fi
+
+          SYNC_SHA="$(git rev-parse HEAD)"
+
+          if ! git merge-base --is-ancestor "${MAIN_SHA}" "${SYNC_SHA}"; then
+            echo "::error::Aborting: sync result lost commits from main."
+            exit 1
+          fi
+
+          git push --force-with-lease=refs/heads/master:"${MASTER_SHA}" \
+            origin "${SYNC_SHA}:refs/heads/master"
+          echo "Synced master → ${SYNC_SHA} (rebased onto main; main untouched)"

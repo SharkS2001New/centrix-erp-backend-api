@@ -1,19 +1,12 @@
-# Promote develop (master) → production branch (main) after CI succeeds.
-# New server / production tracks `main`. Local develop continues on `master`.
+# DEPRECATED: promote now runs inside CI (ci.yml → promote job) on every
+# successful push to master. Kept disabled so we do not race two promote jobs.
 #
-# Strategy: compare both tips, rebase the CI-validated master tip onto
-# origin/main, verify neither side's history is dropped, then fast-forward
-# main only (never force-push).
+# If you need a manual re-promote, re-run the CI workflow for the master tip
+# (or temporarily restore the workflow_run trigger below).
 name: Promote to main
 
 on:
-  workflow_run:
-    workflows:
-      - CI
-    types:
-      - completed
-    branches:
-      - master
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -24,23 +17,16 @@ concurrency:
 
 jobs:
   promote:
-    name: Rebase master onto main
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'master'
+    name: Rebase master onto main (manual)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          # Need a token that can push to main (branch protection may require a PAT).
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN || secrets.GITHUB_TOKEN }}
 
-      - name: Promote master → main
-        env:
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      - name: Promote master → main and sync master
         run: |
           set -euo pipefail
 
@@ -49,82 +35,43 @@ jobs:
 
           git fetch origin master main
 
-          # Only promote the exact commit CI validated.
-          if [[ "$(git rev-parse origin/master)" != "${HEAD_SHA}" ]]; then
-            echo "origin/master moved since CI ran (${HEAD_SHA}); skipping promote."
-            exit 0
-          fi
-
           MAIN_SHA="$(git rev-parse origin/main)"
-          MASTER_SHA="${HEAD_SHA}"
-          BASE_SHA="$(git merge-base "${MAIN_SHA}" "${MASTER_SHA}")"
+          MASTER_SHA="$(git rev-parse origin/master)"
 
           echo "==> Comparing branches before promote"
           echo "main:   ${MAIN_SHA}"
           echo "master: ${MASTER_SHA}"
-          echo "base:   ${BASE_SHA}"
 
-          echo ""
-          echo "==> Commits only on main (must be preserved)"
-          git log --oneline "${MASTER_SHA}..${MAIN_SHA}" || true
-
-          echo ""
-          echo "==> Commits only on master (will replay onto main)"
-          git log --oneline "${MAIN_SHA}..${MASTER_SHA}" || true
-
-          if git merge-base --is-ancestor "${MASTER_SHA}" "${MAIN_SHA}"; then
-            echo "main already contains ${MASTER_SHA}; nothing to promote."
+          if [[ "${MASTER_SHA}" == "${MAIN_SHA}" ]]; then
+            echo "master and main already aligned."
             exit 0
           fi
 
-          # Replay master-only commits on top of current main so main-only
-          # commits are preserved, then fast-forward main to that tip.
+          # main ahead only — fast-forward master so it is never behind.
+          if git merge-base --is-ancestor "${MASTER_SHA}" "${MAIN_SHA}"; then
+            git push --ff-only origin "${MAIN_SHA}:refs/heads/master"
+            echo "Synced master → ${MAIN_SHA} (ff-only)"
+            exit 0
+          fi
+
           git checkout -B promote-temp "${MASTER_SHA}"
 
           if ! git rebase "${MAIN_SHA}"; then
             git rebase --abort || true
-            echo "::error::Rebase conflict promoting master onto main. Resolve locally: checkout master tip, rebase onto origin/main, push main (ff-only, never force)."
+            echo "::error::Rebase conflict promoting master onto main."
             exit 1
           fi
 
           PROMOTE_SHA="$(git rev-parse HEAD)"
 
-          # Safety: every commit that was on main must still be an ancestor.
           if ! git merge-base --is-ancestor "${MAIN_SHA}" "${PROMOTE_SHA}"; then
-            echo "::error::Aborting: rebase result lost commits from main (${MAIN_SHA}). Nothing pushed."
+            echo "::error::Aborting: rebase result lost commits from main."
             exit 1
           fi
-
-          # Safety: rebased tip must differ from old main when master had unique commits.
-          if [[ "${PROMOTE_SHA}" == "${MAIN_SHA}" ]]; then
-            echo "::error::Aborting: promote tip equals old main; unexpected empty promote."
-            exit 1
-          fi
-
-          echo ""
-          echo "==> Rebase result (main preserved + master replayed)"
-          git log --oneline "${MAIN_SHA}..${PROMOTE_SHA}"
 
           git checkout -B main "${MAIN_SHA}"
-
-          if git merge-base --is-ancestor "${PROMOTE_SHA}" HEAD; then
-            echo "main already at promoted tip ${PROMOTE_SHA}; nothing to push."
-            exit 0
-          fi
-
-          # Never overwrite: only advance main with a fast-forward.
           git merge --ff-only "${PROMOTE_SHA}"
-
-          NEW_MAIN="$(git rev-parse HEAD)"
-          if ! git merge-base --is-ancestor "${MAIN_SHA}" "${NEW_MAIN}"; then
-            echo "::error::Aborting before push: new main would drop previous main tip."
-            exit 1
-          fi
-          if ! git merge-base --is-ancestor "${NEW_MAIN}" "${PROMOTE_SHA}" || [[ "${NEW_MAIN}" != "${PROMOTE_SHA}" ]]; then
-            echo "::error::Aborting before push: main tip does not match rebased promote tip."
-            exit 1
-          fi
-
-          # Never force-push. Fail if remote main moved and cannot ff.
           git push --ff-only origin main
-          echo "Promoted master → main at $(git rev-parse HEAD) (rebased onto previous main; no force)"
+          git push --force-with-lease=refs/heads/master:"${MASTER_SHA}" \
+            origin "${PROMOTE_SHA}:refs/heads/master"
+          echo "Promoted and aligned master + main at ${PROMOTE_SHA}"
