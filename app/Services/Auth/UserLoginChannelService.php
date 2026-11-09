@@ -88,6 +88,15 @@ class UserLoginChannelService
             }
         }
 
+        // Hotel & Bar / AS shop: staff often have backoffice (or POS) channels only, while the
+        // org enables the mobile login channel for outlet ops. Module/permission checks still run.
+        if ($channel === self::MOBILE
+            && array_intersect($allowed, [self::BACKOFFICE, self::POS]) !== []
+            && $this->organizationAllowsMobileLogin($user)
+        ) {
+            return;
+        }
+
         // Platform super-admins may use Centrix Manager even if login_channels was seeded as backoffice-only.
         if ($channel === self::MANAGER && $this->isPlatformSuperAdmin($user)) {
             return;
@@ -98,6 +107,20 @@ class UserLoginChannelService
                 sprintf('This account is not allowed to sign in via %s.', $this->label($channel)),
             ],
         ]);
+    }
+
+    protected function organizationAllowsMobileLogin(User $user): bool
+    {
+        $organization = $user->organization ?? Organization::query()->find($user->organization_id);
+        if (! $organization) {
+            return false;
+        }
+
+        try {
+            return app(ErpContext::class)->gateForOrganization($organization)->mobileSalesEnabled();
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
     public function normalizeChannel(string $channel): string
@@ -372,7 +395,9 @@ class UserLoginChannelService
             'routes',
             'uoms',
             'vats',
+            // AS shop supplier info, edits, summary ledger, and payments.
             'suppliers',
+            'supplier-payments',
             'reference/',
             'retail-package-settings',
             'payments/',

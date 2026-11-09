@@ -31,10 +31,14 @@ class UserLoginChannelServiceTest extends TestCase
         $this->assertTrue($service->mobileTokenCanAccessPath($user, 'api/v1/reports/sales-by-user'));
         $this->assertTrue($service->mobileTokenCanAccessPath($user, 'api/v1/reports/daily-sales'));
 
-        // AS shop supplier info / ledger.
+        // AS shop supplier info / ledger / payments / purchases.
         $this->assertTrue($service->mobileTokenCanAccessPath($user, 'api/v1/suppliers'));
         $this->assertTrue($service->mobileTokenCanAccessPath($user, 'api/v1/suppliers/12'));
         $this->assertTrue($service->mobileTokenCanAccessPath($user, 'api/v1/suppliers/12/summary'));
+        $this->assertTrue($service->mobileTokenCanAccessPath($user, 'api/v1/supplier-payments'));
+        $this->assertTrue($service->mobileTokenCanAccessPath($user, 'api/v1/reference/suppliers'));
+        $this->assertTrue($service->mobileTokenCanAccessPath($user, 'api/v1/inventory/receive'));
+        $this->assertTrue($service->mobileTokenCanAccessPath($user, 'api/v1/stock-receipts'));
 
         // Full reports suite stays manager-only.
         $this->assertFalse($service->mobileTokenCanAccessPath($user, 'api/v1/reports/profit-loss'));

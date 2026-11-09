@@ -96,4 +96,20 @@ class OrganizationProvisioningChannelsTest extends TestCase
             $this->service->loginChannelsFromEnabledModules($modules, ['enable_manager_app' => false]),
         );
     }
+
+    public function test_hospitality_modules_expose_mobile_login_channel(): void
+    {
+        $modules = [
+            'sales.backend' => false,
+            'sales.pos' => false,
+            'sales.mobile' => false,
+            'hospitality.backend' => true,
+            'hospitality.bar_pos' => true,
+        ];
+
+        $this->assertEqualsCanonicalizing(
+            ['backoffice', 'mobile', 'manager'],
+            $this->service->loginChannelsFromEnabledModules($modules),
+        );
+    }
 }

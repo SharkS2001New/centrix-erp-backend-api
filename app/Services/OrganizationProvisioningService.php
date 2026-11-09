@@ -328,7 +328,15 @@ class OrganizationProvisioningService
         if ($modules['sales.pos'] ?? false) {
             $channels[] = 'pos';
         }
-        if (($modules['sales.mobile'] ?? false) && $mobileOrdersEnabled) {
+        // Match CapabilityGate::mobileSalesEnabled — hotel/bar tenants use AS mobile without retail POS.
+        if (
+            $mobileOrdersEnabled
+            && (
+                ($modules['sales.mobile'] ?? false)
+                || ($modules['hospitality.bar_pos'] ?? false)
+                || ($modules['hospitality.backend'] ?? false)
+            )
+        ) {
             $channels[] = 'mobile';
         }
 

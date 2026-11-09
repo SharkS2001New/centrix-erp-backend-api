@@ -23,7 +23,12 @@ class MobileAppModuleAccessService
         $driverAttendanceOrgEnabled = $gate->driverAttendanceEnabled();
         $fieldAttendanceOrgEnabled = $this->fieldAttendance->isEnabled($gate);
 
-        $salesUserAllowed = $isAdmin || $this->permissions->hasPermission($user, 'sales.create', $gate);
+        // Hotel & Bar outlet staff use AS mobile with hotel_bar_pos grants (not retail sales.create).
+        $salesUserAllowed = $isAdmin
+            || $this->permissions->hasPermission($user, 'sales.create', $gate)
+            || $this->permissions->hasPermission($user, 'mobile_sales.orders.create', $gate)
+            || $this->permissions->hasPermission($user, 'hotel_bar_pos.checks.create', $gate)
+            || $this->permissions->hasPermission($user, 'hotel_bar_pos.terminal.view', $gate);
         $driverUserAllowed = $isAdmin || $this->permissions->hasPermission($user, 'driver.mobile', $gate);
 
         $sales = $this->modulePayload(

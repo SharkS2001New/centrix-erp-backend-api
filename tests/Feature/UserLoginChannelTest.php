@@ -96,6 +96,21 @@ class UserLoginChannelTest extends TestCase
         }
     }
 
+    public function test_backoffice_only_user_can_login_via_mobile_when_org_allows_mobile(): void
+    {
+        // Hotel/AS staff are often seeded with backoffice channels only while the org
+        // enables the mobile login channel for outlet shop ops.
+        $user = $this->makeUser(['login_channels' => ['backoffice']]);
+
+        $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'DEMO',
+            'username' => $user->username,
+            'password' => 'password',
+            'client_id' => 'MOBILE_BACKOFFICE_BRIDGE',
+            'login_channel' => 'mobile',
+        ])->assertOk();
+    }
+
     public function test_mobile_session_cannot_access_admin_users_api(): void
     {
         $user = $this->makeUser(['login_channels' => ['mobile']]);

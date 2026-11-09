@@ -197,10 +197,25 @@ class ReferencePickerController extends Controller
             }
         }
 
+        // AS / mobile shop needs contact fields for supplier info without /suppliers/{id}.
         return response()->json(
             $query->paginate(
                 $this->perPage($request),
-                ['id', 'supplier_code', 'supplier_name', 'is_active', 'organization_id'],
+                [
+                    'id',
+                    'supplier_code',
+                    'supplier_name',
+                    'contact_person',
+                    'phone',
+                    'alternate_phone',
+                    'email',
+                    'town',
+                    'tax_pin',
+                    'terms_of_payment',
+                    'address',
+                    'is_active',
+                    'organization_id',
+                ],
             ),
         );
     }
