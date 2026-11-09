@@ -200,11 +200,13 @@ return [
             'label' => 'Hotel & Bar',
             'industry' => 'hospitality',
             'business_types' => ['Hotel', 'Lodge', 'Bar / restaurant', 'Café'],
-            // Hotel POS + Hotel Backoffice + Admin. Accounting / HR stay optional for Platform to tick.
+            // Hotel POS + Hotel Backoffice + AS mobile shop app + Admin.
+            // Accounting / HR stay optional for Platform to tick.
             // Retail POS / Backoffice / Distribution stay off for this industry.
             'application_ids' => [
                 'hotel_bar_pos',
                 'hospitality_backoffice',
+                'mobile',
                 'accounting',
                 'hr',
                 'admin',
@@ -215,6 +217,9 @@ return [
                 'hospitality.backend' => true,
                 'hospitality.dashboard' => true,
                 'hospitality.reports' => true,
+                // AS / Centrix mobile app (login_channel=mobile) for hotel & bar outlets.
+                'sales' => true,
+                'sales.mobile' => true,
                 'inventory' => true,
                 'inventory.dashboard' => true,
                 'inventory.reports' => true,
@@ -222,7 +227,7 @@ return [
                 'customers_suppliers.reports' => true,
                 'admin' => true,
             ]),
-            'default_channels' => ['backend'],
+            'default_channels' => ['mobile', 'backend'],
         ],
         'spa_kinyozi' => [
             'label' => 'SPA & Kinyozi',

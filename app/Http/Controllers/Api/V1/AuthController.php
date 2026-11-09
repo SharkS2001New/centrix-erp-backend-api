@@ -110,9 +110,16 @@ class AuthController extends Controller
             ]);
         }
 
+        $profile = (string) ($organization->deployment_profile ?? '');
+        $industry = $profile !== ''
+            ? \App\Services\Erp\IndustryRegistry::industryForProfile($profile)
+            : null;
+
         return response()->json([
             'company_code' => $organization->company_code,
             'org_name' => $organization->org_name,
+            'deployment_profile' => $profile !== '' ? $profile : null,
+            'industry' => $industry,
         ]);
     }
 

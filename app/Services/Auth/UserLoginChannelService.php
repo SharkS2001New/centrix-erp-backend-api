@@ -371,6 +371,9 @@ class UserLoginChannelService
             'action-requests/',
             'system-issue-reports',
             'erp/settings',
+            // AS shop expenses (fallback when no open till session).
+            'expenses',
+            'expense-groups',
         ];
 
         return $this->pathMatchesAny($path, $prefixes);

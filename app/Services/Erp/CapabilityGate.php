@@ -310,13 +310,22 @@ class CapabilityGate
             return true;
         }
 
-        if (! $this->selfEnabled('sales.mobile')) {
-            return false;
+        $sales = $this->moduleSettings('sales');
+        $ordersOn = (bool) ($sales['enable_mobile_orders'] ?? true);
+
+        // Hotel & Bar tenants use the same AS mobile channel for outlet shop ops.
+        if (
+            $ordersOn
+            && (
+                $this->selfEnabled('sales.mobile')
+                || $this->selfEnabled('hospitality.bar_pos')
+                || $this->selfEnabled('hospitality.backend')
+            )
+        ) {
+            return true;
         }
 
-        $sales = $this->moduleSettings('sales');
-
-        return (bool) ($sales['enable_mobile_orders'] ?? true);
+        return false;
     }
 
     /** Centrix Manager app for approvals, reports, and mobile administration. */
