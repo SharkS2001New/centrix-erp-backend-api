@@ -2,6 +2,7 @@
 
 namespace Tests;
 
+use App\Support\SchemaProbe;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 
 abstract class TestCase extends BaseTestCase
@@ -17,5 +18,9 @@ abstract class TestCase extends BaseTestCase
         }
 
         parent::setUp();
+
+        // Unit cases may observe missing tables before Feature migrations run.
+        SchemaProbe::flushRequestCache();
+        SchemaProbe::forget('platform_subscriptions');
     }
 }

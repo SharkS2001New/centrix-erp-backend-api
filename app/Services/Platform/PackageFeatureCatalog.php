@@ -123,15 +123,18 @@ class PackageFeatureCatalog
             return null;
         }
 
-        if (! \App\Support\SchemaProbe::hasTable('platform_subscriptions')) {
-            return null;
+        try {
+            $subscription = PlatformSubscription::query()
+                ->where('organization_id', (int) $organization->id)
+                ->whereNotNull('plan_id')
+                ->latest('id')
+                ->first();
+        } catch (\Throwable $e) {
+            if (! \App\Support\SchemaProbe::hasTable('platform_subscriptions')) {
+                return null;
+            }
+            throw $e;
         }
-
-        $subscription = PlatformSubscription::query()
-            ->where('organization_id', (int) $organization->id)
-            ->whereNotNull('plan_id')
-            ->latest('id')
-            ->first();
         $plan = $subscription?->plan;
         if (! $plan || ! is_array($plan->feature_keys)) {
             return null;

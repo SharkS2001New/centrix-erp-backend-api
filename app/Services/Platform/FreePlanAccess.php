@@ -258,16 +258,18 @@ class FreePlanAccess
             }
         }
 
-        $pages = $this->pagesForFeatures($industry, $featureKeys);
-        if ($pages === []) {
-            $pages = $grant['page_keys'];
-        }
+        // Always keep Package 1 pages/APIs, then add pages implied by org-enabled apps.
+        // Replacing the baseline with pagesForFeatures alone can drop sales/carts access.
+        $pages = array_values(array_unique(array_merge(
+            $grant['page_keys'],
+            $this->pagesForFeatures($industry, $featureKeys),
+        )));
 
         $definition = $this->industries()[$industry] ?? [];
         $pageRows = [];
-        $rules = [];
-        $api = [];
-        $sections = [];
+        $rules = $grant['rules'] ?? [];
+        $api = $grant['api'] ?? [];
+        $sections = $grant['sections'] ?? [];
         foreach ((array) ($definition['pages'] ?? []) as $page) {
             if (! is_array($page) || ! in_array((string) ($page['id'] ?? ''), $pages, true)) {
                 continue;
@@ -295,11 +297,11 @@ class FreePlanAccess
 
         return [
             'industry' => $industry,
-            'page_keys' => array_values($pages),
+            'page_keys' => $pages,
             'workspace_keys' => $workspaceKeys,
             'feature_keys' => $featureKeys,
-            'pages' => $pageRows,
-            'rules' => $rules,
+            'pages' => $pageRows !== [] ? $pageRows : ($grant['pages'] ?? []),
+            'rules' => array_values($rules),
             'api' => array_values(array_unique($api)),
             'sections' => array_values(array_unique($sections)),
         ];

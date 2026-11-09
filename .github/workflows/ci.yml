@@ -288,7 +288,7 @@ jobs:
           # main ahead only — update master from main (never leave master behind).
           if git merge-base --is-ancestor "${MASTER_SHA}" "${MAIN_SHA}"; then
             echo "main is ahead of master; fast-forwarding master to main."
-            git push --ff-only origin "${MAIN_SHA}:refs/heads/master"
+            git push origin "${MAIN_SHA}:refs/heads/master"
             echo "Synced master → ${MAIN_SHA} (ff-only)"
             exit 0
           fi
@@ -337,7 +337,7 @@ jobs:
 
           # main: never force — fast-forward only.
           if [[ "$(git rev-parse origin/main)" != "${PROMOTE_SHA}" ]]; then
-            git push --ff-only origin main
+            git push origin main
             echo "Promoted → main at ${PROMOTE_SHA} (ff-only, no force)"
           else
             echo "origin/main already at ${PROMOTE_SHA}"
@@ -406,7 +406,7 @@ jobs:
 
           # main ahead — update master from main.
           if git merge-base --is-ancestor "${MASTER_SHA}" "${MAIN_SHA}"; then
-            git push --ff-only origin "${MAIN_SHA}:refs/heads/master"
+            git push origin "${MAIN_SHA}:refs/heads/master"
             echo "main was ahead; fast-forwarded master → ${MAIN_SHA}"
             exit 0
           fi

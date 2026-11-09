@@ -105,11 +105,21 @@ class OrganizationLicenseService
     {
         /** @var PlatformSubscription|null $sub */
         $sub = null;
-        if ($org->id && SchemaProbe::hasTable('platform_subscriptions')) {
-            $sub = PlatformSubscription::query()
-                ->with(['plan', 'contract'])
-                ->where('organization_id', $org->id)
-                ->first();
+        // Unsaved orgs (unit tests) skip DB. Prefer a live query when the org is
+        // persisted — SchemaProbe negatives must not hide a migrated table.
+        if ($org->id) {
+            try {
+                $sub = PlatformSubscription::query()
+                    ->with(['plan', 'contract'])
+                    ->where('organization_id', $org->id)
+                    ->first();
+            } catch (\Throwable $e) {
+                if (! SchemaProbe::hasTable('platform_subscriptions')) {
+                    $sub = null;
+                } else {
+                    throw $e;
+                }
+            }
         }
 
         if (! $sub) {

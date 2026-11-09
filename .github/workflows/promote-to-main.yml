@@ -49,7 +49,7 @@ jobs:
 
           # main ahead only — fast-forward master so it is never behind.
           if git merge-base --is-ancestor "${MASTER_SHA}" "${MAIN_SHA}"; then
-            git push --ff-only origin "${MAIN_SHA}:refs/heads/master"
+            git push origin "${MAIN_SHA}:refs/heads/master"
             echo "Synced master → ${MAIN_SHA} (ff-only)"
             exit 0
           fi
@@ -71,7 +71,7 @@ jobs:
 
           git checkout -B main "${MAIN_SHA}"
           git merge --ff-only "${PROMOTE_SHA}"
-          git push --ff-only origin main
+          git push origin main
           git push --force-with-lease=refs/heads/master:"${MASTER_SHA}" \
             origin "${PROMOTE_SHA}:refs/heads/master"
           echo "Promoted and aligned master + main at ${PROMOTE_SHA}"
