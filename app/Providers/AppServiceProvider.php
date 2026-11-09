@@ -11,6 +11,7 @@ use App\Services\Ai\AiSettingsResolver;
 use App\Services\Audit\AuditLogger;
 use App\Services\Audit\ModelChangeAuditor;
 use App\Services\Auth\PermissionCatalog;
+use App\Services\Auth\UserPermissionService;
 use App\Services\SystemIssues\SystemIssueReporter;
 use App\Support\LocalAgentTokens;
 use Illuminate\Cache\RateLimiting\Limit;
@@ -39,6 +40,14 @@ class AppServiceProvider extends ServiceProvider
         // narrow routes pay a few indexed point lookups (bytes); admin / matrix
         // routes that call all() hydrate ~461 Eloquent models (~2.5 MiB).
         $this->app->scoped(PermissionCatalog::class);
+
+        // Request-scoped so the in-instance rememberRequest() cache on this
+        // service actually lives for the request. Without this binding every
+        // app(UserPermissionService::class) call returned a fresh instance,
+        // making the memoization pointless (and the rememberRequest() helper
+        // was being called without the method existing on earlier revisions
+        // of this class, breaking login).
+        $this->app->scoped(UserPermissionService::class);
     }
 
     public function boot(): void
