@@ -203,7 +203,7 @@ class RolePermissionTest extends TestCase
 
         $mobile = $applications->firstWhere('id', 'mobile');
         $this->assertNotNull($mobile);
-        $this->assertSame('Mobile application', $mobile['label']);
+        $this->assertSame('Field Mobile', $mobile['label']);
         $this->assertTrue($mobile['standalone']);
         $this->assertSame(['mobile_sales', 'mobile_driver'], collect($mobile['modules'])->pluck('module')->all());
 
@@ -373,8 +373,9 @@ class RolePermissionTest extends TestCase
         $this->assertTrue($appIds->contains('hotel_bar_pos'));
         $this->assertTrue($appIds->contains('hospitality_backoffice'));
         $this->assertTrue($appIds->contains('manager'));
-        // Hotel & Bar uses the AS / Centrix mobile shop app (not retail External POS).
-        $this->assertTrue($appIds->contains('mobile'));
+        // Hotel & Bar uses Centrix AS Mobile (not Field Mobile / External POS).
+        $this->assertTrue($appIds->contains('centrix_as_mobile'));
+        $this->assertFalse($appIds->contains('mobile'));
         $this->assertFalse($appIds->contains('pos'));
         $this->assertFalse($appIds->contains('backoffice'));
         $this->assertFalse($appIds->contains('distribution'));
@@ -385,17 +386,18 @@ class RolePermissionTest extends TestCase
         $groupModules = collect($matrix->json('groups'))->pluck('module');
         $this->assertTrue($groupModules->contains('hospitality'));
         $this->assertTrue($groupModules->contains('hotel_bar_pos'));
-        $this->assertTrue($groupModules->contains('mobile_sales'));
+        $this->assertTrue($groupModules->contains('centrix_as_mobile'));
         // Manager app shell is present (reports module); mobile_manager rows may be empty when
         // the org has not enabled manager-channel grants beyond the industry application list.
         $this->assertNotNull($manager);
         $this->assertFalse($groupModules->contains('pos'));
         $this->assertFalse($groupModules->contains('sales'));
         $this->assertFalse($groupModules->contains('fulfillment'));
+        $this->assertFalse($groupModules->contains('mobile_sales'));
 
         $permissionCodes = collect($matrix->json('permissions'))->pluck('permission_code');
         $this->assertFalse($permissionCodes->contains(fn ($code) => str_starts_with((string) $code, 'pos.')));
-        $this->assertTrue($permissionCodes->contains(fn ($code) => str_starts_with((string) $code, 'mobile_sales.')));
+        $this->assertTrue($permissionCodes->contains('centrix_as_mobile.app.access'));
     }
 
     public function test_hospitality_roles_index_hides_commerce_templates(): void

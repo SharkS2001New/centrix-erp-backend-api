@@ -219,18 +219,8 @@ return [
                 'hotel_bar_pos.checks.edit',
                 'hotel_bar_pos.room_charge.create',
                 'catalogue.products.view',
-                // AS / Centrix mobile shop for outlet ops
-                'mobile_sales.dashboard.view',
-                'mobile_sales.orders.view',
-                'mobile_sales.orders.create',
-                'mobile_sales.orders.edit',
-                'mobile_sales.customers.view',
-                'mobile_sales.customers.create',
-                'mobile_sales.customers.edit',
-                'mobile_sales.catalog.view',
-                'mobile_sales.stock.view',
-                'mobile_sales.payments.view',
-                'mobile_sales.payments.create',
+                // Centrix AS Mobile shop (Roles app) for outlet ops
+                'centrix_as_mobile.app.access',
             ],
         ],
 
@@ -314,6 +304,7 @@ return [
                 'hospitality.settings.edit',
                 'hotel_bar_pos.terminal.view',
                 'hotel_bar_pos.checks.view',
+                'centrix_as_mobile.app.access',
                 'dashboard.overview.view',
                 'dashboard.inventory.view',
                 'catalogue.products.view',

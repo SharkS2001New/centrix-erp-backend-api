@@ -49,8 +49,8 @@ return [
             'permission_application_ids' => [
                 'hotel_bar_pos',
                 'hospitality_backoffice',
-                // AS / Centrix mobile shop app for hotel & bar outlets.
-                'mobile',
+                // Centrix ERP AS mobile shop (not Field Mobile sales/driver).
+                'centrix_as_mobile',
                 // Centrix Manager (approvals / reports) when hotel ops enable the manager channel.
                 'manager',
                 // Shared finance/HR/admin when those apps are later enabled for a hotel tenant.

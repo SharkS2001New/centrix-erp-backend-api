@@ -23,8 +23,9 @@ class MobileAppModuleAccessService
         $driverAttendanceOrgEnabled = $gate->driverAttendanceEnabled();
         $fieldAttendanceOrgEnabled = $this->fieldAttendance->isEnabled($gate);
 
-        // Hotel & Bar outlet staff use AS mobile with hotel_bar_pos grants (not retail sales.create).
+        // Centrix AS Mobile app.access, Hotel POS, or field sales grants (not Field Mobile alone).
         $salesUserAllowed = $isAdmin
+            || $this->permissions->hasPermission($user, 'centrix_as_mobile.app.access', $gate)
             || $this->permissions->hasPermission($user, 'sales.create', $gate)
             || $this->permissions->hasPermission($user, 'mobile_sales.orders.create', $gate)
             || $this->permissions->hasPermission($user, 'hotel_bar_pos.checks.create', $gate)

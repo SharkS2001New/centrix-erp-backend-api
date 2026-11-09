@@ -66,6 +66,12 @@ return [
                 'field_attendance' => ['label' => 'Field attendance', 'actions' => ['view', 'create']],
             ],
         ],
+        'centrix_as_mobile' => [
+            'label' => 'Centrix AS Mobile',
+            'features' => [
+                'app' => ['label' => 'AS mobile shop access', 'actions' => ['access']],
+            ],
+        ],
         'mobile_sales' => [
             'label' => 'Sales rep',
             'features' => [

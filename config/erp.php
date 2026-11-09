@@ -196,9 +196,9 @@ return [
             'industry' => 'hospitality',
             'business_types' => ['Hotel', 'Lodge', 'Bar / restaurant', 'Café'],
             // Hotel POS + Hotel Backoffice + Admin.
-            // AS mobile shop is provisioned via sales.mobile (login_channel=mobile), not an application id.
             // Accounting / HR stay optional for Platform to tick.
             // Retail POS / Backoffice / Distribution stay off for this industry.
+            // AS mobile shop is a Roles permission app (centrix_as_mobile), not a platform tenant app id.
             'application_ids' => [
                 'hotel_bar_pos',
                 'hospitality_backoffice',

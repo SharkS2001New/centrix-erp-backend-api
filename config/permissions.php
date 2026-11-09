@@ -9,6 +9,7 @@ return [
     'sales.manage' => 'Update order workflow / transitions',
     'sales.view' => 'View sales orders and related records',
     'mobile.access' => 'Use the LightStores mobile field sales app',
+    'centrix_as_mobile.app.access' => 'Sign in to Centrix AS Mobile (outlet shop app)',
     'driver.mobile' => 'Use the mobile driver delivery app',
     'payments.manage' => 'Record payments on sales and AR',
     'payments.view' => 'View payment and invoice records',

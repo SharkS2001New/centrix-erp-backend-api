@@ -66,7 +66,7 @@ class UserMobileLoginValidator
 
         throw ValidationException::withMessages([
             'login_channel' => [
-                'This account is not authorized for the mobile sales or driver app.',
+                'This account is not authorized for Centrix AS Mobile (or the field sales / driver apps). Grant Centrix AS Mobile in Roles & permissions.',
             ],
         ]);
     }
@@ -96,7 +96,7 @@ class UserMobileLoginValidator
 
         throw ValidationException::withMessages([
             'login_channels' => [
-                'Mobile login requires Sales rep (sales.create) or Driver (driver.mobile) permission on the user\'s role.',
+                'Mobile login requires Centrix AS Mobile (centrix_as_mobile.app.access), Sales rep, or Driver permission on the user\'s role.',
             ],
         ]);
     }

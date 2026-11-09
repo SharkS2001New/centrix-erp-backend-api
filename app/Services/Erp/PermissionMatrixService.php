@@ -216,6 +216,7 @@ class PermissionMatrixService
             'sales.manage' => 'sales',
             'sales.view' => 'sales',
             'mobile.access' => 'mobile_sales',
+            'centrix_as_mobile.app.access' => 'centrix_as_mobile',
             'manager.access' => 'mobile_manager',
             'driver.mobile' => 'mobile_driver',
             'payments.manage' => 'payments',

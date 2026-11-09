@@ -440,6 +440,7 @@ return [
         'pricing_tax.vat_rates.delete',
     ],
     'mobile.access' => [
+        'centrix_as_mobile.app.access',
         'mobile_sales.dashboard.view',
         'mobile_sales.orders.view',
         'mobile_sales.orders.create',
@@ -449,6 +450,20 @@ return [
         'mobile_sales.catalog.view',
         'mobile_sales.stock.view',
         'mobile_sales.routes.view',
+    ],
+    'centrix_as_mobile.app.access' => [
+        'mobile.access',
+        'mobile_sales.dashboard.view',
+        'mobile_sales.orders.view',
+        'mobile_sales.orders.create',
+        'mobile_sales.orders.edit',
+        'mobile_sales.customers.view',
+        'mobile_sales.customers.create',
+        'mobile_sales.customers.edit',
+        'mobile_sales.catalog.view',
+        'mobile_sales.stock.view',
+        'mobile_sales.payments.view',
+        'mobile_sales.payments.create',
     ],
     'hr.attendance.create' => [
         'hr.manual_attendance.create',

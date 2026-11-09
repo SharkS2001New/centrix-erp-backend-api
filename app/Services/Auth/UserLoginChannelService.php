@@ -97,6 +97,14 @@ class UserLoginChannelService
             return;
         }
 
+        // Roles matrix: Centrix AS Mobile app.access (not Field Mobile / sales.create).
+        if ($channel === self::MOBILE
+            && $this->organizationAllowsMobileLogin($user)
+            && $this->userHasCentrixAsMobileAccess($user)
+        ) {
+            return;
+        }
+
         // Platform super-admins may use Centrix Manager even if login_channels was seeded as backoffice-only.
         if ($channel === self::MANAGER && $this->isPlatformSuperAdmin($user)) {
             return;
@@ -107,6 +115,27 @@ class UserLoginChannelService
                 sprintf('This account is not allowed to sign in via %s.', $this->label($channel)),
             ],
         ]);
+    }
+
+    protected function userHasCentrixAsMobileAccess(User $user): bool
+    {
+        if ((bool) $user->is_admin) {
+            return true;
+        }
+
+        try {
+            $permissions = app(UserPermissionService::class);
+            $organization = $user->organization ?? Organization::query()->find($user->organization_id);
+            $gate = $organization
+                ? app(ErpContext::class)->gateForOrganization($organization)
+                : null;
+
+            return $permissions->hasPermission($user, 'centrix_as_mobile.app.access', $gate)
+                || $permissions->hasPermission($user, 'hotel_bar_pos.terminal.view', $gate)
+                || $permissions->hasPermission($user, 'hotel_bar_pos.checks.create', $gate);
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
     protected function organizationAllowsMobileLogin(User $user): bool
@@ -298,7 +327,7 @@ class UserLoginChannelService
         return match ($channel) {
             self::BACKOFFICE => 'CentrixERP',
             self::POS => 'POS',
-            self::MOBILE => 'CentrixMobileapp',
+            self::MOBILE => 'Centrix AS Mobile',
             self::MANAGER => 'Centrix Manager',
             default => $channel,
         };

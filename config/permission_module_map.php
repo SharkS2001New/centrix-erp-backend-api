@@ -26,6 +26,7 @@ return [
     'customers' => ['customers_suppliers', 'sales.backend', 'sales.mobile'],
     'shop_debtors' => ['sales.backend', 'sales.pos', 'customers_suppliers'],
     'sales' => ['sales.backend', 'sales.dashboard', 'sales.pos'],
+    'centrix_as_mobile' => ['sales.mobile', 'hospitality.bar_pos', 'hospitality.backend'],
     'mobile_sales' => ['sales.mobile'],
     'mobile_driver' => ['distribution', 'sales.mobile'],
     'mobile_manager' => ['sales.backend', 'sales.pos', 'distribution', 'inventory', 'accounting', 'hr_payroll', 'admin', 'customers_suppliers', 'hospitality.backend', 'hospitality.bar_pos'],

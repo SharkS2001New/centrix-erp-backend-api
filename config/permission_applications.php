@@ -11,6 +11,7 @@ return [
     'order' => [
         'pos',
         'hotel_bar_pos',
+        'centrix_as_mobile',
         'mobile',
         'manager',
         'backoffice',
@@ -36,9 +37,15 @@ return [
             'description' => 'Hotel front POS (checks, outlets, room charge) — separate from retail sales.',
             'registry_modules' => ['hotel_bar_pos'],
         ],
+        'centrix_as_mobile' => [
+            'label' => 'Centrix AS Mobile',
+            'description' => 'Centrix ERP AS mobile shop app (outlet POS, purchases, stock, customers). Not the field sales / driver app.',
+            'standalone' => true,
+            'registry_modules' => ['centrix_as_mobile'],
+        ],
         'mobile' => [
-            'label' => 'Mobile application',
-            'description' => 'Separate permissions for field sales reps and driver delivery users.',
+            'label' => 'Field Mobile',
+            'description' => 'Field sales reps and driver delivery users (distribution routes).',
             'standalone' => true,
             'registry_modules' => ['mobile_sales', 'mobile_driver'],
         ],
