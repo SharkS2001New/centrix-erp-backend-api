@@ -219,20 +219,25 @@ class OrderWorkflowTransitionTest extends TestCase
             'sale_id' => $sale->id,
             'product_code' => $product->product_code,
             'quantity' => 2,
+            'selling_price' => 450,
             'amount' => 900,
             'on_wholesale_retail' => 0,
         ]);
 
-        $this->postJson("/api/v1/sales/orders/{$sale->id}/transition", [
+        $weightError = $this->postJson("/api/v1/sales/orders/{$sale->id}/transition", [
             'status' => 'processed',
         ])
             ->assertStatus(422)
-            ->assertJsonPath('code', 'missing_product_weights')
-            ->assertJsonPath('products.0.product_code', $product->product_code)
-            ->assertJsonFragment([
-                'message' => 'Set product weight (kg per unit) so order tonnage can be calculated: '
-                    ."{$product->product_code} ({$product->product_name}).",
-            ]);
+            ->assertJsonPath('code', 'missing_product_weights');
+        // product_code may be JSON-decoded as int when numeric; compare as strings.
+        $this->assertSame(
+            (string) $product->product_code,
+            (string) ($weightError->json('products.0.product_code') ?? ''),
+        );
+        $weightError->assertJsonFragment([
+            'message' => 'Set product weight (kg per unit) so order tonnage can be calculated: '
+                ."{$product->product_code} ({$product->product_name}).",
+        ]);
     }
 
     public function test_order_product_weights_endpoint_updates_weights_and_returns_status(): void
@@ -259,14 +264,19 @@ class OrderWorkflowTransitionTest extends TestCase
             'sale_id' => $sale->id,
             'product_code' => $product->product_code,
             'quantity' => 2,
+            'selling_price' => 450,
             'amount' => 900,
             'on_wholesale_retail' => 0,
         ]);
 
-        $this->getJson("/api/v1/sales/orders/{$sale->id}/load-weight-status")
+        $weightStatus = $this->getJson("/api/v1/sales/orders/{$sale->id}/load-weight-status")
             ->assertOk()
             ->assertJsonPath('ready', false)
-            ->assertJsonPath('missing_products.0.product_code', $product->product_code);
+            ->json();
+        $this->assertSame(
+            (string) $product->product_code,
+            (string) ($weightStatus['missing_products'][0]['product_code'] ?? ''),
+        );
 
         $this->postJson("/api/v1/sales/orders/{$sale->id}/product-weights", [
             'weights' => [
@@ -314,6 +324,7 @@ class OrderWorkflowTransitionTest extends TestCase
             'sale_id' => $sale->id,
             'product_code' => $product->product_code,
             'quantity' => 2,
+            'selling_price' => 450,
             'amount' => 900,
             'on_wholesale_retail' => 0,
         ]);

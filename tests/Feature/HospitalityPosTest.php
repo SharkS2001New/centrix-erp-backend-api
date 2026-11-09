@@ -86,30 +86,45 @@ class HospitalityPosTest extends TestCase
         $high = $this->barSellableProduct($low->product_code);
 
         $template = Sale::query()->where('organization_id', $this->org->id)->first();
-        if (! $template) {
-            $this->markTestSkipped('Demo data has no sales for popularity ranking.');
+        if ($template) {
+            $sale = $template->replicate([
+                'order_num',
+                'mpesa_transaction_code',
+                'payment_reference',
+                'pos_ticket_scope', // generated column — must not be written
+                'is_legacy_import', // generated column — must not be written
+                'loading_date', // generated column — must not be written
+                'effective_sale_date',
+            ]);
+            $sale->order_num = 991001 + random_int(1, 9000);
+            $sale->status = 'completed';
+            $sale->payment_status = 'paid';
+            $sale->amount_paid = 100;
+            $sale->order_total = 100;
+            $sale->archived = 0;
+            $sale->completed_at = now();
+            $sale->channel = 'pos';
+            unset($sale->loading_date, $sale->is_legacy_import, $sale->pos_ticket_scope, $sale->effective_sale_date);
+            $sale->save();
+            $saleId = (int) $sale->id;
+        } else {
+            // No demo sale template — still exercise popularity ranking (do not skip).
+            $sale = Sale::query()->create([
+                'organization_id' => $this->org->id,
+                'branch_id' => $this->user->branch_id,
+                'cashier_id' => $this->user->id,
+                'order_num' => 991001 + random_int(1, 9000),
+                'channel' => 'pos',
+                'status' => 'completed',
+                'payment_status' => 'paid',
+                'amount_paid' => 100,
+                'order_total' => 100,
+                'total_vat' => 0,
+                'archived' => 0,
+                'completed_at' => now(),
+            ]);
+            $saleId = (int) $sale->id;
         }
-
-        $sale = $template->replicate([
-            'order_num',
-            'mpesa_transaction_code',
-            'payment_reference',
-            'pos_ticket_scope', // generated column — must not be written
-            'is_legacy_import', // generated column — must not be written
-            'loading_date', // generated column — must not be written
-            'effective_sale_date',
-        ]);
-        $sale->order_num = 991001 + random_int(1, 9000);
-        $sale->status = 'completed';
-        $sale->payment_status = 'paid';
-        $sale->amount_paid = 100;
-        $sale->order_total = 100;
-        $sale->archived = 0;
-        $sale->completed_at = now();
-        $sale->channel = 'pos';
-        unset($sale->loading_date, $sale->is_legacy_import, $sale->pos_ticket_scope, $sale->effective_sale_date);
-        $sale->save();
-        $saleId = (int) $sale->id;
 
         SaleItem::query()->create([
             'sale_id' => $saleId,

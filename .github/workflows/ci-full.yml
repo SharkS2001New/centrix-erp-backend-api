@@ -1,0 +1,76 @@
+# Full Unit suite (MySQL + demo seed). Slow — not on the deploy/promote path.
+# Run nightly and on demand when you need the heavy gate.
+name: CI Full
+
+on:
+  schedule:
+    # 02:15 UTC daily
+    - cron: "15 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  unit:
+    name: Full unit tests
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: pos_erp_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          coverage: none
+          extensions: mbstring, pdo_mysql, tokenizer, xml, ctype, json, bcmath
+          tools: composer:v2
+
+      - name: Install dependencies
+        env:
+          COMPOSER_CAFILE: /etc/ssl/certs/ca-certificates.crt
+        run: |
+          composer config --no-plugins --no-interaction use-github-api false
+          composer config --no-plugins --no-interaction github-oauth.github.com "${{ secrets.GITHUB_TOKEN }}"
+          composer install --no-interaction --prefer-dist
+
+      - name: Prepare test environment
+        run: |
+          rm -f .env
+          cp .env.example .env
+          php -r "file_put_contents('.env', preg_replace('/^APP_KEY=.*/m', 'APP_KEY=base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=', file_get_contents('.env')));"
+
+      - name: Run full unit suite
+        env:
+          APP_ENV: testing
+          APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          DB_CONNECTION: mysql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: pos_erp_test
+          DB_USERNAME: root
+          DB_PASSWORD: root
+          DB_HOST_TEST: 127.0.0.1
+          DB_PORT_TEST: 3306
+          DB_DATABASE_TEST: pos_erp_test
+          DB_USERNAME_TEST: root
+          DB_PASSWORD_TEST: root
+          DB_HOST_LOCAL: 127.0.0.1
+          DB_USERNAME_LOCAL: root
+          DB_PASSWORD_LOCAL: root
+          CACHE_STORE: array
+          QUEUE_CONNECTION: sync
+          SESSION_DRIVER: array
+          MAIL_MAILER: array
+        run: php artisan test --testsuite=Unit --stop-on-failure

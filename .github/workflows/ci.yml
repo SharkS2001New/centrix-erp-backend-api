@@ -1,5 +1,5 @@
-# CI gates promote-to-main. Feature PHPUnit (MySQL + demo seed) still runs locally
-# via `php artisan test`. CI runs Composer audit + Unit suite.
+# Deploy/promote gate: audit + Smoke (seconds) + Critical (MySQL, must-pass paths).
+# Full Unit stays on ci-full.yml (nightly / manual).
 name: CI
 
 on:
@@ -61,8 +61,52 @@ jobs:
       - name: Composer security audit
         run: composer audit
 
-  unit:
-    name: Unit tests
+  smoke:
+    name: Smoke tests
+    if: >-
+      github.event_name == 'pull_request' ||
+      !contains(github.event.head_commit.message, '[skip ci]')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          coverage: none
+          extensions: mbstring, pdo_mysql, tokenizer, xml, ctype, json, bcmath
+          tools: composer:v2
+
+      - name: Install dependencies
+        env:
+          COMPOSER_CAFILE: /etc/ssl/certs/ca-certificates.crt
+        run: |
+          composer config --no-plugins --no-interaction use-github-api false
+          composer config --no-plugins --no-interaction github-oauth.github.com "${{ secrets.GITHUB_TOKEN }}"
+          composer install --no-interaction --prefer-dist
+
+      - name: Prepare test environment
+        run: |
+          rm -f .env
+          cp .env.example .env
+          php -r "file_put_contents('.env', preg_replace('/^APP_KEY=.*/m', 'APP_KEY=base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=', file_get_contents('.env')));"
+
+      - name: Run smoke tests
+        env:
+          APP_ENV: testing
+          APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          CACHE_STORE: array
+          QUEUE_CONNECTION: sync
+          SESSION_DRIVER: array
+          MAIL_MAILER: array
+          DB_CONNECTION: sqlite
+          DB_DATABASE: ":memory:"
+        run: php artisan test --testsuite=Smoke --fail-on-skipped
+
+  critical:
+    name: Critical tests
     if: >-
       github.event_name == 'pull_request' ||
       !contains(github.event.head_commit.message, '[skip ci]')
@@ -100,15 +144,13 @@ jobs:
           composer config --no-plugins --no-interaction github-oauth.github.com "${{ secrets.GITHUB_TOKEN }}"
           composer install --no-interaction --prefer-dist
 
-      # EnvironmentSettings prefers DB_*_TEST (then DB_*_LOCAL) over DB_*.
-      # Never rely on a checked-in .env — CI MySQL is root/root only.
       - name: Prepare test environment
         run: |
           rm -f .env
           cp .env.example .env
           php -r "file_put_contents('.env', preg_replace('/^APP_KEY=.*/m', 'APP_KEY=base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=', file_get_contents('.env')));"
 
-      - name: Run unit tests
+      - name: Run critical suite
         env:
           APP_ENV: testing
           APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
@@ -130,4 +172,33 @@ jobs:
           QUEUE_CONNECTION: sync
           SESSION_DRIVER: array
           MAIL_MAILER: array
-        run: php artisan test --testsuite=Unit --stop-on-failure
+        # No --stop-on-failure: every critical test must run. Fail if any are skipped.
+        run: php artisan test --testsuite=Critical --fail-on-skipped
+
+      - name: Run critical cart/stock paths
+        env:
+          APP_ENV: testing
+          APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          DB_CONNECTION: mysql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: pos_erp_test
+          DB_USERNAME: root
+          DB_PASSWORD: root
+          DB_HOST_TEST: 127.0.0.1
+          DB_PORT_TEST: 3306
+          DB_DATABASE_TEST: pos_erp_test
+          DB_USERNAME_TEST: root
+          DB_PASSWORD_TEST: root
+          DB_HOST_LOCAL: 127.0.0.1
+          DB_USERNAME_LOCAL: root
+          DB_PASSWORD_LOCAL: root
+          CACHE_STORE: array
+          QUEUE_CONNECTION: sync
+          SESSION_DRIVER: array
+          MAIL_MAILER: array
+        # Core till paths from the large cart suite (full file is too slow for every push).
+        run: >-
+          php artisan test tests/Feature/SalesCartCheckoutStockTest.php
+          --filter='test_create_cart_and_add_line_reserves_stock|test_checkout_completes_sale_and_deducts_ledger|test_clear_cart_releases_reservation|test_inventory_availability_endpoint|test_held_order_can_be_cancelled|test_hold_order_can_be_restored_to_cart|test_checkout_rejects_expired_cart_holds_when_stock_is_gone|test_cart_rejects_unknown_product_code'
+          --fail-on-skipped

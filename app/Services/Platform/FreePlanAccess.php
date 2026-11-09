@@ -457,6 +457,10 @@ class FreePlanAccess
                 $featureId = (string) $featureId;
                 $prefix = explode('.', $featureId, 2)[0];
                 $flag = explode('.', $featureId, 2)[1] ?? '';
+                if ($industry === 'hospitality' && ($moduleId === 'hotel_bar_pos' || $prefix === 'hotel_bar_pos')) {
+                    $add(['hotel_pos']);
+                    continue;
+                }
                 if ($industry === 'hospitality' && $prefix === 'hospitality') {
                     $add(match ($flag) {
                         'dashboard' => ['dashboard'],

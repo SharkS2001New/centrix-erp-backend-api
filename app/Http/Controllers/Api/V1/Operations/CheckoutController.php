@@ -221,6 +221,8 @@ class CheckoutController extends Controller
                 'status_name' => $statusName,
                 'payment_status' => $sale->payment_status,
                 'amount_paid' => round((float) $sale->amount_paid, 2),
+                'customer_num' => $sale->customer_num !== null ? (int) $sale->customer_num : null,
+                'customer_name_override' => $sale->customer_name_override,
                 'same_day_customer_append' => ! empty($fulfillmentMeta['same_day_customer_append']),
             ], $kraSkipMeta), 201);
         }

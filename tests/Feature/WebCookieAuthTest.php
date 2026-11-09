@@ -15,6 +15,9 @@ class WebCookieAuthTest extends TestCase
     {
         parent::setUp();
 
+        // API group does not run EncryptCookies; send the plaintext token value as-is.
+        $this->disableCookieEncryption();
+
         config([
             'security.api_token_cookie.enabled' => true,
             'security.api_token_cookie.name' => 'centrix_api_token',
@@ -166,10 +169,15 @@ class WebCookieAuthTest extends TestCase
             ->first(fn ($c) => $c->getName() === 'centrix_api_token');
         $this->assertNotNull($cookie);
 
-        $this->withCookie('centrix_api_token', $cookie->getValue())
-            ->getJson('/api/v1/auth/me')
-            ->assertOk()
-            ->assertJsonPath('username', $user->username);
+        // PHPUnit withCookie helpers do not always surface on the API middleware stack;
+        // pass the plaintext token the same way the browser would after EncryptCookies.
+        $me = $this->call(
+            'GET',
+            '/api/v1/auth/me',
+            cookies: ['centrix_api_token' => $cookie->getValue()],
+            server: ['HTTP_ACCEPT' => 'application/json'],
+        );
+        $me->assertOk()->assertJsonPath('username', $user->username);
     }
 
     public function test_logout_clears_http_only_cookie(): void

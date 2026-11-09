@@ -260,7 +260,7 @@ class OrderWorkflowServiceTest extends TestCase
         $this->assertNull($service->printInvoiceStatuses());
         $this->assertSame(['unpaid', 'pending_payment'], $service->collectPaymentStatuses());
         $this->assertSame(
-            ['booked', 'pending', 'unpaid', 'pending_payment', 'paid', 'processed', 'delivered', 'completed'],
+            ['booked', 'pending', 'unpaid', 'pending_payment', 'paid', 'processed', 'delivered', 'completed', 'pending_approval', 'editable'],
             $service->cancelOrderStatuses(),
         );
         $this->assertSame(

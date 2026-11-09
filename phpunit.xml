@@ -5,6 +5,59 @@
          colors="true"
 >
     <testsuites>
+        <!--
+          Smoke: fast gate for every push/PR (~seconds, no MySQL seed).
+          Full Unit/Feature stay local + nightly / workflow_dispatch.
+        -->
+        <testsuite name="Smoke">
+            <file>tests/Unit/DeadlockSafeTest.php</file>
+            <file>tests/Unit/EnvironmentSettingsTest.php</file>
+            <file>tests/Unit/CentrixVersionTest.php</file>
+            <file>tests/Unit/PhoneNumberTest.php</file>
+            <file>tests/Unit/PasswordPolicyTest.php</file>
+            <file>tests/Unit/ApiTokenCookieTest.php</file>
+            <file>tests/Unit/ApiErrorPresenterTest.php</file>
+            <file>tests/Unit/ApplicationProvisionerTest.php</file>
+            <file>tests/Unit/CapabilityGateApplicationOverridesTest.php</file>
+            <file>tests/Unit/WorkspaceResolverIndustryTest.php</file>
+            <file>tests/Unit/OrganizationProvisioningChannelsTest.php</file>
+            <file>tests/Unit/PackageFeatureCatalogTest.php</file>
+            <file>tests/Unit/PlatformLicenceQuoteTest.php</file>
+            <file>tests/Unit/LicencePeriodWindowTest.php</file>
+            <file>tests/Unit/SalesVatCalculatorTest.php</file>
+            <file>tests/Unit/SqlLikeSearchTest.php</file>
+            <file>tests/Unit/DestructiveCommandsGuardTest.php</file>
+        </testsuite>
+        <!--
+          Critical: always-on deploy gate for selling / auth / hotel / KRA / RBAC.
+          Runs every push/PR (MySQL). Full Unit remains nightly / manual.
+        -->
+        <testsuite name="Critical">
+            <file>tests/Unit/DeadlockSafeTest.php</file>
+            <file>tests/Unit/DestructiveCommandsGuardTest.php</file>
+            <file>tests/Unit/EnvironmentSettingsTest.php</file>
+            <file>tests/Unit/OrderWorkflowServiceTest.php</file>
+            <file>tests/Unit/CustomerRoutePolicyTest.php</file>
+            <file>tests/Unit/CapabilityGateApplicationOverridesTest.php</file>
+            <file>tests/Unit/CapabilityGateStockDeductionTest.php</file>
+            <file>tests/Unit/WorkspaceResolverIndustryTest.php</file>
+            <file>tests/Unit/KraComstorePluPayloadTest.php</file>
+            <file>tests/Unit/KraDeviceFailurePluMatchTest.php</file>
+            <file>tests/Unit/PosOfflineCheckoutIdempotencyTest.php</file>
+            <file>tests/Unit/PickingListBuilderTest.php</file>
+            <file>tests/Unit/PayrollPlatformConfigTest.php</file>
+            <file>tests/Unit/StockReservationCartLineIdTest.php</file>
+            <file>tests/Feature/BackofficeSalesCartTest.php</file>
+            <file>tests/Feature/CustomerCreditLimitCheckoutTest.php</file>
+            <file>tests/Feature/OrderWorkflowTransitionTest.php</file>
+            <file>tests/Feature/DiscountApprovalCheckoutTest.php</file>
+            <file>tests/Feature/HospitalityPosTest.php</file>
+            <file>tests/Feature/ProductImageApiTest.php</file>
+            <file>tests/Feature/WebCookieAuthTest.php</file>
+            <file>tests/Feature/RolePermissionTest.php</file>
+            <file>tests/Feature/ModuleScopedPermissionsTest.php</file>
+            <file>tests/Feature/KraDeviceCheckoutTest.php</file>
+        </testsuite>
         <testsuite name="Unit">
             <directory>tests/Unit</directory>
         </testsuite>

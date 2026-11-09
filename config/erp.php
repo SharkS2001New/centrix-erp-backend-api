@@ -602,7 +602,7 @@ return [
             'edit_order_statuses' => ['booked', 'pending', 'editable'],
             'print_invoice_statuses' => null,
             'collect_payment_statuses' => ['unpaid', 'pending_payment'],
-            'cancel_order_statuses' => ['booked', 'pending', 'unpaid', 'pending_payment', 'paid', 'processed', 'delivered', 'completed'],
+            'cancel_order_statuses' => ['booked', 'pending', 'unpaid', 'pending_payment', 'paid', 'processed', 'delivered', 'completed', 'pending_approval', 'editable'],
             /** Empty = Convert to paid disabled until platform enables stages (unpaid / partial / mobile / whatsapp). */
             'convert_to_paid_statuses' => [],
             /** Empty = Convert to unpaid disabled until platform enables stages. */

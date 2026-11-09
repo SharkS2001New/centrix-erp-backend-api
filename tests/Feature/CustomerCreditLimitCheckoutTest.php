@@ -129,21 +129,36 @@ class CustomerCreditLimitCheckoutTest extends TestCase
         $customer = Customer::firstOrFail();
         $productCode = Product::first()->product_code;
 
-        $cartId = $this->postJson('/api/v1/sales/carts', [
+        $routeId = \App\Models\RouteModel::query()
+            ->where('organization_id', $user->organization_id)
+            ->where('is_active', true)
+            ->value('id');
+
+        $cartPayload = [
             'channel' => 'mobile',
             'branch_id' => $user->branch_id,
-        ])->json('id');
+        ];
+        if ($routeId) {
+            $cartPayload['route_id'] = (int) $routeId;
+        }
+
+        $cartId = $this->postJson('/api/v1/sales/carts', $cartPayload)->json('id');
 
         $lineCart = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
             'product_code' => $productCode,
             'quantity' => 1,
         ])->assertCreated()->json();
 
-        $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+        $checkout = [
             'customer_num' => $customer->customer_num,
             'payment_method_code' => 'CASH',
             'pay_now' => (float) (($lineCart['lines'][0]['amount'] ?? 100)),
-        ])
+        ];
+        if ($routeId) {
+            $checkout['route_id'] = (int) $routeId;
+        }
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", $checkout)
             ->assertCreated()
             ->assertJsonPath('customer_num', $customer->customer_num)
             ->assertJsonPath('customer_name_override', $customer->customer_name);

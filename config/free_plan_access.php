@@ -34,10 +34,11 @@ return [
         ],
         'hospitality' => [
             'label' => 'Hotel & Hospitality',
-            'workspaces' => ['hospitality_backoffice'],
-            'default' => ['dashboard'],
+            'workspaces' => ['hotel_bar_pos', 'hospitality_backoffice'],
+            'default' => ['dashboard', 'hotel_pos'],
             'pages' => [
                 ['id' => 'dashboard', 'label' => 'Dashboard', 'exact' => ['/hospitality'], 'api' => ['hospitality/dashboard', 'reports/dashboard']],
+                ['id' => 'hotel_pos', 'label' => 'Hotel POS', 'paths' => ['/hotel-bar-pos', '/hospitality/pos'], 'api' => ['hospitality/pos']],
                 ['id' => 'rooms', 'label' => 'Rooms & guests', 'paths' => ['/hospitality/rooms', '/hospitality/reservations', '/hospitality/front-desk', '/hospitality/folios'], 'api' => ['hospitality/rooms', 'hospitality/reservations', 'hospitality/front-desk', 'hospitality/folios']],
                 ['id' => 'sales', 'label' => 'Sales', 'paths' => ['/hospitality/orders', '/hospitality/payments-breakdown', '/hospitality/end-of-day'], 'api' => ['hospitality/orders', 'hospitality/payments', 'hospitality/end-of-day']],
                 ['id' => 'catalogue', 'label' => 'Menu & products', 'paths' => ['/products', '/categories', '/uoms'], 'api' => ['products', 'categories', 'uoms']],

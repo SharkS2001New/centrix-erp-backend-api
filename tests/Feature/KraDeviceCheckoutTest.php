@@ -509,13 +509,13 @@ class KraDeviceCheckoutTest extends TestCase
             'quantity' => 1,
         ])->assertCreated();
 
-        $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
             'status' => 'completed',
             'submit_kra' => true,
             'customer_num' => $customer->customer_num,
             'pos_order_num' => 42,
             'pos_order_date' => now()->toDateString(),
-        ])->assertCreated();
+        ])->assertCreated()->json();
 
         $command = KraAgentCommand::query()
             ->where('path', '/api/complete-workflow')

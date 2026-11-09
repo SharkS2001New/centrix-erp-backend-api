@@ -106,19 +106,17 @@ class RoleController extends BaseResourceController
             fn (int $id) => isset($allowedFlip[$id]),
         ));
 
-        // Global roles are shared across industries — preserve grants outside this industry's matrix
-        // so saving from a retail tenant does not strip hotel permissions (and vice versa).
+        // Preserve grants outside the currently editable matrix (disabled modules, and for
+        // global roles also other industries) so saving the visible set does not strip them.
         $preservedIds = [];
-        if ($role->organization_id === null) {
-            $existingIds = DB::table('role_permissions')
-                ->where('role_id', $role->id)
-                ->pluck('permission_id')
-                ->map(fn ($v) => (int) $v)
-                ->all();
-            foreach ($existingIds as $existingId) {
-                if (! isset($allowedFlip[$existingId])) {
-                    $preservedIds[] = $existingId;
-                }
+        $existingIds = DB::table('role_permissions')
+            ->where('role_id', $role->id)
+            ->pluck('permission_id')
+            ->map(fn ($v) => (int) $v)
+            ->all();
+        foreach ($existingIds as $existingId) {
+            if (! isset($allowedFlip[$existingId])) {
+                $preservedIds[] = $existingId;
             }
         }
 

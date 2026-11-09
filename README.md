@@ -39,9 +39,9 @@ php artisan serve
 
 ## Testing
 
-**Local only** — run `php artisan test` on your machine. Tests are **not** run during Docker image build or in GitHub Actions.
+Docker image builds do **not** run PHPUnit. Every push/PR runs **Smoke** (seconds) plus **Critical** (MySQL — cart/checkout, hotel POS, auth, RBAC, KRA). Full Unit remains local / nightly / manual.
 
-Feature and unit tests use MySQL database `pos_erp_test` (`DB_DATABASE_TEST` in `.env` / `phpunit.xml`). Each feature test class reloads schema + demo seed via `RefreshesErpDatabase`.
+Feature and unit tests that need MySQL use `pos_erp_test` (`DB_DATABASE_TEST`). Classes using `RefreshesErpDatabase` reload schema + demo seed between tests — that is what makes the full suite slow.
 
 **Local setup**
 
@@ -53,6 +53,13 @@ composer install
 cp .env.example .env   # set DB_*_LOCAL for your machine
 php artisan key:generate
 
+# Same gates as CI
+php artisan test --testsuite=Smoke --fail-on-skipped
+php artisan test --testsuite=Critical --fail-on-skipped
+
+# Full suites
+php artisan test --testsuite=Unit
+php artisan test --testsuite=Feature
 php artisan test
 
 # Single file or filter
@@ -70,7 +77,8 @@ php -d memory_limit=512M artisan test
 
 | Workflow | Runs tests? |
 |----------|-------------|
-| `ci.yml` | No — `composer audit` only |
+| `ci.yml` | Yes — `composer audit` + **Smoke** + **Critical** (always; `--fail-on-skipped`) |
+| `ci-full.yml` | Yes — full **Unit** (MySQL), nightly + workflow_dispatch |
 | `docker-publish.yml` | No — builds/pushes image only (`composer install --no-dev`, `tests/` excluded) |
 
 ## Capabilities (per tenant)

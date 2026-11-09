@@ -140,6 +140,13 @@ class PermissionMatrixService
             self::ensureAdministratorIndustryCatalogPermissions();
         } finally {
             self::$ensuring = false;
+            // Mark ensureCached() satisfied so read paths (matrix / role sync payload)
+            // do not re-run role-grant migrations and undo an intentional sync.
+            Cache::put(
+                'erp:permission_matrix:ensure_done:'.self::registryCacheVersion(),
+                true,
+                86400 * 7,
+            );
             // ensure() mutates `permissions` and `role_permissions`. Flush the
             // request-scoped catalog so later reads in the same request/process
             // see the new rows. In a finally so a partial failure can't leave
@@ -331,6 +338,8 @@ class PermissionMatrixService
     /** @return list<int> Permission ids whose registry module is enabled for the org. */
     public static function enabledPermissionIds(CapabilityGate $gate, bool $includeAdminWhenDisabled = false): array
     {
+        // Catalog/read path: run role-grant migrations at most once per registry version.
+        // Calling ensure() here re-inserted admin/cashier grants after every role sync.
         self::ensureCached();
 
         return app(PermissionCatalog::class)
@@ -970,15 +979,13 @@ class PermissionMatrixService
             return;
         }
 
+        // Only roles that already have POS checkout — do not force-attach by role name,
+        // or an intentional Cashier permission sync/clear is undone on the next matrix read.
         $roleIds = DB::table('role_permissions')
             ->where('permission_id', $checkoutId)
             ->pluck('role_id');
 
-        $namedCashierIds = Role::query()
-            ->whereIn('role_name', ['Cashier'])
-            ->pluck('id');
-
-        foreach ($roleIds->merge($namedCashierIds)->unique() as $roleId) {
+        foreach ($roleIds->unique() as $roleId) {
             DB::table('role_permissions')->insertOrIgnore([
                 'role_id' => $roleId,
                 'permission_id' => $collectId,

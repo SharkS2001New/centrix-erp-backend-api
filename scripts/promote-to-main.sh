@@ -21,8 +21,12 @@ if [[ -n "$(git status --porcelain)" ]]; then
   exit 1
 fi
 
-echo "==> Running unit + feature tests"
-php artisan test --stop-on-failure
+echo "==> Running smoke + critical gates (full suite: php artisan test --testsuite=Unit)"
+php artisan test --testsuite=Smoke --fail-on-skipped
+php artisan test --testsuite=Critical --fail-on-skipped
+php artisan test tests/Feature/SalesCartCheckoutStockTest.php \
+  --filter='test_create_cart_and_add_line_reserves_stock|test_checkout_completes_sale_and_deducts_ledger|test_clear_cart_releases_reservation|test_inventory_availability_endpoint|test_held_order_can_be_cancelled|test_hold_order_can_be_restored_to_cart|test_checkout_rejects_expired_cart_holds_when_stock_is_gone|test_cart_rejects_unknown_product_code' \
+  --fail-on-skipped
 
 echo "==> Fetching remotes"
 git fetch origin master main
