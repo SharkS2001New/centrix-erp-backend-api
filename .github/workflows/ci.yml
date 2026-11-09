@@ -285,9 +285,9 @@ jobs:
             exit 0
           fi
 
-          # main is strictly ahead and contains master — fast-forward master only.
+          # main ahead only — update master from main (never leave master behind).
           if git merge-base --is-ancestor "${MASTER_SHA}" "${MAIN_SHA}"; then
-            echo "main contains master; fast-forwarding master to main so it is never behind."
+            echo "main is ahead of master; fast-forwarding master to main."
             git push --ff-only origin "${MAIN_SHA}:refs/heads/master"
             echo "Synced master → ${MAIN_SHA} (ff-only)"
             exit 0
@@ -404,10 +404,10 @@ jobs:
             exit 0
           fi
 
-          # master is strictly behind — fast-forward only.
+          # main ahead — update master from main.
           if git merge-base --is-ancestor "${MASTER_SHA}" "${MAIN_SHA}"; then
             git push --ff-only origin "${MAIN_SHA}:refs/heads/master"
-            echo "Fast-forwarded master → ${MAIN_SHA}"
+            echo "main was ahead; fast-forwarded master → ${MAIN_SHA}"
             exit 0
           fi
 

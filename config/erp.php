@@ -56,7 +56,28 @@ return [
         'small_shop' => [
             'label' => 'Small shop (backoffice sales only)',
             'industry' => 'commerce',
-            'business_types' => ['Pharmacy', 'Hardware', 'Retail shop'],
+            'business_types' => [
+                'Pharmacy',
+                'Hardware',
+                'Retail shop',
+                'Mini mart',
+                'Shoe shop',
+                'Perfumes & cosmetics',
+                'Fashion & clothing',
+                'Boutique',
+                'Electronics & phones',
+                'Furniture & home',
+                'Agrovet',
+                'Bookshop & stationery',
+                'Butchery',
+                'Liquor store',
+                'Optical',
+                'Jewelry & accessories',
+                'Pet shop',
+                'Gift shop',
+                'Sports & outdoor',
+                'Baby & kids',
+            ],
             'application_ids' => ['pos', 'backoffice', 'accounting', 'hr', 'admin'],
             'modules' => array_merge($allModulesFalse, [
                 'sales' => true,
@@ -76,7 +97,15 @@ return [
         'wholesale_retail' => [
             'label' => 'Wholesale & retail (full stack)',
             'industry' => 'commerce',
-            'business_types' => ['Wholesale shop', 'Retail shop'],
+            'business_types' => [
+                'Wholesale shop',
+                'Retail shop',
+                'Fashion & clothing',
+                'Electronics & phones',
+                'Furniture & home',
+                'Perfumes & cosmetics',
+                'Shoe shop',
+            ],
             'application_ids' => ['pos', 'backoffice', 'distribution', 'accounting', 'hr', 'admin'],
             'modules' => array_merge($allModulesFalse, [
                 'sales' => true,
@@ -104,7 +133,7 @@ return [
         'supermarket' => [
             'label' => 'Supermarket (POS retail)',
             'industry' => 'commerce',
-            'business_types' => ['Supermarket'],
+            'business_types' => ['Supermarket', 'Mini mart'],
             'application_ids' => ['pos', 'backoffice', 'accounting', 'hr', 'admin'],
             'modules' => array_merge($allModulesFalse, [
                 'sales' => true,
@@ -140,7 +169,7 @@ return [
         'distribution' => [
             'label' => 'Distribution / warehouse',
             'industry' => 'commerce',
-            'business_types' => ['Wholesale shop'],
+            'business_types' => ['Wholesale shop', 'Distribution', 'Warehouse'],
             'application_ids' => ['pos', 'backoffice', 'distribution', 'accounting', 'hr', 'admin'],
             'modules' => array_merge($allModulesFalse, [
                 'sales' => true,
@@ -170,7 +199,7 @@ return [
         'hotel_bar' => [
             'label' => 'Hotel & Bar',
             'industry' => 'hospitality',
-            'business_types' => ['Hotel', 'Lodge', 'Bar / restaurant'],
+            'business_types' => ['Hotel', 'Lodge', 'Bar / restaurant', 'Café'],
             // Hotel POS + Hotel Backoffice + Admin. Accounting / HR stay optional for Platform to tick.
             // Retail POS / Backoffice / Distribution stay off for this industry.
             'application_ids' => [
@@ -198,7 +227,7 @@ return [
         'spa_kinyozi' => [
             'label' => 'SPA & Kinyozi',
             'industry' => 'spa',
-            'business_types' => ['SPA / Salon / Kinyozi'],
+            'business_types' => ['SPA / Salon / Kinyozi', 'Barbershop'],
             // Lean salon workspace — Accounting / HR are not part of this setup.
             'application_ids' => ['spa', 'admin'],
             'modules' => array_merge($allModulesFalse, [
