@@ -112,8 +112,16 @@ class ModuleRegistry
         }
 
         $primary = self::reportModuleForSlug($slug);
+        if ($primary === null) {
+            return [];
+        }
 
-        return $primary !== null ? [$primary] : [];
+        // Hotel & Bar AS mobile enables hospitality.reports without sales.reports.
+        if ($primary === 'sales.reports') {
+            return ['sales.reports', 'hospitality.reports'];
+        }
+
+        return [$primary];
     }
 
     /**

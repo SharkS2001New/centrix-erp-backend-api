@@ -448,7 +448,8 @@ Route::middleware('auth:sanctum')->group(function () {
         });
 
         // Sales operational and analytics reports.
-        Route::middleware('erp.permission:reports.view|sales.view')->group(function () {
+        // sales.create covers AS / mobile reps who can sell but lack reports.view.
+        Route::middleware('erp.permission:reports.view|sales.view|sales.create')->group(function () {
             Route::get('sales-by-product', [ReportController::class, 'salesByProduct']);
             Route::get('sales-by-supplier', [ReportController::class, 'salesBySupplier']);
             Route::get('sales-by-user', [ReportController::class, 'salesByUser']);

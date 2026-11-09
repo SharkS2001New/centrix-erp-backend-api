@@ -156,6 +156,48 @@ class UserLoginChannelTest extends TestCase
             ->assertCreated();
     }
 
+    public function test_mobile_session_can_access_allowlisted_sales_reports(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $routeId = (int) (\App\Models\RouteModel::query()->value('id') ?? 1);
+        $user = User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $admin->role_id,
+            'username' => 'mobile_reports_'.uniqid(),
+            'email' => null,
+            'password' => Hash::make('password'),
+            'full_name' => 'Mobile Reports User',
+            'is_admin' => false,
+            'access_scope' => 'branch',
+            'login_channels' => ['mobile'],
+            'mobile_order_scope' => 'route_only',
+            'assigned_route_id' => $routeId,
+            'is_active' => true,
+        ]);
+
+        $issued = $user->createToken('MOBILE_REPORTS_TEST', ['*']);
+        $issued->accessToken->forceFill([
+            'organization_id' => $user->organization_id,
+            'login_channel' => 'mobile',
+        ])->save();
+        $token = $issued->plainTextToken;
+        $today = now()->toDateString();
+
+        $this->withToken($token)
+            ->getJson("/api/v1/reports/sales-by-supplier?from_date={$today}&to_date={$today}&date_column=sale_date&per_page=10")
+            ->assertOk();
+
+        $this->withToken($token)
+            ->getJson("/api/v1/reports/sales-by-product?from_date={$today}&to_date={$today}&date_column=sale_date&per_page=10")
+            ->assertOk();
+
+        $this->withToken($token)
+            ->getJson("/api/v1/reports/eod-report?from_date={$today}&to_date={$today}")
+            ->assertStatus(403)
+            ->assertJsonPath('code', 'login_channel_forbidden');
+    }
+
     public function test_pos_session_can_access_pos_sales_and_branches_but_not_admin_users(): void
     {
         $user = $this->makeUser(['login_channels' => ['pos']]);

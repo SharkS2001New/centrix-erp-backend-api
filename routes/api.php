@@ -1149,8 +1149,8 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['index', 'show'], ['erp.permission:inventory.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:inventory.manage|inventory.damages.create']);
             Route::apiResource('stock-receipts', StockReceiptController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:inventory.view'])
-                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:inventory.manage']);
+                ->middlewareFor(['index', 'show'], ['erp.permission:inventory.view|inventory.receipts.view'])
+                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:inventory.manage|inventory.receipts.create']);
             Route::get('inventory/expiring-batches', [ExpiringBatchController::class, 'index'])
                 ->middleware('erp.permission:inventory.view|inventory.receipts.view');
             Route::post('inventory/expiring-batches/{id}/clear', [ExpiringBatchController::class, 'clear'])

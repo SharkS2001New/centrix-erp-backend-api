@@ -220,6 +220,7 @@ return [
                 // AS / Centrix mobile app (login_channel=mobile) for hotel & bar outlets.
                 'sales' => true,
                 'sales.mobile' => true,
+                'sales.reports' => true,
                 'inventory' => true,
                 'inventory.dashboard' => true,
                 'inventory.reports' => true,

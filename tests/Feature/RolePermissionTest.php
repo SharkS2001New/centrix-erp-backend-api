@@ -373,10 +373,11 @@ class RolePermissionTest extends TestCase
         $this->assertTrue($appIds->contains('hotel_bar_pos'));
         $this->assertTrue($appIds->contains('hospitality_backoffice'));
         $this->assertTrue($appIds->contains('manager'));
+        // Hotel & Bar uses the AS / Centrix mobile shop app (not retail External POS).
+        $this->assertTrue($appIds->contains('mobile'));
         $this->assertFalse($appIds->contains('pos'));
         $this->assertFalse($appIds->contains('backoffice'));
         $this->assertFalse($appIds->contains('distribution'));
-        $this->assertFalse($appIds->contains('mobile'));
 
         $manager = collect($matrix->json('applications'))->firstWhere('id', 'manager');
         $this->assertNotNull(collect($manager['modules'] ?? [])->firstWhere('module', 'reports'));
@@ -384,17 +385,17 @@ class RolePermissionTest extends TestCase
         $groupModules = collect($matrix->json('groups'))->pluck('module');
         $this->assertTrue($groupModules->contains('hospitality'));
         $this->assertTrue($groupModules->contains('hotel_bar_pos'));
+        $this->assertTrue($groupModules->contains('mobile_sales'));
         // Manager app shell is present (reports module); mobile_manager rows may be empty when
         // the org has not enabled manager-channel grants beyond the industry application list.
         $this->assertNotNull($manager);
         $this->assertFalse($groupModules->contains('pos'));
         $this->assertFalse($groupModules->contains('sales'));
-        $this->assertFalse($groupModules->contains('mobile_sales'));
         $this->assertFalse($groupModules->contains('fulfillment'));
 
         $permissionCodes = collect($matrix->json('permissions'))->pluck('permission_code');
         $this->assertFalse($permissionCodes->contains(fn ($code) => str_starts_with((string) $code, 'pos.')));
-        $this->assertFalse($permissionCodes->contains(fn ($code) => str_starts_with((string) $code, 'mobile_sales.')));
+        $this->assertTrue($permissionCodes->contains(fn ($code) => str_starts_with((string) $code, 'mobile_sales.')));
     }
 
     public function test_hospitality_roles_index_hides_commerce_templates(): void

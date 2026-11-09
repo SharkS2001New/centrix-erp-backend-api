@@ -20,7 +20,14 @@ class ProcurementSettingsResolver
             ? $organization->module_settings['procurement']
             : [];
 
-        return self::normalize(array_merge(self::defaults(), $stored));
+        $settings = self::normalize(array_merge(self::defaults(), $stored));
+
+        // Small shops stock only in shop — never default receive into store.
+        if (($organization->deployment_profile ?? '') === 'small_shop') {
+            $settings['default_receive_location'] = 'shop';
+        }
+
+        return $settings;
     }
 
     /** @return array<string, mixed> */

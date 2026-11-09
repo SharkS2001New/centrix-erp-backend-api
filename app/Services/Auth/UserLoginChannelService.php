@@ -367,6 +367,7 @@ class UserLoginChannelService
             // AS shop purchases / stock reconciliation.
             'inventory/receive',
             'inventory/adjust',
+            'stock-receipts',
             'current-stock',
             'routes',
             'uoms',
