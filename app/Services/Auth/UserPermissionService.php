@@ -22,51 +22,12 @@ use Illuminate\Validation\ValidationException;
 class UserPermissionService
 {
     /**
-     * Per-instance memoization for rememberRequest(). Only meaningful when the
-     * container resolves this service as `scoped` (see AppServiceProvider), so
-     * the same instance is reused across call sites within one HTTP request or
-     * queue job. A fresh resolve means a fresh cache — intentional, matching
-     * the request-scoped lifetime.
-     *
-     * @var array<string, mixed>
-     */
-    private array $requestCache = [];
-
-    /**
      * Request-scoped permission catalog. Resolved lazily via app() so existing
      * `new UserPermissionService()` call sites (if any) keep working.
      */
     private function catalog(): PermissionCatalog
     {
         return app(PermissionCatalog::class);
-    }
-
-    /**
-     * Memoize $callback under $key for the lifetime of this instance. Combined
-     * with the `scoped` container binding, this collapses repeated per-request
-     * lookups against role_permissions / user_permission_overrides into one.
-     *
-     * @template T
-     * @param  callable(): T  $callback
-     * @return T
-     */
-    private function rememberRequest(string $key, callable $callback): mixed
-    {
-        if (array_key_exists($key, $this->requestCache)) {
-            return $this->requestCache[$key];
-        }
-
-        return $this->requestCache[$key] = $callback();
-    }
-
-    /**
-     * Drop the per-instance memoization. Call after writing to any of the
-     * tables the cached lookups read from so later reads in the same request
-     * see the just-written rows.
-     */
-    public function flushRequestCache(): void
-    {
-        $this->requestCache = [];
     }
 
     /** @return list<int> */
@@ -1244,7 +1205,6 @@ class UserPermissionService
 
         Cache::forget('user_permission_overrides:'.$userId.':grant');
         Cache::forget('user_permission_overrides:'.$userId.':deny');
-        $this->flushRequestCache();
     }
 
     public function forgetRolePermissionCache(?int $roleId): void
@@ -1252,7 +1212,6 @@ class UserPermissionService
         if ($roleId) {
             Cache::forget('role_permission_ids:'.$roleId);
         }
-        $this->flushRequestCache();
     }
 
     /** @return Collection<int, User> */
