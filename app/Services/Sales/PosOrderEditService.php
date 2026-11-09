@@ -92,6 +92,11 @@ class PosOrderEditService
         $orderSource = strtolower((string) ($sale->order_source ?? ''));
         $isPosSale = $channel === 'pos' || $orderSource === 'pos';
 
+        // Parked tickets are always restorable — this is not “edit completed POS orders”.
+        if (in_array($status, ['held', 'draft'], true)) {
+            return;
+        }
+
         // LightStores parity: when “Allow editing completed POS orders” is on, cashiers can
         // pull back any non-expired POS receipt (held / unpaid / paid / completed / …),
         // adjust lines + stock, then re-checkout under the same order number.

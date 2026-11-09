@@ -551,9 +551,11 @@ class SalesCartCheckoutStockTest extends TestCase
         $this->assertEquals(2.0, (float) ($cart['lines'][0]['quantity'] ?? 0));
         $this->assertNull($cart['held_order_num'] ?? null);
         $this->assertNull($cart['superseded_sale_id'] ?? null);
-        $this->assertEquals('cancelled', Sale::find($sale['id'])->status);
-        // Parked held sale keeps its order_num (not tombstoned); complete books a new sale.
-        $this->assertEquals((int) $sale['order_num'], (int) Sale::find($sale['id'])->order_num);
+        $cancelled = Sale::find($sale['id']);
+        $this->assertEquals('cancelled', $cancelled->status);
+        // Parked held sale is tombstoned so Complete can book a fresh order_num without colliding.
+        $this->assertNotEquals((int) $sale['order_num'], (int) $cancelled->order_num);
+        $this->assertGreaterThanOrEqual(9000000, (int) $cancelled->order_num);
     }
 
     public function test_backend_save_at_unpaid_reserves_stock_when_reserve_point_is_booked(): void
