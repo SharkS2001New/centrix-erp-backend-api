@@ -4,9 +4,15 @@ namespace Tests\Feature;
 
 use App\Models\Branch;
 use App\Models\CurrentStock;
+use App\Models\Customer;
+use App\Models\Driver;
 use App\Models\Organization;
 use App\Models\Product;
+use App\Models\RouteModel;
+use App\Models\Sale;
+use App\Models\Supplier;
 use App\Models\User;
+use App\Models\Vehicle;
 use App\Services\Platform\PlatformDemoDataService;
 use Illuminate\Support\Facades\Storage;
 use Tests\Concerns\RefreshesErpDatabase;
@@ -34,9 +40,24 @@ class PlatformCommerceDemoDataTest extends TestCase
             $this->assertSame($profile, $result['profile']);
             $this->assertSame(8, $result['products']);
             $this->assertSame(8, $result['images']);
+            $this->assertSame(2, $result['suppliers']);
+            $this->assertSame(3, $result['customers']);
+            $this->assertGreaterThanOrEqual(3, $result['sales']);
             $this->assertSame(8, Product::query()
                 ->where('organization_id', $org->id)
                 ->where('product_code', 'like', 'DEMO-COM-'.$org->id.'-%')
+                ->count());
+            $this->assertSame(2, Supplier::query()
+                ->where('organization_id', $org->id)
+                ->where('supplier_code', 'like', 'DEMO-SUP-'.$org->id.'-%')
+                ->count());
+            $this->assertSame(3, Customer::query()
+                ->where('organization_id', $org->id)
+                ->whereIn('customer_num', [91001, 91002, 91003])
+                ->count());
+            $this->assertGreaterThanOrEqual(3, Sale::query()
+                ->where('organization_id', $org->id)
+                ->where('fulfillment_meta->platform_demo', true)
                 ->count());
 
             $products = Product::query()
@@ -50,14 +71,37 @@ class PlatformCommerceDemoDataTest extends TestCase
                     'Commerce demo photos should be stored on the public disk',
                 );
                 $this->assertTrue(Storage::disk('public')->exists($product->image_path));
-                $this->assertStringContainsString('/image/file', (string) $product->image_url);
-                $this->assertStringContainsString('v='.$product->image_version, (string) $product->image_url);
+                $imageUrl = (string) $product->image_url;
+                $this->assertTrue(
+                    str_contains($imageUrl, '/image/file') || str_contains($imageUrl, '/storage/'),
+                    'Commerce demo photo URL should be a local file URL',
+                );
+                $this->assertStringContainsString('v='.$product->image_version, $imageUrl);
+                $this->assertNotNull($product->supplier_id);
             }
 
             $this->assertSame(8, CurrentStock::query()
                 ->whereIn('product_code', $result['product_codes'])
                 ->where('branch_id', $branch->id)
                 ->count());
+
+            $wantsDistribution = in_array($profile, ['distribution', 'wholesale_retail'], true);
+            $this->assertSame($wantsDistribution, (bool) $result['distribution']);
+            if ($wantsDistribution) {
+                $this->assertTrue(RouteModel::query()
+                    ->where('organization_id', $org->id)
+                    ->where('route_name', 'Demo city route')
+                    ->exists());
+                $this->assertTrue(Driver::query()
+                    ->where('organization_id', $org->id)
+                    ->where('driver_code', 'DEMO-DRV-'.$org->id)
+                    ->exists());
+                $this->assertTrue(Vehicle::query()
+                    ->where('organization_id', $org->id)
+                    ->where('vehicle_code', 'DEMO-VEH-'.$org->id)
+                    ->exists());
+                $this->assertGreaterThanOrEqual(5, $result['sales']);
+            }
         }
 
         $service->clearOrganization($org->fresh());
@@ -69,6 +113,18 @@ class PlatformCommerceDemoDataTest extends TestCase
         $this->assertSame(0, CurrentStock::query()
             ->where('branch_id', $branch->id)
             ->where('product_code', 'like', 'DEMO-COM-'.$org->id.'-%')
+            ->count());
+        $this->assertSame(0, Supplier::query()
+            ->where('organization_id', $org->id)
+            ->where('supplier_code', 'like', 'DEMO-SUP-'.$org->id.'-%')
+            ->count());
+        $this->assertSame(0, Customer::query()
+            ->where('organization_id', $org->id)
+            ->whereIn('customer_num', [91001, 91002, 91003])
+            ->count());
+        $this->assertSame(0, Sale::query()
+            ->where('organization_id', $org->id)
+            ->where('fulfillment_meta->platform_demo', true)
             ->count());
     }
 

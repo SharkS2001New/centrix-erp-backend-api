@@ -369,10 +369,14 @@ class PlatformDemoDataService
             return [
                 'profile' => $profile,
                 'message' => sprintf(
-                    'Seeded %d %s with %d product photos and opening stock for this %s organisation.',
+                    'Seeded %d %s with %d photos, %d suppliers, %d customers, %d sample sales%s, and opening stock for this %s organisation.',
                     $result['products'],
                     $catalogue,
                     $result['images'],
+                    $result['suppliers'] ?? 0,
+                    $result['customers'] ?? 0,
+                    $result['sales'] ?? 0,
+                    ! empty($result['distribution']) ? ', plus a demo route / driver / vehicle' : '',
                     config('erp.profiles.'.$profile.'.label') ?: $profile,
                 ),
                 ...$result,
