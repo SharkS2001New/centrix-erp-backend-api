@@ -6,6 +6,7 @@
 #   RUN_MIGRATIONS_ON_START=false          — skip php artisan migrate --force
 #   RUN_PERMISSIONS_SYNC_ON_START=false    — skip php artisan erp:permissions-sync
 #   RUN_STORAGE_LINK_ON_START=false        — skip php artisan storage:link --force
+#   PUBLIC_STORAGE_DRIVER=r2|s3            — also skips storage:link (objects live in cloud)
 set -e
 
 mkdir -p resources/views
@@ -39,11 +40,14 @@ else
   echo "[bootstrap] Skipping permission sync (RUN_PERMISSIONS_SYNC_ON_START=false)."
 fi
 
-if [ "${RUN_STORAGE_LINK_ON_START:-true}" != "false" ]; then
+PUBLIC_DRIVER="$(printf '%s' "${PUBLIC_STORAGE_DRIVER:-local}" | tr '[:upper:]' '[:lower:]')"
+if [ "${RUN_STORAGE_LINK_ON_START:-true}" = "false" ]; then
+  echo "[bootstrap] Skipping storage:link (RUN_STORAGE_LINK_ON_START=false)."
+elif [ "$PUBLIC_DRIVER" = "r2" ] || [ "$PUBLIC_DRIVER" = "s3" ]; then
+  echo "[bootstrap] Skipping storage:link (PUBLIC_STORAGE_DRIVER=${PUBLIC_DRIVER}; public files are remote)."
+else
   echo "[bootstrap] Linking public storage..."
   php artisan storage:link --force
-else
-  echo "[bootstrap] Skipping storage:link (RUN_STORAGE_LINK_ON_START=false)."
 fi
 
 echo "[bootstrap] Done."

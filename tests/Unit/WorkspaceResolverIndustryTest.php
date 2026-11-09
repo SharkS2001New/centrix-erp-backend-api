@@ -19,6 +19,19 @@ class WorkspaceResolverIndustryTest extends TestCase
         });
     }
 
+    /**
+     * Unsaved DEMO orgs resolve as unpaid/free and package entitlements hide apps.
+     * Use the platform company code so these tests cover industry/module behaviour only.
+     *
+     * @param  array<string, mixed>  $attributes
+     */
+    protected function organization(array $attributes): Organization
+    {
+        return new Organization(array_merge([
+            'company_code' => (string) config('erp.platform_company_code', 'PLATFORM'),
+        ], $attributes));
+    }
+
     public function test_commerce_org_never_sees_hotel_workspaces_even_with_inventory(): void
     {
         $this->mockPermissionMap([
@@ -27,7 +40,7 @@ class WorkspaceResolverIndustryTest extends TestCase
             'catalogue.products.view' => true,
         ]);
 
-        $org = new Organization([
+        $org = $this->organization([
             'deployment_profile' => 'wholesale_retail',
             'enabled_modules' => [
                 'sales' => true,
@@ -65,7 +78,7 @@ class WorkspaceResolverIndustryTest extends TestCase
             'hospitality.dashboard.view' => true,
         ]);
 
-        $org = new Organization([
+        $org = $this->organization([
             'deployment_profile' => 'hotel_bar',
             'enabled_modules' => [
                 'hospitality' => true,
@@ -105,7 +118,7 @@ class WorkspaceResolverIndustryTest extends TestCase
             'catalogue.products.view' => true,
         ]);
 
-        $org = new Organization([
+        $org = $this->organization([
             'deployment_profile' => 'wholesale_retail',
             'enabled_modules' => [
                 'inventory' => true,
@@ -145,7 +158,7 @@ class WorkspaceResolverIndustryTest extends TestCase
             'admin.users.view' => true,
         ]);
 
-        $org = new Organization([
+        $org = $this->organization([
             'deployment_profile' => 'hotel_bar',
             'enabled_modules' => [
                 'hospitality' => true,
@@ -188,7 +201,7 @@ class WorkspaceResolverIndustryTest extends TestCase
             'payments.sale_payments.view' => true,
         ]);
 
-        $org = new Organization([
+        $org = $this->organization([
             'deployment_profile' => 'wholesale_retail',
             'enabled_modules' => [
                 'sales' => true,

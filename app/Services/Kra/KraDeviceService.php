@@ -1694,14 +1694,22 @@ class KraDeviceService
         $code = $translated['code'] ?? null;
 
         // Product upload path: Code 34/034 is PLU data invalid — never "receipt number".
+        // Sale/credit payloads also carry plu_data lines; do not remap E337 (missing PLU)
+        // into the E034 "invalid upload" copy just because the payload has plu_data.
         if (
             $this->usesUploadPluDataPayload($path)
             || str_contains(strtolower($path), 'register-plu')
             || isset($payload['plu_items'])
             || isset($payload['plu_data'])
         ) {
-            if (in_array((string) $code, ['34', '034'], true)
-                || KraDeviceErrorTranslator::looksLikePluUploadFailure($technical.$message)
+            $missingOnDevice = in_array((string) $code, ['337', '13'], true)
+                || preg_match('/NO\s+FIND\s+PLU\s+DATA/i', $technical.$message) === 1;
+            if (
+                ! $missingOnDevice
+                && (
+                    in_array((string) $code, ['34', '034'], true)
+                    || KraDeviceErrorTranslator::looksLikePluUploadFailure($technical.$message)
+                )
             ) {
                 $pluMessage = config('kra_device_errors.codes.034');
                 if (is_string($pluMessage) && $pluMessage !== '') {

@@ -170,6 +170,7 @@ class PublicMediaR2SettingsResolver
             return $cfg;
         }
 
+        // R2 rejects object ACLs — never set visibility/ACL on this disk.
         config([
             'filesystems.disks.public' => [
                 'driver' => 's3',

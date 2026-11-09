@@ -62,15 +62,20 @@ return [
             'use_path_style_endpoint' => filter_var(env('AWS_USE_PATH_STYLE_ENDPOINT', true), FILTER_VALIDATE_BOOL),
             'throw' => false,
         ],
+        // Named R2 disk used by database backups (runtime may overwrite via BackupR2SettingsResolver).
+        // Product/media uploads use the "public" disk above when PUBLIC_STORAGE_DRIVER=r2.
         'r2' => [
             'driver' => 's3',
-            'key' => env('BACKUP_R2_ACCESS_KEY_ID'),
-            'secret' => env('BACKUP_R2_SECRET_ACCESS_KEY'),
-            'region' => env('BACKUP_R2_REGION', 'auto'),
-            'bucket' => env('BACKUP_R2_BUCKET'),
-            'url' => env('BACKUP_R2_PUBLIC_URL'),
-            'endpoint' => env('BACKUP_R2_ENDPOINT'),
-            'use_path_style_endpoint' => filter_var(env('BACKUP_R2_USE_PATH_STYLE_ENDPOINT', true), FILTER_VALIDATE_BOOL),
+            'key' => env('BACKUP_R2_ACCESS_KEY_ID', env('PUBLIC_R2_ACCESS_KEY_ID')),
+            'secret' => env('BACKUP_R2_SECRET_ACCESS_KEY', env('PUBLIC_R2_SECRET_ACCESS_KEY')),
+            'region' => env('BACKUP_R2_REGION', env('PUBLIC_R2_REGION', 'auto')),
+            'bucket' => env('BACKUP_R2_BUCKET', env('PUBLIC_R2_BUCKET')),
+            'url' => env('BACKUP_R2_PUBLIC_URL', env('PUBLIC_R2_PUBLIC_URL')),
+            'endpoint' => env('BACKUP_R2_ENDPOINT', env('PUBLIC_R2_ENDPOINT')),
+            'use_path_style_endpoint' => filter_var(
+                env('BACKUP_R2_USE_PATH_STYLE_ENDPOINT', env('PUBLIC_R2_USE_PATH_STYLE_ENDPOINT', true)),
+                FILTER_VALIDATE_BOOL,
+            ),
             'throw' => true,
         ],
     ],

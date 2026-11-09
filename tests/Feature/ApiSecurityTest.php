@@ -86,7 +86,7 @@ class ApiSecurityTest extends TestCase
             'password' => 'wrong-password',
             'client_id' => 'test-client',
         ], [
-            'Origin' => 'https://centrixerp.betsassured.com',
+            'Origin' => 'https://app.centrixerp.co.ke',
         ])
             ->assertStatus(422)
             ->assertJsonMissing(['message' => 'CSRF token mismatch.']);
@@ -94,13 +94,13 @@ class ApiSecurityTest extends TestCase
 
     public function test_cors_allows_frontend_url_origin(): void
     {
-        config(['cors.allowed_origins' => ['https://centrixerp.betsassured.com']]);
+        config(['cors.allowed_origins' => ['https://app.centrixerp.co.ke']]);
 
         $this->options('/api/v1/health', [], [
-            'Origin' => 'https://centrixerp.betsassured.com',
+            'Origin' => 'https://app.centrixerp.co.ke',
             'Access-Control-Request-Method' => 'GET',
         ])
             ->assertNoContent()
-            ->assertHeader('Access-Control-Allow-Origin', 'https://centrixerp.betsassured.com');
+            ->assertHeader('Access-Control-Allow-Origin', 'https://app.centrixerp.co.ke');
     }
 }
