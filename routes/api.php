@@ -92,6 +92,7 @@ use App\Http\Controllers\Api\V1\PlatformPaybillController;
 use App\Http\Controllers\Api\V1\SetupProfileMenuController;
 use App\Http\Controllers\Api\V1\PlatformSubscriptionController;
 use App\Http\Controllers\Api\V1\PlatformDatabaseBackupController;
+use App\Http\Controllers\Api\V1\PlatformPublicMediaStorageController;
 use App\Http\Controllers\Api\V1\RetailPackageImportController;
 use App\Http\Controllers\Api\V1\PlatformSystemIssueReportController;
 use App\Http\Controllers\Api\V1\PlatformWhatsNewController;
@@ -594,6 +595,14 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::post('admin/database-backup-settings/test-upload', [PlatformDatabaseBackupController::class, 'testR2Upload'])
             ->middleware(['erp.super_admin']);
+        Route::get('admin/public-media-storage-settings', [PlatformPublicMediaStorageController::class, 'show'])
+            ->middleware(['erp.super_admin']);
+        Route::put('admin/public-media-storage-settings', [PlatformPublicMediaStorageController::class, 'update'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/public-media-storage-settings/test-connection', [PlatformPublicMediaStorageController::class, 'testConnection'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/public-media-storage-settings/test-upload', [PlatformPublicMediaStorageController::class, 'testUpload'])
+            ->middleware(['erp.super_admin']);
         Route::get('admin/slow-queries', [\App\Http\Controllers\Api\V1\PlatformSlowQueryController::class, 'index'])
             ->middleware(['erp.super_admin']);
         Route::post('admin/slow-queries/reset', [\App\Http\Controllers\Api\V1\PlatformSlowQueryController::class, 'reset'])
@@ -916,50 +925,47 @@ Route::prefix('v1')->group(function () {
                 Route::get('accounting/settings', [\App\Http\Controllers\Api\V1\Operations\AccountingSettingsController::class, 'show']);
                 Route::patch('accounting/settings', [\App\Http\Controllers\Api\V1\Operations\AccountingSettingsController::class, 'update']);
                 Route::post('accounting/seed-chart-of-accounts', [\App\Http\Controllers\Api\V1\Operations\AccountingSettingsController::class, 'seedChart']);
-                Route::post('logo', function (Request $request, $organization) {
-                    return app(OrganizationController::class)->uploadLogo($request, (string) $organization);
-                });
-                Route::get('logo/file', function (Request $request, $organization) {
-                    return app(OrganizationController::class)->logoFile($request, (string) $organization);
-                });
-                Route::delete('logo', function (Request $request, $organization) {
-                    return app(OrganizationController::class)->deleteLogo($request, (string) $organization);
-                });
-                Route::apiResource('branches', BranchController::class);
+                Route::post('logo', [OrganizationController::class, 'uploadLogo']);
+                Route::get('logo/file', [OrganizationController::class, 'logoFile']);
+                Route::delete('logo', [OrganizationController::class, 'deleteLogo']);
+                // Unique route names so `php artisan route:cache` can serialize (tenant admin mirrors).
+                Route::apiResource('branches', BranchController::class)->names('admin.org.branches');
                 Route::get('roles/permissions/matrix', [RoleController::class, 'permissionMatrix']);
                 Route::get('roles/{role}/permissions', [RoleController::class, 'permissions']);
                 Route::put('roles/{role}/permissions', [RoleController::class, 'syncPermissions']);
-                Route::apiResource('roles', RoleController::class);
-                Route::apiResource('payment-methods', PaymentMethodController::class);
-                Route::apiResource('audit-logs', AuditLogController::class)->only(['index', 'show']);
-                Route::apiResource('users', UserController::class);
+                Route::apiResource('roles', RoleController::class)->names('admin.org.roles');
+                Route::apiResource('payment-methods', PaymentMethodController::class)->names('admin.org.payment-methods');
+                Route::apiResource('audit-logs', AuditLogController::class)->only(['index', 'show'])->names('admin.org.audit-logs');
+                Route::apiResource('users', UserController::class)->names('admin.org.users');
                 Route::post('users/{user}/clear-password-lock', [UserController::class, 'clearPasswordLock']);
                 Route::post('users/{user}/clear-two-factor', [UserController::class, 'clearTwoFactor']);
                 Route::get('users/{user}/permissions', [UserController::class, 'permissions']);
                 Route::put('users/{user}/permissions', [UserController::class, 'syncPermissions']);
-                Route::apiResource('routes', RouteModelController::class)->only(['index', 'show']);
-                Route::apiResource('employees', EmployeeController::class)->only(['index', 'show']);
-                Route::apiResource('vats', VatController::class);
-                Route::apiResource('uoms', UomController::class);
-                Route::apiResource('categories', CategoryController::class);
-                Route::apiResource('sub-categories', SubCategoryController::class);
+                Route::apiResource('routes', RouteModelController::class)->only(['index', 'show'])->names('admin.org.routes');
+                Route::apiResource('employees', EmployeeController::class)->only(['index', 'show'])->names('admin.org.employees');
+                Route::apiResource('vats', VatController::class)->names('admin.org.vats');
+                Route::apiResource('uoms', UomController::class)->names('admin.org.uoms');
+                Route::apiResource('categories', CategoryController::class)->names('admin.org.categories');
+                Route::apiResource('sub-categories', SubCategoryController::class)->names('admin.org.sub-categories');
                 Route::post('vats/import-batch', [VatImportController::class, 'store']);
                 Route::post('uoms/import-batch', [UomImportController::class, 'store']);
                 Route::post('categories/import-batch', [CategoryImportController::class, 'store']);
                 Route::post('sub-categories/import-batch', [SubCategoryImportController::class, 'store']);
                 Route::apiResource('attendance-mobile-devices', AttendanceMobileDeviceController::class)
-                    ->parameters(['attendance-mobile-devices' => 'id']);
+                    ->parameters(['attendance-mobile-devices' => 'id'])
+                    ->names('admin.org.attendance-mobile-devices');
                 Route::post(
                     'attendance-clock-devices/{id}/agent-package',
                     [AttendanceClockDeviceController::class, 'issueAgentPackage']
                 );
                 Route::apiResource('attendance-clock-devices', AttendanceClockDeviceController::class)
-                    ->parameters(['attendance-clock-devices' => 'id']);
+                    ->parameters(['attendance-clock-devices' => 'id'])
+                    ->names('admin.org.attendance-clock-devices');
                 Route::prefix('attendance')->group(function () {
                     Route::get('company-premises', [CompanyPremisesController::class, 'show']);
                     Route::post('company-premises', [CompanyPremisesController::class, 'update']);
                 });
-                Route::apiResource('kra-responses', KraResponseController::class)->only(['index', 'show']);
+                Route::apiResource('kra-responses', KraResponseController::class)->only(['index', 'show'])->names('admin.org.kra-responses');
                 Route::get('kra/device-status', [KraOperationsController::class, 'deviceStatus']);
                 Route::post('kra/device-health', [KraOperationsController::class, 'deviceHealth']);
                 Route::post('kra/device-upload', [KraOperationsController::class, 'deviceUploadPendingInvoices']);
@@ -990,6 +996,7 @@ Route::prefix('v1')->group(function () {
                 ->middleware(['erp.permission:admin.company.edit|admin.manage']);
             Route::apiResource('branches', BranchController::class)
                 ->only(['store', 'update', 'destroy'])
+                ->names('branches')
                 ->middleware(['erp.permission:admin.manage']);
             Route::get('roles/permissions/matrix', [RoleController::class, 'permissionMatrix'])
                 ->middleware('erp.permission:admin.view');
@@ -1009,6 +1016,7 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:admin.manage']);
             Route::apiResource('payment-methods', PaymentMethodController::class)
                 ->only(['store', 'update', 'destroy'])
+                ->names('payment-methods')
                 ->middleware(['erp.permission:admin.manage|admin.payment_methods.create|admin.payment_methods.edit|admin.payment_methods.delete']);
             Route::apiResource('kra-responses', KraResponseController::class)
                 ->middleware('erp.permission:admin.kra_responses.view');
@@ -1017,6 +1025,7 @@ Route::prefix('v1')->group(function () {
         // List/show for checkout, collect-payment, drivers, External POS till — not admin-module-only.
         Route::apiResource('payment-methods', PaymentMethodController::class)
             ->only(['index', 'show'])
+            ->names('payment-methods.picker')
             ->middleware([
                 'erp.module:admin,sales,sales.pos,payments,customers_suppliers,distribution',
                 'erp.permission:admin.view|admin.payment_methods.view|purchasing.view|payments.view|payments.manage|payments.sale_payments.view|payments.sale_payments.create|sales.orders.view|sales.orders.edit|pos.checkout.create|pos.till|driver.mobile|reports.view',
@@ -1024,6 +1033,7 @@ Route::prefix('v1')->group(function () {
         // Branch pickers (HR employee form, sales, etc.) — not admin-module-only.
         Route::apiResource('branches', BranchController::class)
             ->only(['index', 'show'])
+            ->names('branches.picker')
             ->middleware([
                 'erp.module:admin,hr_payroll,sales,inventory,accounting,distribution,customers_suppliers,sales.pos',
                 'erp.permission:admin.view|hr.view|hr.manage|fulfillment.manage|fulfillment.view|customers.view|customers.manage|sales.view|inventory.view|accounting.view|reports.view|catalogue.view|catalogue.products.view|pos.checkout.create|pos.terminal.view|pos.till',
@@ -1031,6 +1041,7 @@ Route::prefix('v1')->group(function () {
         // User pickers for HR employee linking — index/show also via hr_payroll.
         Route::apiResource('users', UserController::class)
             ->only(['index', 'show'])
+            ->names('users.picker')
             ->middleware([
                 'erp.module:admin,hr_payroll',
                 'erp.permission:admin.view|hr.view|hr.manage',

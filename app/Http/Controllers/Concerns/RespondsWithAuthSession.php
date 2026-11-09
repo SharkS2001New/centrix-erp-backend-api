@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Concerns;
 use App\Http\Controllers\Api\V1\ErpCapabilitiesController;
 use App\Models\User;
 use App\Services\Auth\ApiTokenCookie;
+use App\Services\Cache\OrganizationCache;
 use App\Services\Platform\OrganizationLicenseService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -17,19 +18,30 @@ trait RespondsWithAuthSession
     protected function respondWithAuthSession(array $result, Request $request): JsonResponse
     {
         $authChannel = $this->resolveAuthLoginChannel($request, $result);
+        $workspaceSwitchOnly = ! empty($result['workspace_switch_only']);
+        unset($result['workspace_switch_only']);
 
         if (($result['user'] ?? null) instanceof User) {
             /** @var User $user */
             $user = $result['user'];
-            $result['capabilities'] = app(ErpCapabilitiesController::class)->resolveForUser(
-                $user,
-                $authChannel,
-            );
+            $org = $result['organization'] ?? $user->organization;
+            $licenses = app(OrganizationLicenseService::class);
+
+            if ($workspaceSwitchOnly) {
+                // Same login channel (e.g. Backoffice → HR): keep existing capabilities on the
+                // client and only return version so UI can poll /erp/capabilities if needed.
+                if ($org instanceof \App\Models\Organization) {
+                    $result['capabilities_version'] = OrganizationCache::capabilitiesVersion((int) $org->id);
+                }
+            } else {
+                $result['capabilities'] = app(ErpCapabilitiesController::class)->resolveForUser(
+                    $user,
+                    $authChannel,
+                );
+            }
 
             // PIN operator switch continues an already-open till session.
             if (! $user->is_super_admin && empty($result['operator_switch'])) {
-                $org = $result['organization'] ?? $user->organization;
-                $licenses = app(OrganizationLicenseService::class);
                 $license = is_array($result['capabilities']['license'] ?? null)
                     ? $result['capabilities']['license']
                     : $licenses->resolveForOrganization($org instanceof \App\Models\Organization ? $org : null);

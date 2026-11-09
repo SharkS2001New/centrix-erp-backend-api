@@ -18,6 +18,14 @@ class HospitalityDashboardController extends Controller
     {
         $org = $this->erp->resolveOrganization($request);
 
-        return response()->json($this->dashboard->summary($org));
+        $data = $request->validate([
+            'from_date' => ['nullable', 'date'],
+            'to_date' => ['nullable', 'date'],
+        ]);
+
+        return response()->json($this->dashboard->summary($org, [
+            'from_date' => $data['from_date'] ?? $request->input('from') ?? $request->input('sale_date'),
+            'to_date' => $data['to_date'] ?? $request->input('to') ?? $request->input('sale_date'),
+        ]));
     }
 }

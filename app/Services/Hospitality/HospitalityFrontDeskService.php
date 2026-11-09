@@ -23,6 +23,50 @@ class HospitalityFrontDeskService
         return HospitalityServices::enabled($org, 'folios');
     }
 
+    /** Single payload for the front-desk UI — avoids 4 round trips. */
+    public function board(Organization $org, ?string $date = null): array
+    {
+        $day = $date ? Carbon::parse($date)->toDateString() : now()->toDateString();
+
+        $rooms = HospitalityRoom::query()
+            ->where('organization_id', $org->id)
+            ->where('is_active', true)
+            ->orderBy('room_number')
+            ->get([
+                'id',
+                'room_number',
+                'room_type_id',
+                'status',
+                'floor',
+                'is_active',
+                'sold_check_id',
+                'guest_name',
+                'guest_phone',
+                'checked_in_at',
+                'expected_checkout_at',
+            ]);
+
+        return [
+            'business_date' => $day,
+            'arrivals' => $this->arrivals($org, $day),
+            'departures' => $this->departures($org, $day),
+            'in_house' => $this->inHouse($org),
+            'rooms' => $rooms->map(fn (HospitalityRoom $r) => [
+                'id' => $r->id,
+                'room_number' => $r->room_number,
+                'room_type_id' => $r->room_type_id,
+                'status' => $r->status,
+                'floor' => $r->floor,
+                'is_active' => (bool) $r->is_active,
+                'sold_check_id' => $r->sold_check_id,
+                'guest_name' => $r->guest_name,
+                'guest_phone' => $r->guest_phone,
+                'checked_in_at' => optional($r->checked_in_at)?->toIso8601String(),
+                'expected_checkout_at' => optional($r->expected_checkout_at)?->toIso8601String(),
+            ])->values()->all(),
+        ];
+    }
+
     public function arrivals(Organization $org, ?string $date = null): array
     {
         $day = $date ? Carbon::parse($date)->toDateString() : now()->toDateString();
@@ -49,22 +93,29 @@ class HospitalityFrontDeskService
                 ->where('status', 'open')
                 ->whereHas('room')
                 ->whereDate('checked_in_at', '<=', $day)
-                ->get()
-                ->filter(function (HospitalityFolio $f) use ($org, $day) {
-                    $res = HospitalityReservation::query()
-                        ->where('organization_id', $org->id)
-                        ->where('folio_id', $f->id)
-                        ->first();
-                    if ($res && $res->departure_date?->toDateString() === $day) {
-                        return true;
-                    }
-                    $checkout = $f->room?->expected_checkout_at;
-                    if ($checkout && Carbon::parse($checkout)->toDateString() === $day) {
-                        return true;
-                    }
+                ->get();
 
-                    return false;
-                });
+            $folioIds = $rows->pluck('id')->map(fn ($id) => (int) $id)->all();
+            $departureByFolioId = $folioIds === []
+                ? collect()
+                : HospitalityReservation::query()
+                    ->where('organization_id', $org->id)
+                    ->whereIn('folio_id', $folioIds)
+                    ->get(['folio_id', 'departure_date'])
+                    ->keyBy(fn (HospitalityReservation $r) => (int) $r->folio_id);
+
+            $rows = $rows->filter(function (HospitalityFolio $f) use ($departureByFolioId, $day) {
+                $res = $departureByFolioId->get((int) $f->id);
+                if ($res && $res->departure_date?->toDateString() === $day) {
+                    return true;
+                }
+                $checkout = $f->room?->expected_checkout_at;
+                if ($checkout && Carbon::parse($checkout)->toDateString() === $day) {
+                    return true;
+                }
+
+                return false;
+            });
 
             $out = $rows->map(fn (HospitalityFolio $f) => $this->folios->toArray($f))->values()->all();
             $folioRoomIds = collect($out)->pluck('room_id')->filter()->map(fn ($id) => (int) $id)->all();

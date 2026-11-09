@@ -183,8 +183,9 @@ Schedule::command('erp:retry-pending-kra-credit-notes')
     ->withoutOverlapping(50)
     ->appendOutputTo(storage_path('logs/retry-pending-kra-credit-notes.log'));
 
+// Checkout defers eTIMS manually-upload so tills get QR fast — retry often.
 Schedule::command('erp:retry-pending-kra-invoice-uploads')
-    ->cron('*/20 * * * *')
+    ->everyTwoMinutes()
     ->timezone(config('app.timezone', 'Africa/Nairobi'))
-    ->withoutOverlapping(10)
+    ->withoutOverlapping(3)
     ->appendOutputTo(storage_path('logs/retry-pending-kra-invoice-uploads.log'));

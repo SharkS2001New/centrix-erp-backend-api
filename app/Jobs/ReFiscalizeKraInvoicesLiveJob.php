@@ -17,11 +17,17 @@ class ReFiscalizeKraInvoicesLiveJob implements ShouldQueue
     use Queueable;
     use RunsBackgroundTaskOnce;
 
-    public int $timeout = 7200;
+    public int $timeout;
 
     public function __construct(
         public string $taskId,
-    ) {}
+    ) {
+        $this->onQueue((string) config('queue.names.kra', 'kra'));
+        $this->timeout = max(
+            3600,
+            (int) config('background.job_timeout_long_seconds', 7200),
+        );
+    }
 
     public function handle(BackgroundTaskService $tasks): void
     {

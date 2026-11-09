@@ -25,6 +25,8 @@ class PublicFreeSignupController extends Controller
             'enabled' => true,
             'free_plan_name' => $freePlan->name(),
             'industries' => $signups->industryOptions(),
+            'setup_types' => $signups->setupTypeOptions(),
+            'business_types' => $signups->businessTypeOptions(),
             'login_url' => rtrim((string) config('erp.frontend_url'), '/').'/login',
         ]);
     }
@@ -36,7 +38,10 @@ class PublicFreeSignupController extends Controller
             'org_email' => 'required|email|max:200',
             'primary_tel' => 'required|string|max:45',
             'org_address' => 'nullable|string|max:400',
-            'industry' => 'required|string|max:40',
+            'industry' => 'required_without:setup_type|string|max:40',
+            'setup_type' => 'required_with:plan_id|nullable|string|max:60',
+            'plan_id' => 'nullable|integer|min:1',
+            'business_type' => 'required_with:setup_type|string|max:100',
             'admin_full_name' => 'required|string|max:200',
             'admin_password' => 'required|string|min:8|max:100',
         ]);
@@ -49,6 +54,9 @@ class PublicFreeSignupController extends Controller
             'username' => $result['username'],
             'org_name' => $result['organization']->org_name,
             'industry' => $result['industry'],
+            'business_type' => $result['business_type'],
+            'setup_type' => $result['setup_type'],
+            'setup_type_label' => $result['setup_type_label'],
             'free_plan_name' => $result['free_plan_name'],
             'login_url' => $result['login_url'],
         ], 201);

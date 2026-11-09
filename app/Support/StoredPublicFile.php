@@ -4,7 +4,7 @@ namespace App\Support;
 
 use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Storage;
-use Symfony\Component\HttpFoundation\StreamedResponse;
+use Symfony\Component\HttpFoundation\Response;
 
 /** Stream files from the public storage disk (local or S3/MinIO). */
 class StoredPublicFile
@@ -26,12 +26,53 @@ class StoredPublicFile
         ?string $path,
         ?string $defaultMime = 'application/octet-stream',
         array $headers = [],
-    ): StreamedResponse {
+    ): Response {
         if (! self::exists($path)) {
             abort(404);
         }
 
-        $mime = self::disk()->mimeType($path) ?: $defaultMime;
+        $disk = self::disk();
+        $mime = $disk->mimeType($path) ?: $defaultMime;
+        $size = null;
+        $lastModified = null;
+
+        try {
+            $size = $disk->size($path);
+        } catch (\Throwable) {
+            $size = null;
+        }
+        try {
+            $lastModified = $disk->lastModified($path);
+        } catch (\Throwable) {
+            $lastModified = null;
+        }
+
+        $etagSource = ($path ?? '').'|'.($size ?? 0).'|'.($lastModified ?? 0);
+        $etag = '"'.sha1($etagSource).'"';
+
+        $request = request();
+        $ifNoneMatch = trim((string) $request->header('If-None-Match', ''));
+        if ($ifNoneMatch !== '' && trim($ifNoneMatch, '"') === trim($etag, '"')) {
+            return response('', 304, array_merge([
+                'ETag' => $etag,
+                'Cache-Control' => self::defaultCacheControl($mime, $headers),
+            ], $headers));
+        }
+
+        $merged = array_merge([
+            'Content-Type' => $mime,
+            'ETag' => $etag,
+            'Accept-Ranges' => 'bytes',
+            // Private (auth) but cacheable so browsers / EntityPhotoDisplay can reuse bytes.
+            'Cache-Control' => self::defaultCacheControl($mime, $headers),
+        ], $headers);
+
+        if ($size !== null) {
+            $merged['Content-Length'] = (string) $size;
+        }
+        if ($lastModified) {
+            $merged['Last-Modified'] = gmdate('D, d M Y H:i:s', $lastModified).' GMT';
+        }
 
         return response()->stream(function () use ($path) {
             $stream = self::disk()->readStream($path);
@@ -41,10 +82,23 @@ class StoredPublicFile
 
             fpassthru($stream);
             fclose($stream);
-        }, 200, array_merge([
-            'Content-Type' => $mime,
-            // Default short private cache — callers can override for mutable URLs (e.g. org logo).
-            'Cache-Control' => 'private, max-age=3600',
-        ], $headers));
+        }, 200, $merged);
+    }
+
+    /**
+     * @param  array<string, string>  $headers
+     */
+    protected static function defaultCacheControl(string $mime, array $headers): string
+    {
+        if (isset($headers['Cache-Control'])) {
+            return $headers['Cache-Control'];
+        }
+
+        if (str_starts_with(strtolower($mime), 'image/')) {
+            // Product / shop / employee photos — long private cache; ETag validates freshness.
+            return 'private, max-age=86400, stale-while-revalidate=604800';
+        }
+
+        return 'private, max-age=3600';
     }
 }

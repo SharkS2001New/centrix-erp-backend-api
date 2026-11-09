@@ -54,7 +54,82 @@ class MobileLoadingSheetService
 
     protected function loadingDateExpression(): string
     {
+        if (\App\Support\SchemaProbe::hasColumn('sales', 'loading_date')) {
+            return 'sales.loading_date';
+        }
+
         return 'COALESCE(DATE(sales.delivery_date), DATE(sales.created_at))';
+    }
+
+    /**
+     * Sargable day filter equivalent to COALESCE(DATE(delivery_date), DATE(created_at)).
+     * Prefer the generated loading_date column when present.
+     *
+     * @param  Builder<Sale>  $query
+     */
+    protected function applyLoadingDateEquals(Builder $query, string $listDate): void
+    {
+        if (\App\Support\SchemaProbe::hasColumn('sales', 'loading_date')) {
+            $query->where('sales.loading_date', $listDate);
+
+            return;
+        }
+
+        $start = $listDate.' 00:00:00';
+        $end = $listDate.' 23:59:59';
+        $query->where(function ($outer) use ($start, $end) {
+            $outer->where(function ($withDelivery) use ($start, $end) {
+                $withDelivery->whereNotNull('sales.delivery_date')
+                    ->whereBetween('sales.delivery_date', [$start, $end]);
+            })->orWhere(function ($fallback) use ($start, $end) {
+                $fallback->whereNull('sales.delivery_date')
+                    ->whereBetween('sales.created_at', [$start, $end]);
+            });
+        });
+    }
+
+    /**
+     * @param  Builder<Sale>  $query
+     */
+    protected function applyLoadingDateRange(Builder $query, ?string $from, ?string $to): void
+    {
+        if ($from === null && $to === null) {
+            return;
+        }
+
+        if (\App\Support\SchemaProbe::hasColumn('sales', 'loading_date')) {
+            if ($from !== null) {
+                $query->where('sales.loading_date', '>=', $from);
+            }
+            if ($to !== null) {
+                $query->where('sales.loading_date', '<=', $to);
+            }
+
+            return;
+        }
+
+        $fromStart = $from ? $from.' 00:00:00' : null;
+        $toEnd = $to ? $to.' 23:59:59' : null;
+
+        $query->where(function ($outer) use ($fromStart, $toEnd) {
+            $outer->where(function ($withDelivery) use ($fromStart, $toEnd) {
+                $withDelivery->whereNotNull('sales.delivery_date');
+                if ($fromStart !== null) {
+                    $withDelivery->where('sales.delivery_date', '>=', $fromStart);
+                }
+                if ($toEnd !== null) {
+                    $withDelivery->where('sales.delivery_date', '<=', $toEnd);
+                }
+            })->orWhere(function ($fallback) use ($fromStart, $toEnd) {
+                $fallback->whereNull('sales.delivery_date');
+                if ($fromStart !== null) {
+                    $fallback->where('sales.created_at', '>=', $fromStart);
+                }
+                if ($toEnd !== null) {
+                    $fallback->where('sales.created_at', '<=', $toEnd);
+                }
+            });
+        });
     }
 
     /** @return array<int, array<string, mixed>> */
@@ -73,12 +148,11 @@ class MobileLoadingSheetService
         if ($routeId = (int) ($filters['route_id'] ?? 0)) {
             $query->where('route_id', $routeId);
         }
-        if ($from = $filters['from_date'] ?? null) {
-            $query->whereRaw("{$dateExpr} >= ?", [$from]);
-        }
-        if ($to = $filters['to_date'] ?? null) {
-            $query->whereRaw("{$dateExpr} <= ?", [$to]);
-        }
+        $this->applyLoadingDateRange(
+            $query,
+            isset($filters['from_date']) ? (string) $filters['from_date'] : null,
+            isset($filters['to_date']) ? (string) $filters['to_date'] : null,
+        );
 
         $rows = $query
             ->orderByDesc(DB::raw($dateExpr))
@@ -102,6 +176,32 @@ class MobileLoadingSheetService
         })->values()->all();
     }
 
+    /**
+     * Load mobile sales for one or more routes on a loading date (single query).
+     *
+     * @param  list<int>  $routeIds
+     * @return \Illuminate\Support\Collection<int, Sale>
+     */
+    public function salesForRoutesOnDate(User $user, array $routeIds, string $listDate)
+    {
+        $routeIds = array_values(array_unique(array_filter(
+            array_map('intval', $routeIds),
+            fn (int $id) => $id > 0,
+        )));
+        if ($routeIds === []) {
+            return collect();
+        }
+
+        $query = $this->baseMobileSalesQuery($user)->whereIn('route_id', $routeIds);
+        $this->applyLoadingDateEquals($query, $listDate);
+
+        return $query
+            ->with(['customer:customer_num,customer_name', 'items'])
+            ->orderBy('route_id')
+            ->orderBy('order_num')
+            ->get();
+    }
+
     /** @return array<string, mixed> */
     public function sheetDetail(User $user, int $routeId, string $listDate): array
     {
@@ -113,17 +213,10 @@ class MobileLoadingSheetService
             throw new InvalidArgumentException('Invalid loading date.');
         }
 
-        $dateExpr = $this->loadingDateExpression();
-        $sales = $this->baseMobileSalesQuery($user)
-            ->where('route_id', $routeId)
-            ->whereRaw("{$dateExpr} = ?", [$listDate])
-            ->with(['customer'])
-            ->orderBy('order_num')
-            ->get();
+        $sales = $this->salesForRoutesOnDate($user, [$routeId], $listDate);
 
         $route = $this->routes->findForUser($user, $routeId);
-        $saleIds = $sales->pluck('id')->all();
-        $orders = $this->loadingListBuilder->aggregateOrdersFromSaleIds($saleIds);
+        $orders = $this->loadingListBuilder->aggregateOrdersFromSales($sales);
         $totalAmount = round(array_sum(array_column($orders, 'subtotal')), 2);
         $orgId = $sales->first()?->organization_id !== null
             ? (int) $sales->first()->organization_id

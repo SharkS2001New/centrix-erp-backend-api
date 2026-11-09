@@ -169,8 +169,13 @@ class PlatformDatabaseBackupController extends Controller
 
             $sendEmail = (bool) ($validated['send_email'] ?? true);
             $uploadR2 = (bool) ($validated['upload_r2'] ?? true);
+            // Default to async when the client does not opt out — long mysqldump + R2 upload
+            // often exceeds reverse-proxy idle timeouts if run inline on the HTTP request.
+            $preferAsync = array_key_exists('async', $validated)
+                ? (bool) $validated['async']
+                : true;
 
-            if ($request->boolean('async') && Schema::hasTable('background_tasks')) {
+            if ($preferAsync && Schema::hasTable('background_tasks')) {
                 try {
                     $task = $this->tasks->create('database_backup', $request->user(), [
                         'send_email' => $sendEmail,
@@ -180,7 +185,9 @@ class PlatformDatabaseBackupController extends Controller
                     $this->tasks->dispatch(RunDatabaseBackupJob::class, $task);
 
                     return response()->json([
-                        'message' => 'Database backup queued.',
+                        'message' => $uploadR2
+                            ? 'Database backup queued (dump + Cloudflare R2 upload).'
+                            : 'Database backup queued.',
                         'task_id' => $task->id,
                         'queued' => true,
                     ], 202);

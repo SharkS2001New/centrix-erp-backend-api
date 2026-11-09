@@ -14,11 +14,28 @@ class CapabilityGateStockDeductionTest extends TestCase
         $org = new Organization([
             'module_settings' => [
                 'sales' => ['stock_deduct_on' => $timing],
+                'distribution' => ['enable_distribution_ops' => true],
             ],
-            'enabled_modules' => ['distribution' => true, 'sales' => true, 'sales.pos' => true],
+            'enabled_modules' => [
+                'distribution' => true,
+                'sales' => true,
+                'sales.pos' => true,
+                'sales.mobile' => true,
+                'sales.backend' => true,
+            ],
         ]);
 
-        return (new CapabilityGate($org))->forOrganization($org);
+        // Isolate from FreePlan package gating so trip_* timing can enable deferral.
+        return new class($org) extends CapabilityGate
+        {
+            public function package(): ?array
+            {
+                return [
+                    'modules' => ['distribution', 'pos', 'mobile', 'backoffice', 'inventory'],
+                    'features' => [],
+                ];
+            }
+        };
     }
 
     public function test_order_created_deducts_at_checkout_not_on_workflow_transition(): void

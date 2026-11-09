@@ -8,6 +8,7 @@ use App\Models\Uom;
 use App\Models\Vat;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\Storage;
 
 class Product extends Model
 {
@@ -27,7 +28,7 @@ class Product extends Model
         'deleted_at', 'deleted_by',
     ];
 
-    protected $appends = ['image_url'];
+    protected $appends = ['image_url', 'image_version'];
 
     public function unit()
     {
@@ -54,6 +55,19 @@ class Product extends Model
         return $this->branch_id === null ? 'organization' : 'branch';
     }
 
+    /** Fingerprint of image_path — tills use this to keep local caches until the photo changes. */
+    protected function imageVersion(): Attribute
+    {
+        return Attribute::get(function () {
+            $path = is_string($this->image_path) ? trim($this->image_path) : '';
+            if ($path === '') {
+                return null;
+            }
+
+            return substr(hash('sha256', $path), 0, 16);
+        });
+    }
+
     protected function imageUrl(): Attribute
     {
         return Attribute::get(function () {
@@ -61,10 +75,41 @@ class Product extends Model
                 return null;
             }
 
+            $version = $this->image_version;
+            if (filter_var($this->image_path, FILTER_VALIDATE_URL)) {
+                // Keep remote/CDN/R2 URLs intact. Appending ?v= breaks signed query strings
+                // and some hotlink rules; tills already cache-bust via image_version.
+                return $this->image_path;
+            }
+
+            // Prefer public disk URL (local /storage or R2 CDN) so tills can use <img>
+            // without authenticated /image/file fan-out on every tile.
+            $path = ltrim(str_replace('\\', '/', (string) $this->image_path), '/');
+            try {
+                $url = Storage::disk('public')->url($path);
+            } catch (\Throwable) {
+                $url = null;
+            }
+
+            if (is_string($url) && $url !== '') {
+                if (! filter_var($url, FILTER_VALIDATE_URL) && str_starts_with($url, '/')) {
+                    $url = rtrim((string) config('app.url'), '/').$url;
+                }
+                if (is_string($version) && $version !== '' && ! str_contains($url, 'v=')) {
+                    $url .= (str_contains($url, '?') ? '&' : '?').'v='.rawurlencode($version);
+                }
+
+                return $url;
+            }
+
             $base = rtrim((string) config('app.url'), '/');
             $code = rawurlencode((string) $this->product_code);
+            $fallback = $base.'/api/v1/products/'.$code.'/image/file';
+            if (is_string($version) && $version !== '') {
+                $fallback .= '?v='.$version;
+            }
 
-            return $base.'/api/v1/products/'.$code.'/image/file';
+            return $fallback;
         });
     }
 

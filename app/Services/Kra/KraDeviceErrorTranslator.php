@@ -212,11 +212,20 @@ final class KraDeviceErrorTranslator
         return null;
     }
 
-    /** True when the raw device fault is about product / PLU registration, not a sale receipt. */
+    /**
+     * True when the raw device fault is about invalid PLU *upload* payload (E034),
+     * not a sale/credit that references a missing registered product (E337).
+     */
     public static function looksLikePluUploadFailure(string $technical): bool
     {
+        // "NO FIND PLU DATA" means the product is missing on the device during a sale —
+        // not that SetPluData / upload-plu-data rejected the payload shape.
+        if (preg_match('/NO\s+FIND\s+PLU\s+DATA|\bE337\b|\(Code\s*337\)/i', $technical) === 1) {
+            return false;
+        }
+
         return (bool) preg_match(
-            '/\bPLU\b|SetPluData|upload-plu|register-plu|plu_items|plu_data|Error processing PLU|product upload|UploadPlu|register products/i',
+            '/SetPluData|upload-plu|register-plu|Error processing PLU|product upload|UploadPlu|register products|\bE034\b/i',
             $technical,
         );
     }

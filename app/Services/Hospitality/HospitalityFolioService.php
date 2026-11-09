@@ -33,9 +33,12 @@ class HospitalityFolioService
             });
         }
 
-        $perPage = min((int) ($filters['per_page'] ?? 50), 200);
+        $perPage = min(max((int) ($filters['per_page'] ?? 50), 1), 200);
+        $page = max((int) ($filters['page'] ?? 1), 1);
 
-        return $query->paginate($perPage)->through(fn (HospitalityFolio $f) => $this->toArray($f))->toArray();
+        return $query->paginate($perPage, ['*'], 'page', $page)
+            ->through(fn (HospitalityFolio $f) => $this->toArray($f))
+            ->toArray();
     }
 
     public function find(Organization $org, int $folioId): HospitalityFolio

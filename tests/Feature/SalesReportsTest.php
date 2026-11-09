@@ -854,6 +854,68 @@ class SalesReportsTest extends TestCase
         );
     }
 
+    public function test_report_filter_cashiers_excludes_inactive_users_and_inactive_employees(): void
+    {
+        $cashierRole = \App\Models\Role::query()->firstOrCreate(
+            ['role_name' => 'Inactive Cashier Filter '.uniqid()],
+            ['scope' => 'branch', 'is_active' => true],
+        );
+        $posPermId = \App\Models\Permission::query()
+            ->where('permission_code', 'pos.checkout.create')
+            ->value('id');
+        $this->assertNotNull($posPermId);
+        \Illuminate\Support\Facades\DB::table('role_permissions')->where('role_id', $cashierRole->id)->delete();
+        \Illuminate\Support\Facades\DB::table('role_permissions')->insert([
+            'role_id' => $cashierRole->id,
+            'permission_id' => $posPermId,
+        ]);
+
+        $inactiveLogin = User::create([
+            'organization_id' => $this->admin->organization_id,
+            'branch_id' => $this->admin->branch_id,
+            'role_id' => $cashierRole->id,
+            'username' => 'inactive_login_'.uniqid(),
+            'password' => \Illuminate\Support\Facades\Hash::make('password'),
+            'full_name' => 'Inactive Login Cashier',
+            'access_scope' => 'branch',
+            'login_channels' => ['pos'],
+            'is_active' => false,
+        ]);
+
+        $linkedInactiveEmployee = User::create([
+            'organization_id' => $this->admin->organization_id,
+            'branch_id' => $this->admin->branch_id,
+            'role_id' => $cashierRole->id,
+            'username' => 'inactive_emp_'.uniqid(),
+            'password' => \Illuminate\Support\Facades\Hash::make('password'),
+            'full_name' => 'Inactive Employee Cashier',
+            'access_scope' => 'branch',
+            'login_channels' => ['pos'],
+            'is_active' => true,
+        ]);
+
+        \App\Models\Employee::query()->create([
+            'organization_id' => $this->admin->organization_id,
+            'branch_id' => $this->admin->branch_id,
+            'user_id' => $linkedInactiveEmployee->id,
+            'employee_code' => 'E'.random_int(10000, 99999),
+            'first_name' => 'Inactive',
+            'last_name' => 'Employee',
+            'full_name' => 'Inactive Employee',
+            'employment_status' => 'terminated',
+            'is_active' => false,
+        ]);
+
+        $response = $this->getJson('/api/v1/reports/filter-cashiers?per_page=100')->assertOk();
+        $ids = collect($response->json('data'))->pluck('id')->map(fn ($id) => (int) $id);
+
+        $this->assertFalse($ids->contains((int) $inactiveLogin->id), 'Deactivated login must not appear');
+        $this->assertFalse(
+            $ids->contains((int) $linkedInactiveEmployee->id),
+            'Users linked to inactive employees must not appear',
+        );
+    }
+
     public function test_daily_sales_and_sales_by_product_tally_with_order_discount(): void
     {
         $day = now()->toDateString();

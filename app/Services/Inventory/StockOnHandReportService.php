@@ -196,7 +196,23 @@ class StockOnHandReportService
             $summary = null;
         }
 
-        $paginator = $query->paginate($perPage);
+        // Reuse summary COUNT when available — avoid Laravel's second COUNT(*) on the heavy join.
+        if ($summary !== null) {
+            $page = max(1, (int) $request->input('page', 1));
+            $items = (clone $query)->forPage($page, $perPage)->get();
+            $paginator = new \Illuminate\Pagination\LengthAwarePaginator(
+                $items,
+                $summary['row_count'],
+                $perPage,
+                $page,
+                [
+                    'path' => $request->url(),
+                    'query' => $request->query(),
+                ],
+            );
+        } else {
+            $paginator = $query->paginate($perPage);
+        }
         $payload = $paginator->toArray();
         $payload['data'] = $this->branchStock->attachAvailabilityToRows($payload['data'] ?? []);
         if ($summary !== null) {

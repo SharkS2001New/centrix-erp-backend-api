@@ -303,4 +303,73 @@ class GeminiProviderTest extends TestCase
                 && (int) ($config['maxOutputTokens'] ?? 0) >= 256;
         });
     }
+
+    public function test_stream_chat_yields_deltas_and_preserves_thought_signature(): void
+    {
+        $chunk1 = json_encode([
+            'candidates' => [[
+                'content' => [
+                    'role' => 'model',
+                    'parts' => [['text' => 'Hello ']],
+                ],
+            ]],
+        ], JSON_THROW_ON_ERROR);
+        $chunk2 = json_encode([
+            'candidates' => [[
+                'content' => [
+                    'role' => 'model',
+                    'parts' => [[
+                        'functionCall' => [
+                            'name' => 'get_sales_summary',
+                            'args' => ['period' => 'today'],
+                        ],
+                        'thoughtSignature' => 'sig-abc',
+                    ]],
+                ],
+                'finishReason' => 'STOP',
+            ]],
+            'usageMetadata' => [
+                'promptTokenCount' => 9,
+                'candidatesTokenCount' => 3,
+                'totalTokenCount' => 12,
+            ],
+        ], JSON_THROW_ON_ERROR);
+
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::response(
+                "data: {$chunk1}\n\ndata: {$chunk2}\n\n",
+                200,
+                ['Content-Type' => 'text/event-stream'],
+            ),
+        ]);
+
+        $provider = new GeminiProvider('key', 'gemini-3.6-flash');
+        $events = [];
+        foreach ($provider->streamChat([
+            'system' => 'You are Centrix.',
+            'messages' => [['role' => 'user', 'content' => 'Sales today?']],
+            'tools' => [],
+        ]) as $event) {
+            $events[] = $event;
+        }
+
+        $this->assertNotEmpty($events);
+        $deltas = array_values(array_filter($events, fn ($e) => ($e['type'] ?? '') === 'delta'));
+        $this->assertNotEmpty($deltas);
+        $this->assertStringContainsString('Hello', (string) ($deltas[0]['content'] ?? ''));
+
+        $complete = end($events);
+        $this->assertSame('complete', $complete['type'] ?? null);
+        $this->assertStringContainsString('Hello', (string) ($complete['text'] ?? ''));
+        $this->assertCount(1, $complete['tool_calls'] ?? []);
+        $this->assertSame('get_sales_summary', $complete['tool_calls'][0]['name'] ?? null);
+        $this->assertSame('sig-abc', $complete['tool_calls'][0]['thought_signature'] ?? null);
+        $this->assertSame('sig-abc', $complete['model_content']['parts'][1]['thoughtSignature'] ?? null);
+        $this->assertSame(9, $complete['usage']['input_tokens'] ?? null);
+
+        Http::assertSent(function ($request) {
+            return str_contains($request->url(), ':streamGenerateContent')
+                && str_contains($request->url(), 'alt=sse');
+        });
+    }
 }

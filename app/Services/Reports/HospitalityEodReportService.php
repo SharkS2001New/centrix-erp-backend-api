@@ -103,6 +103,22 @@ class HospitalityEodReportService
 
         $dailyBreakdown = null;
         if ($isMonthly) {
+            // One payments scan for the whole month (was N+1 aggregatePayments per day).
+            $cashByDay = [];
+            $cashByDayQuery = DB::table('hospitality_check_payments as p')
+                ->join('hospitality_checks as c', 'c.id', '=', 'p.check_id')
+                ->where('c.organization_id', $organizationId)
+                ->whereIn('c.status', ['paid', 'settled', 'partially_paid'])
+                ->whereBetween(DB::raw('DATE(COALESCE(c.closed_at, c.updated_at))'), [$periodStartDate, $periodEndDate])
+                ->whereRaw('UPPER(TRIM(COALESCE(p.method_code, ""))) = ?', ['CASH'])
+                ->selectRaw('DATE(COALESCE(c.closed_at, c.updated_at)) as sale_date')
+                ->selectRaw('COALESCE(SUM(p.amount), 0) as cash_amt')
+                ->groupBy(DB::raw('DATE(COALESCE(c.closed_at, c.updated_at))'));
+            $this->applyCheckFilters($cashByDayQuery, $branchId, $cashierId, 'c');
+            foreach ($cashByDayQuery->get() as $cashRow) {
+                $cashByDay[(string) $cashRow->sale_date] = (float) $cashRow->cash_amt;
+            }
+
             $dailyBreakdown = (clone $checksBase)
                 ->selectRaw('
                     DATE(COALESCE(c.closed_at, c.updated_at)) as sale_date,
@@ -113,16 +129,15 @@ class HospitalityEodReportService
                 ->groupBy(DB::raw('DATE(COALESCE(c.closed_at, c.updated_at))'))
                 ->orderBy('sale_date')
                 ->get()
-                ->map(function ($row) use ($organizationId, $branchId, $cashierId) {
+                ->map(function ($row) use ($cashByDay) {
                     $day = (string) $row->sale_date;
-                    $dayPayments = $this->aggregatePayments($organizationId, $day, $day, $branchId, $cashierId);
 
                     return [
                         'sale_date' => $day,
                         'transactions' => (int) $row->transactions,
                         'gross_sales' => round((float) $row->gross_sales, 2),
                         'total_vat' => round((float) $row->total_vat, 2),
-                        'cash_collected' => round((float) ($dayPayments['cash'] ?? 0), 2),
+                        'cash_collected' => round((float) ($cashByDay[$day] ?? 0), 2),
                     ];
                 })
                 ->values()

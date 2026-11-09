@@ -3,9 +3,12 @@
 namespace App\Services\Platform;
 
 use App\Models\Organization;
+use App\Models\PlatformPlan;
 use App\Models\User;
 use App\Services\Erp\IndustryRegistry;
+use App\Services\Erp\SetupProfileMenuService;
 use App\Services\OrganizationProvisioningService;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -14,9 +17,20 @@ use Illuminate\Validation\ValidationException;
  */
 class PublicFreeSignupService
 {
+    private const TRIAL_APPLICATIONS = [
+        'pos',
+        'backoffice',
+        'distribution',
+        'hotel_bar_pos',
+        'hospitality_backoffice',
+        'spa',
+        'driving',
+    ];
+
     public function __construct(
         protected OrganizationProvisioningService $provisioning,
         protected FreePlanAccess $freePlan,
+        protected SetupProfileMenuService $setupProfiles,
     ) {}
 
     public function enabled(): bool
@@ -29,7 +43,10 @@ class PublicFreeSignupService
      *   org_name: string,
      *   org_email: string,
      *   primary_tel: string,
-     *   industry: string,
+     *   industry?: string,
+     *   setup_type?: string,
+     *   plan_id?: int|string|null,
+     *   business_type?: string,
      *   admin_full_name: string,
      *   admin_password: string,
      *   org_address?: string|null,
@@ -40,6 +57,9 @@ class PublicFreeSignupService
      *   company_code: string,
      *   username: string,
      *   industry: string,
+     *   business_type: string,
+     *   setup_type: string,
+     *   setup_type_label: string,
      *   free_plan_name: string,
      *   login_url: string,
      * }
@@ -52,19 +72,101 @@ class PublicFreeSignupService
             ]);
         }
 
-        $industry = strtolower(trim((string) ($input['industry'] ?? '')));
-        $definition = IndustryRegistry::definition($industry);
-        if ($definition === null) {
-            throw ValidationException::withMessages([
-                'industry' => ['Choose a valid industry product.'],
-            ]);
+        $requestedIndustry = strtolower(trim((string) ($input['industry'] ?? '')));
+        $setupType = trim((string) ($input['setup_type'] ?? ''));
+        $selectedPlan = null;
+        if (! empty($input['plan_id'])) {
+            $selectedPlan = PlatformPlan::query()->find((int) $input['plan_id']);
+            if (
+                $selectedPlan === null
+                || ! $selectedPlan->is_active
+                || (Schema::hasColumn('platform_plans', 'self_serve') && ! $selectedPlan->self_serve)
+                || (((float) ($selectedPlan->monthly_price ?? 0)) <= 0
+                    && ((float) ($selectedPlan->yearly_price ?? 0)) <= 0)
+            ) {
+                throw ValidationException::withMessages([
+                    'plan_id' => ['Choose an active self-serve package.'],
+                ]);
+            }
+        }
+        $setupTypeOption = null;
+        if ($setupType !== '') {
+            foreach ($this->setupTypeOptions() as $option) {
+                if ($option['id'] === $setupType) {
+                    $setupTypeOption = $option;
+                    break;
+                }
+            }
+            if ($setupTypeOption === null) {
+                throw ValidationException::withMessages([
+                    'setup_type' => ['Choose a valid setup type.'],
+                ]);
+            }
+            $industry = $setupTypeOption['industry'];
+            if ($requestedIndustry !== '' && $requestedIndustry !== $industry) {
+                throw ValidationException::withMessages([
+                    'setup_type' => ['Choose a setup type for the selected industry.'],
+                ]);
+            }
+            $profile = $setupType;
+        } else {
+            $industry = $requestedIndustry;
+            $definition = IndustryRegistry::definition($industry);
+            if ($definition === null) {
+                throw ValidationException::withMessages([
+                    'industry' => ['Choose a valid industry product.'],
+                ]);
+            }
+
+            $profile = trim((string) ($definition['default_profile'] ?? ''));
+            if ($profile === '' || ! is_array(config("erp.profiles.{$profile}"))) {
+                throw ValidationException::withMessages([
+                    'industry' => ['This industry is not ready for self-serve signup yet.'],
+                ]);
+            }
+            $setupTypeOption = [
+                'id' => $profile,
+                'label' => (string) (config("erp.profiles.{$profile}.label") ?? $profile),
+                'industry' => $industry,
+            ];
         }
 
-        $profile = trim((string) ($definition['default_profile'] ?? ''));
-        if ($profile === '' || ! is_array(config("erp.profiles.{$profile}"))) {
-            throw ValidationException::withMessages([
-                'industry' => ['This industry is not ready for self-serve signup yet.'],
-            ]);
+        if ($selectedPlan !== null) {
+            $planIndustry = (string) ($selectedPlan->industry ?: 'commerce');
+            if ($planIndustry !== $industry) {
+                throw ValidationException::withMessages([
+                    'plan_id' => ['Choose a setup type for the selected package.'],
+                ]);
+            }
+            $allowedProfiles = is_array($selectedPlan->setup_profile_keys) ? $selectedPlan->setup_profile_keys : [];
+            $trialProfiles = is_array($selectedPlan->trial_profile_keys) ? $selectedPlan->trial_profile_keys : [];
+            if (
+                ($allowedProfiles !== [] && ! in_array($profile, $allowedProfiles, true))
+                || ($trialProfiles !== [] && ! in_array($profile, $trialProfiles, true))
+            ) {
+                throw ValidationException::withMessages([
+                    'setup_type' => ['Choose a setup type available with the selected package.'],
+                ]);
+            }
+        }
+
+        $businessType = trim((string) ($input['business_type'] ?? ''));
+        if ($businessType === '') {
+            $businessType = IndustryRegistry::labelForIndustry($industry);
+        }
+        if ($setupTypeOption !== null) {
+            $allowedBusinessTypes = is_array($setupTypeOption['business_types'] ?? null)
+                ? $setupTypeOption['business_types']
+                : [];
+            if (
+                $allowedBusinessTypes !== []
+                && $businessType !== 'Other'
+                && ! in_array($businessType, $allowedBusinessTypes, true)
+            ) {
+                throw ValidationException::withMessages([
+                    'setup_type' => ['Choose a setup type that matches this type of business.'],
+                ]);
+            }
         }
 
         $orgName = trim((string) $input['org_name']);
@@ -87,6 +189,7 @@ class PublicFreeSignupService
             'primary_tel' => $phone,
             'org_address' => $address,
             'deployment_profile' => $profile,
+            'business_type' => $businessType,
             'registration_source' => 'self_registered',
             'admin_username' => $username,
             'admin_email' => $orgEmail,
@@ -106,6 +209,9 @@ class PublicFreeSignupService
             'company_code' => $companyCode,
             'username' => $username,
             'industry' => $industry,
+            'business_type' => $businessType,
+            'setup_type' => $profile,
+            'setup_type_label' => $setupTypeOption['label'],
             'free_plan_name' => $this->freePlan->name(),
             'login_url' => $loginUrl,
         ];
@@ -128,6 +234,53 @@ class PublicFreeSignupService
         }
 
         return $out;
+    }
+
+    /**
+     * @return list<array{id: string, label: string, industry: string, industry_label: string, business_types: list<string>}>
+     */
+    public function setupTypeOptions(): array
+    {
+        $availableIndustries = array_fill_keys(
+            array_column($this->industryOptions(), 'id'),
+            true,
+        );
+        $out = [];
+        foreach ($this->setupProfiles->all() as $profile) {
+            $key = (string) ($profile['key'] ?? '');
+            $industry = (string) ($profile['industry'] ?? '');
+            if (
+                $key === ''
+                || ! isset($availableIndustries[$industry])
+                || (! ($profile['custom'] ?? false)
+                    && ! in_array($key, IndustryRegistry::definition($industry)['profile_keys'] ?? [], true))
+            ) {
+                continue;
+            }
+            if (! collect(self::TRIAL_APPLICATIONS)->contains(
+                fn (string $application) => ($profile['applications'][$application] ?? false) === true,
+            )) {
+                continue;
+            }
+            $out[] = [
+                'id' => $key,
+                'label' => (string) ($profile['label'] ?? $key),
+                'industry' => $industry,
+                'industry_label' => IndustryRegistry::labelForIndustry($industry),
+                'business_types' => array_values(array_map(
+                    'strval',
+                    is_array($profile['business_types'] ?? null) ? $profile['business_types'] : [],
+                )),
+            ];
+        }
+
+        return $out;
+    }
+
+    /** @return list<array{value: string, label: string, industry: string}> */
+    public function businessTypeOptions(): array
+    {
+        return $this->setupProfiles->businessTypeCatalog();
     }
 
     protected function allocateCompanyCode(string $orgName): string

@@ -358,6 +358,11 @@ class AuthSessionService
                 'organization' => $account->organization,
                 'memberships' => $memberships,
                 'must_change_password' => (bool) $effective->must_change_password,
+                'login_channel' => $loginChannel,
+                'active_workspace_id' => $activeWorkspaceId
+                    ?? ($currentToken->active_workspace_id ?? null),
+                // Client already has capabilities for this channel — skip full rebuild.
+                'workspace_switch_only' => true,
             ], $effective);
         }
 

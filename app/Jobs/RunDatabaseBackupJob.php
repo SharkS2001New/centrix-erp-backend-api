@@ -13,7 +13,7 @@ class RunDatabaseBackupJob implements ShouldQueue
 {
     use Queueable;
 
-    public int $timeout = 3600;
+    public int $timeout = 7200;
 
     public function __construct(
         public string $taskId,

@@ -45,7 +45,13 @@ class PlatformCommerceDemoDataTest extends TestCase
                 ->get();
             foreach ($products as $product) {
                 $this->assertNotEmpty($product->image_path);
+                $this->assertFalse(
+                    (bool) filter_var($product->image_path, FILTER_VALIDATE_URL),
+                    'Commerce demo photos should be stored on the public disk',
+                );
                 $this->assertTrue(Storage::disk('public')->exists($product->image_path));
+                $this->assertStringContainsString('/image/file', (string) $product->image_url);
+                $this->assertStringContainsString('v='.$product->image_version, (string) $product->image_url);
             }
 
             $this->assertSame(8, CurrentStock::query()
@@ -64,5 +70,59 @@ class PlatformCommerceDemoDataTest extends TestCase
             ->where('branch_id', $branch->id)
             ->where('product_code', 'like', 'DEMO-COM-'.$org->id.'-%')
             ->count());
+    }
+
+    public function test_platform_demo_generation_seeds_retail_wholesale_and_distribution_accounts(): void
+    {
+        Storage::fake('public');
+
+        $service = app(PlatformDemoDataService::class);
+        $result = $service->generate();
+
+        $accounts = collect($result['organizations'])->keyBy('company_code');
+        foreach (['RETAIL', 'WHOLESALE', 'DISTRIB'] as $code) {
+            $this->assertTrue($accounts->get($code)['present']);
+        }
+
+        $this->assertSame(8, Product::query()
+            ->where('organization_id', Organization::query()->where('company_code', 'RETAIL')->value('id'))
+            ->count());
+        $this->assertSame(8, Product::query()
+            ->where('organization_id', Organization::query()->where('company_code', 'WHOLESALE')->value('id'))
+            ->count());
+        $this->assertSame(8, Product::query()
+            ->where('organization_id', Organization::query()->where('company_code', 'DISTRIB')->value('id'))
+            ->count());
+
+        $retailNames = Product::query()
+            ->where('organization_id', Organization::query()->where('company_code', 'RETAIL')->value('id'))
+            ->pluck('product_name');
+        $this->assertContains('Premium rice 2kg', $retailNames);
+        $this->assertNotContains('Fresh bananas (bunch)', $retailNames);
+
+        $wholesaleNames = Product::query()
+            ->where('organization_id', Organization::query()->where('company_code', 'WHOLESALE')->value('id'))
+            ->pluck('product_name');
+        $this->assertContains('Premium rice 25kg sack', $wholesaleNames);
+
+        $distributionNames = Product::query()
+            ->where('organization_id', Organization::query()->where('company_code', 'DISTRIB')->value('id'))
+            ->pluck('product_name');
+        $this->assertContains('Rice 2kg retail pack (carton)', $distributionNames);
+
+        $supermarketOrg = Organization::query()->where('company_code', 'RETAIL')->firstOrFail();
+        $supermarketOrg->deployment_profile = 'supermarket';
+        $supermarketOrg->save();
+        $service->seedOrganization($supermarketOrg->fresh());
+        $supermarketNames = Product::query()
+            ->where('organization_id', $supermarketOrg->id)
+            ->where('product_code', 'like', 'DEMO-COM-'.$supermarketOrg->id.'-%')
+            ->pluck('product_name');
+        $this->assertContains('Fresh bananas (bunch)', $supermarketNames);
+        $this->assertContains('Laundry bar soap 1kg', $supermarketNames);
+        $this->assertNotContains('Premium rice 25kg sack', $supermarketNames);
+
+        $service->rollback();
+        $this->assertFalse($service->status()['loaded']);
     }
 }

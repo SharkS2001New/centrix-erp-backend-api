@@ -5,30 +5,46 @@ namespace App\Http\Controllers\Api\V1\Operations;
 use App\Http\Controllers\Controller;
 use App\Models\Customer;
 use App\Models\CustomerInvoice;
+use App\Models\InventoryTransaction;
 use App\Models\LpoMst;
+use App\Models\Organization;
+use App\Models\Uom;
 use App\Models\User;
 use App\Services\Accounting\CustomerInvoiceService;
 use App\Services\Auth\UserAccessService;
+use App\Services\Cache\OrganizationCache;
 use App\Services\Catalog\ProductCatalogFilterService;
 use App\Services\Catalog\ProductPriceSheetService;
-use App\Services\Inventory\StockCostCalculation;
-use App\Services\Inventory\StockUomDisplayService;
-use App\Services\Inventory\StockValuationService;
-use App\Models\Uom;
-use App\Services\LpoModuleService;
+use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
-use App\Services\Cache\OrganizationCache;
+use App\Services\Fulfillment\TripLoadReportService;
+use App\Services\Inventory\LowStockReportService;
+use App\Services\Inventory\StockChainReportService;
+use App\Services\Inventory\StockCostCalculation;
+use App\Services\Inventory\StockOnHandReportService;
+use App\Services\Inventory\StockUomDisplayService;
+use App\Services\Inventory\StockValuationReportService;
+use App\Services\Inventory\StockValuationService;
+use App\Services\LpoModuleService;
 use App\Services\Pos\TillReportMetrics;
+use App\Services\Reports\HospitalityEodReportService;
+use App\Services\Reports\HospitalityPaymentsBreakdownService;
+use App\Services\Reports\PaymentsBreakdownService;
 use App\Services\Sales\CentrixSalesScope;
 use App\Support\AppTimezone;
+use App\Support\CentrixAgentServiceUser;
 use App\Support\EffectiveSaleDate;
+use App\Support\ReportDateRangeGuard;
 use App\Support\SalePaymentStatus;
 use App\Support\SalesChannelLabels;
 use App\Support\SalesReportUserScope;
 use Carbon\Carbon;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -48,7 +64,7 @@ class ReportController extends Controller
             ->whereNull('deleted_at')
             ->where('organization_id', $orgId);
 
-        \App\Support\CentrixAgentServiceUser::excludeFromQuery($query);
+        CentrixAgentServiceUser::excludeFromQuery($query);
 
         if (! $access->isOrgWide($user)) {
             $branchId = $access->branchId($user);
@@ -71,16 +87,16 @@ class ReportController extends Controller
         }
 
         // Create-order / POS / mobile-sales permission holders only (not stock/HR-only).
-        SalesReportUserScope::applyEligibleSalesReportUsers($query);
-        $query->where('is_active', true);
+        // Also drops inactive users and users linked to inactive employees.
+        SalesReportUserScope::applySalesPickerUsers($query);
 
         $q = trim((string) $request->input('q', ''));
         if ($q !== '') {
-        $query->where(function ($inner) use ($q) {
-            $inner->where('full_name', 'like', "%{$q}%")
-                ->orWhere('email', 'like', "%{$q}%")
-                ->orWhere('username', 'like', "%{$q}%");
-        });
+            $query->where(function ($inner) use ($q) {
+                $inner->where('full_name', 'like', "%{$q}%")
+                    ->orWhere('email', 'like', "%{$q}%")
+                    ->orWhere('username', 'like', "%{$q}%");
+            });
         }
 
         $perPage = min((int) $request->input('per_page', 50), 50);
@@ -298,6 +314,107 @@ class ReportController extends Controller
     }
 
     /**
+     * Lean sales trend for manager / mobile charts — two grouped SUM queries only.
+     * Avoids rebuilding inventory, receivables, top products, and channel KPIs.
+     *
+     * @return list<array{date: string, label: string, current: float, previous: float}>
+     */
+    public function leanSalesTrend(
+        ?int $orgId,
+        ?int $branchId,
+        Carbon $from,
+        Carbon $to,
+    ): array {
+        $fromDay = $from->copy()->startOfDay();
+        $toDay = $to->copy()->startOfDay();
+        if ($fromDay->gt($toDay)) {
+            [$fromDay, $toDay] = [$toDay, $fromDay];
+        }
+
+        $build = function () use ($orgId, $branchId, $fromDay, $toDay): array {
+            $metricStatuses = app(OrderWorkflowService::class)->metricSaleStatuses();
+            $dayExpr = EffectiveSaleDate::daySqlExpression();
+            $days = max(1, $fromDay->diffInDays($toDay) + 1);
+            $prevTo = $fromDay->copy()->subDay();
+            $prevFrom = $prevTo->copy()->subDays($days - 1);
+
+            $salesBase = function (Carbon $start, Carbon $end) use ($branchId, $orgId, $metricStatuses) {
+                $query = DB::table('sales')
+                    ->whereIn('status', $metricStatuses)
+                    ->where('archived', 0)
+                    ->when($orgId, fn ($q) => $q->where('organization_id', $orgId))
+                    ->when($branchId, fn ($q) => $q->where('branch_id', $branchId));
+
+                EffectiveSaleDate::applyFromToDateFilter(
+                    $query,
+                    $start->toDateString(),
+                    $end->toDateString(),
+                );
+
+                return CentrixSalesScope::excludeLegacyMaterialized($query);
+            };
+
+            $dailyCurrent = $salesBase($fromDay, $toDay)
+                ->selectRaw("{$dayExpr} as day, SUM(order_total) as total")
+                ->groupBy('day')
+                ->orderBy('day')
+                ->get()
+                ->mapWithKeys(function ($row) {
+                    $key = Carbon::parse((string) $row->day)->toDateString();
+
+                    return [$key => (float) ($row->total ?? 0)];
+                });
+
+            $dailyPrevious = $salesBase($prevFrom, $prevTo)
+                ->selectRaw("{$dayExpr} as day, SUM(order_total) as total")
+                ->groupBy('day')
+                ->orderBy('day')
+                ->get()
+                ->mapWithKeys(function ($row) {
+                    $key = Carbon::parse((string) $row->day)->toDateString();
+
+                    return [$key => (float) ($row->total ?? 0)];
+                });
+
+            $salesTrend = [];
+            $cursor = $fromDay->copy();
+            $previousCursor = $prevFrom->copy();
+            while ($cursor->lte($toDay)) {
+                $dayKey = $cursor->toDateString();
+                $previousDayKey = $previousCursor->toDateString();
+                $salesTrend[] = [
+                    'date' => $dayKey,
+                    'label' => $cursor->format('M j'),
+                    'current' => (float) ($dailyCurrent[$dayKey] ?? 0),
+                    'previous' => (float) ($dailyPrevious[$previousDayKey] ?? 0),
+                ];
+                $cursor->addDay();
+                $previousCursor->addDay();
+            }
+
+            return $salesTrend;
+        };
+
+        $cacheOrgId = (int) ($orgId ?? 0);
+        if ($cacheOrgId <= 0) {
+            return $build();
+        }
+
+        return OrganizationCache::remember(
+            $cacheOrgId,
+            sprintf(
+                'reports.sales_trend:v%d:b%d:%s:%s',
+                OrganizationCache::reportsDashboardVersion($cacheOrgId),
+                (int) $branchId,
+                $fromDay->toDateString(),
+                $toDay->toDateString(),
+            ),
+            120,
+            $build,
+        );
+    }
+
+    /**
      * @param  list<string>  $metricStatuses
      * @return array<string, mixed>
      */
@@ -311,7 +428,7 @@ class ReportController extends Controller
         array $metricStatuses,
         string $dayExpr,
     ): array {
-        $salesBase = function (\Carbon\Carbon $start, \Carbon\Carbon $end) use ($branchId, $orgId, $metricStatuses) {
+        $salesBase = function (Carbon $start, Carbon $end) use ($branchId, $orgId, $metricStatuses) {
             $query = DB::table('sales')
                 ->whereIn('status', $metricStatuses)
                 ->where('archived', 0)
@@ -330,7 +447,7 @@ class ReportController extends Controller
         $totalSales = (float) $salesBase($from, $to)->sum('order_total');
         $prevTotalSales = (float) $salesBase($prevFrom, $prevTo)->sum('order_total');
 
-        $grossProfitForPeriod = function (\Carbon\Carbon $start, \Carbon\Carbon $end) use ($orgId, $branchId, $metricStatuses) {
+        $grossProfitForPeriod = function (Carbon $start, Carbon $end) use ($orgId, $branchId, $metricStatuses) {
             // Gross profit = (qty × unit/selling price) − (qty × cost) = gross sales − COGS.
             // Do not subtract VAT from revenue here: unit_price and cost_price are on the same basis.
             $revenue = (float) CentrixSalesScope::excludeLegacyMaterialized(
@@ -428,8 +545,8 @@ class ReportController extends Controller
 
         $prevReceivables = max(0, $receivables - $creditIssued + $paymentsCollected);
 
-        // Stock value = on-hand qty × selling price (expected revenue from remaining stock).
-        $inventorySummary = app(StockValuationService::class)->summarize($orgId, $branchId);
+        // Stock value = on-hand qty × selling price (shared cache with manager home KPIs).
+        $inventorySummary = app(StockValuationService::class)->summarizeCached($orgId, $branchId);
         $shopInventoryValue = $inventorySummary['shop_value'];
         $storeInventoryValue = $inventorySummary['store_value'];
         $inventoryValue = $inventorySummary['value'];
@@ -574,7 +691,7 @@ class ReportController extends Controller
     }
 
     /**
-     * @param  \Illuminate\Support\Collection<int, object{channel: ?string, revenue: mixed, orders: mixed}>  $channelRows
+     * @param  Collection<int, object{channel: ?string, revenue: mixed, orders: mixed}>  $channelRows
      * @return list<array{channel: string, channel_label: string, revenue: float, orders: int, share_pct: float}>
      */
     protected function aggregateSalesByChannel($channelRows): array
@@ -719,8 +836,8 @@ class ReportController extends Controller
         string $fromDate,
         string $toDate,
     ) {
-            $legacy = CentrixSalesScope::legacyExcludeSql('s');
-            $statuses = CentrixSalesScope::reportPipelineStatuses();
+        $legacy = CentrixSalesScope::legacyExcludeSql('s');
+        $statuses = CentrixSalesScope::reportPipelineStatuses();
         $saleDate = CentrixSalesScope::reportSaleDateSql('s');
         $unpaidSql = SalePaymentStatus::isUnpaidSql('s.');
         $outstandingSql = 'GREATEST(COALESCE(s.order_total, 0) - COALESCE(s.amount_paid, 0), 0)';
@@ -732,9 +849,9 @@ class ReportController extends Controller
                     ->whereNull('c.deleted_at');
             })
             ->leftJoin('routes as r', 'r.id', '=', 'c.route_id')
-                    ->where('s.organization_id', $orgId)
-                    ->whereIn('s.status', $statuses)
-                    ->where('s.archived', 0)
+            ->where('s.organization_id', $orgId)
+            ->whereIn('s.status', $statuses)
+            ->where('s.archived', 0)
             ->whereRaw($legacy)
             ->whereRaw("{$saleDate} >= ?", [$fromDate])
             ->whereRaw("{$saleDate} <= ?", [$toDate]);
@@ -877,12 +994,12 @@ class ReportController extends Controller
 
     public function vehicleTripLoads(Request $request)
     {
-        return response()->json(app(\App\Services\Fulfillment\TripLoadReportService::class)->paginate($request, 'vehicle'));
+        return response()->json(app(TripLoadReportService::class)->paginate($request, 'vehicle'));
     }
 
     public function driverTripLoads(Request $request)
     {
-        return response()->json(app(\App\Services\Fulfillment\TripLoadReportService::class)->paginate($request, 'driver'));
+        return response()->json(app(TripLoadReportService::class)->paginate($request, 'driver'));
     }
 
     public function salesPipeline(Request $request)
@@ -945,7 +1062,7 @@ class ReportController extends Controller
         $branchId = ! empty($filters['branch_id']) ? (int) $filters['branch_id'] : null;
 
         return response()->json(
-            app(\App\Services\Reports\PaymentsBreakdownService::class)->build(
+            app(PaymentsBreakdownService::class)->build(
                 $request,
                 (int) $orgId,
                 $branchId,
@@ -966,7 +1083,7 @@ class ReportController extends Controller
         $branchId = ! empty($filters['branch_id']) ? (int) $filters['branch_id'] : null;
 
         return response()->json(
-            app(\App\Services\Reports\HospitalityPaymentsBreakdownService::class)->build(
+            app(HospitalityPaymentsBreakdownService::class)->build(
                 $request,
                 (int) $orgId,
                 $branchId,
@@ -988,7 +1105,7 @@ class ReportController extends Controller
         }
 
         return response()->json(
-            app(\App\Services\Reports\HospitalityEodReportService::class)->build(
+            app(HospitalityEodReportService::class)->build(
                 $request,
                 (int) $orgId,
                 $branchId,
@@ -1011,7 +1128,7 @@ class ReportController extends Controller
         }
 
         return response()->json(
-            app(\App\Services\Inventory\StockOnHandReportService::class)->paginate($request, $orgId),
+            app(StockOnHandReportService::class)->paginate($request, $orgId),
         );
     }
 
@@ -1023,13 +1140,13 @@ class ReportController extends Controller
         }
 
         return response()->json(
-            app(\App\Services\Inventory\LowStockReportService::class)->paginate($request, $orgId),
+            app(LowStockReportService::class)->paginate($request, $orgId),
         );
     }
 
     public function stockMovement(Request $request)
     {
-        $q = \App\Models\InventoryTransaction::query();
+        $q = InventoryTransaction::query();
         $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
         if ($orgId) {
             $this->scopeOrganizationBranches($q, $orgId);
@@ -1060,11 +1177,11 @@ class ReportController extends Controller
             ->first();
 
         $paginator = $q->with(['product:product_code,product_name,unit_id', 'product.unit'])
-                ->orderByDesc('id')
-                ->paginate(min((int) $request->input('per_page', 50), 200))
-                ->through(function ($transaction) {
-                    $payload = $transaction->toArray();
-                    $payload['product_name'] = $transaction->product?->product_name;
+            ->orderByDesc('id')
+            ->paginate(min((int) $request->input('per_page', 50), 200))
+            ->through(function ($transaction) {
+                $payload = $transaction->toArray();
+                $payload['product_name'] = $transaction->product?->product_name;
                 $unit = $transaction->product?->unit;
                 if ($unit) {
                     $payload['uom_name'] = $unit->full_name;
@@ -1075,7 +1192,7 @@ class ReportController extends Controller
                     $payload['uom_type'] = $unit->uom_type;
                 }
 
-                    return $payload;
+                return $payload;
             });
 
         return response()->json(array_merge($paginator->toArray(), [
@@ -1100,7 +1217,7 @@ class ReportController extends Controller
         }
 
         return response()->json(
-            app(\App\Services\Inventory\StockChainReportService::class)->paginate($request, $orgId),
+            app(StockChainReportService::class)->paginate($request, $orgId),
         );
     }
 
@@ -1119,7 +1236,7 @@ class ReportController extends Controller
         }
 
         return response()->json(
-            app(\App\Services\Inventory\StockValuationReportService::class)->paginate($request, $orgId),
+            app(StockValuationReportService::class)->paginate($request, $orgId),
         );
     }
 
@@ -1152,7 +1269,7 @@ class ReportController extends Controller
             $access->assertBranchInOrganization($request->user(), $branchId, $request);
         }
 
-        return response()->json(app(StockValuationService::class)->summarize($orgId, $branchId));
+        return response()->json(app(StockValuationService::class)->summarizeCached($orgId, $branchId));
     }
 
     public function stockReservations(Request $request)
@@ -1526,7 +1643,8 @@ class ReportController extends Controller
             MAX(COALESCE(completed_at, created_at)) as last_sale_at
         ')->first();
 
-        $lineDiscountQuery = CentrixSalesScope::excludeLegacyMaterialized(
+        // One sale_items scan for line discounts + items sold (was two full joins).
+        $lineAggQuery = CentrixSalesScope::excludeLegacyMaterialized(
             DB::table('sale_items as si')
                 ->join('sales as s', 'si.sale_id', '=', 's.id')
                 ->whereIn('s.status', $metricStatuses)
@@ -1535,33 +1653,19 @@ class ReportController extends Controller
                 ->when($floatSessionId, fn ($q) => $q->where('s.float_session_id', $floatSessionId)),
             's',
         );
-        $tillMetrics->applyCollectedSalesFilter($lineDiscountQuery, 's');
-        $this->applySalesTenantScope($lineDiscountQuery, $orgId, $branchId, 's');
-        $lineDiscountQuery
-            ->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) >= ?', [$periodStartDate])
-            ->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) <= ?', [$periodEndDate]);
-        $lineDiscounts = (float) $lineDiscountQuery->sum('si.discount_given');
+        $tillMetrics->applyCollectedSalesFilter($lineAggQuery, 's');
+        $this->applySalesTenantScope($lineAggQuery, $orgId, $branchId, 's');
+        EffectiveSaleDate::applyFromToDateFilter($lineAggQuery, $periodStartDate, $periodEndDate, 's');
+        $lineAgg = $lineAggQuery->selectRaw('
+            COALESCE(SUM(si.discount_given), 0) as line_discounts,
+            COALESCE(SUM(si.quantity), 0) as items_sold
+        ')->first();
+        $lineDiscounts = (float) ($lineAgg->line_discounts ?? 0);
+        $itemsSold = (float) ($lineAgg->items_sold ?? 0);
 
-        $itemsSoldQuery = CentrixSalesScope::excludeLegacyMaterialized(
-            DB::table('sale_items as si')
-                ->join('sales as s', 'si.sale_id', '=', 's.id')
-                ->whereIn('s.status', $metricStatuses)
-                ->where('s.archived', 0)
-                ->when($cashierId, fn ($q) => $q->where('s.cashier_id', $cashierId))
-                ->when($floatSessionId, fn ($q) => $q->where('s.float_session_id', $floatSessionId)),
-            's',
-        );
-        $tillMetrics->applyCollectedSalesFilter($itemsSoldQuery, 's');
-        $this->applySalesTenantScope($itemsSoldQuery, $orgId, $branchId, 's');
-        $itemsSoldQuery
-            ->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) >= ?', [$periodStartDate])
-            ->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) <= ?', [$periodEndDate]);
-        $itemsSold = (float) $itemsSoldQuery->sum('si.quantity');
-
-        $saleIds = (clone $salesBase)->pluck('id');
-        $refunds = $saleIds->isEmpty()
-            ? 0
-            : (float) DB::table('returns')->whereIn('sale_id', $saleIds)->sum('amount');
+        // Subquery instead of plucking every sale id into PHP (was O(n) memory + two whereIn scans).
+        $saleIdSub = (clone $salesBase)->select('id');
+        $refunds = (float) DB::table('returns')->whereIn('sale_id', $saleIdSub)->sum('amount');
 
         $voidedQuery = DB::table('sales')
             ->where('status', 'cancelled');
@@ -1576,9 +1680,9 @@ class ReportController extends Controller
 
         $gross = (float) ($agg->gross_sales ?? 0);
         $headerVat = round((float) ($agg->total_vat ?? 0), 2);
-        $lineVat = $saleIds->isEmpty()
-            ? 0.0
-            : round((float) DB::table('sale_items')->whereIn('sale_id', $saleIds)->sum('product_vat'), 2);
+        $lineVat = round((float) DB::table('sale_items')
+            ->whereIn('sale_id', (clone $salesBase)->select('id'))
+            ->sum('product_vat'), 2);
         $totalVat = max($headerVat, $lineVat);
         $totalDiscounts = (float) ($agg->order_discounts ?? 0) + $lineDiscounts;
         // Gross / net sales = SUM(order_total). Top-ups and returns already revise
@@ -1872,37 +1976,64 @@ class ReportController extends Controller
                 DB::raw('COALESCE(SUM(s.kcb_amount), 0) as kcb_collected'),
                 DB::raw('COALESCE(SUM(s.equity_amount), 0) + COALESCE(SUM(s.kcb_amount), 0) as bank_collected'),
             )
-            ->get()
-            ->map(function ($row) use ($date, $branchId, $orgId, $isMonthly, $periodStartDate, $periodEndDate, $floatSessionId, $tillMetrics) {
-                $floatQuery = DB::table('till_float_sessions')
-                    ->where('cashier_id', $row->cashier_id);
-                if ($floatSessionId) {
-                    $floatQuery->where('id', $floatSessionId);
-                } elseif ($isMonthly) {
-                    $floatQuery->whereBetween('session_date', [$periodStartDate, $periodEndDate]);
-                } else {
-                    $floatQuery->whereDate('session_date', $date);
-                }
-                $this->applyBranchTenantScope($floatQuery, $orgId, $branchId);
-                $row->opening_float = (float) $floatQuery->sum('working_amount');
+            ->get();
 
-                $debtorQ = DB::table('sale_payments as sp')
-                    ->join('sales as s', 's.id', '=', 'sp.sale_id')
-                    ->join('till_float_sessions as tfs', 'tfs.id', '=', 'sp.float_session_id')
-                    ->where('tfs.cashier_id', $row->cashier_id);
-                if ($floatSessionId) {
-                    $debtorQ->where('tfs.id', $floatSessionId);
-                } elseif ($isMonthly) {
-                    $debtorQ->whereBetween('tfs.session_date', [$periodStartDate, $periodEndDate]);
-                } else {
-                    $debtorQ->whereDate('tfs.session_date', $date);
-                }
-                $this->applyBranchTenantScope($debtorQ, $orgId, $branchId, 'tfs.branch_id');
-                $tillMetrics->applyDebtorCollectionFilter($debtorQ);
-                $row->paid_debtors = round((float) $debtorQ->sum('sp.amount'), 2);
+        // Batch float + debtor totals for all cashiers (was N+1 per cashier).
+        $cashierIds = $cashierRows
+            ->pluck('cashier_id')
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
+        $floatByCashier = [];
+        $debtorByCashier = [];
+        if ($cashierIds !== []) {
+            $floatBatch = DB::table('till_float_sessions')
+                ->whereIn('cashier_id', $cashierIds);
+            if ($floatSessionId) {
+                $floatBatch->where('id', $floatSessionId);
+            } elseif ($isMonthly) {
+                $floatBatch->whereBetween('session_date', [$periodStartDate, $periodEndDate]);
+            } else {
+                $floatBatch->whereDate('session_date', $date);
+            }
+            $this->applyBranchTenantScope($floatBatch, $orgId, $branchId);
+            $floatByCashier = $floatBatch
+                ->groupBy('cashier_id')
+                ->select('cashier_id', DB::raw('COALESCE(SUM(working_amount), 0) as opening_float'))
+                ->pluck('opening_float', 'cashier_id')
+                ->map(fn ($v) => (float) $v)
+                ->all();
 
-                return $row;
-            });
+            $debtorBatch = DB::table('sale_payments as sp')
+                ->join('sales as s', 's.id', '=', 'sp.sale_id')
+                ->join('till_float_sessions as tfs', 'tfs.id', '=', 'sp.float_session_id')
+                ->whereIn('tfs.cashier_id', $cashierIds);
+            if ($floatSessionId) {
+                $debtorBatch->where('tfs.id', $floatSessionId);
+            } elseif ($isMonthly) {
+                $debtorBatch->whereBetween('tfs.session_date', [$periodStartDate, $periodEndDate]);
+            } else {
+                $debtorBatch->whereDate('tfs.session_date', $date);
+            }
+            $this->applyBranchTenantScope($debtorBatch, $orgId, $branchId, 'tfs.branch_id');
+            $tillMetrics->applyDebtorCollectionFilter($debtorBatch);
+            $debtorByCashier = $debtorBatch
+                ->groupBy('tfs.cashier_id')
+                ->selectRaw('tfs.cashier_id as cashier_id, COALESCE(SUM(sp.amount), 0) as paid_debtors')
+                ->pluck('paid_debtors', 'cashier_id')
+                ->map(fn ($v) => round((float) $v, 2))
+                ->all();
+        }
+
+        $cashierRows = $cashierRows->map(function ($row) use ($floatByCashier, $debtorByCashier) {
+            $cid = (int) $row->cashier_id;
+            $row->opening_float = (float) ($floatByCashier[$cid] ?? 0);
+            $row->paid_debtors = (float) ($debtorByCashier[$cid] ?? 0);
+
+            return $row;
+        });
 
         // Cashiers who only collected debtors (no ORDTTL cash sales) still appear in Cashier maths.
         $cashierById = $cashierRows->keyBy(fn ($row) => (int) $row->cashier_id);
@@ -1919,6 +2050,7 @@ class ReportController extends Controller
                 if ((float) ($existing->paid_debtors ?? 0) <= 0 && $sessionDebtors > 0) {
                     $existing->paid_debtors = $sessionDebtors;
                 }
+
                 continue;
             }
             if ($sessionDebtors <= 0 && $sessionFloat <= 0) {
@@ -2075,15 +2207,16 @@ class ReportController extends Controller
             $tillMetrics->applyCollectedSalesFilter($dailyBreakdown);
             $this->applySalesTenantScope($dailyBreakdown, $orgId, $branchId);
             EffectiveSaleDate::applyFromToDateFilter($dailyBreakdown, $periodStartDate, $periodEndDate);
+            $dayExpr = EffectiveSaleDate::daySqlExpression('sales');
             $dailyBreakdown = $dailyBreakdown
-                ->selectRaw('
-                    DATE(COALESCE(completed_at, created_at)) as sale_date,
+                ->selectRaw("
+                    {$dayExpr} as sale_date,
                     COUNT(*) as transactions,
                     COALESCE(SUM(order_total), 0) as gross_sales,
                     COALESCE(SUM(total_vat), 0) as total_vat,
                     COALESCE(SUM(cash), 0) as cash_collected
-                ')
-                ->groupBy(DB::raw('DATE(COALESCE(completed_at, created_at))'))
+                ")
+                ->groupBy(DB::raw($dayExpr))
                 ->orderBy('sale_date')
                 ->get()
                 ->map(fn ($row) => [
@@ -2361,7 +2494,7 @@ class ReportController extends Controller
             ->first();
 
         $paginator = $q->orderByDesc('cip.date_paid')
-                ->orderByDesc('cip.id')
+            ->orderByDesc('cip.id')
             ->paginate(min((int) ($filters['per_page'] ?? 20), 200));
 
         return response()->json(array_merge($paginator->toArray(), [
@@ -2646,7 +2779,12 @@ class ReportController extends Controller
             },
             [
                 'select' => $listColumns,
+                // Footer / KPI money = eTIMS portal uploads only (success + live, not test).
                 'lean_summary' => ['order_total', 'amount_paid', 'total_vat'],
+                'lean_summary_money_scope' => [
+                    'status' => 'success',
+                    'is_test' => 0,
+                ],
                 // Prefer timestamp range so (organization_id, created_at) can be used.
                 'prefer_timestamp_date_column' => 'receipt_at',
             ],
@@ -2931,15 +3069,25 @@ class ReportController extends Controller
         if (! $skipDateGuard) {
             $defaultDays = null;
             if ($user?->organization_id) {
-                $org = \App\Models\Organization::query()->find($user->organization_id);
-                if ($org) {
-                    $gate = app(\App\Services\Erp\CapabilityGate::class)->forOrganization($org);
-                    $sales = $gate->moduleSettings('sales');
-                    $defaultDays = (int) ($sales['reports_default_date_range_days'] ?? 0) ?: null;
-                }
+                $orgId = (int) $user->organization_id;
+                $defaultDays = OrganizationCache::remember(
+                    $orgId,
+                    'reports_default_date_range_days',
+                    300,
+                    function () use ($orgId) {
+                        $org = Organization::query()->find($orgId);
+                        if (! $org) {
+                            return null;
+                        }
+                        $gate = app(CapabilityGate::class)->forOrganization($org);
+                        $sales = $gate->moduleSettings('sales');
+
+                        return (int) ($sales['reports_default_date_range_days'] ?? 0) ?: null;
+                    },
+                );
             }
 
-            $filters = \App\Support\ReportDateRangeGuard::enforce($filters, $defaultDays);
+            $filters = ReportDateRangeGuard::enforce($filters, $defaultDays);
         }
 
         return $filters;
@@ -3021,23 +3169,10 @@ class ReportController extends Controller
             $view,
             $effectiveSumColumns,
         );
-
-        // Build the paginator by hand instead of ->paginate(), which would run its own
-        // COUNT(*) over the same expensive view subquery. summary.row_count already has
-        // the total, so reuse it and run only the data page query.
-        $perPage = min((int) ($filters['per_page'] ?? 20), 200);
-        $page = max(1, (int) request()->input('page', 1));
-        $total = (int) ($summary['row_count'] ?? 0);
-        $items = $aggregated->forPage($page, $perPage)->get();
-        $paginator = new LengthAwarePaginator(
-            $items,
-            $total,
-            $perPage,
-            $page,
-            [
-                'path' => LengthAwarePaginator::resolveCurrentPath(),
-                'pageName' => 'page',
-            ],
+        $paginator = $this->paginateReportQueryWithKnownTotal(
+            $aggregated,
+            $filters,
+            (int) ($summary['row_count'] ?? 0),
         );
 
         return array_merge($paginator->toArray(), [
@@ -3047,7 +3182,7 @@ class ReportController extends Controller
 
     /**
      * @param  array<int, string>  $allowedCols
-     * @return \Illuminate\Database\Query\Builder
+     * @return Builder
      */
     protected function buildFilteredReportViewQuery(string $view, array $filters, array $allowedCols, array $options = [])
     {
@@ -3079,16 +3214,16 @@ class ReportController extends Controller
                 $q->where($preferTimestamp, '<=', $filters['to_date'].' 23:59:59');
             }
         } else {
-        if (! empty($filters['from_date']) && ! empty($filters['date_column'])) {
-            $dateColumn = $filters['date_column'];
-            if ($this->viewColumnExists($view, $dateColumn)) {
-                $q->where($dateColumn, '>=', $filters['from_date']);
+            if (! empty($filters['from_date']) && ! empty($filters['date_column'])) {
+                $dateColumn = $filters['date_column'];
+                if ($this->viewColumnExists($view, $dateColumn)) {
+                    $q->where($dateColumn, '>=', $filters['from_date']);
+                }
             }
-        }
-        if (! empty($filters['to_date']) && ! empty($filters['date_column'])) {
-            $dateColumn = $filters['date_column'];
-            if ($this->viewColumnExists($view, $dateColumn)) {
-                $q->where($dateColumn, '<=', $filters['to_date']);
+            if (! empty($filters['to_date']) && ! empty($filters['date_column'])) {
+                $dateColumn = $filters['date_column'];
+                if ($this->viewColumnExists($view, $dateColumn)) {
+                    $q->where($dateColumn, '<=', $filters['to_date']);
                 }
             }
         }
@@ -3111,8 +3246,8 @@ class ReportController extends Controller
                         if (in_array($col, ['order_total', 'amount_paid'], true)) {
                             $escaped = str_replace('`', '``', $col);
                             if ($amountNeedle !== null) {
+                                // Exact numeric match — skip CAST(... LIKE) which defeats indexes.
                                 $inner->{$method}($col, $amountNeedle);
-                                $inner->orWhereRaw("CAST(`{$escaped}` AS CHAR) LIKE ?", ['%'.$search.'%']);
                             } else {
                                 $inner->{$method.'Raw'}("CAST(`{$escaped}` AS CHAR) LIKE ?", ['%'.$search.'%']);
                             }
@@ -3151,11 +3286,22 @@ class ReportController extends Controller
         $q = $this->buildFilteredReportViewQuery($view, $filters, $allowedCols, $options);
 
         // Full-filter aggregates for KPI / footer cards (not just the current page).
+        // Prefer lean COUNT/SUM (no sample-row materialization) — heavy views with
+        // JSON columns were paying for limit(1) before every summary.
         $leanSummary = $options['lean_summary'] ?? null;
+        if ($leanSummary === null && empty($options['force_sample_summary'])) {
+            $leanSummary = $this->summableColumnsForView($view);
+        }
         if (is_array($leanSummary)) {
-            $summary = $this->aggregateLeanReportSummary(clone $q, $leanSummary);
+            $summary = $this->aggregateLeanReportSummary(
+                clone $q,
+                $leanSummary,
+                is_array($options['lean_summary_money_scope'] ?? null)
+                    ? $options['lean_summary_money_scope']
+                    : null,
+            );
         } else {
-        $summary = $this->aggregateFilteredReportSummary(clone $q, $view);
+            $summary = $this->aggregateFilteredReportSummary(clone $q, $view);
         }
 
         if ($orderBy) {
@@ -3173,7 +3319,11 @@ class ReportController extends Controller
             }
         }
 
-        $paginator = $q->paginate(min((int) ($filters['per_page'] ?? 20), 200));
+        $paginator = $this->paginateReportQueryWithKnownTotal(
+            $q,
+            $filters,
+            (int) ($summary['row_count'] ?? 0),
+        );
 
         return array_merge($paginator->toArray(), [
             'summary' => $summary,
@@ -3181,14 +3331,46 @@ class ReportController extends Controller
     }
 
     /**
+     * Build a length-aware paginator using a total already computed by the report summary.
+     * Avoids Laravel paginate()'s second full-filter COUNT(*) on heavy SQL views.
+     *
+     * @param  Builder  $query
+     * @param  array<string, mixed>  $filters
+     */
+    protected function paginateReportQueryWithKnownTotal($query, array $filters, int $total): LengthAwarePaginator
+    {
+        $perPage = min(max(1, (int) ($filters['per_page'] ?? 20)), 200);
+        $page = max(1, (int) ($filters['page'] ?? request()->input('page', 1)));
+        $total = max(0, $total);
+
+        $items = (clone $query)->forPage($page, $perPage)->get();
+
+        return new LengthAwarePaginator(
+            $items,
+            $total,
+            $perPage,
+            $page,
+            [
+                'path' => request()->url(),
+                'query' => request()->query(),
+            ],
+        );
+    }
+
+    /**
      * Cheap COUNT + SUM for known money columns (avoids loading a full sample row
      * that may include large JSON payload columns).
      *
-     * @param  \Illuminate\Database\Query\Builder  $query
+     * When $moneyScope is set (e.g. KRA eTIMS: status=success, is_test=0), money
+     * columns and etims_invoice_count use that subset; row_count stays on the full
+     * filtered list so pagination is unchanged.
+     *
+     * @param  Builder  $query
      * @param  list<string>  $sumCols
+     * @param  array<string, mixed>|null  $moneyScope
      * @return array<string, float|int>
      */
-    protected function aggregateLeanReportSummary($query, array $sumCols): array
+    protected function aggregateLeanReportSummary($query, array $sumCols, ?array $moneyScope = null): array
     {
         try {
             $query->reorder();
@@ -3196,15 +3378,41 @@ class ReportController extends Controller
             // continue
         }
 
-        $selects = ['COUNT(*) as row_count'];
+        if (! is_array($moneyScope) || $moneyScope === []) {
+            $selects = ['COUNT(*) as row_count'];
+            foreach ($sumCols as $col) {
+                $escaped = str_replace('`', '``', (string) $col);
+                $selects[] = "COALESCE(SUM(`{$escaped}`), 0) as `{$escaped}`";
+            }
+
+            $agg = (clone $query)->selectRaw(implode(', ', $selects))->first();
+            $summary = [
+                'row_count' => (int) ($agg->row_count ?? 0),
+            ];
+            foreach ($sumCols as $col) {
+                $summary[$col] = round((float) ($agg->{$col} ?? 0), 4);
+            }
+
+            return $summary;
+        }
+
+        // Scoped money totals (KRA eTIMS): list COUNT stays unscoped for pagination.
+        $countAgg = (clone $query)->selectRaw('COUNT(*) as row_count')->first();
+        $moneyQuery = clone $query;
+        foreach ($moneyScope as $column => $value) {
+            $moneyQuery->where((string) $column, $value);
+        }
+
+        $selects = ['COUNT(*) as etims_invoice_count'];
         foreach ($sumCols as $col) {
             $escaped = str_replace('`', '``', (string) $col);
             $selects[] = "COALESCE(SUM(`{$escaped}`), 0) as `{$escaped}`";
         }
 
-        $agg = (clone $query)->selectRaw(implode(', ', $selects))->first();
+        $agg = $moneyQuery->selectRaw(implode(', ', $selects))->first();
         $summary = [
-            'row_count' => (int) ($agg->row_count ?? 0),
+            'row_count' => (int) ($countAgg->row_count ?? 0),
+            'etims_invoice_count' => (int) ($agg->etims_invoice_count ?? 0),
         ];
         foreach ($sumCols as $col) {
             $summary[$col] = round((float) ($agg->{$col} ?? 0), 4);
@@ -3216,7 +3424,7 @@ class ReportController extends Controller
     /**
      * Sum numeric/money/qty columns across the full filtered report (before pagination).
      *
-     * @param  \Illuminate\Database\Query\Builder  $query
+     * @param  Builder  $query
      * @param  list<string>|null  $sumColumns  When set (period overall reports), only these
      *                                         projected columns are summed — avoids SUMming
      *                                         view fields that were dropped in a subquery
@@ -3351,26 +3559,34 @@ class ReportController extends Controller
      */
     protected function summableColumnsForView(string $view): array
     {
-        static $cache = [];
-        if (isset($cache[$view])) {
-            return $cache[$view];
+        static $requestCache = [];
+        if (isset($requestCache[$view])) {
+            return $requestCache[$view];
         }
 
-        $names = collect(DB::select(
-            'SELECT column_name AS name
-             FROM information_schema.columns
-             WHERE table_schema = DATABASE() AND table_name = ?',
-            [$view],
-        ))->pluck('name')->map(fn ($n) => (string) $n)->all();
+        $sumCols = Cache::remember(
+            "schema.summable:{$view}",
+            86400,
+            function () use ($view) {
+                $names = collect(DB::select(
+                    'SELECT column_name AS name
+                     FROM information_schema.columns
+                     WHERE table_schema = DATABASE() AND table_name = ?',
+                    [$view],
+                ))->pluck('name')->map(fn ($n) => (string) $n)->all();
 
-        $sumCols = [];
-        foreach ($names as $col) {
-            if ($this->isSummableReportColumn($col)) {
-                $sumCols[] = $col;
-            }
-        }
+                $cols = [];
+                foreach ($names as $col) {
+                    if ($this->isSummableReportColumn($col)) {
+                        $cols[] = $col;
+                    }
+                }
 
-        return $cache[$view] = $sumCols;
+                return $cols;
+            },
+        );
+
+        return $requestCache[$view] = $sumCols;
     }
 
     /** Add ERP-style PO numbers to LPO report rows (open LPO, purchases by supplier). */
@@ -3777,7 +3993,7 @@ class ReportController extends Controller
             ->whereIn('payment_status', [0, 1])
             ->get();
         $open = $this->decorateStatementInvoices($open, $invoiceService);
-        $asOfDay = \Carbon\Carbon::parse($asOf)->startOfDay();
+        $asOfDay = Carbon::parse($asOf)->startOfDay();
 
         foreach ($open as $row) {
             $remaining = max(
@@ -3788,7 +4004,7 @@ class ReportController extends Controller
                 continue;
             }
             $due = $row->due_date ?: $row->invoice_date;
-            $daysPastDue = \Carbon\Carbon::parse($due)->startOfDay()->diffInDays($asOfDay, false);
+            $daysPastDue = Carbon::parse($due)->startOfDay()->diffInDays($asOfDay, false);
             if ($daysPastDue <= 0) {
                 $buckets['current'] += $remaining;
             } elseif ($daysPastDue <= 30) {
@@ -3984,19 +4200,26 @@ class ReportController extends Controller
 
     protected function viewColumnExists(string $view, string $column): bool
     {
-        static $cache = [];
+        static $requestCache = [];
 
         $key = "{$view}.{$column}";
-        if (! array_key_exists($key, $cache)) {
-            $cache[$key] = collect(DB::select(
+        if (array_key_exists($key, $requestCache)) {
+            return $requestCache[$key];
+        }
+
+        // Persist across prefork workers — information_schema probes were 10–30× per report.
+        $requestCache[$key] = (bool) Cache::remember(
+            "schema.col:{$view}.{$column}",
+            86400,
+            fn () => collect(DB::select(
                 'SELECT 1 FROM information_schema.columns
                  WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?
                  LIMIT 1',
                 [$view, $column],
-            ))->isNotEmpty();
-        }
+            ))->isNotEmpty(),
+        );
 
-        return $cache[$key];
+        return $requestCache[$key];
     }
 
     protected function resolveReportBranchId(Request $request, ?int $requestedBranchId = null): ?int

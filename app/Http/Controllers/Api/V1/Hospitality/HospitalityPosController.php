@@ -331,7 +331,7 @@ class HospitalityPosController extends Controller
         $checks = $this->checkService->listCollectible((int) $org->id, $outletId);
 
         return response()->json([
-            'checks' => array_map(fn ($c) => $this->checkService->toArray($c), $checks),
+            'checks' => array_map(fn ($c) => $this->checkService->toListArray($c), $checks),
         ]);
     }
 

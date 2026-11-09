@@ -438,23 +438,94 @@ class DrivingSchoolService
 
     public function invoiceOutstanding(DrivingInvoice $invoice): float
     {
-        $paid = (float) DrivingPayment::query()->where('invoice_id', $invoice->id)->sum('amount');
-        $refunded = (float) DrivingRefund::query()
-            ->whereIn('payment_id', DrivingPayment::query()->where('invoice_id', $invoice->id)->select('id'))
-            ->sum('amount');
+        $map = $this->invoiceOutstandingsById([$invoice]);
 
-        return max(0, DrivingScheduleRules::outstanding($invoice->netAmount(), $paid, $refunded));
+        return $map[(int) $invoice->id] ?? 0.0;
+    }
+
+    /**
+     * Batch invoice outstanding amounts (avoids N+1 payment/refund sums).
+     *
+     * @param  iterable<DrivingInvoice>  $invoices
+     * @return array<int, float> invoice_id => outstanding
+     */
+    public function invoiceOutstandingsById(iterable $invoices): array
+    {
+        $rows = collect($invoices)->filter()->values();
+        if ($rows->isEmpty()) {
+            return [];
+        }
+
+        $invoiceIds = $rows->map(fn (DrivingInvoice $invoice) => (int) $invoice->id)->all();
+        $paidByInvoice = DrivingPayment::query()
+            ->whereIn('invoice_id', $invoiceIds)
+            ->selectRaw('invoice_id, SUM(amount) as total')
+            ->groupBy('invoice_id')
+            ->pluck('total', 'invoice_id');
+        $refundedByInvoice = DrivingRefund::query()
+            ->whereIn(
+                'payment_id',
+                DrivingPayment::query()->whereIn('invoice_id', $invoiceIds)->select('id')
+            )
+            ->join('driving_payments', 'driving_payments.id', '=', 'driving_refunds.payment_id')
+            ->selectRaw('driving_payments.invoice_id as invoice_id, SUM(driving_refunds.amount) as total')
+            ->groupBy('driving_payments.invoice_id')
+            ->pluck('total', 'invoice_id');
+
+        $out = [];
+        foreach ($rows as $invoice) {
+            $id = (int) $invoice->id;
+            $out[$id] = round(max(0, DrivingScheduleRules::outstanding(
+                $invoice->netAmount(),
+                (float) ($paidByInvoice[$id] ?? 0),
+                (float) ($refundedByInvoice[$id] ?? 0),
+            )), 2);
+        }
+
+        return $out;
     }
 
     public function studentBalance(int $studentId): float
     {
-        $invoices = DrivingInvoice::query()->where('student_id', $studentId)->where('status', '!=', 'void')->get();
-        $total = 0.0;
-        foreach ($invoices as $invoice) {
-            $total += $this->invoiceOutstanding($invoice);
+        $balances = $this->studentBalancesForIds([$studentId]);
+
+        return $balances[$studentId] ?? 0.0;
+    }
+
+    /**
+     * @param  list<int>  $studentIds
+     * @return array<int, float> student_id => outstanding
+     */
+    public function studentBalancesForIds(array $studentIds): array
+    {
+        $ids = array_values(array_unique(array_map('intval', $studentIds)));
+        $ids = array_values(array_filter($ids, fn ($id) => $id > 0));
+        if ($ids === []) {
+            return [];
         }
 
-        return round($total, 2);
+        $invoices = DrivingInvoice::query()
+            ->whereIn('student_id', $ids)
+            ->where('status', '!=', 'void')
+            ->get(['id', 'student_id', 'amount', 'discount']);
+        $byInvoice = $this->invoiceOutstandingsById($invoices);
+        $balances = array_fill_keys($ids, 0.0);
+        foreach ($invoices as $invoice) {
+            $sid = (int) $invoice->student_id;
+            $balances[$sid] = round(($balances[$sid] ?? 0) + ($byInvoice[(int) $invoice->id] ?? 0), 2);
+        }
+
+        return $balances;
+    }
+
+    public function organizationOutstanding(int $organizationId): float
+    {
+        $invoices = DrivingInvoice::query()
+            ->where('organization_id', $organizationId)
+            ->where('status', 'open')
+            ->get(['id', 'amount', 'discount']);
+
+        return round(array_sum($this->invoiceOutstandingsById($invoices)), 2);
     }
 
     protected function refreshInvoiceStatus(DrivingInvoice $invoice): void
@@ -490,14 +561,22 @@ class DrivingSchoolService
         $revenue = (float) (clone $payments)->whereDate('received_on', now()->toDateString())->sum('amount');
         $refunds = (float) DrivingRefund::query()->where('organization_id', $organizationId)->whereDate('refunded_on', now()->toDateString())->sum('amount');
 
-        $balance = 0.0;
-        DrivingInvoice::query()
+        $balance = $this->organizationOutstanding($organizationId);
+        $lessonsTodayPending = (clone $todayLessons)
+            ->whereIn('status', ['scheduled', 'confirmed', 'in_progress'])
+            ->count();
+        $openInvoiceCount = DrivingInvoice::query()
             ->where('organization_id', $organizationId)
             ->where('status', 'open')
-            ->orderBy('id')
-            ->each(function (DrivingInvoice $invoice) use (&$balance) {
-                $balance += $this->invoiceOutstanding($invoice);
-            });
+            ->count();
+        $vehiclesDue = $this->scoped(DrivingVehicle::query(), $user, $request)
+            ->where('status', '!=', 'inactive')
+            ->where(function ($query) {
+                $query->whereDate('insurance_expires_on', '<=', now()->addDays(14)->toDateString())
+                    ->orWhereDate('inspection_expires_on', '<=', now()->addDays(14)->toDateString())
+                    ->orWhere('status', 'maintenance');
+            })
+            ->count();
 
         return [
             'active_students' => (clone $students)->where('status', 'active')->count(),
@@ -508,6 +587,11 @@ class DrivingSchoolService
             'vehicles_available' => $this->scoped(DrivingVehicle::query(), $user, $request)->where('status', 'available')->count(),
             'revenue_collected_today' => round($revenue - $refunds, 2),
             'outstanding_balances' => round($balance, 2),
+            'attention' => [
+                'lessons_pending_today' => $lessonsTodayPending,
+                'open_invoices' => $openInvoiceCount,
+                'vehicles_attention' => $vehiclesDue,
+            ],
             'upcoming_lessons' => (clone $lessons)->with(['student:id,full_name', 'instructor:id,full_name'])
                 ->where('starts_at', '>=', now())
                 ->whereNotIn('status', ['cancelled', 'completed', 'no_show'])

@@ -122,9 +122,49 @@ class HospitalityOpsMvpTest extends TestCase
         $this->assertSame('checked_out', $folioId ? $this->getJson("/api/v1/hospitality/folios/{$folioId}")->json('folio.status') : null);
 
         $this->getJson('/api/v1/hospitality/dashboard')->assertOk()
-            ->assertJsonStructure(['rooms', 'arrivals_today', 'open_folios', 'fnb_today']);
+            ->assertJsonStructure([
+                'rooms',
+                'kpis',
+                'from_date',
+                'to_date',
+                'arrivals_today',
+                'departures_today',
+                'arrivals',
+                'departures',
+                'open_folios',
+                'open_folios_list',
+                'fnb_today',
+                'fnb_by_outlet',
+                'open_checks',
+            ]);
+
+        $range = $this->getJson('/api/v1/hospitality/dashboard?from_date=2020-01-01&to_date=2020-01-07')
+            ->assertOk()
+            ->json();
+        $this->assertSame('2020-01-01', $range['from_date']);
+        $this->assertSame('2020-01-07', $range['to_date']);
+        $this->assertSame(7, (int) $range['period_days']);
 
         $this->getJson('/api/v1/reports/hospitality-occupancy')->assertOk();
+    }
+
+    public function test_dashboard_accepts_from_and_to_date_filters(): void
+    {
+        $today = $this->getJson('/api/v1/hospitality/dashboard')
+            ->assertOk()
+            ->json();
+        $this->assertSame(now()->toDateString(), $today['from_date']);
+        $this->assertSame(now()->toDateString(), $today['to_date']);
+        $this->assertSame(1, (int) $today['period_days']);
+
+        $range = $this->getJson('/api/v1/hospitality/dashboard?from_date=2024-06-01&to_date=2024-06-10')
+            ->assertOk()
+            ->json();
+        $this->assertSame('2024-06-01', $range['from_date']);
+        $this->assertSame('2024-06-10', $range['to_date']);
+        $this->assertSame(10, (int) $range['period_days']);
+        $this->assertArrayHasKey('kpis', $range);
+        $this->assertArrayHasKey('fnb_today', $range);
     }
 
     public function test_front_desk_check_in_without_folios_occupies_room(): void

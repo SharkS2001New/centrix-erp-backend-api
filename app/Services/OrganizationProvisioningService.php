@@ -68,6 +68,7 @@ class OrganizationProvisioningService
                     'org_address' => $data['org_address'],
                     'org_pin' => $data['org_pin'] ?? null,
                     'vat_regno' => $data['vat_regno'] ?? null,
+                    'business_type' => $data['business_type'] ?? null,
                     'deployment_profile' => $data['deployment_profile'],
                     'registration_source' => $registrationSource,
                     'enabled_modules' => $this->normalizeEnabledModules($data['enabled_modules'] ?? null),
@@ -193,9 +194,14 @@ class OrganizationProvisioningService
                 );
             }
 
-            if (! empty($data['payroll_platform']) && is_array($data['payroll_platform'])) {
-                $org = app(OrganizationPlatformConfigService::class)->applyPayrollPlatformConfig($org, $data['payroll_platform']);
-            }
+            $platformConfig = app(OrganizationPlatformConfigService::class);
+            $payrollPlatform = array_replace(
+                $platformConfig->defaultPayrollPlatformConfig(
+                    (string) ($data['deployment_profile'] ?? 'wholesale_retail'),
+                ),
+                is_array($data['payroll_platform'] ?? null) ? $data['payroll_platform'] : [],
+            );
+            $org = $platformConfig->applyPayrollPlatformConfig($org, $payrollPlatform);
 
             return [
                 'organization' => $org,

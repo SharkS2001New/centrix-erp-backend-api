@@ -37,7 +37,7 @@ class MobileOrdersQuickActionsController extends Controller
             ->where('status', 'pending');
         $this->constrainToMobileSale($query, $filters);
 
-        if (Schema::hasColumn('customer_returns', 'return_kind')) {
+        if ($this->customerReturnsHasReturnKind()) {
             $query->where(function ($inner) {
                 $inner->where('return_kind', 'standard')->orWhereNull('return_kind');
             });
@@ -45,7 +45,7 @@ class MobileOrdersQuickActionsController extends Controller
 
         $this->access->scopeBranchIfLimited($query, $user);
 
-        $rows = $query->orderByDesc('id')->limit(200)->get()
+        $rows = $query->orderByDesc('id')->limit(75)->get()
             ->map(fn (CustomerReturn $return) => $this->returns->withActionFlags($return, $user));
 
         return response()->json(['data' => $rows]);
@@ -66,7 +66,7 @@ class MobileOrdersQuickActionsController extends Controller
             ->where('status', 'approved');
         $this->constrainToMobileSale($query, $filters);
 
-        if (Schema::hasColumn('customer_returns', 'return_kind')) {
+        if ($this->customerReturnsHasReturnKind()) {
             $query->where(function ($inner) {
                 $inner->where('return_kind', 'standard')->orWhereNull('return_kind');
             });
@@ -75,22 +75,18 @@ class MobileOrdersQuickActionsController extends Controller
         $from = $filters['from_date'];
         $to = $filters['to_date'];
         if ($from || $to) {
-            $query->where(function ($inner) use ($from, $to) {
-                $dateCol = Schema::hasColumn('customer_returns', 'approved_at')
-                    ? 'approved_at'
-                    : 'created_at';
-                if ($from) {
-                    $inner->whereDate($dateCol, '>=', $from);
-                }
-                if ($to) {
-                    $inner->whereDate($dateCol, '<=', $to);
-                }
-            });
+            $dateCol = $this->customerReturnsHasApprovedAt() ? 'approved_at' : 'created_at';
+            if ($from) {
+                $query->where($dateCol, '>=', $from.' 00:00:00');
+            }
+            if ($to) {
+                $query->where($dateCol, '<=', $to.' 23:59:59');
+            }
         }
 
         $this->access->scopeBranchIfLimited($query, $user);
 
-        $rows = $query->orderByDesc('id')->limit(200)->get()
+        $rows = $query->orderByDesc('id')->limit(75)->get()
             ->map(fn (CustomerReturn $return) => $this->returns->withActionFlags($return, $user));
 
         return response()->json(['data' => $rows]);
@@ -367,15 +363,32 @@ class MobileOrdersQuickActionsController extends Controller
         $cashierId = (int) ($filters['cashier_id'] ?? 0);
         $routeId = (int) ($filters['route_id'] ?? 0);
 
-        $query->whereHas('sale', function ($sale) use ($cashierId, $routeId) {
-            $sale->where('channel', 'mobile');
-            if ($cashierId > 0) {
-                $sale->where('cashier_id', $cashierId);
-            }
-            if ($routeId > 0) {
-                $sale->where('route_id', $routeId);
-            }
-        });
+        // Join instead of whereHas — avoids correlated EXISTS per candidate return row.
+        $query->join('sales as mobile_sale', 'mobile_sale.id', '=', 'customer_returns.sale_id')
+            ->where('mobile_sale.channel', 'mobile')
+            ->when($cashierId > 0, fn ($q) => $q->where('mobile_sale.cashier_id', $cashierId))
+            ->when($routeId > 0, fn ($q) => $q->where('mobile_sale.route_id', $routeId))
+            ->select('customer_returns.*');
+    }
+
+    protected function customerReturnsHasReturnKind(): bool
+    {
+        static $has = null;
+        if ($has === null) {
+            $has = Schema::hasColumn('customer_returns', 'return_kind');
+        }
+
+        return $has;
+    }
+
+    protected function customerReturnsHasApprovedAt(): bool
+    {
+        static $has = null;
+        if ($has === null) {
+            $has = Schema::hasColumn('customer_returns', 'approved_at');
+        }
+
+        return $has;
     }
 
     protected function organizationFor($user): Organization

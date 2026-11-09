@@ -101,6 +101,17 @@ class LoadingListBuilder
         return $this->buildOrdersFromSales($sales);
     }
 
+    /**
+     * Build loading orders from an already-loaded sales collection (avoids a second round-trip).
+     *
+     * @param  Collection<int, Sale>|iterable<int, Sale>  $sales
+     * @return array<int, array<string, mixed>>
+     */
+    public function aggregateOrdersFromSales(iterable $sales): array
+    {
+        return $this->buildOrdersFromSales($sales);
+    }
+
     /** @param  array<int, int|string>  $saleIds
      * @return array<int, array<string, mixed>>
      */

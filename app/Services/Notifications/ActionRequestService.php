@@ -221,6 +221,24 @@ class ActionRequestService
         });
     }
 
+    /**
+     * At most once per org every 5 minutes — was running on every notification poll.
+     */
+    public function cancelOrphanedCashAdvanceApprovalsThrottled(User $user): void
+    {
+        $orgId = (int) ($user->organization_id ?? 0);
+        if ($orgId <= 0) {
+            return;
+        }
+
+        $lockKey = 'cash_advance_orphan_sweep:'.$orgId;
+        if (\Illuminate\Support\Facades\Cache::has($lockKey)) {
+            return;
+        }
+        \Illuminate\Support\Facades\Cache::put($lockKey, 1, 300);
+        $this->cancelOrphanedCashAdvanceApprovals($user);
+    }
+
     public function cancelOrphanedCashAdvanceApprovals(User $user): void
     {
         $requestIds = ActionRequest::query()

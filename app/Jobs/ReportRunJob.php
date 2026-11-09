@@ -18,11 +18,17 @@ class ReportRunJob implements ShouldQueue
     use Queueable;
     use RunsBackgroundTaskOnce;
 
-    public int $timeout = 3600;
+    public int $timeout;
 
     public function __construct(
         public string $taskId,
-    ) {}
+    ) {
+        $this->onQueue((string) config('queue.names.exports', 'exports'));
+        $this->timeout = max(
+            3600,
+            (int) config('background.job_timeout_long_seconds', 7200),
+        );
+    }
 
     public function handle(BackgroundTaskService $tasks, InternalApiPaginator $paginator): void
     {

@@ -54,13 +54,13 @@ class MobileRouteExpenseService
             ->orderByDesc('id');
 
         if ($fromDate) {
-            $query->whereDate('expense_date', '>=', $fromDate);
+            $query->where('expense_date', '>=', $fromDate);
         }
         if ($toDate) {
-            $query->whereDate('expense_date', '<=', $toDate);
+            $query->where('expense_date', '<=', $toDate);
         }
 
-        return $query->limit(200)->get()->map(fn (MobileRouteExpense $row) => $this->serialize($row))->all();
+        return $query->limit(75)->get()->map(fn (MobileRouteExpense $row) => $this->serialize($row))->all();
     }
 
     /**
@@ -123,7 +123,7 @@ class MobileRouteExpenseService
             ->where('status', MobileRouteExpense::STATUS_PENDING)
             ->orderByDesc('id');
 
-        return $query->limit(200)->get()->map(fn (MobileRouteExpense $row) => $this->serialize($row))->all();
+        return $query->limit(75)->get()->map(fn (MobileRouteExpense $row) => $this->serialize($row))->all();
     }
 
     /**
@@ -146,15 +146,15 @@ class MobileRouteExpenseService
         if ($fromDate || $toDate) {
             $query->where(function (Builder $inner) use ($fromDate, $toDate) {
                 if ($fromDate) {
-                    $inner->whereDate('expense_date', '>=', $fromDate);
+                    $inner->where('expense_date', '>=', $fromDate);
                 }
                 if ($toDate) {
-                    $inner->whereDate('expense_date', '<=', $toDate);
+                    $inner->where('expense_date', '<=', $toDate);
                 }
             });
         }
 
-        return $query->limit(200)->get()->map(fn (MobileRouteExpense $row) => $this->serialize($row))->all();
+        return $query->limit(75)->get()->map(fn (MobileRouteExpense $row) => $this->serialize($row))->all();
     }
 
     /**
@@ -260,11 +260,11 @@ class MobileRouteExpenseService
             ->where('organization_id', $user->organization_id)
             ->where('user_id', $user->id)
             ->where('status', MobileRouteExpense::STATUS_APPROVED)
-            ->whereDate('expense_date', '>=', $from->toDateString())
-            ->whereDate('expense_date', '<=', $to->toDateString())
-            ->selectRaw('DATE(expense_date) as expense_day')
+            ->where('expense_date', '>=', $from->toDateString())
+            ->where('expense_date', '<=', $to->toDateString())
+            ->selectRaw('expense_date as expense_day')
             ->selectRaw('COALESCE(ROUND(SUM(expense_amount), 2), 0) as total_amount')
-            ->groupBy('expense_day')
+            ->groupBy('expense_date')
             ->pluck('total_amount', 'expense_day')
             ->map(fn ($value) => (float) $value)
             ->all();
@@ -280,8 +280,8 @@ class MobileRouteExpenseService
             ->where('organization_id', $user->organization_id)
             ->where('user_id', $user->id)
             ->where('status', MobileRouteExpense::STATUS_APPROVED)
-            ->whereDate('expense_date', '>=', $from->toDateString())
-            ->whereDate('expense_date', '<=', $to->toDateString())
+            ->where('expense_date', '>=', $from->toDateString())
+            ->where('expense_date', '<=', $to->toDateString())
             ->sum('expense_amount'), 2);
     }
 
@@ -302,8 +302,8 @@ class MobileRouteExpenseService
 
         return round((float) $this->managerQuery($manager, $filters)
             ->where('status', MobileRouteExpense::STATUS_APPROVED)
-            ->whereDate('expense_date', '>=', $from->toDateString())
-            ->whereDate('expense_date', '<=', $to->toDateString())
+            ->where('expense_date', '>=', $from->toDateString())
+            ->where('expense_date', '<=', $to->toDateString())
             ->sum('expense_amount'), 2);
     }
 
@@ -379,6 +379,17 @@ class MobileRouteExpenseService
 
     protected function tableReady(): bool
     {
-        return \Illuminate\Support\Facades\Schema::hasTable('mobile_route_expenses');
+        static $ready = null;
+        if ($ready !== null) {
+            return $ready;
+        }
+
+        $ready = (bool) \Illuminate\Support\Facades\Cache::remember(
+            'schema.table:mobile_route_expenses',
+            86400,
+            fn () => \Illuminate\Support\Facades\Schema::hasTable('mobile_route_expenses'),
+        );
+
+        return $ready;
     }
 }

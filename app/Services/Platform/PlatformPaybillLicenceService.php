@@ -570,7 +570,7 @@ class PlatformPaybillLicenceService
      *
      * @return list<array<string, mixed>>
      */
-    public function monthlyPlanChoices(Organization $org): array
+    public function monthlyPlanChoices(Organization $org, ?array $discount = null): array
     {
         if (! \Illuminate\Support\Facades\Schema::hasTable('platform_plans')) {
             return [];
@@ -579,10 +579,28 @@ class PlatformPaybillLicenceService
             return [];
         }
 
-        $discount = $this->durationDiscount();
+        $discount ??= $this->durationDiscount();
         $industry = IndustryRegistry::industryForProfile((string) $org->deployment_profile);
+        $columns = array_flip(Schema::getColumnListing('platform_plans'));
+        $selectedColumns = array_values(array_filter([
+            'id',
+            'name',
+            'description',
+            'interval',
+            'currency',
+            'monthly_price',
+            'yearly_price',
+            'feature_details',
+            'section_keys',
+            'industry',
+            'workspace_keys',
+            'is_recommended',
+            'cta_action',
+            'cta_label',
+        ], static fn (string $column) => isset($columns[$column])));
 
         return PlatformPlan::query()
+            ->select($selectedColumns)
             ->where('is_active', true)
             ->where('self_serve', true)
             ->when(

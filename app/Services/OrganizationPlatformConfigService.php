@@ -607,8 +607,64 @@ class OrganizationPlatformConfigService
         $isDistribution = $deploymentProfile === 'distribution';
 
         $workflowDefaults = config('erp.default_order_workflow', []);
+        $profileWorkflow = config("erp.order_workflow_profiles.{$deploymentProfile}", []);
+        if (is_array($profileWorkflow['steps'] ?? null)) {
+            $workflowDefaults['steps'] = $profileWorkflow['steps'];
+        }
+        $setupProfiles = app(\App\Services\Erp\SetupProfileMenuService::class);
+        $profileApplications = $setupProfiles->applicationsForProfile($deploymentProfile);
+        $profileMenuGroups = $setupProfiles->forProfile($deploymentProfile);
+        $disabledMenus = static fn (array $map): array => array_fill_keys(array_keys($map), false);
+        $profileMenuSettings = [
+            'backoffice_sections' => ($profileApplications['backoffice'] ?? false)
+                || ($profileApplications['hospitality_backoffice'] ?? false)
+                ? $profileMenuGroups['backoffice']
+                : $disabledMenus(\App\Services\Erp\BackofficeSections::DEFAULTS),
+            'hr_sections' => ($profileApplications['hr'] ?? false)
+                ? $profileMenuGroups['hr']
+                : $disabledMenus(\App\Services\Erp\SetupProfileMenuService::defaultGroup(
+                    \App\Services\Erp\SetupProfileMenuService::HR_KEYS,
+                )),
+            'accounting_sections' => ($profileApplications['accounting'] ?? false)
+                ? $profileMenuGroups['accounting']
+                : $disabledMenus(\App\Services\Erp\SetupProfileMenuService::defaultGroup(
+                    \App\Services\Erp\SetupProfileMenuService::ACCOUNTING_KEYS,
+                )),
+        ];
+        $profileSalesSettings = array_replace(
+            $profileMenuSettings,
+            $setupProfiles->salesPlatformSettingsForProfile($deploymentProfile),
+        );
+        $customWorkflow = $profileSalesSettings['order_workflow'] ?? null;
+        if (is_array($customWorkflow)) {
+            $customWorkflowWithoutSteps = $customWorkflow;
+            unset($customWorkflowWithoutSteps['steps']);
+            $workflowDefaults = array_replace_recursive($workflowDefaults, $customWorkflowWithoutSteps);
+            if (is_array($customWorkflow['steps'] ?? null)) {
+                $workflowDefaults['steps'] = array_values($customWorkflow['steps']);
+            }
+        }
+        $workflowStatuses = array_values(array_map(
+            static fn (array $step): string => (string) $step['status'],
+            array_filter(
+                $workflowDefaults['steps'] ?? [],
+                static fn (array $step): bool => ($step['enabled'] ?? true) === true,
+            ),
+        ));
+        $customerReturnStatuses = array_values(array_intersect(
+            ['paid', 'processed', 'delivered', 'completed'],
+            $workflowStatuses,
+        ));
+        $editOrderStatuses = array_values(array_unique(array_merge(
+            array_values(array_intersect(['booked', 'pending'], $workflowStatuses)),
+            ['editable'],
+        )));
+        $collectPaymentStatuses = array_values(array_intersect(
+            ['unpaid', 'pending_payment'],
+            $workflowStatuses,
+        ));
 
-        return [
+        $defaults = [
             'show_checkout_on_create_order' => true,
             'enable_mobile_orders' => ! in_array($deploymentProfile, ['small_shop', 'supermarket'], true),
             'mobile_enable_field_attendance' => false,
@@ -670,13 +726,38 @@ class OrganizationPlatformConfigService
             'orders_list_visible_columns_by_queue' => $this->normalizeOrdersListVisibleColumnsByQueue(
                 config('erp.module_settings_defaults.sales.orders_list_visible_columns_by_queue', []),
             ),
-            'edit_order_statuses' => ['booked', 'pending', 'editable'],
+            'edit_order_statuses' => $editOrderStatuses,
             'print_invoice_statuses' => null,
-            'collect_payment_statuses' => ['unpaid', 'pending_payment'],
+            'collect_payment_statuses' => $collectPaymentStatuses,
             'cancel_order_statuses' => OrderWorkflowService::defaultCancelOrderStatusesFromWorkflowConfig($workflowDefaults),
             'convert_to_paid_statuses' => [],
             'convert_to_unpaid_statuses' => [],
-            'customer_return_statuses' => ['paid', 'processed', 'delivered', 'completed'],
+            'customer_return_statuses' => $customerReturnStatuses,
+        ];
+
+        if (is_array($customWorkflow)) {
+            $profileSalesSettings['order_workflow'] = $workflowDefaults;
+        }
+
+        return array_replace($defaults, $profileSalesSettings);
+    }
+
+    /**
+     * Default platform payroll config for a new tenant.
+     *
+     * @return array{payroll_month_days_basis: string, shif_minimum_monthly: float|int|null}
+     */
+    public function defaultPayrollPlatformConfig(string $deploymentProfile = 'wholesale_retail'): array
+    {
+        $defaults = \App\Services\Hr\HrPayrollSettingsResolver::defaults();
+        $profileSettings = app(\App\Services\Erp\SetupProfileMenuService::class)
+            ->payrollPlatformSettingsForProfile($deploymentProfile);
+        $settings = array_merge($defaults, $profileSettings);
+        $normalized = \App\Services\Hr\HrPayrollSettingsResolver::normalize($settings);
+
+        return [
+            'payroll_month_days_basis' => $normalized['payroll_month_days_basis'],
+            'shif_minimum_monthly' => $normalized['shif_minimum_monthly'],
         ];
     }
 

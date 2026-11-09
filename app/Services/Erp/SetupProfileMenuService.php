@@ -6,11 +6,63 @@ use App\Models\PlatformSetupProfile;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * Menu groups saved for each setup type (Small shop, Wholesale, and the rest).
- * Choosing that setup on an organisation copies these groups onto it.
+ * Menu groups and platform defaults saved for each setup type.
+ * Choosing that setup on an organisation copies these defaults onto it.
  */
 class SetupProfileMenuService
 {
+    /** @var list<string> */
+    private const SALES_PLATFORM_SETTING_KEYS = [
+        'show_checkout_on_create_order',
+        'backoffice_product_search_mode',
+        'enable_mobile_orders',
+        'mobile_enable_field_attendance',
+        'mobile_enable_driver_app',
+        'mobile_enable_driver_attendance',
+        'enable_mobile_orders_returns_card',
+        'enable_mobile_orders_payments_card',
+        'enable_mobile_orders_expenses_card',
+        'append_same_day_customer_orders',
+        'enable_mpesa_stk',
+        'enable_equity_bank',
+        'enable_kra_integration',
+        'enable_ai',
+        'enable_ai_chat',
+        'enable_ai_talk',
+        'use_platform_gemini',
+        'enable_whatsapp_orders',
+        'enable_investors',
+        'enable_advanced_data_import',
+        'advanced_data_import_pages',
+        'hospitality_services',
+        'hospitality_payment_workflow',
+        'hotel_pos_payment_methods',
+        'hotel_pos_collect_payment',
+        'stock_deduct_on',
+        'reserve_stock_on_cart',
+        'cart_reservation_ttl_minutes',
+        'enable_receive_batch_tracking',
+        'orders_list_default_days',
+        'shop_debtors_default_days',
+        'reports_default_date_range_days',
+        'orders_list_search_days',
+        'orders_list_sort',
+        'orders_list_visible_columns',
+        'orders_list_visible_columns_by_queue',
+        'order_expiry_enabled',
+        'order_expiry_days',
+        'order_expiry_before_status',
+        'order_cancellation_enabled',
+        'order_workflow',
+        'edit_order_statuses',
+        'print_invoice_statuses',
+        'collect_payment_statuses',
+        'cancel_order_statuses',
+        'convert_to_paid_statuses',
+        'convert_to_unpaid_statuses',
+        'customer_return_statuses',
+    ];
+
     /** @var list<string> */
     public const HR_KEYS = [
         'hr_people',
@@ -155,6 +207,27 @@ class SetupProfileMenuService
         return $this->normalizeApplications($profileKey, $raw);
     }
 
+    /** @return array<string, mixed> */
+    public function salesPlatformSettingsForProfile(string $profileKey): array
+    {
+        $stored = $this->storedDocument($profileKey);
+        $settings = is_array($stored['sales_platform'] ?? null) ? $stored['sales_platform'] : [];
+
+        return array_intersect_key($settings, array_flip(self::SALES_PLATFORM_SETTING_KEYS));
+    }
+
+    /** @return array<string, mixed> */
+    public function payrollPlatformSettingsForProfile(string $profileKey): array
+    {
+        $stored = $this->storedDocument($profileKey);
+        $settings = is_array($stored['payroll_platform'] ?? null) ? $stored['payroll_platform'] : [];
+
+        return array_intersect_key($settings, array_flip([
+            'payroll_month_days_basis',
+            'shif_minimum_monthly',
+        ]));
+    }
+
     /**
      * @return list<string>
      */
@@ -224,10 +297,76 @@ class SetupProfileMenuService
     {
         return match ($industry) {
             'hospitality' => ['hotel_bar_pos', 'hospitality_backoffice', 'accounting', 'hr', 'admin'],
-            'spa' => ['spa', 'accounting', 'hr', 'admin'],
+            'spa' => ['spa', 'admin'],
             'driving' => ['driving', 'admin'],
             default => ['pos', 'backoffice', 'distribution', 'accounting', 'hr', 'admin'],
         };
+    }
+
+    /**
+     * Business types (marketing / trial signup) this setup may appear under.
+     * Empty list = any business type in the industry.
+     *
+     * @return list<string>
+     */
+    public function businessTypesForProfile(string $profileKey): array
+    {
+        $stored = $this->storedDocument($profileKey);
+        if (is_array($stored) && array_key_exists('business_types', $stored)) {
+            return $this->normalizeBusinessTypes($stored['business_types']);
+        }
+
+        $fromConfig = config('erp.profiles.'.$profileKey.'.business_types');
+
+        return $this->normalizeBusinessTypes(is_array($fromConfig) ? $fromConfig : null);
+    }
+
+    /**
+     * Catalog of known business types for Platform UI and public signup.
+     *
+     * @return list<array{value: string, label: string, industry: string}>
+     */
+    public function businessTypeCatalog(): array
+    {
+        return [
+            ['value' => 'Pharmacy', 'label' => 'Pharmacy', 'industry' => 'commerce'],
+            ['value' => 'Hardware', 'label' => 'Hardware', 'industry' => 'commerce'],
+            ['value' => 'Retail shop', 'label' => 'Retail shop', 'industry' => 'commerce'],
+            ['value' => 'Wholesale shop', 'label' => 'Wholesale shop', 'industry' => 'commerce'],
+            ['value' => 'Supermarket', 'label' => 'Supermarket', 'industry' => 'commerce'],
+            ['value' => 'Hotel', 'label' => 'Hotel', 'industry' => 'hospitality'],
+            ['value' => 'Lodge', 'label' => 'Lodge', 'industry' => 'hospitality'],
+            ['value' => 'Bar / restaurant', 'label' => 'Bar / restaurant', 'industry' => 'hospitality'],
+            ['value' => 'SPA / Salon / Kinyozi', 'label' => 'SPA / Salon / Kinyozi', 'industry' => 'spa'],
+            ['value' => 'Driving school', 'label' => 'Driving school', 'industry' => 'driving'],
+            ['value' => 'Other', 'label' => 'Other', 'industry' => 'commerce'],
+        ];
+    }
+
+    /**
+     * @param  mixed  $raw
+     * @return list<string>
+     */
+    public function normalizeBusinessTypes(mixed $raw): array
+    {
+        if (! is_array($raw)) {
+            return [];
+        }
+
+        $allowed = array_fill_keys(
+            array_column($this->businessTypeCatalog(), 'value'),
+            true,
+        );
+        $out = [];
+        foreach ($raw as $value) {
+            $label = trim((string) $value);
+            if ($label === '' || ! isset($allowed[$label]) || in_array($label, $out, true)) {
+                continue;
+            }
+            $out[] = $label;
+        }
+
+        return $out;
     }
 
     /**
@@ -280,12 +419,30 @@ class SetupProfileMenuService
 
         $key = $this->uniqueCustomKey($name);
         $applications = array_fill_keys($this->applicationIdsForIndustry($industry), false);
+        // Turn on the primary industry app so the setup is usable for trial signup immediately.
+        foreach ($this->applicationIdsForIndustry($industry) as $appId) {
+            if (! in_array($appId, ['accounting', 'hr', 'admin', 'distribution'], true)) {
+                $applications[$appId] = true;
+                break;
+            }
+        }
+        if (array_key_exists('admin', $applications)) {
+            $applications['admin'] = true;
+        }
         $menu = $this->applyApplicationGate($this->normalize(null), $applications);
+        $businessTypes = array_values(array_map(
+            static fn (array $row): string => $row['value'],
+            array_filter(
+                $this->businessTypeCatalog(),
+                static fn (array $row): bool => $row['industry'] === $industry && $row['value'] !== 'Other',
+            ),
+        ));
 
         PlatformSetupProfile::query()->create([
             'profile_key' => $key,
             'menu_groups' => array_merge($menu, [
                 'applications' => $applications,
+                'business_types' => $businessTypes,
                 'label' => $name,
                 'industry' => $industry,
                 'custom' => true,
@@ -310,7 +467,7 @@ class SetupProfileMenuService
 
     /**
      * @param  array<string, mixed>  $payload
-     * @return array{menu_groups: array<string, mixed>, applications: array<string, bool>}
+     * @return array{menu_groups: array<string, mixed>, applications: array<string, bool>, sales_platform: array<string, mixed>, payroll_platform: array<string, mixed>}
      */
     public function save(string $profileKey, array $payload): array
     {
@@ -339,7 +496,31 @@ class SetupProfileMenuService
             ? $this->storedIndustry($profileKey)
             : (config('erp.profiles.'.$profileKey.'.industry') ?? null);
 
-        $document = array_merge($menu, ['applications' => $applications]);
+        $businessTypes = array_key_exists('business_types', $payload)
+            ? $this->normalizeBusinessTypes($payload['business_types'])
+            : $this->businessTypesForProfile($profileKey);
+
+        $salesPlatform = array_replace(
+            $this->salesPlatformSettingsForProfile($profileKey),
+            is_array($payload['sales_platform'] ?? null)
+                ? array_intersect_key($payload['sales_platform'], array_flip(self::SALES_PLATFORM_SETTING_KEYS))
+                : [],
+        );
+        $payrollPlatform = array_replace(
+            $this->payrollPlatformSettingsForProfile($profileKey),
+            is_array($payload['payroll_platform'] ?? null)
+                ? array_intersect_key($payload['payroll_platform'], array_flip([
+                    'payroll_month_days_basis',
+                    'shif_minimum_monthly',
+                ]))
+                : [],
+        );
+        $document = array_merge($menu, [
+            'applications' => $applications,
+            'business_types' => $businessTypes,
+            'sales_platform' => $salesPlatform,
+            'payroll_platform' => $payrollPlatform,
+        ]);
         if ($custom) {
             $document['custom'] = true;
             $document['label'] = $label;
@@ -356,6 +537,9 @@ class SetupProfileMenuService
         return [
             'menu_groups' => $menu,
             'applications' => $applications,
+            'business_types' => $businessTypes,
+            'sales_platform' => $salesPlatform,
+            'payroll_platform' => $payrollPlatform,
             'label' => $label,
             'industry' => $industry,
             'custom' => $custom,
@@ -430,7 +614,9 @@ class SetupProfileMenuService
         $stored = $this->storedDocument($profileKey);
         $industry = is_array($stored) ? ($stored['industry'] ?? null) : null;
 
-        return $industry === 'hospitality' ? 'hospitality' : 'commerce';
+        return is_string($industry) && in_array($industry, IndustryRegistry::ids(), true)
+            ? $industry
+            : 'commerce';
     }
 
     /**
@@ -445,6 +631,7 @@ class SetupProfileMenuService
             'custom' => $custom,
             'application_ids' => $this->applicationIdsForProfile($key),
             'applications' => $this->applicationsForProfile($key),
+            'business_types' => $this->businessTypesForProfile($key),
             'menu_groups' => $this->forProfile($key),
         ];
     }

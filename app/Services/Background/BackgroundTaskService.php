@@ -41,11 +41,10 @@ class BackgroundTaskService
     }
 
     /**
-     * Push the job onto the queue, then (outside unit tests) run it inline after the
-     * HTTP response if a worker has not claimed it yet. That keeps exports/imports
-     * moving when the queue worker is down or Redis silently drops unique locks.
-     * The sync queue driver is not dispatched during the request so the client can
-     * poll progress instead of blocking on "Starting…".
+     * Push the job onto the queue. Optionally (see background.inline_fallback) run it
+     * inline after the HTTP response if a worker has not claimed it yet — local/sync
+     * only by default. Production Redis should rely on queue workers; inline sync of
+     * large exports exhausts API workers and surfaces as client "offline" errors.
      *
      * @param  class-string  $jobClass
      */
@@ -59,11 +58,16 @@ class BackgroundTaskService
             $jobClass::dispatch($taskId);
         }
 
-        if (app()->runningUnitTests()) {
+        if (app()->runningUnitTests() || ! $this->shouldInlineFallback()) {
             return;
         }
 
         app()->terminating(function () use ($jobClass, $taskId): void {
+            $delayMs = max(0, (int) config('background.inline_fallback_delay_ms', 750));
+            if ($delayMs > 0) {
+                usleep($delayMs * 1000);
+            }
+
             $fresh = BackgroundTask::query()->find($taskId);
             if ($fresh === null || $fresh->status !== 'pending') {
                 return;
@@ -82,6 +86,16 @@ class BackgroundTaskService
                 ]);
             }
         });
+    }
+
+    protected function shouldInlineFallback(): bool
+    {
+        $configured = config('background.inline_fallback');
+        if ($configured !== null && $configured !== '') {
+            return filter_var($configured, FILTER_VALIDATE_BOOLEAN);
+        }
+
+        return config('queue.default') === 'sync';
     }
 
     /**
@@ -109,6 +123,33 @@ class BackgroundTaskService
         $task->refresh();
 
         return true;
+    }
+
+    /**
+     * Reset a running task to pending so Laravel job retries can claim it again
+     * (used for capped KRA product-registration auto-retries).
+     */
+    public function requeueForAutoRetry(BackgroundTask $task, int $attempt, ?string $message = null): void
+    {
+        if ($this->isTerminal($task)) {
+            return;
+        }
+
+        $payload = is_array($task->payload) ? $task->payload : [];
+        $payload['auto_retry_count'] = max((int) ($payload['auto_retry_count'] ?? 0), $attempt);
+        $payload['auto_retry_last_at'] = now()->toIso8601String();
+        $payload['progress_message'] = $message
+            ?: "Auto-retry {$attempt}/".\App\Services\Kra\KraAutoRetryPolicy::maxAttempts().' scheduled…';
+
+        BackgroundTask::query()->whereKey($task->id)->update([
+            'status' => 'pending',
+            'progress' => 0,
+            'started_at' => null,
+            'finished_at' => null,
+            'error_message' => null,
+            'payload' => $payload,
+        ]);
+        $task->refresh();
     }
 
     public function updateProgress(BackgroundTask $task, int $progress, ?string $message = null, ?int $processed = null, ?int $total = null): void
@@ -218,17 +259,22 @@ class BackgroundTaskService
         ]);
     }
 
-    public function markFailed(BackgroundTask $task, string $message): void
+    public function markFailed(BackgroundTask $task, string $message, array $result = []): void
     {
         if ($this->isTerminal($task)) {
             return;
         }
 
-        $task->update([
+        $updates = [
             'status' => 'failed',
             'error_message' => $message,
             'finished_at' => now(),
-        ]);
+        ];
+        if ($result !== []) {
+            $updates['result'] = $result;
+        }
+
+        $task->update($updates);
     }
 
     public function findForUser(string $id, User $user): ?BackgroundTask
@@ -330,16 +376,35 @@ class BackgroundTaskService
 
     protected function staleRunningMinutesFor(BackgroundTask $task): int
     {
-        $default = max(1, (int) config('background.stale_running_minutes', 35));
+        $default = max(1, (int) config('background.stale_running_minutes', 70));
+        $type = (string) ($task->type ?? '');
 
-        if (! str_ends_with((string) ($task->type ?? ''), '_import')) {
-            return $default;
+        if (str_ends_with($type, '_import')) {
+            return max(
+                $default,
+                (int) config('background.stale_import_running_minutes', 90),
+            );
         }
 
-        return max(
-            $default,
-            (int) config('background.stale_import_running_minutes', 90),
+        $longMinutes = max(
+            (int) config('background.stale_export_running_minutes', 150),
+            (int) config('background.stale_long_running_minutes', 150),
         );
+
+        if (
+            str_contains($type, 'export')
+            || str_contains($type, 'report')
+            || str_contains($type, 'paginated')
+            || str_contains($type, 'backup')
+            || str_contains($type, 'stock_take')
+            || str_contains($type, 'kra')
+            || str_contains($type, 'payroll')
+            || str_contains($type, 'accounting')
+        ) {
+            return max($default, $longMinutes);
+        }
+
+        return $default;
     }
 
     protected function isOlderThan(?Carbon $timestamp, int $minutes, Carbon $now): bool

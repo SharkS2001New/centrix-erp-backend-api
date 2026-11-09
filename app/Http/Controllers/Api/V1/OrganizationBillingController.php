@@ -26,6 +26,19 @@ class OrganizationBillingController extends Controller
             return response()->json(['message' => 'No organisation on this login.'], 422);
         }
 
+        if ($request->boolean('payment_options')) {
+            $licencePayments = app(\App\Services\Platform\PlatformPaybillLicenceService::class);
+
+            return response()->json([
+                'data' => [
+                    'policy' => $policy->current(),
+                    'equity' => $licencePayments->equityInstructionsFor($org),
+                    'payment_methods' => $licencePayments->paymentMethodsFor($org),
+                    'paybill' => $licencePayments->instructionsFor($org, null),
+                ],
+            ]);
+        }
+
         $license = $licenses->resolveForOrganization($org);
         $subscription = PlatformSubscription::query()->with(['plan', 'contract'])->where('organization_id', $org->id)->first();
         $plan = $subscription?->plan;

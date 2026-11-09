@@ -3,10 +3,11 @@
 namespace App\Http\Middleware;
 
 use App\Models\UserMembership;
+use App\Support\SanctumTokenResolver;
 use Closure;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
-use Laravel\Sanctum\Sanctum;
+use Illuminate\Support\Facades\Cache;
 use Symfony\Component\HttpFoundation\Response;
 
 class EnsureUserIsActive
@@ -17,14 +18,18 @@ class EnsureUserIsActive
             return $next($request);
         }
 
-        $plainTextToken = $request->bearerToken();
-        if (! $plainTextToken) {
+        $accessToken = SanctumTokenResolver::fromRequest($request);
+        if (! $accessToken) {
             return $next($request);
         }
 
-        $accessToken = Sanctum::personalAccessTokenModel()::findToken($plainTextToken);
-        if (! $accessToken) {
+        $verdictKey = 'pat.active:'.$accessToken->id;
+        $cachedVerdict = Cache::get($verdictKey);
+        if ($cachedVerdict === 'ok') {
             return $next($request);
+        }
+        if (is_array($cachedVerdict) && isset($cachedVerdict['status'], $cachedVerdict['body'])) {
+            return response()->json($cachedVerdict['body'], (int) $cachedVerdict['status']);
         }
 
         /** @var \App\Models\User|null $user */
@@ -62,6 +67,7 @@ class EnsureUserIsActive
             $membership = UserMembership::find($accessToken->user_membership_id);
             if (! $membership?->is_active) {
                 $accessToken->delete();
+                Cache::forget($verdictKey);
 
                 return response()->json([
                     'message' => 'Your access to this organization has been deactivated.',
@@ -69,6 +75,8 @@ class EnsureUserIsActive
                 ], 403);
             }
         }
+
+        Cache::put($verdictKey, 'ok', 45);
 
         return $next($request);
     }

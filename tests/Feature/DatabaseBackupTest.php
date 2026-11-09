@@ -115,4 +115,26 @@ class DatabaseBackupTest extends TestCase
 
         DB::prohibitDestructiveCommands(false);
     }
+
+    public function test_destructive_commands_are_blocked_against_local_non_test_databases(): void
+    {
+        $this->app['env'] = 'local';
+        config([
+            'database.allow_destructive_commands' => false,
+            'database.default' => 'mysql',
+            'database.connections.mysql.database' => 'centrix_erp',
+        ]);
+
+        (new \App\Providers\AppServiceProvider($this->app))->boot();
+
+        $exitCode = Artisan::call('db:wipe', ['--force' => true]);
+
+        $this->assertNotSame(0, $exitCode);
+        $this->assertStringContainsString(
+            'prohibited',
+            strtolower(Artisan::output()),
+        );
+
+        DB::prohibitDestructiveCommands(false);
+    }
 }

@@ -16,7 +16,7 @@ class ReportBuilderPreviewJob implements ShouldQueue
     use Queueable;
     use RunsBackgroundTaskOnce;
 
-    public int $timeout = 1800;
+    public int $timeout = 3600;
 
     public function __construct(
         public string $taskId,

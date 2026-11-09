@@ -24,6 +24,12 @@ class CapabilityGate
     /** @var array{modules: list<string>, features: array<string, list<string>>}|null */
     protected ?array $packageCache = null;
 
+    /** @var array<string, bool>|null */
+    protected ?array $resolvedModuleMapCache = null;
+
+    /** @var array<string, bool>|null */
+    protected ?array $allModulesCache = null;
+
     public function organization(): ?Organization
     {
         return $this->organization;
@@ -160,8 +166,12 @@ class CapabilityGate
     /** @return array<string, bool> */
     protected function resolvedModuleMap(): array
     {
+        if ($this->resolvedModuleMapCache !== null) {
+            return $this->resolvedModuleMapCache;
+        }
+
         if (! $this->organization) {
-            return [];
+            return $this->resolvedModuleMapCache = [];
         }
 
         $profile = $this->organization->deployment_profile ?? 'wholesale_retail';
@@ -199,18 +209,22 @@ class CapabilityGate
             }
         }
 
-        return $cascaded;
+        return $this->resolvedModuleMapCache = $cascaded;
     }
 
     /** @return array<string, bool> */
     public function allModules(): array
     {
+        if ($this->allModulesCache !== null) {
+            return $this->allModulesCache;
+        }
+
         $out = [];
         foreach (ModuleRegistry::keys() as $key) {
             $out[$key] = $this->enabled($key);
         }
 
-        return $out;
+        return $this->allModulesCache = $out;
     }
 
     /** @return list<string> */
@@ -827,6 +841,12 @@ class CapabilityGate
     ): bool {
         if (in_array($orderStatus, ['held', 'pending_approval'], true)) {
             return true;
+        }
+
+        // Hard deduct on this checkout — soft holds are not the checkout outcome.
+        // (Checkout still transfers cart holds via pendingStockDeduct before deduct.)
+        if ($this->shouldDeductStockAtCheckout($workflow, $orderStatus, $channel)) {
+            return false;
         }
 
         return $this->shouldReserveStockOnCheckout($workflow, $orderStatus, $channel);

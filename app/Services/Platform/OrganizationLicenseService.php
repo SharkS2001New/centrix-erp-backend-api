@@ -6,6 +6,8 @@ use App\Models\Organization;
 use App\Models\PlatformLicenceBalance;
 use App\Models\PlatformSubscription;
 use App\Models\User;
+use App\Services\Cache\OrganizationCache;
+use App\Support\SchemaProbe;
 use Carbon\Carbon;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Support\Facades\Schema;
@@ -46,6 +48,61 @@ class OrganizationLicenseService
             return null;
         }
 
+        // Module switches + erp.module middleware call this repeatedly in one request
+        // (license middleware, CapabilityGate::package, capabilities runtime). Memoize.
+        $cacheKey = 'organization_license.resolve.'.$org->id;
+        try {
+            $request = request();
+            if ($request->attributes->has($cacheKey)) {
+                return $request->attributes->get($cacheKey);
+            }
+        } catch (\Throwable) {
+            $request = null;
+        }
+
+        $license = OrganizationCache::remember(
+            (int) $org->id,
+            'license.slim.v2',
+            120,
+            fn () => $this->buildLicensePayload($org),
+        );
+        if ($request) {
+            $request->attributes->set($cacheKey, $license);
+        }
+
+        return $license;
+    }
+
+    /**
+     * Attach Paybill / offers / plans only for capabilities and billing screens.
+     *
+     * @param  array<string, mixed>  $license
+     * @return array<string, mixed>
+     */
+    public function withPaymentUi(Organization $org, array $license): array
+    {
+        if (array_key_exists('paybill', $license) && array_key_exists('offers', $license)) {
+            return $license;
+        }
+
+        $licencePayments = app(PlatformPaybillLicenceService::class);
+        $durationDiscount = $licencePayments->durationDiscount();
+        $subId = (int) ($license['subscription_id'] ?? 0);
+        $sub = $subId > 0
+            ? PlatformSubscription::query()->with(['plan', 'contract'])->find($subId)
+            : null;
+
+        $license['paybill'] = $licencePayments->instructionsFor($org, $sub);
+        $license['offers'] = $licencePayments->paymentOffers($org, $sub);
+        $license['plans'] = $licencePayments->monthlyPlanChoices($org, $durationDiscount);
+        $license['duration_discount'] = $durationDiscount;
+
+        return $license;
+    }
+
+    /** @return array<string, mixed> */
+    protected function buildLicensePayload(Organization $org): array
+    {
         /** @var PlatformSubscription|null $sub */
         $sub = PlatformSubscription::query()
             ->with(['plan', 'contract'])
@@ -65,10 +122,6 @@ class OrganizationLicenseService
                 'sale_tokens' => app(BillingPolicy::class)->saleCost(),
                 'write_costs' => app(BillingPolicy::class)->current()['write_costs'],
                 'modules' => [],
-                'paybill' => app(PlatformPaybillLicenceService::class)->instructionsFor($org, null),
-                'offers' => app(PlatformPaybillLicenceService::class)->paymentOffers($org, null),
-                'plans' => app(PlatformPaybillLicenceService::class)->monthlyPlanChoices($org),
-                'duration_discount' => app(PlatformPaybillLicenceService::class)->durationDiscount(),
             ];
 
             return $this->finishLicense($org, $missing);
@@ -97,13 +150,24 @@ class OrganizationLicenseService
             'write_costs' => app(BillingPolicy::class)->current()['write_costs'],
             'modules' => $this->licensedModules($sub),
         ];
-        $license = $this->finishLicense($org, $license);
-        $license['paybill'] = app(PlatformPaybillLicenceService::class)->instructionsFor($org, $sub);
-        $license['offers'] = app(PlatformPaybillLicenceService::class)->paymentOffers($org, $sub);
-        $license['plans'] = app(PlatformPaybillLicenceService::class)->monthlyPlanChoices($org);
-        $license['duration_discount'] = app(PlatformPaybillLicenceService::class)->durationDiscount();
 
-        return $license;
+        return $this->finishLicense($org, $license);
+    }
+
+    /** Drop request-memoized and org-cached license after subscription/payment mutations. */
+    public function forgetResolvedLicense(?int $organizationId): void
+    {
+        if (! $organizationId) {
+            return;
+        }
+
+        try {
+            request()->attributes->remove('organization_license.resolve.'.$organizationId);
+        } catch (\Throwable) {
+            // no request context
+        }
+
+        OrganizationCache::forget($organizationId, 'license.slim.v2');
     }
 
     /** True when the org must be locked out (no usable active subscription). */
@@ -234,10 +298,10 @@ class OrganizationLicenseService
 
     public function tokenBalanceFor(?Organization $org): int
     {
-        if (! $org || ! \Illuminate\Support\Facades\Schema::hasTable('platform_licence_balances')) {
+        if (! $org || ! SchemaProbe::hasTable('platform_licence_balances')) {
             return 0;
         }
-        if (! \Illuminate\Support\Facades\Schema::hasColumn('platform_licence_balances', 'token_balance')) {
+        if (! SchemaProbe::hasColumn('platform_licence_balances', 'token_balance')) {
             return 0;
         }
 

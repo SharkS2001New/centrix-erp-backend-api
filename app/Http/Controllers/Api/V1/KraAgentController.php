@@ -75,7 +75,7 @@ class KraAgentController extends Controller
                 'comstoreBaseUrl' => $agent->comstore_base_url,
                 'comstoreApiKey' => (string) ($finance['kra_comstore_api_key'] ?? ''),
                 'deviceHardwareIp' => trim((string) ($finance['kra_device_hardware_ip'] ?? '')),
-                'longPollMs' => 400,
+                'longPollMs' => 200,
                 // Fresher Comstore status in the background so checkout never needs /api/health.
                 'heartbeatIntervalSeconds' => 30,
                 // Keep below checkout soft-skip budget so a dead Comstore cannot pin the agent/worker.
@@ -233,7 +233,7 @@ class KraAgentController extends Controller
             if ($waitMs <= 0 || microtime(true) >= $deadline) {
                 break;
             }
-            usleep(15_000);
+            usleep(8_000);
         } while (true);
 
         $hardwareIp = trim((string) ($agent->device_hardware_ip ?? ''));

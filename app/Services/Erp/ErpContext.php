@@ -104,7 +104,19 @@ class ErpContext
     public function resolveOrganization(Request $request): Organization
     {
         if ($actingId = $request->attributes->get('acting_organization_id')) {
-            return Organization::findOrFail($actingId);
+            $actingId = (int) $actingId;
+            $attrKey = 'erp_context.org.'.$actingId;
+            if ($request->attributes->has($attrKey)) {
+                $cached = $request->attributes->get($attrKey);
+                if ($cached instanceof Organization) {
+                    return $cached;
+                }
+            }
+
+            $org = Organization::findOrFail($actingId);
+            $request->attributes->set($attrKey, $org);
+
+            return $org;
         }
 
         $user = $request->user();
@@ -112,7 +124,13 @@ class ErpContext
             abort(403, 'Organization context required.');
         }
 
-        return Organization::findOrFail($user->organization_id);
+        // Reuse request-scoped org instead of a second findOrFail on every erp.module call.
+        $org = $this->organizationForUser($user);
+        if (! $org) {
+            abort(403, 'Organization context required.');
+        }
+
+        return $org;
     }
 
     public function gateForRequest(Request $request): CapabilityGate

@@ -64,10 +64,14 @@ class InAppNotificationService
         $query = $this->visibleQuery($user)
             ->where('type', 'approval')
             ->whereNull('resolved_at')
-            ->whereHas('actionRequest', fn ($q) => $q->where('status', 'pending'));
+            ->whereIn('action_request_id', function ($sub) {
+                $sub->select('id')
+                    ->from('action_requests')
+                    ->where('status', 'pending');
+            });
         $this->applyWorkspaceFilter($query, $workspace);
 
-        return $query->count();
+        return (int) $query->count();
     }
 
     /** @return Collection<int, array<string, mixed>> */

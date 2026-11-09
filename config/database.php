@@ -50,8 +50,9 @@ return [
     | Destructive Artisan commands
     |--------------------------------------------------------------------------
     |
-    | When false in production, migrate:fresh, db:wipe, migrate:rollback, etc.
-    | are blocked via DB::prohibitDestructiveCommands().
+    | Default false everywhere. When false, migrate:fresh / db:wipe / refresh
+    | are blocked unless APP_ENV=testing AND the DB name is a dedicated test
+    | database (*_test). Never set true in production.
     |
     */
     'allow_destructive_commands' => filter_var(

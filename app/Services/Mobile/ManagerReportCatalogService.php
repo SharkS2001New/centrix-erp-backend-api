@@ -238,6 +238,24 @@ class ManagerReportCatalogService
     /** @return array<string, mixed> */
     public function catalogForUser(User $user, CapabilityGate $gate): array
     {
+        $orgId = (int) ($user->organization_id ?? 0);
+        if ($orgId <= 0) {
+            return $this->buildCatalogForUser($user, $gate);
+        }
+
+        $capsVersion = \App\Services\Cache\OrganizationCache::capabilitiesVersion($orgId);
+
+        return \App\Services\Cache\OrganizationCache::remember(
+            $orgId,
+            sprintf('mgr_report_catalog:v%d:u%d', $capsVersion, (int) $user->id),
+            3600,
+            fn () => $this->buildCatalogForUser($user, $gate),
+        );
+    }
+
+    /** @return array<string, mixed> */
+    protected function buildCatalogForUser(User $user, CapabilityGate $gate): array
+    {
         $request = Request::create('/api/v1/reports/', 'GET');
         $request->setUserResolver(fn () => $user);
         $rawCatalog = app(ReportController::class)->catalog($request)->getData(true);

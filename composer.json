@@ -15,6 +15,7 @@
         "openspout/openspout": "^4.28",
         "phpoffice/phpspreadsheet": "^2.4.8",
         "predis/predis": "^2.3",
+        "smalot/pdfparser": "^2.0",
         "web-auth/webauthn-lib": "^5.2"
     },
     "require-dev": {

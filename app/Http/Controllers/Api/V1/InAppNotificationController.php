@@ -18,8 +18,8 @@ class InAppNotificationController extends Controller
 
     public function unreadCount(Request $request)
     {
+        // Hot poll path (every ~12–15s on mobile) — do not run orphan sweeps here.
         $user = $request->user();
-        $this->actionRequests->cancelOrphanedCashAdvanceApprovals($user);
         $workspace = $request->input('workspace');
 
         return response()->json([
@@ -31,7 +31,7 @@ class InAppNotificationController extends Controller
 
     public function index(Request $request)
     {
-        $this->actionRequests->cancelOrphanedCashAdvanceApprovals($request->user());
+        $this->actionRequests->cancelOrphanedCashAdvanceApprovalsThrottled($request->user());
         $limit = min(max((int) $request->input('limit', 20), 1), 50);
 
         return response()->json([
@@ -41,7 +41,7 @@ class InAppNotificationController extends Controller
 
     public function all(Request $request)
     {
-        $this->actionRequests->cancelOrphanedCashAdvanceApprovals($request->user());
+        $this->actionRequests->cancelOrphanedCashAdvanceApprovalsThrottled($request->user());
         $filters = $request->only(['bucket', 'per_page', 'workspace']);
         $page = $this->notifications->paginate($request->user(), $filters);
 

@@ -10,9 +10,8 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
 /**
- * Attach demo product photos on the public disk.
- * Prefers bundled JPEGs in resources/seed-images/hospitality, then remote URLs,
- * then GD placeholders.
+ * Attach demo photos to products, either as direct URLs or public-disk files.
+ * File mode prefers bundled JPEGs, then remote downloads, then GD placeholders.
  */
 class SeededProductImage
 {
@@ -81,16 +80,33 @@ class SeededProductImage
         string $tone = 'neutral',
         bool $force = false,
         ?string $photoKey = null,
+        bool $preferRemoteUrl = false,
     ): ?string {
         if (! Schema::hasColumn('products', 'image_path')) {
             return null;
+        }
+
+        if ($preferRemoteUrl) {
+            $url = self::photoUrlFor($photoKey, $label, $tone);
+            if ($url !== null) {
+                if (
+                    is_string($product->image_path)
+                    && $product->image_path !== ''
+                    && StoredPublicFile::exists($product->image_path)
+                ) {
+                    Storage::disk('public')->delete($product->image_path);
+                }
+                $product->update(['image_path' => $url]);
+
+                return $url;
+            }
         }
 
         if (
             ! $force
             && is_string($product->image_path)
             && $product->image_path !== ''
-            && StoredPublicFile::exists($product->image_path)
+            && (filter_var($product->image_path, FILTER_VALIDATE_URL) || StoredPublicFile::exists($product->image_path))
         ) {
             return $product->image_path;
         }
@@ -109,7 +125,10 @@ class SeededProductImage
 
         $bytes = self::resolveJpegBytes($label, $tone, $photoKey);
         if ($bytes === null) {
-            return null;
+            $url = self::photoUrlFor($photoKey, $label, $tone);
+            $product->update(['image_path' => $url]);
+
+            return $url;
         }
 
         Storage::disk('public')->makeDirectory($directory);
@@ -160,17 +179,40 @@ class SeededProductImage
             return null;
         }
 
-        $path = resource_path('seed-images/hospitality/'.$key.'.jpg');
-        if (! is_file($path)) {
-            return null;
+        foreach (self::bundledPhotoCandidates($key) as $candidate) {
+            $path = resource_path('seed-images/hospitality/'.$candidate.'.jpg');
+            if (! is_file($path)) {
+                continue;
+            }
+
+            $bytes = @file_get_contents($path);
+            if (is_string($bytes) && strlen($bytes) >= 512) {
+                return $bytes;
+            }
         }
 
-        $bytes = @file_get_contents($path);
-        if (! is_string($bytes) || strlen($bytes) < 512) {
-            return null;
-        }
+        return null;
+    }
 
-        return $bytes;
+    /**
+     * Map commerce / alias photo keys onto the bundled hospitality JPEG set.
+     *
+     * @return list<string>
+     */
+    protected static function bundledPhotoCandidates(string $key): array
+    {
+        $alias = match ($key) {
+            'rice', 'grain', 'grains', 'flour', 'maize', 'sugar', 'soap', 'detergent', 'toothpaste', 'household' => 'retail',
+            'oil', 'cooking-oil' => 'juice',
+            'bread', 'bakery', 'loaf' => 'chapati',
+            'milk', 'dairy' => 'milk-tea',
+            'eggs', 'egg' => 'retail',
+            'banana', 'bananas', 'tomato', 'tomatoes', 'produce' => 'salad',
+            'snack', 'snacks', 'biscuit', 'biscuits' => 'retail',
+            default => $key,
+        };
+
+        return array_values(array_unique(array_filter([$key, $alias])));
     }
 
     /**
@@ -212,6 +254,21 @@ class SeededProductImage
             'salad' => 'salad',
             'pilau' => 'pilau',
             'rice' => 'pilau',
+            'maize flour' => 'retail',
+            'flour' => 'retail',
+            'sugar' => 'retail',
+            'cooking oil' => 'juice',
+            'oil' => 'juice',
+            'bread' => 'chapati',
+            'loaf' => 'chapati',
+            'milk' => 'milk-tea',
+            'egg' => 'retail',
+            'banana' => 'salad',
+            'tomato' => 'salad',
+            'toothpaste' => 'retail',
+            'soap' => 'retail',
+            'detergent' => 'retail',
+            'biscuit' => 'retail',
             'githeri' => 'githeri',
             'nyama' => 'nyama-choma',
             'choma' => 'nyama-choma',

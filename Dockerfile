@@ -121,17 +121,27 @@ COPY --from=builder /usr/local/etc/php/conf.d/ /usr/local/etc/php/conf.d/
 ENV APACHE_DOCUMENT_ROOT=/var/www/html/public
 RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-available/*.conf \
     && sed -ri -e 's!/var/www/!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/apache2.conf /etc/apache2/conf-available/*.conf \
-    && a2enmod rewrite headers \
+    && a2enmod rewrite headers deflate \
+    && printf '%s\n' \
+        '<IfModule mod_deflate.c>' \
+        '  AddOutputFilterByType DEFLATE application/json text/plain text/html text/xml text/css application/javascript application/x-javascript' \
+        '</IfModule>' \
+        > /etc/apache2/conf-available/deflate-json.conf \
+    && a2enconf deflate-json \
     && sed -i 's/Listen 80/Listen 8001/' /etc/apache2/ports.conf \
     && sed -i 's/:80/:8001/' /etc/apache2/sites-available/*.conf \
     && echo "ServerName localhost" >> /etc/apache2/apache2.conf
 
-ENV LOG_CHANNEL=stderr \
-    REDIS_CLIENT=phpredis \
-    CACHE_STORE=redis \
-    SESSION_DRIVER=redis \
-    APP_ENV=production \
-    APP_DEBUG=false
+# stderr + JSON so cluster log scrapers can ship Laravel logs to Loki/Grafana.
+ENV LOG_CHANNEL=stderr
+ENV LOG_LEVEL=info
+ENV LOG_STDERR_FORMATTER=Monolog\Formatter\JsonFormatter
+ENV REDIS_CLIENT=phpredis
+ENV CACHE_STORE=redis
+ENV SESSION_DRIVER=redis
+# Image build is production-only — PHPUnit/tests never run here (local machine only).
+ENV APP_ENV=production
+ENV APP_DEBUG=false
 
 WORKDIR /var/www/html
 

@@ -15,6 +15,7 @@ use App\Services\Platform\PackageFeatureCatalog;
 use App\Support\SalesOrderQueuePermissions;
 use App\Support\ShopDebtorsPermissions;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -36,12 +37,18 @@ class UserPermissionService
             return [];
         }
 
-        return DB::table('role_permissions')
-            ->where('role_id', $roleId)
-            ->pluck('permission_id')
-            ->map(fn ($id) => (int) $id)
-            ->values()
-            ->all();
+        return $this->rememberRequest('role_permission_ids.'.$roleId, function () use ($roleId) {
+            return Cache::remember(
+                'role_permission_ids:'.$roleId,
+                300,
+                fn () => DB::table('role_permissions')
+                    ->where('role_id', $roleId)
+                    ->pluck('permission_id')
+                    ->map(fn ($id) => (int) $id)
+                    ->values()
+                    ->all(),
+            );
+        });
     }
 
     /** @return list<int> */
@@ -59,29 +66,37 @@ class UserPermissionService
     /** @return list<int> */
     protected function overrideIds(int $userId, string $effect): array
     {
-        return DB::table('user_permission_overrides')
-            ->where('user_id', $userId)
-            ->where('effect', $effect)
-            ->pluck('permission_id')
-            ->map(fn ($id) => (int) $id)
-            ->values()
-            ->all();
+        return $this->rememberRequest('user_permission_overrides.'.$userId.'.'.$effect, function () use ($userId, $effect) {
+            return Cache::remember(
+                'user_permission_overrides:'.$userId.':'.$effect,
+                120,
+                fn () => DB::table('user_permission_overrides')
+                    ->where('user_id', $userId)
+                    ->where('effect', $effect)
+                    ->pluck('permission_id')
+                    ->map(fn ($id) => (int) $id)
+                    ->values()
+                    ->all(),
+            );
+        });
     }
 
     /** @return list<int> */
     public function roleAssignedPermissionIds(User $user): array
     {
-        $roleIds = collect($this->rolePermissionIds($user->role_id));
-        $grants = collect($this->grantIds((int) $user->id));
-        $denies = collect($this->denyIds((int) $user->id));
+        return $this->rememberRequest('role_assigned_permission_ids.'.$user->id, function () use ($user) {
+            $roleIds = collect($this->rolePermissionIds($user->role_id));
+            $grants = collect($this->grantIds((int) $user->id));
+            $denies = collect($this->denyIds((int) $user->id));
 
-        return $roleIds
-            ->merge($grants)
-            ->diff($denies)
-            ->unique()
-            ->values()
-            ->map(fn ($id) => (int) $id)
-            ->all();
+            return $roleIds
+                ->merge($grants)
+                ->diff($denies)
+                ->unique()
+                ->values()
+                ->map(fn ($id) => (int) $id)
+                ->all();
+        });
     }
 
     /** @return list<int> */
@@ -92,18 +107,31 @@ class UserPermissionService
         if ($user->is_super_admin) {
             return $this->catalog()->allIds();
         }
+    }
 
-        $roleIds = collect($this->rolePermissionIds($user->role_id));
-        $grants = collect($this->grantIds((int) $user->id));
-        $denies = collect($this->denyIds((int) $user->id));
+    protected function permissionIdByCode(string $permissionCode): ?int
+    {
+        $map = $this->rememberRequest('permission_id_by_code', function () {
+            return Permission::query()
+                ->pluck('id', 'permission_code')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+        });
 
-        return $roleIds
-            ->merge($grants)
-            ->diff($denies)
-            ->unique()
-            ->values()
-            ->map(fn ($id) => (int) $id)
-            ->all();
+        $id = $map[$permissionCode] ?? null;
+
+        return $id !== null ? (int) $id : null;
+    }
+
+    protected function permissionByCode(string $permissionCode): ?Permission
+    {
+        $map = $this->rememberRequest('permission_model_by_code', function () {
+            return Permission::query()->get()->keyBy('permission_code');
+        });
+
+        $permission = $map[$permissionCode] ?? null;
+
+        return $permission instanceof Permission ? $permission : null;
     }
 
     public function hasPermission(User $user, string $permissionCode, ?CapabilityGate $gate = null): bool
@@ -1153,6 +1181,16 @@ class UserPermissionService
                 ]);
             }
         });
+
+        Cache::forget('user_permission_overrides:'.$userId.':grant');
+        Cache::forget('user_permission_overrides:'.$userId.':deny');
+    }
+
+    public function forgetRolePermissionCache(?int $roleId): void
+    {
+        if ($roleId) {
+            Cache::forget('role_permission_ids:'.$roleId);
+        }
     }
 
     /** @return Collection<int, User> */

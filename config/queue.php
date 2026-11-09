@@ -4,6 +4,16 @@ return [
 
     'default' => env('QUEUE_CONNECTION', 'database'),
 
+    /**
+     * Named queues so long KRA/export work does not stall checkout side-effects.
+     * Workers: `queue:work --queue=checkout,kra,exports,default`
+     */
+    'names' => [
+        'checkout' => env('QUEUE_CHECKOUT', 'checkout'),
+        'kra' => env('QUEUE_KRA', 'kra'),
+        'exports' => env('QUEUE_EXPORTS', 'exports'),
+    ],
+
     'connections' => [
 
         'sync' => [
@@ -15,8 +25,8 @@ return [
             'connection' => env('DB_QUEUE_CONNECTION'),
             'table' => env('DB_QUEUE_TABLE', 'jobs'),
             'queue' => env('DB_QUEUE', 'default'),
-            // Must exceed the longest job timeout (report exports use 3600s).
-            'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', 7200),
+            // Must exceed the longest job + worker timeout (long KRA / exports use 7200s).
+            'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', 10800),
             'after_commit' => false,
         ],
 
@@ -44,8 +54,8 @@ return [
             'driver' => 'redis',
             'connection' => env('REDIS_QUEUE_CONNECTION', 'default'),
             'queue' => env('REDIS_QUEUE', 'default'),
-            // Must exceed the longest job timeout (report exports use 3600s).
-            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 7200),
+            // Must exceed the longest job + worker timeout (long KRA / exports use 7200s).
+            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 10800),
             'block_for' => null,
             'after_commit' => false,
         ],

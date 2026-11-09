@@ -39,10 +39,14 @@ class BackupR2SettingsResolver
             return $organization;
         }
 
-        $resolved = true;
         $organization = Organization::query()
             ->where('company_code', config('erp.platform_company_code', 'PLATFORM'))
             ->first();
+
+        // Do not permanently cache a miss — boot may run before the platform org is seeded.
+        if ($organization !== null) {
+            $resolved = true;
+        }
 
         return $organization;
     }

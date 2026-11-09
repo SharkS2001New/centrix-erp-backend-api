@@ -422,37 +422,10 @@ class KraOperationsController extends Controller
         $allocator = app(\App\Services\Kra\KraTraderInvoiceAllocator::class);
         $invoiceNumber = $allocator->extractFromKraResponse($row)
             ?: $service->traderInvoiceForSale($sale, $finance);
-        $orderItems = $sale->items->map(fn ($line) => [
-            'product_name' => $line->resolvedProductName(),
-            'product_code' => $line->product_code,
-            'quantity' => (float) $line->quantity,
-            'amount' => (float) $line->amount,
-            'product_vat' => (float) ($line->product_vat ?? 0),
-            'vat_rate' => \App\Services\Kra\SalesVatCalculator::vatRateFromProduct($line->product),
-        ])->all();
-
+        $orderItems = \App\Services\Kra\KraSaleFiscalBuilder::orderItemsFromSale($sale);
         $buyerPin = trim((string) ($sale->customer?->kra_pin ?? ''));
         $buyerPin = $buyerPin !== '' ? $buyerPin : null;
-        $tenders = ['cash' => 0.0, 'check' => 0.0, 'card' => 0.0];
-        foreach ($sale->payments as $payment) {
-            $method = strtoupper(trim((string) ($payment->paymentMethod?->method_code ?? '')));
-            if (in_array($method, ['CHEQUE', 'CHECK'], true)) {
-                $tenders['check'] += (float) $payment->amount;
-            } elseif ($method === 'CASH') {
-                $tenders['cash'] += (float) $payment->amount;
-            } else {
-                $tenders['card'] += (float) $payment->amount;
-            }
-        }
-        if ($sale->payments->isEmpty()) {
-            $tenders = [
-                'cash' => (float) ($sale->cash ?? 0),
-                'check' => 0.0,
-                'card' => (float) ($sale->mpesa_amount ?? 0)
-                    + (float) ($sale->equity_amount ?? 0)
-                    + (float) ($sale->kcb_amount ?? 0),
-            ];
-        }
+        $tenders = \App\Services\Kra\KraSaleFiscalBuilder::tendersFromSale($sale);
 
         $result = $service->sendSale(
             $orderItems,
@@ -604,37 +577,10 @@ class KraOperationsController extends Controller
         try {
             $service = KraDeviceService::fromSettings($finance, $orgId);
             $invoiceNumber = app(KraTraderInvoiceAllocator::class)->forOrganization($orgId);
-            $orderItems = $sale->items->map(fn ($line) => [
-                'product_name' => $line->resolvedProductName(),
-                'product_code' => $line->product_code,
-                'quantity' => (float) $line->quantity,
-                'amount' => (float) $line->amount,
-                'product_vat' => (float) ($line->product_vat ?? 0),
-                'vat_rate' => \App\Services\Kra\SalesVatCalculator::vatRateFromProduct($line->product),
-            ])->all();
-
+            $orderItems = \App\Services\Kra\KraSaleFiscalBuilder::orderItemsFromSale($sale);
             $buyerPin = trim((string) ($sale->customer?->kra_pin ?? ''));
             $buyerPin = $buyerPin !== '' ? $buyerPin : null;
-            $tenders = ['cash' => 0.0, 'check' => 0.0, 'card' => 0.0];
-            foreach ($sale->payments as $payment) {
-                $method = strtoupper(trim((string) ($payment->paymentMethod?->method_code ?? '')));
-                if (in_array($method, ['CHEQUE', 'CHECK'], true)) {
-                    $tenders['check'] += (float) $payment->amount;
-                } elseif ($method === 'CASH') {
-                    $tenders['cash'] += (float) $payment->amount;
-                } else {
-                    $tenders['card'] += (float) $payment->amount;
-                }
-            }
-            if ($sale->payments->isEmpty()) {
-                $tenders = [
-                    'cash' => (float) ($sale->cash ?? 0),
-                    'check' => 0.0,
-                    'card' => (float) ($sale->mpesa_amount ?? 0)
-                        + (float) ($sale->equity_amount ?? 0)
-                        + (float) ($sale->kcb_amount ?? 0),
-                ];
-            }
+            $tenders = \App\Services\Kra\KraSaleFiscalBuilder::tendersFromSale($sale);
             $result = $service->sendSale(
                 $orderItems,
                 (float) $sale->order_total,

@@ -73,7 +73,7 @@ class ProductController extends BaseResourceController
         if ($this->isHospitalityRequest($request)) {
             $data['has_image'] = filled($product->image_path);
         } else {
-            unset($data['image_path'], $data['image_url'], $data['has_image']);
+            unset($data['image_path'], $data['image_url'], $data['image_version'], $data['has_image']);
         }
 
         if ($skipBranchOverlay || ! $request) {
@@ -343,7 +343,9 @@ class ProductController extends BaseResourceController
         $leanSalesList = in_array($this->salesLoginChannel($request), ['mobile', 'pos'], true);
         $fields = strtolower(trim((string) $request->input('fields', '')));
         $leanOptIn = $fields === 'lean' || $request->boolean('lightweight');
-        $useLeanSelect = $leanSalesList || $leanOptIn;
+        // Default list payloads to lean columns (100-row pages were serializing products.*).
+        // Pass fields=full when the client needs every column + branch relation.
+        $useLeanSelect = $leanSalesList || $leanOptIn || $fields !== 'full';
         $select = $useLeanSelect
             ? [
                 'products.product_code',
@@ -352,6 +354,7 @@ class ProductController extends BaseResourceController
                 'products.vat_id',
                 'products.unit_price',
                 'products.last_cost_price',
+                'products.last_selling_price',
                 'products.sell_on_retail',
                 'products.sell_on_bar',
                 'products.sell_on_hotel',
@@ -363,6 +366,7 @@ class ProductController extends BaseResourceController
                 'products.subcategory_id',
                 'products.supplier_id',
                 'products.reorder_point',
+                'products.low_stock_alert_enabled',
                 'products.product_weight',
                 'products.shelf_location',
                 'products.stock_in_shop',
@@ -394,7 +398,12 @@ class ProductController extends BaseResourceController
         );
 
         if ($branchId !== null) {
-            $presented = $this->branchStock->overlayCollection($presented, $branchId);
+            // List browse is read-only — never expire reservations on every page scroll.
+            $presented = $this->branchStock->overlayCollection(
+                $presented,
+                $branchId,
+                releaseExpired: false,
+            );
             if ($this->shouldUseSalesConsumerStock($request)) {
                 $saleLocation = $this->salesConsumerStockLocation($request);
                 $splitShopStore = $this->salesConsumerStockSplitEnabled($request);
@@ -408,9 +417,10 @@ class ProductController extends BaseResourceController
             }
         }
 
-        // Embed UOM / VAT / retail pack helpers on lean sales lists so mobile
+        // Embed UOM / VAT / retail pack helpers on sales-channel lean lists so mobile
         // does not need separate /uoms /vats /retail-package-settings fan-out.
-        if ($useLeanSelect) {
+        // Backoffice catalogue uses lean columns by default but skips this embed.
+        if ($leanSalesList || $leanOptIn) {
             $presented = $this->embedSalesHelpers($presented);
         }
 
@@ -917,21 +927,128 @@ class ProductController extends BaseResourceController
         $this->assertHospitalityProductImages($request);
         $model = $this->findScopedModel($request, $product);
 
-        if (! StoredPublicFile::exists($model->image_path)) {
-            abort(Response::HTTP_NOT_FOUND);
-        }
-
         $headers = [];
         if ($request->boolean('download')) {
             $safe = preg_replace('/[^A-Za-z0-9._-]+/', '_', (string) $model->product_code) ?: 'product';
-            $ext = strtolower((string) pathinfo((string) $model->image_path, PATHINFO_EXTENSION));
-            if ($ext === '') {
+            $ext = strtolower((string) pathinfo((string) ($model->image_path ?? ''), PATHINFO_EXTENSION));
+            if ($ext === '' || strlen($ext) > 5) {
                 $ext = 'jpg';
             }
             $headers['Content-Disposition'] = 'attachment; filename="'.$safe.'.'.$ext.'"';
         }
+        // Versioned URLs (?v= fingerprint of image_path) are safe for long-lived PC/browser cache.
+        if ($request->filled('v')) {
+            $headers['Cache-Control'] = 'private, max-age=31536000, immutable';
+        }
 
-        return StoredPublicFile::response($model->image_path, 'image/jpeg', $headers);
+        $resolved = $this->resolveProductImageStoragePath($model);
+        if ($resolved !== null) {
+            return StoredPublicFile::response($resolved, 'image/jpeg', $headers);
+        }
+
+        // Remote catalogue URL still importing — let the browser load it directly.
+        $path = is_string($model->image_path) ? trim($model->image_path) : '';
+        if ($path !== '' && filter_var($path, FILTER_VALIDATE_URL)) {
+            return redirect()->away($path);
+        }
+
+        abort(Response::HTTP_NOT_FOUND);
+    }
+
+    /**
+     * Resolve a readable public-disk path for the product photo.
+     * Handles local files, /storage/… URLs after host moves, and remote catalogue URLs
+     * (downloads once onto the public disk so tills can cache /image/file).
+     */
+    protected function resolveProductImageStoragePath(Product $model): ?string
+    {
+        $path = is_string($model->image_path) ? trim($model->image_path) : '';
+        if ($path === '') {
+            return null;
+        }
+
+        if (StoredPublicFile::exists($path)) {
+            return $path;
+        }
+
+        // Full public URL from an older host → try the relative key under /storage/.
+        $fromStorageUrl = $this->relativePathFromPublicStorageUrl($path);
+        if ($fromStorageUrl !== null && StoredPublicFile::exists($fromStorageUrl)) {
+            $model->forceFill(['image_path' => $fromStorageUrl])->save();
+
+            return $fromStorageUrl;
+        }
+
+        if (! filter_var($path, FILTER_VALIDATE_URL)) {
+            return null;
+        }
+
+        // Sync-import so authenticated /image/file returns bytes (not a cross-origin 302).
+        // Tills fetch with Authorization; browsers cannot read redirected CDN/R2 bodies via CORS.
+        try {
+            $directory = OrganizationPublicStorage::path(
+                $model->organization_id,
+                'products',
+                (string) $model->product_code,
+            );
+            $stored = (new RemoteProductImageImporter)->import($path, $directory);
+            $model->forceFill(['image_path' => $stored['path']])->save();
+
+            return $stored['path'];
+        } catch (\Throwable) {
+            // Keep remote URL and retry on a later request.
+            return null;
+        }
+    }
+
+    protected function relativePathFromPublicStorageUrl(string $url): ?string
+    {
+        if (! filter_var($url, FILTER_VALIDATE_URL)) {
+            return null;
+        }
+
+        $parts = parse_url($url);
+        $urlPath = is_array($parts) ? (string) ($parts['path'] ?? '') : '';
+        if ($urlPath === '') {
+            return null;
+        }
+
+        // Cloudflare R2 / S3 public base URL → object key (orgs/…).
+        $publicBase = rtrim((string) (config('filesystems.disks.public.url') ?? ''), '/');
+        if ($publicBase !== '' && str_starts_with($url, $publicBase.'/')) {
+            $relative = rawurldecode(substr($url, strlen($publicBase) + 1));
+            $relative = ltrim(str_replace('\\', '/', $relative), '/');
+            if ($relative !== '' && ! str_contains($relative, '..')) {
+                // Drop query/signature if somehow included after the key.
+                $relative = explode('?', $relative, 2)[0];
+
+                return $relative !== '' ? $relative : null;
+            }
+        }
+
+        $markers = ['/storage/', '/public/storage/'];
+        foreach ($markers as $marker) {
+            $pos = stripos($urlPath, $marker);
+            if ($pos === false) {
+                continue;
+            }
+            $relative = rawurldecode(substr($urlPath, $pos + strlen($marker)));
+            $relative = ltrim(str_replace('\\', '/', $relative), '/');
+            if ($relative !== '' && ! str_contains($relative, '..')) {
+                return $relative;
+            }
+        }
+
+        // Public R2/S3 URLs often look like https://host/orgs/CODE/products/…
+        if (preg_match('#/(orgs/[A-Za-z0-9_-]+/.+)$#', $urlPath, $match) === 1) {
+            $relative = rawurldecode($match[1]);
+            $relative = ltrim(str_replace('\\', '/', $relative), '/');
+            if ($relative !== '' && ! str_contains($relative, '..')) {
+                return $relative;
+            }
+        }
+
+        return null;
     }
 
     /** POST /products/{product}/image — multipart product photo */

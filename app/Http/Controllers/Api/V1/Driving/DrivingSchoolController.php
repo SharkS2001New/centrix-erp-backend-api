@@ -55,16 +55,39 @@ class DrivingSchoolController extends Controller
         if ($status = $request->input('status')) {
             $query->where('status', $status);
         }
-        $query->with(['enrolments.course:id,code,name', 'enrolments.package:id,name'])->orderByDesc('id');
+        if ($courseId = (int) $request->input('course_id')) {
+            $query->whereHas('enrolments', function ($inner) use ($courseId) {
+                $inner->where('course_id', $courseId)->where('status', 'active');
+            });
+        }
+        $lean = $request->boolean('lean');
+        $query->with([
+            'enrolments' => fn ($inner) => $inner->orderByDesc('id'),
+            'enrolments.course:id,code,name',
+            'enrolments.package:id,name',
+        ])->orderByDesc('id');
         if ($request->input('format') === 'csv') {
             return $this->csv('students.csv', ['Number', 'Name', 'Phone', 'Status', 'Registered'], $query->get()->map(fn ($row) => [
                 $row->student_number, $row->full_name, $row->phone, $row->status, optional($row->registered_on)->toDateString(),
             ]));
         }
-        $page = $query->paginate(min((int) $request->input('per_page', 25), 100));
-        $page->getCollection()->transform(function (DrivingStudent $student) {
+        $page = $query->paginate(min(max((int) $request->input('per_page', 25), 1), 100));
+        if ($lean) {
+            $page->getCollection()->transform(function (DrivingStudent $student) {
+                $student->id_document_number = $this->driving->maskDocument($student->id_document_number);
+
+                return $student;
+            });
+
+            return response()->json($page);
+        }
+
+        $balances = $this->driving->studentBalancesForIds(
+            $page->getCollection()->map(fn (DrivingStudent $student) => (int) $student->id)->all()
+        );
+        $page->getCollection()->transform(function (DrivingStudent $student) use ($balances) {
             $student->id_document_number = $this->driving->maskDocument($student->id_document_number);
-            $student->setAttribute('outstanding', $this->driving->studentBalance($student->id));
+            $student->setAttribute('outstanding', $balances[(int) $student->id] ?? 0.0);
 
             return $student;
         });
@@ -494,9 +517,10 @@ class DrivingSchoolController extends Controller
             ])
             ->where('organization_id', $org->id)
             ->latest('id')
-            ->paginate(50);
-        $page->getCollection()->transform(function (DrivingInvoice $invoice) {
-            $invoice->setAttribute('outstanding', $this->driving->invoiceOutstanding($invoice));
+            ->paginate(min(max((int) $request->input('per_page', 50), 1), 100));
+        $outstanding = $this->driving->invoiceOutstandingsById($page->getCollection());
+        $page->getCollection()->transform(function (DrivingInvoice $invoice) use ($outstanding) {
+            $invoice->setAttribute('outstanding', $outstanding[(int) $invoice->id] ?? 0.0);
 
             return $invoice;
         });

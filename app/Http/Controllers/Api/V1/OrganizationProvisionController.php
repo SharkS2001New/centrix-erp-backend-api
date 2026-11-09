@@ -49,18 +49,22 @@ class OrganizationProvisionController extends Controller
         $organizations = Organization::query()
             ->where('company_code', '!=', $platformCode)
             ->orderBy('org_name')
-            ->get(['id', 'company_code', 'org_name', 'org_email', 'deployment_profile', 'registration_source', 'is_active', 'created_at', 'enabled_modules']);
+            ->get(['id', 'company_code', 'org_name', 'org_email', 'business_type', 'deployment_profile', 'registration_source', 'is_active', 'created_at', 'enabled_modules']);
+        $setupLabels = collect(app(SetupProfileMenuService::class)->all())->keyBy('key');
 
-        $data = $organizations->map(function (Organization $org) {
+        $data = $organizations->map(function (Organization $org) use ($setupLabels) {
             $gate = app(\App\Services\Erp\CapabilityGate::class)->forOrganization($org);
             $effectiveModules = $gate->allModules();
             $industry = IndustryRegistry::summaryForOrganization($org->deployment_profile);
 
             return array_merge($org->only([
-                'id', 'company_code', 'org_name', 'org_email', 'deployment_profile', 'registration_source', 'is_active', 'created_at',
+                'id', 'company_code', 'org_name', 'org_email', 'business_type', 'deployment_profile', 'registration_source', 'is_active', 'created_at',
             ]), [
                 'industry' => $industry['id'],
                 'industry_label' => $industry['label'],
+                'deployment_profile_label' => data_get($setupLabels->get($org->deployment_profile), 'label')
+                    ?? config("erp.profiles.{$org->deployment_profile}.label")
+                    ?? $org->deployment_profile,
                 'administration_enabled' => (bool) ($effectiveModules['admin'] ?? false),
             ]);
         });
@@ -80,8 +84,11 @@ class OrganizationProvisionController extends Controller
                 'key' => $key,
                 'label' => $profile['label'] ?? $key,
                 'industry' => $profile['industry'] ?? IndustryRegistry::industryForProfile($key),
+                'default_sales_platform' => $this->platformConfig->defaultSalesPlatformConfig($key),
+                'default_payroll_platform' => $this->platformConfig->defaultPayrollPlatformConfig($key),
                 'modules' => $profile['modules'] ?? [],
                 'applications' => $setupMenus->applicationsForProfile($key),
+                'business_types' => $setupMenus->businessTypesForProfile($key),
                 'menu_groups' => $setupMenus->forProfile($key),
                 'application_ids' => array_key_exists('application_ids', $profile)
                     ? $profile['application_ids']
@@ -97,8 +104,11 @@ class OrganizationProvisionController extends Controller
                 'key' => $row['key'],
                 'label' => $row['label'],
                 'industry' => $row['industry'],
+                'default_sales_platform' => $this->platformConfig->defaultSalesPlatformConfig($row['key']),
+                'default_payroll_platform' => $this->platformConfig->defaultPayrollPlatformConfig($row['key']),
                 'modules' => [],
                 'applications' => $row['applications'],
+                'business_types' => $row['business_types'] ?? [],
                 'menu_groups' => $row['menu_groups'],
                 'application_ids' => $row['application_ids'],
             ])
@@ -123,7 +133,7 @@ class OrganizationProvisionController extends Controller
                 'industry' => 'Select industry first (Retail & Distribution, Hotel & Hospitality, or SPA & Kinyozi). Applications and roles follow that industry.',
                 'applications' => 'Enable or disable tenant applications for this setup type. Hotel & Hospitality only exposes Hotel POS and Hotel Backoffice.',
                 'custom_profile' => 'Within Retail & Distribution, Custom setup starts from a blank module map.',
-                'sales_platform' => 'Checkout vs save order, order workflow, and stock timing are configured by the platform super admin — not the organization manager.',
+                'sales_platform' => 'Checkout behavior, order workflow, stock timing, and order-list defaults come from the selected setup type and can be adjusted by the platform super admin.',
                 'org_settings' => 'Organization managers configure day-to-day preferences (payment fields, receipts, SMTP, M-Pesa, etc.) under Administration → Organization settings when Administration is enabled.',
                 'role_templates' => 'Recommended staff roles are seeded globally and suggested per profile when an organization is registered.',
             ],
@@ -202,6 +212,7 @@ class OrganizationProvisionController extends Controller
             'applications' => $this->applications->applicationsFromEnabledModules($gate->allModules()),
             'enabled_modules' => $org->enabled_modules,
             'sales_platform' => $this->platformConfig->salesPlatformConfigForOrganization($org),
+            'payroll_platform' => $this->platformConfig->payrollPlatformConfigForOrganization($org),
             'source_organization' => [
                 'id' => $org->id,
                 'company_code' => $org->company_code,
@@ -239,6 +250,7 @@ class OrganizationProvisionController extends Controller
     public function update(Request $request, int $organization)
     {
         $org = $this->findTenantOrganization($organization);
+        $previousProfile = (string) $org->deployment_profile;
 
         $data = $request->validate(array_merge(
             $this->salesPlatformRules(),
@@ -251,6 +263,24 @@ class OrganizationProvisionController extends Controller
                 'enabled_modules.*' => 'boolean',
             ],
         ));
+        $profileChanged = isset($data['deployment_profile'])
+            && $data['deployment_profile'] !== $previousProfile;
+        if ($profileChanged && ! array_key_exists('sales_platform', $data)) {
+            $data['sales_platform'] = $this->platformConfig
+                ->defaultSalesPlatformConfig((string) $data['deployment_profile']);
+        }
+        if ($profileChanged && ! array_key_exists('payroll_platform', $data)) {
+            $data['payroll_platform'] = $this->platformConfig
+                ->defaultPayrollPlatformConfig((string) $data['deployment_profile']);
+        }
+        if (
+            $profileChanged
+            && ! array_key_exists('applications', $data)
+            && ! array_key_exists('enabled_modules', $data)
+        ) {
+            $data['applications'] = app(SetupProfileMenuService::class)
+                ->applicationsForProfile((string) $data['deployment_profile']);
+        }
 
         if ($resolvedModules = $this->resolveEnabledModulesInput($data, $org)) {
             $resolvedModules['centrix_payments'] = false;
@@ -293,19 +323,32 @@ class OrganizationProvisionController extends Controller
             $this->provisioning->syncModuleSettingsFromEnabledModules($org);
         }
 
-        if (array_key_exists('sales_platform', $data) && is_array($data['sales_platform'])) {
-            $this->platformConfig->applySalesPlatformConfig($org, $data['sales_platform']);
-            if (array_key_exists('enable_mobile_orders', $data['sales_platform'])) {
+        if (
+            (array_key_exists('sales_platform', $data) && is_array($data['sales_platform']))
+            || $profileChanged
+        ) {
+            $salesPlatform = is_array($data['sales_platform'] ?? null)
+                ? $data['sales_platform']
+                : $this->platformConfig->defaultSalesPlatformConfig((string) $org->deployment_profile);
+            $this->platformConfig->applySalesPlatformConfig($org, $salesPlatform);
+            if (array_key_exists('enable_mobile_orders', $salesPlatform)) {
                 $modules = $org->enabled_modules ?? [];
-                $modules = $this->platformConfig->reconcileEnabledModules($org, $modules, $data['sales_platform']);
+                $modules = $this->platformConfig->reconcileEnabledModules($org, $modules, $salesPlatform);
                 $org->enabled_modules = $this->provisioning->normalizeEnabledModules($modules);
                 $org->save();
             }
             $this->provisioning->syncModuleSettingsFromEnabledModules($org);
         }
 
-        if (array_key_exists('payroll_platform', $data) && is_array($data['payroll_platform'])) {
-            $this->platformConfig->applyPayrollPlatformConfig($org, $data['payroll_platform']);
+        if (
+            (array_key_exists('payroll_platform', $data) && is_array($data['payroll_platform']))
+            || $profileChanged
+        ) {
+            $payrollPlatform = array_replace(
+                $this->platformConfig->defaultPayrollPlatformConfig((string) $org->deployment_profile),
+                is_array($data['payroll_platform'] ?? null) ? $data['payroll_platform'] : [],
+            );
+            $this->platformConfig->applyPayrollPlatformConfig($org, $payrollPlatform);
         }
 
         return response()->json($this->organizationPayload($org->fresh()));
@@ -984,6 +1027,7 @@ class OrganizationProvisionController extends Controller
     {
         $applications = $this->applications->applicationsFromEnabledModules($modules);
         $profileConfig = config("erp.profiles.{$profile}", []);
+        $salesPlatform ??= $this->platformConfig->defaultSalesPlatformConfig($profile);
         $mobileOrdersEnabled = ($salesPlatform['enable_mobile_orders'] ?? true) !== false;
 
         return [

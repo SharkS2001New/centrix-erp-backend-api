@@ -43,6 +43,32 @@ class CheckoutFinalizationService
     ): void {
         $gate = $this->erp->gateForUser($user);
 
+        // Mobile edit/append may defer prior-sale stock reverse until here so confirm is instant.
+        $priorSaleId = (int) (($sale->fulfillment_meta['supersedes_sale_id'] ?? 0));
+        if ($priorSaleId > 0) {
+            $priorSale = Sale::query()->find($priorSaleId);
+            if ($priorSale) {
+                $priorMeta = is_array($priorSale->fulfillment_meta) ? $priorSale->fulfillment_meta : [];
+                if ($priorSale->stock_balanced || ! empty($priorMeta['stock_reverse_pending'])) {
+                    try {
+                        app(SaleInventoryRestorer::class)->reverseForPosEdit($priorSale, $user);
+                        unset($priorMeta['stock_reverse_pending']);
+                        $priorSale->update([
+                            'stock_balanced' => 0,
+                            'fulfillment_meta' => $priorMeta,
+                        ]);
+                    } catch (Throwable $e) {
+                        Log::error('Deferred prior-sale stock reverse failed', [
+                            'sale_id' => $sale->id,
+                            'prior_sale_id' => $priorSaleId,
+                            'error' => $e->getMessage(),
+                        ]);
+                        throw $e;
+                    }
+                }
+            }
+        }
+
         if ($deductStock) {
             try {
                 $this->deductSaleStock($sale->fresh(['items']) ?? $sale, $user, $gate);

@@ -19,6 +19,7 @@ use App\Services\Inventory\StockUomDisplayService;
 use App\Support\SqlLikeSearch;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class MobileSalesService
@@ -142,19 +143,44 @@ class MobileSalesService
             )
             ->first();
 
-        $customerCount = Customer::query()
-            ->whereNull('deleted_at')
-            ->when(
-                $user->organization_id,
-                fn (Builder $q) => $q->where('organization_id', $user->organization_id),
-            );
-        $this->access->scopeBranchIfLimited($customerCount, $user);
-        $this->mobileScope->applyCustomerScope($customerCount, $user);
+        $orgId = (int) ($user->organization_id ?? 0);
+        $customerCount = $orgId > 0
+            ? (int) OrganizationCache::remember(
+                $orgId,
+                sprintf(
+                    'mobile-customer-count:u%d:b%s',
+                    (int) $user->id,
+                    (string) ($user->branch_id ?? 'all'),
+                ),
+                300,
+                function () use ($user) {
+                    $customerCountQuery = Customer::query()
+                        ->whereNull('deleted_at')
+                        ->when(
+                            $user->organization_id,
+                            fn (Builder $q) => $q->where('organization_id', $user->organization_id),
+                        );
+                    $this->access->scopeBranchIfLimited($customerCountQuery, $user);
+                    $this->mobileScope->applyCustomerScope($customerCountQuery, $user);
+
+                    return (int) $customerCountQuery->count();
+                },
+            )
+            : 0;
 
         $trendFrom = $to->copy()->subDays(29);
+        // Loads sales + approved expenses by day once — reused for weekly/monthly charts and summary.
         $trendRows = $this->trendSalesRows($user, $trendFrom, $to, $allChannels);
         $weekStart = $to->copy()->subDays(6)->toDateString();
-        $expenseTotal = $this->routeExpenses()->approvedTotalForUserBetween($user, $from, $to);
+        $fromKey = $from->toDateString();
+        $toKey = $to->toDateString();
+        $expenseTotal = round((float) $trendRows
+            ->filter(function ($row) use ($fromKey, $toKey) {
+                $day = Carbon::parse($row->sale_day)->toDateString();
+
+                return $day >= $fromKey && $day <= $toKey;
+            })
+            ->sum(fn ($row) => (float) ($row->expense_amount ?? 0)), 2);
 
         return [
             'mobile_context' => $this->mobileScope->mobileContext($user),
@@ -164,7 +190,7 @@ class MobileSalesService
                 'orderTotals' => round((float) ($summaryRow->order_total ?? 0) - $expenseTotal, 2),
                 'expenseTotals' => $expenseTotal,
                 'noofPaidOrders' => (int) ($summaryRow->paid_count ?? 0),
-                'noofCustomers' => (int) $customerCount->count(),
+                'noofCustomers' => $customerCount,
             ], $this->workflowQueueCounts($user, $allChannels)),
             'recent_orders' => $this->recentOrders($user, $from, $to, $allChannels),
             'weekly_sales' => $this->formatTrendSales(
@@ -306,10 +332,10 @@ class MobileSalesService
             $allChannels = false;
         }
 
+        // List cards use order_discount only — skip withSum(items.discount_given).
         $query = $this->mobileSalesQuery($user, $allChannels)
             ->select($this->orderListColumns())
-            ->with(['customer:customer_num,customer_name,organization_id'])
-            ->withSum('items', 'discount_given');
+            ->with(['customer:customer_num,customer_name,organization_id']);
 
         $statusFilter = strtolower(trim((string) ($filters['status'] ?? '')));
         $knownStatuses = [
@@ -346,12 +372,25 @@ class MobileSalesService
         $summaryQuery = clone $query;
         $requestedPage = max(1, (int) ($filters['page'] ?? 1));
         $isLaterPage = $requestedPage > 1;
-        $page = $isLaterPage
-            ? $query->simplePaginate($perPage)
-            : $query->paginate($perPage);
-        $listSummary = $isLaterPage
-            ? []
-            : $this->buildOrderListSummary(
+        // Page 1: one COUNT+SUM aggregate then forPage — avoid Laravel paginate()'s second COUNT.
+        if ($isLaterPage) {
+            $page = $query->simplePaginate($perPage);
+            $listSummary = [];
+        } else {
+            $agg = (clone $summaryQuery)->cloneWithout(['columns', 'orders'])
+                ->selectRaw('COUNT(*) as order_count, COALESCE(SUM(sales.order_total), 0) as gross_total')
+                ->first();
+            $orderCount = (int) ($agg->order_count ?? 0);
+            $grossTotal = round((float) ($agg->gross_total ?? 0), 2);
+            $items = $query->forPage(1, $perPage)->get();
+            $page = new \Illuminate\Pagination\LengthAwarePaginator(
+                $items,
+                $orderCount,
+                $perPage,
+                1,
+                ['path' => request()->url(), 'query' => request()->query()],
+            );
+            $listSummary = $this->buildOrderListSummary(
                 $summaryQuery,
                 $search,
                 (int) ($user->organization_id ?? 0),
@@ -359,8 +398,10 @@ class MobileSalesService
                 $from,
                 $to,
                 $dateScoped && $search === '',
-                (int) $page->total(),
+                $orderCount,
+                $grossTotal,
             );
+        }
         $gate = $this->erp->gateForUser($user);
         $presentation = app(SaleOrderPresentationService::class);
         $cancelCaps = $this->cancellationCapabilitiesTemplate($user, $gate);
@@ -444,8 +485,11 @@ class MobileSalesService
         Carbon $to,
         bool $deductExpenses,
         int $orderCount,
+        ?float $precomputedGrossTotal = null,
     ): array {
-        $grossTotal = round((float) (clone $query)->sum('sales.order_total'), 2);
+        $grossTotal = $precomputedGrossTotal !== null
+            ? round($precomputedGrossTotal, 2)
+            : round((float) (clone $query)->sum('sales.order_total'), 2);
         $expenseTotal = $deductExpenses
             ? $this->routeExpenses()->approvedTotalForUserBetween($user, $from, $to)
             : 0.0;
@@ -575,14 +619,8 @@ class MobileSalesService
             $allChannels = false;
         }
 
-        $sale = $this->mobileSalesQuery($user, $allChannels)
-            ->with([
-                'items.product:product_code,product_name,unit_id,organization_id,sell_on_retail',
-                'items.product.unit:id,conversion_factor,full_name,measure_name,small_packaging_label,middle_packaging_label,middle_factor,uses_small_packaging,uom_type',
-                'cashier:id,username',
-                'customer:customer_num,customer_name,organization_id',
-            ])
-            ->findOrFail($saleId);
+        // Header only first — immutable detail cache can skip the items/product graph.
+        $sale = $this->mobileSalesQuery($user, $allChannels)->findOrFail($saleId);
 
         $cache = app(CompletedSalesCacheService::class);
         if ($cache->isImmutableSale($sale)) {
@@ -592,6 +630,13 @@ class MobileSalesService
                 return $cache->hydrateMobileOrderDetail($cached, $sale, $user);
             }
         }
+
+        $sale->load([
+            'items.product:product_code,product_name,unit_id,organization_id,sell_on_retail',
+            'items.product.unit:id,conversion_factor,full_name,measure_name,small_packaging_label,middle_packaging_label,middle_factor,uses_small_packaging,uom_type',
+            'cashier:id,username',
+            'customer:customer_num,customer_name,organization_id',
+        ]);
 
         $flags = $this->orderCapabilityFlags($sale, $user);
         $detail = array_merge(
@@ -798,15 +843,15 @@ class MobileSalesService
         $presentation = app(SaleOrderPresentationService::class);
         $cancelCaps = $this->cancellationCapabilitiesTemplate($user, $gate);
 
+        // No withSum — home cards only need order_discount; line discounts load on detail.
         return $this->mobileSalesQuery($user, $allChannels)
             ->select($this->orderListColumns())
             ->with(['customer:customer_num,customer_name,organization_id'])
-            ->withSum('items', 'discount_given')
             ->tap(fn (Builder $q) => $this->applyCreatedAtDayRange($q, $from, $to))
             ->where('status', '!=', 'cancelled')
             ->whereNotIn('status', ['pending_approval', 'editable'])
             ->orderByDesc('id')
-            ->limit(20)
+            ->limit(12)
             ->get()
             ->map(fn (Sale $sale) => array_merge(
                 $this->presentOrderSummary($sale, $user, $presentation),
@@ -830,12 +875,16 @@ class MobileSalesService
         $rows = $this->mobileSalesQuery($user, $allChannels);
         $this->applyCreatedAtDayRange($rows, $from, $to);
 
+        // Prefer indexed date column when present (avoids DATE(created_at) wrap on group).
+        $dayExpr = \App\Support\EffectiveSaleDate::columnExists()
+            ? 'sales.effective_sale_date'
+            : 'DATE(sales.created_at)';
         $salesRows = $rows
             ->where('status', '!=', 'cancelled')
-            ->selectRaw('DATE(created_at) as sale_day')
+            ->selectRaw("{$dayExpr} as sale_day")
             ->selectRaw('COUNT(*) as order_count')
             ->selectRaw('COALESCE(ROUND(SUM(order_total), 2), 0) as total_amount')
-            ->groupBy('sale_day')
+            ->groupBy(DB::raw($dayExpr))
             ->orderBy('sale_day')
             ->get();
 
@@ -899,12 +948,15 @@ class MobileSalesService
     ): array {
         $rowsQuery = $this->mobileSalesQuery($user, $allChannels);
         $this->applyCreatedAtDayRange($rowsQuery, $from, $to);
+        $dayExpr = \App\Support\EffectiveSaleDate::columnExists()
+            ? 'sales.effective_sale_date'
+            : 'DATE(sales.created_at)';
         $rows = $rowsQuery
             ->where('status', '!=', 'cancelled')
-            ->selectRaw('DATE(created_at) as sale_day')
+            ->selectRaw("{$dayExpr} as sale_day")
             ->selectRaw('COUNT(*) as order_count')
             ->selectRaw('COALESCE(ROUND(SUM(order_total), 2), 0) as total_amount')
-            ->groupBy('sale_day')
+            ->groupBy(DB::raw($dayExpr))
             ->orderBy('sale_day')
             ->get()
             ->keyBy(fn ($row) => Carbon::parse($row->sale_day)->toDateString());
@@ -1010,7 +1062,9 @@ class MobileSalesService
     protected function workflowQueueCounts(User $user, bool $allChannels = false): array
     {
         // Cap queue scans — older workflow rows are not actionable for mobile ops.
+        // Filter statuses first so the query can use (cashier/org, status, created_at) indexes.
         $row = $this->mobileSalesQuery($user, $allChannels)
+            ->whereIn('status', ['pending_approval', 'editable'])
             ->where('sales.created_at', '>=', now()->subDays(90)->startOfDay()->toDateTimeString())
             ->selectRaw("COALESCE(SUM(CASE WHEN status = 'pending_approval' THEN 1 ELSE 0 END), 0) as pending_approval_count")
             ->selectRaw("COALESCE(SUM(CASE WHEN status = 'editable' THEN 1 ELSE 0 END), 0) as editable_count")

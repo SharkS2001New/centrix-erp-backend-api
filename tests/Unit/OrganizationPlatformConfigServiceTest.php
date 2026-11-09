@@ -3,6 +3,7 @@
 namespace Tests\Unit;
 
 use App\Models\Organization;
+use App\Services\Erp\SetupProfileMenuService;
 use App\Services\OrganizationPlatformConfigService;
 use Tests\TestCase;
 
@@ -60,22 +61,120 @@ class OrganizationPlatformConfigServiceTest extends TestCase
         $this->assertSame(60, $distribution['orders_list_search_days']);
         $this->assertSame('order_completed', $distribution['stock_deduct_on']['mobile']);
         $this->assertSame('order_completed', $distribution['stock_deduct_on']['backend']);
+
+        $this->assertSame(
+            ['booked', 'unpaid', 'pending_payment', 'paid', 'completed'],
+            array_column($service->defaultSalesPlatformConfig('small_shop')['order_workflow']['steps'], 'status'),
+        );
+        $this->assertSame(
+            ['booked', 'unpaid', 'pending_payment', 'paid', 'completed'],
+            array_column($service->defaultSalesPlatformConfig('supermarket')['order_workflow']['steps'], 'status'),
+        );
+        $this->assertSame(
+            ['booked', 'pending', 'unpaid', 'pending_payment', 'paid', 'processed', 'delivered', 'completed'],
+            array_column($wholesale['order_workflow']['steps'], 'status'),
+        );
+        $this->assertSame(
+            ['booked', 'pending', 'unpaid', 'pending_payment', 'paid', 'processed', 'delivered', 'completed'],
+            array_column($distribution['order_workflow']['steps'], 'status'),
+        );
+    }
+
+    public function test_setup_profile_sales_defaults_override_provisioning_configuration(): void
+    {
+        $this->mock(SetupProfileMenuService::class, function ($mock) {
+            $mock->shouldReceive('applicationsForProfile')
+                ->once()
+                ->with('small_shop')
+                ->andReturn([
+                    'pos' => true,
+                    'backoffice' => true,
+                    'distribution' => false,
+                    'accounting' => false,
+                    'hr' => false,
+                ]);
+            $mock->shouldReceive('forProfile')
+                ->once()
+                ->with('small_shop')
+                ->andReturn([
+                    'backoffice' => \App\Services\Erp\BackofficeSections::DEFAULTS,
+                    'hr' => \App\Services\Erp\SetupProfileMenuService::defaultGroup(
+                        \App\Services\Erp\SetupProfileMenuService::HR_KEYS,
+                    ),
+                    'accounting' => \App\Services\Erp\SetupProfileMenuService::defaultGroup(
+                        \App\Services\Erp\SetupProfileMenuService::ACCOUNTING_KEYS,
+                    ),
+                ]);
+            $mock->shouldReceive('salesPlatformSettingsForProfile')
+                ->once()
+                ->with('small_shop')
+                ->andReturn([
+                    'order_workflow' => [
+                        'steps' => [
+                            ['status' => 'booked', 'label' => 'Received', 'enabled' => true],
+                            ['status' => 'completed', 'label' => 'Done', 'enabled' => true],
+                        ],
+                    ],
+                    'orders_list_default_days' => 21,
+                    'stock_deduct_on' => [
+                        'pos' => 'order_completed',
+                        'mobile' => 'order_completed',
+                        'backend' => 'order_completed',
+                    ],
+                ]);
+        });
+
+        $config = app(OrganizationPlatformConfigService::class)
+            ->defaultSalesPlatformConfig('small_shop');
+
+        $this->assertSame(
+            ['booked', 'completed'],
+            array_column($config['order_workflow']['steps'], 'status'),
+        );
+        $this->assertSame('Received', $config['order_workflow']['steps'][0]['label']);
+        $this->assertSame(21, $config['orders_list_default_days']);
+        $this->assertSame('order_completed', $config['stock_deduct_on']['pos']);
+        $this->assertSame(
+            \App\Services\Erp\BackofficeSections::DEFAULTS,
+            $config['backoffice_sections'],
+        );
+        $this->assertFalse($config['hr_sections']['hr_payroll']);
+        $this->assertFalse($config['accounting_sections']['accounting']);
+    }
+
+    public function test_setup_profile_payroll_defaults_override_platform_defaults(): void
+    {
+        $this->mock(SetupProfileMenuService::class, function ($mock) {
+            $mock->shouldReceive('payrollPlatformSettingsForProfile')
+                ->once()
+                ->with('small_shop')
+                ->andReturn([
+                    'payroll_month_days_basis' => 'fixed_30',
+                    'shif_minimum_monthly' => 2500,
+                ]);
+        });
+
+        $config = app(OrganizationPlatformConfigService::class)
+            ->defaultPayrollPlatformConfig('small_shop');
+
+        $this->assertSame('fixed_30', $config['payroll_month_days_basis']);
+        $this->assertSame(2500.0, $config['shif_minimum_monthly']);
     }
 
     public function test_default_sales_platform_includes_order_action_status_gates(): void
     {
         $config = app(OrganizationPlatformConfigService::class)->defaultSalesPlatformConfig('small_shop');
 
-        $this->assertSame(['booked', 'pending', 'editable'], $config['edit_order_statuses']);
+        $this->assertSame(['booked', 'editable'], $config['edit_order_statuses']);
         $this->assertNull($config['print_invoice_statuses']);
         $this->assertSame(['unpaid', 'pending_payment'], $config['collect_payment_statuses']);
         $this->assertTrue($config['order_cancellation_enabled']);
         $this->assertSame(
-            ['booked', 'pending', 'unpaid', 'pending_payment', 'paid', 'processed', 'delivered', 'completed'],
+            ['booked', 'unpaid', 'pending_payment', 'paid', 'completed'],
             $config['cancel_order_statuses'],
         );
         $this->assertSame(
-            ['paid', 'processed', 'delivered', 'completed'],
+            ['paid', 'completed'],
             $config['customer_return_statuses'],
         );
         $this->assertSame(

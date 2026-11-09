@@ -156,7 +156,11 @@ class ErpCapabilitiesController extends Controller
         $payload['allow_org_provisioning'] = (bool) $user->is_super_admin
             && config('erp.allow_org_provisioning');
         $payload['password_expiry'] = app(PasswordExpiryService::class)->statusForUser($user);
-        $payload['license'] = app(OrganizationLicenseService::class)->resolveForOrganization($org);
+        $licenses = app(OrganizationLicenseService::class);
+        $license = $licenses->resolveForOrganization($org);
+        $payload['license'] = is_array($license) && $org
+            ? $licenses->withPaymentUi($org, $license)
+            : $license;
         if (
             $org
             && ! $user->is_super_admin

@@ -3,6 +3,7 @@
 namespace App\Services\Platform;
 
 use App\Models\PlatformBillingSetting;
+use App\Support\SchemaProbe;
 use Illuminate\Support\Facades\Schema;
 
 /**
@@ -43,12 +44,26 @@ class BillingPolicy
     /** @return array<string, mixed> */
     public function current(): array
     {
+        try {
+            $request = request();
+            if ($request->attributes->has('billing_policy.current')) {
+                return $request->attributes->get('billing_policy.current');
+            }
+        } catch (\Throwable) {
+            $request = null;
+        }
+
         $stored = null;
-        if (Schema::hasTable('platform_billing_settings') && Schema::hasColumn('platform_billing_settings', 'policy')) {
+        if (SchemaProbe::hasTable('platform_billing_settings') && SchemaProbe::hasColumn('platform_billing_settings', 'policy')) {
             $stored = PlatformBillingSetting::current()?->policy;
         }
 
-        return $this->normalize(is_array($stored) ? $stored : []);
+        $policy = $this->normalize(is_array($stored) ? $stored : []);
+        if ($request) {
+            $request->attributes->set('billing_policy.current', $policy);
+        }
+
+        return $policy;
     }
 
     public function tokensEnabled(): bool

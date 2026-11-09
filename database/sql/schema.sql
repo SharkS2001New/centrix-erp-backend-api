@@ -40,6 +40,7 @@ CREATE TABLE organizations (
     company_code_aliases JSON     NULL,
     logo            VARCHAR(200),
     org_name        VARCHAR(200)  NOT NULL,
+    business_type   VARCHAR(100),
     org_email       VARCHAR(200)  NOT NULL,
     primary_tel     VARCHAR(45)   NOT NULL,
     secondary_tel   VARCHAR(45),

@@ -11,12 +11,15 @@ class MigratePublicStorageToS3 extends Command
                             {--dry-run : List files without uploading}
                             {--source= : Local directory override (default: storage/app/public)}';
 
-    protected $description = 'Copy existing public-disk files from local disk to S3/MinIO';
+    protected $description = 'Copy existing public-disk files from local disk to S3/MinIO/Cloudflare R2';
 
     public function handle(): int
     {
         if (config('filesystems.disks.public.driver') !== 's3') {
-            $this->error('PUBLIC_STORAGE_DRIVER must be s3. Set AWS_* env vars and PUBLIC_STORAGE_DRIVER=s3 first.');
+            $this->error(
+                'PUBLIC_STORAGE_DRIVER must be s3 or r2 before migrating. '
+                .'Example: PUBLIC_STORAGE_DRIVER=r2 with PUBLIC_R2_* (or BACKUP_R2_*) credentials.',
+            );
 
             return self::FAILURE;
         }

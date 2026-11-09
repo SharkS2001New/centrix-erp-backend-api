@@ -243,14 +243,50 @@ class RouteOrganizationRepairService
             return 0;
         }
 
-        return DB::affectingStatement('
-            UPDATE customers c
-            INNER JOIN routes r ON r.id = c.route_id
-            SET c.organization_id = r.organization_id
-            WHERE c.route_id IS NOT NULL
-              AND r.organization_id IS NOT NULL
-              AND (c.organization_id IS NULL OR c.organization_id <> r.organization_id)
-        ');
+        // Composite FKs (organization_id, customer_num) block parent key updates; move children first
+        // under FOREIGN_KEY_CHECKS=0 so parent + dependents stay consistent.
+        $dependentTables = [
+            'sales',
+            'customer_invoices',
+            'customer_invoice_payments',
+            'loyalty_cards',
+            'customer_returns',
+            'credit_notes',
+        ];
+
+        DB::statement('SET FOREIGN_KEY_CHECKS=0');
+        try {
+            foreach ($dependentTables as $table) {
+                if (! Schema::hasTable($table)
+                    || ! Schema::hasColumn($table, 'organization_id')
+                    || ! Schema::hasColumn($table, 'customer_num')) {
+                    continue;
+                }
+
+                DB::affectingStatement("
+                    UPDATE {$table} t
+                    INNER JOIN customers c
+                        ON c.organization_id = t.organization_id
+                       AND c.customer_num = t.customer_num
+                    INNER JOIN routes r ON r.id = c.route_id
+                    SET t.organization_id = r.organization_id
+                    WHERE c.route_id IS NOT NULL
+                      AND r.organization_id IS NOT NULL
+                      AND (c.organization_id IS NULL OR c.organization_id <> r.organization_id)
+                ");
+            }
+
+            return DB::affectingStatement('
+                UPDATE customers c
+                INNER JOIN routes r ON r.id = c.route_id
+                SET c.organization_id = r.organization_id
+                WHERE c.route_id IS NOT NULL
+                  AND r.organization_id IS NOT NULL
+                  AND (c.organization_id IS NULL OR c.organization_id <> r.organization_id)
+            ');
+        } finally {
+            DB::statement('SET FOREIGN_KEY_CHECKS=1');
+        }
     }
 
     protected function alignRoutesToHeadOfficeBranch(): int

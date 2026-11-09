@@ -32,7 +32,7 @@ class HospitalityCheckController extends Controller
         ]);
 
         $checks = collect($paginator->items())
-            ->map(fn ($c) => $this->checks->toArray($c))
+            ->map(fn ($c) => $this->checks->toListArray($c))
             ->values()
             ->all();
 

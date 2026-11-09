@@ -20,9 +20,10 @@ class KraComstorePluPayloadTest extends TestCase
         $item = KraDeviceService::buildComstorePluItemFromProduct($product);
 
         $this->assertSame('301', $item['plu_no']);
-        $this->assertSame('000000PRD#0001', $item['barcode']);
+        // Comstore barcodes are alphanumeric only — # and other symbols are stripped.
+        $this->assertSame('000000PRD0001', $item['barcode']);
         $this->assertSame('Test Item', $item['plu_name']);
-        $this->assertSame('1', $item['unit_price']);
+        $this->assertSame('99', $item['unit_price']);
         $this->assertSame('99010000', $item['item_cls_code']);
         $this->assertSame('BG-Bag', $item['pkg_unit_cd']);
         $this->assertSame('U-Pieces/item [Number]', $item['qty_unit_cd']);
@@ -50,6 +51,7 @@ class KraComstorePluPayloadTest extends TestCase
 
         $this->assertSame('orange', $item['plu_name']);
         $this->assertSame('A-Exempt', $item['tax_type']);
-        $this->assertSame('1', $item['unit_price']);
+        $this->assertSame('44', $item['unit_price']);
     }
 }
+

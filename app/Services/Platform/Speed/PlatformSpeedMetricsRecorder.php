@@ -8,9 +8,16 @@ use Illuminate\Support\Facades\Redis;
 
 /**
  * Hot-path request / query aggregates in Redis (or file cache fallback).
+ * Accrues in memory during the request and flushes once via pipeline.
  */
 class PlatformSpeedMetricsRecorder
 {
+    /** @var array<string, array{minute: string, method: string, route_key: string, count: int, total_ms: int, total_bytes: int, error_count: int, timeout_count: int, max_ms: int, buckets: array<string, int>}> */
+    protected array $apiBuffer = [];
+
+    /** @var array<string, array{minute: string, fingerprint: string, sql_preview: string, count: int, total_ms: int, slow_count: int, n_plus_one_hits: int, max_ms: int}> */
+    protected array $queryBuffer = [];
+
     public function __construct(
         protected PlatformSpeedHistogram $histogram,
     ) {}
@@ -28,39 +35,31 @@ class PlatformSpeedMetricsRecorder
 
         $minute = now()->format('Y-m-d H:i:00');
         $key = $this->apiKey($minute, strtoupper($method), $routeKey);
-
-        try {
-            if ($this->useRedis()) {
-                $redis = Redis::connection();
-                $redis->hincrby($key, 'count', 1);
-                $redis->hincrby($key, 'total_ms', max(0, $durationMs));
-                $redis->hincrby($key, 'total_bytes', max(0, $bytes));
-                if ($status >= 500) {
-                    $redis->hincrby($key, 'error_count', 1);
-                }
-                if ($status === 408 || $status === 504) {
-                    $redis->hincrby($key, 'timeout_count', 1);
-                }
-                $max = (int) $redis->hget($key, 'max_ms');
-                if ($durationMs > $max) {
-                    $redis->hset($key, 'max_ms', $durationMs);
-                }
-                $bucket = $this->bucketField($durationMs);
-                $redis->hincrby($key, 'h:'.$bucket, 1);
-                $redis->hset($key, 'method', strtoupper($method));
-                $redis->hset($key, 'route_key', $routeKey);
-                $redis->hset($key, 'minute_at', $minute);
-                $redis->expire($key, 7200);
-                $redis->sadd($this->apiIndexKey(), $key);
-                $redis->expire($this->apiIndexKey(), 7200);
-
-                return;
-            }
-
-            $this->recordApiViaCache($key, $minute, $method, $routeKey, $durationMs, $status, $bytes);
-        } catch (\Throwable $e) {
-            Log::debug('platform_speed.record_api_failed', ['error' => $e->getMessage()]);
+        $row = $this->apiBuffer[$key] ?? [
+            'minute' => $minute,
+            'method' => strtoupper($method),
+            'route_key' => $routeKey,
+            'count' => 0,
+            'total_ms' => 0,
+            'total_bytes' => 0,
+            'error_count' => 0,
+            'timeout_count' => 0,
+            'max_ms' => 0,
+            'buckets' => [],
+        ];
+        $row['count']++;
+        $row['total_ms'] += max(0, $durationMs);
+        $row['total_bytes'] += max(0, $bytes);
+        $row['max_ms'] = max($row['max_ms'], $durationMs);
+        if ($status >= 500) {
+            $row['error_count']++;
         }
+        if ($status === 408 || $status === 504) {
+            $row['timeout_count']++;
+        }
+        $bucket = $this->bucketField($durationMs);
+        $row['buckets'][$bucket] = (int) ($row['buckets'][$bucket] ?? 0) + 1;
+        $this->apiBuffer[$key] = $row;
     }
 
     public function recordQuery(
@@ -74,37 +73,144 @@ class PlatformSpeedMetricsRecorder
             return;
         }
 
+        $sampleRate = (float) config('platform_speed.sample_rate', 1.0);
+        if ($sampleRate < 1.0 && (mt_rand() / mt_getrandmax()) > $sampleRate) {
+            return;
+        }
+
         $minute = now()->format('Y-m-d H:i:00');
         $key = $this->queryKey($minute, $fingerprint);
+        $row = $this->queryBuffer[$key] ?? [
+            'minute' => $minute,
+            'fingerprint' => $fingerprint,
+            'sql_preview' => substr($sqlPreview, 0, 500),
+            'count' => 0,
+            'total_ms' => 0,
+            'slow_count' => 0,
+            'n_plus_one_hits' => 0,
+            'max_ms' => 0,
+        ];
+        $row['count']++;
+        $row['total_ms'] += max(0, $durationMs);
+        $row['max_ms'] = max($row['max_ms'], $durationMs);
+        if ($slow) {
+            $row['slow_count']++;
+        }
+        if ($nPlusOne) {
+            $row['n_plus_one_hits']++;
+        }
+        $this->queryBuffer[$key] = $row;
+    }
+
+    /** Flush buffered API/query metrics once per request (Redis pipeline when available). */
+    public function flush(): void
+    {
+        if ($this->apiBuffer === [] && $this->queryBuffer === []) {
+            return;
+        }
+
+        $api = $this->apiBuffer;
+        $queries = $this->queryBuffer;
+        $this->apiBuffer = [];
+        $this->queryBuffer = [];
 
         try {
             if ($this->useRedis()) {
-                $redis = Redis::connection();
-                $redis->hincrby($key, 'count', 1);
-                $redis->hincrby($key, 'total_ms', max(0, $durationMs));
-                if ($slow) {
-                    $redis->hincrby($key, 'slow_count', 1);
-                }
-                if ($nPlusOne) {
-                    $redis->hincrby($key, 'n_plus_one_hits', 1);
-                }
-                $max = (int) $redis->hget($key, 'max_ms');
-                if ($durationMs > $max) {
-                    $redis->hset($key, 'max_ms', $durationMs);
-                }
-                $redis->hset($key, 'fingerprint', $fingerprint);
-                $redis->hset($key, 'sql_preview', substr($sqlPreview, 0, 500));
-                $redis->hset($key, 'minute_at', $minute);
-                $redis->expire($key, 7200);
-                $redis->sadd($this->queryIndexKey(), $key);
-                $redis->expire($this->queryIndexKey(), 7200);
+                $this->flushViaRedisPipeline($api, $queries);
 
                 return;
             }
 
-            $this->recordQueryViaCache($key, $minute, $fingerprint, $sqlPreview, $durationMs, $slow, $nPlusOne);
+            foreach ($api as $key => $row) {
+                $this->recordApiViaCache(
+                    $key,
+                    $row['minute'],
+                    $row['method'],
+                    $row['route_key'],
+                    $row['total_ms'],
+                    $row['error_count'] > 0 ? 500 : 200,
+                    $row['total_bytes'],
+                    $row,
+                );
+            }
+            foreach ($queries as $key => $row) {
+                $this->recordQueryViaCache(
+                    $key,
+                    $row['minute'],
+                    $row['fingerprint'],
+                    $row['sql_preview'],
+                    $row['total_ms'],
+                    $row['slow_count'] > 0,
+                    $row['n_plus_one_hits'] > 0,
+                    $row,
+                );
+            }
         } catch (\Throwable $e) {
-            Log::debug('platform_speed.record_query_failed', ['error' => $e->getMessage()]);
+            Log::debug('platform_speed.flush_failed', ['error' => $e->getMessage()]);
+        }
+    }
+
+    /**
+     * @param  array<string, array<string, mixed>>  $api
+     * @param  array<string, array<string, mixed>>  $queries
+     */
+    protected function flushViaRedisPipeline(array $api, array $queries): void
+    {
+        $redis = Redis::connection();
+        $redis->pipeline(function ($pipe) use ($api, $queries) {
+            foreach ($api as $key => $row) {
+                $pipe->hincrby($key, 'count', (int) $row['count']);
+                $pipe->hincrby($key, 'total_ms', (int) $row['total_ms']);
+                $pipe->hincrby($key, 'total_bytes', (int) $row['total_bytes']);
+                if ((int) $row['error_count'] > 0) {
+                    $pipe->hincrby($key, 'error_count', (int) $row['error_count']);
+                }
+                if ((int) $row['timeout_count'] > 0) {
+                    $pipe->hincrby($key, 'timeout_count', (int) $row['timeout_count']);
+                }
+                $pipe->hset($key, 'max_ms_candidate', (int) $row['max_ms']);
+                foreach ($row['buckets'] as $bucket => $count) {
+                    $pipe->hincrby($key, 'h:'.$bucket, (int) $count);
+                }
+                $pipe->hset($key, 'method', (string) $row['method']);
+                $pipe->hset($key, 'route_key', (string) $row['route_key']);
+                $pipe->hset($key, 'minute_at', (string) $row['minute']);
+                $pipe->expire($key, 7200);
+                $pipe->sadd($this->apiIndexKey(), $key);
+                $pipe->expire($this->apiIndexKey(), 7200);
+            }
+
+            foreach ($queries as $key => $row) {
+                $pipe->hincrby($key, 'count', (int) $row['count']);
+                $pipe->hincrby($key, 'total_ms', (int) $row['total_ms']);
+                if ((int) $row['slow_count'] > 0) {
+                    $pipe->hincrby($key, 'slow_count', (int) $row['slow_count']);
+                }
+                if ((int) $row['n_plus_one_hits'] > 0) {
+                    $pipe->hincrby($key, 'n_plus_one_hits', (int) $row['n_plus_one_hits']);
+                }
+                $pipe->hset($key, 'max_ms_candidate', (int) $row['max_ms']);
+                $pipe->hset($key, 'fingerprint', (string) $row['fingerprint']);
+                $pipe->hset($key, 'sql_preview', (string) $row['sql_preview']);
+                $pipe->hset($key, 'minute_at', (string) $row['minute']);
+                $pipe->expire($key, 7200);
+                $pipe->sadd($this->queryIndexKey(), $key);
+                $pipe->expire($this->queryIndexKey(), 7200);
+            }
+        });
+
+        // Promote max_ms_candidate → max_ms without racing every hget in the hot path.
+        foreach (array_merge(array_keys($api), array_keys($queries)) as $key) {
+            try {
+                $candidate = (int) $redis->hget($key, 'max_ms_candidate');
+                $max = (int) $redis->hget($key, 'max_ms');
+                if ($candidate > $max) {
+                    $redis->hset($key, 'max_ms', $candidate);
+                }
+                $redis->hdel($key, 'max_ms_candidate');
+            } catch (\Throwable) {
+                //
+            }
         }
     }
 
@@ -235,6 +341,9 @@ class PlatformSpeedMetricsRecorder
         return 'inf';
     }
 
+    /**
+     * @param  array<string, mixed>|null  $buffered
+     */
     protected function recordApiViaCache(
         string $key,
         string $minute,
@@ -243,6 +352,7 @@ class PlatformSpeedMetricsRecorder
         int $durationMs,
         int $status,
         int $bytes,
+        ?array $buffered = null,
     ): void {
         $row = Cache::get($key, [
             'count' => 0,
@@ -256,19 +366,39 @@ class PlatformSpeedMetricsRecorder
             'route_key' => $routeKey,
             'minute_at' => $minute,
         ]);
-        $row['count'] = (int) $row['count'] + 1;
-        $row['total_ms'] = (int) $row['total_ms'] + max(0, $durationMs);
-        $row['total_bytes'] = (int) $row['total_bytes'] + max(0, $bytes);
-        $row['max_ms'] = max((int) $row['max_ms'], $durationMs);
-        if ($status >= 500) {
-            $row['error_count'] = (int) $row['error_count'] + 1;
+        if ($buffered) {
+            $row['count'] = (int) $row['count'] + (int) $buffered['count'];
+            $row['total_ms'] = (int) $row['total_ms'] + (int) $buffered['total_ms'];
+            $row['total_bytes'] = (int) $row['total_bytes'] + (int) $buffered['total_bytes'];
+            $row['max_ms'] = max((int) $row['max_ms'], (int) $buffered['max_ms']);
+            $row['error_count'] = (int) $row['error_count'] + (int) $buffered['error_count'];
+            $row['timeout_count'] = (int) $row['timeout_count'] + (int) $buffered['timeout_count'];
+            $hist = is_array($row['histogram'] ?? null) ? $row['histogram'] : $this->histogram->emptyBuckets();
+            foreach ($buffered['buckets'] as $bucket => $count) {
+                $field = 'h:'.$bucket;
+                // histogram helper stores by bound key; keep both shapes compatible
+                if (isset($hist[$bucket])) {
+                    $hist[$bucket] = (int) $hist[$bucket] + (int) $count;
+                } else {
+                    $this->histogram->bucketIndex((int) $bucket === 0 ? 1 : (int) $bucket, $hist);
+                }
+            }
+            $row['histogram'] = $hist;
+        } else {
+            $row['count'] = (int) $row['count'] + 1;
+            $row['total_ms'] = (int) $row['total_ms'] + max(0, $durationMs);
+            $row['total_bytes'] = (int) $row['total_bytes'] + max(0, $bytes);
+            $row['max_ms'] = max((int) $row['max_ms'], $durationMs);
+            if ($status >= 500) {
+                $row['error_count'] = (int) $row['error_count'] + 1;
+            }
+            if ($status === 408 || $status === 504) {
+                $row['timeout_count'] = (int) $row['timeout_count'] + 1;
+            }
+            $hist = is_array($row['histogram'] ?? null) ? $row['histogram'] : $this->histogram->emptyBuckets();
+            $this->histogram->bucketIndex($durationMs, $hist);
+            $row['histogram'] = $hist;
         }
-        if ($status === 408 || $status === 504) {
-            $row['timeout_count'] = (int) $row['timeout_count'] + 1;
-        }
-        $hist = is_array($row['histogram'] ?? null) ? $row['histogram'] : $this->histogram->emptyBuckets();
-        $this->histogram->bucketIndex($durationMs, $hist);
-        $row['histogram'] = $hist;
         Cache::put($key, $row, 7200);
         $index = Cache::get($this->apiIndexKey(), []);
         if (! is_array($index)) {
@@ -280,6 +410,9 @@ class PlatformSpeedMetricsRecorder
         }
     }
 
+    /**
+     * @param  array<string, mixed>|null  $buffered
+     */
     protected function recordQueryViaCache(
         string $key,
         string $minute,
@@ -288,6 +421,7 @@ class PlatformSpeedMetricsRecorder
         int $durationMs,
         bool $slow,
         bool $nPlusOne,
+        ?array $buffered = null,
     ): void {
         $row = Cache::get($key, [
             'count' => 0,
@@ -299,14 +433,22 @@ class PlatformSpeedMetricsRecorder
             'sql_preview' => substr($sqlPreview, 0, 500),
             'minute_at' => $minute,
         ]);
-        $row['count'] = (int) $row['count'] + 1;
-        $row['total_ms'] = (int) $row['total_ms'] + max(0, $durationMs);
-        $row['max_ms'] = max((int) $row['max_ms'], $durationMs);
-        if ($slow) {
-            $row['slow_count'] = (int) $row['slow_count'] + 1;
-        }
-        if ($nPlusOne) {
-            $row['n_plus_one_hits'] = (int) $row['n_plus_one_hits'] + 1;
+        if ($buffered) {
+            $row['count'] = (int) $row['count'] + (int) $buffered['count'];
+            $row['total_ms'] = (int) $row['total_ms'] + (int) $buffered['total_ms'];
+            $row['max_ms'] = max((int) $row['max_ms'], (int) $buffered['max_ms']);
+            $row['slow_count'] = (int) $row['slow_count'] + (int) $buffered['slow_count'];
+            $row['n_plus_one_hits'] = (int) $row['n_plus_one_hits'] + (int) $buffered['n_plus_one_hits'];
+        } else {
+            $row['count'] = (int) $row['count'] + 1;
+            $row['total_ms'] = (int) $row['total_ms'] + max(0, $durationMs);
+            $row['max_ms'] = max((int) $row['max_ms'], $durationMs);
+            if ($slow) {
+                $row['slow_count'] = (int) $row['slow_count'] + 1;
+            }
+            if ($nPlusOne) {
+                $row['n_plus_one_hits'] = (int) $row['n_plus_one_hits'] + 1;
+            }
         }
         Cache::put($key, $row, 7200);
         $index = Cache::get($this->queryIndexKey(), []);

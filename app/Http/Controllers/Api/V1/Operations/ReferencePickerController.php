@@ -89,8 +89,14 @@ class ReferencePickerController extends Controller
 
         // Sales data / report seller pickers: create-order, POS, hotel POS, mobile sales.
         if ($request->boolean('sales_capable') || $request->input('for') === 'sales') {
-            SalesReportUserScope::applyEligibleSalesReportUsers($query);
-            $query->where('is_active', true);
+            SalesReportUserScope::applySalesPickerUsers($query);
+        } elseif (
+            $request->boolean('active_only')
+            || $request->boolean('is_active')
+            || $request->input('for') === 'filter'
+        ) {
+            // Generic user filters (expenses, price history, etc.): active logins only.
+            SalesReportUserScope::applyActivePickerUsers($query);
         }
 
         $this->applyLikeSearch($query, (string) $request->input('q', ''), ['full_name', 'username', 'email']);

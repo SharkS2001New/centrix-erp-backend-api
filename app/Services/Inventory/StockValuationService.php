@@ -2,11 +2,15 @@
 
 namespace App\Services\Inventory;
 
+use App\Services\Cache\OrganizationCache;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
 
 class StockValuationService
 {
+    /** Shared by manager home + reports dashboard cold starts. */
+    public const SUMMARY_CACHE_SECONDS = 900;
+
     /**
      * Derived table: latest positive receipt cost per org + product (one scan, joinable).
      */
@@ -142,6 +146,28 @@ SQL;
      *   total_available_units: float
      * }
      */
+    /**
+     * Cached inventory valuation snapshot (manager KPIs + reports dashboard).
+     *
+     * @return array<string, mixed>
+     */
+    public function summarizeCached(?int $organizationId, ?int $branchId = null, ?int $ttlSeconds = null): array
+    {
+        if (! $organizationId || $organizationId <= 0) {
+            return $this->summarize($organizationId, $branchId);
+        }
+
+        $ttl = $ttlSeconds ?? self::SUMMARY_CACHE_SECONDS;
+        $version = OrganizationCache::inventoryValuationVersion((int) $organizationId);
+
+        return OrganizationCache::remember(
+            (int) $organizationId,
+            sprintf('inventory.valuation:v%d:b%d', $version, (int) $branchId),
+            $ttl,
+            fn () => $this->summarize($organizationId, $branchId),
+        );
+    }
+
     public function summarize(?int $organizationId, ?int $branchId = null): array
     {
         $empty = [

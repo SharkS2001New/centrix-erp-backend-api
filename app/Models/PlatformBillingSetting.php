@@ -48,6 +48,20 @@ class PlatformBillingSetting extends Model
 
     public static function current(): ?self
     {
-        return static::query()->orderBy('id')->first();
+        try {
+            $request = request();
+            if ($request->attributes->has('platform_billing_setting.current')) {
+                return $request->attributes->get('platform_billing_setting.current');
+            }
+        } catch (\Throwable) {
+            $request = null;
+        }
+
+        $row = static::query()->orderBy('id')->first();
+        if ($request) {
+            $request->attributes->set('platform_billing_setting.current', $row);
+        }
+
+        return $row;
     }
 }

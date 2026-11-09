@@ -202,11 +202,13 @@ class AiToolChatService
             return;
         }
 
+        // Paint status before DB history / big system prompt so the UI feels instant.
+        yield $this->streamEvent('status', ['message' => 'Reading your question…']);
+
         $conversation = $this->resolveConversation($user, $organization, $conversationId);
         $history = $this->buildHistory($conversation, $clientHistory);
         $priorHistory = $history;
         $history[] = ['role' => 'user', 'content' => $message];
-        $this->persistMessage($conversation, $user, $organization, 'user', $message);
 
         $entityRefs = $this->focusResolver->enrichEntityRefs(
             $message,
@@ -232,8 +234,13 @@ class AiToolChatService
         $modelUsed = (string) ($runtime['model'] ?? '');
         $toolDeclarations = $this->tools->declarations($organization);
         $maxOutputTokens = (int) config('ai.tool_chat.max_output_tokens', 8192);
+        $fastMode = filter_var(config('ai.fast_mode', true), FILTER_VALIDATE_BOOLEAN);
+        if ($fastMode) {
+            $fastMaxOut = max(512, (int) config('ai.fast_mode_max_output_tokens', 3072));
+            $maxOutputTokens = min($maxOutputTokens, $fastMaxOut);
+        }
         $maxLoops = max(1, (int) config('ai.max_tool_rounds', 3));
-        if (filter_var(config('ai.fast_mode', true), FILTER_VALIDATE_BOOLEAN)) {
+        if ($fastMode) {
             $fastCap = max(1, (int) config('ai.fast_mode_max_tool_rounds', 2));
             $maxLoops = min($maxLoops, $fastCap);
         }
@@ -268,21 +275,34 @@ class AiToolChatService
             $turn = null;
             $priorToolCalls = [];
             $lastToolResults = [];
+            $userPersisted = false;
 
             if ($streamProvider) {
-                yield $this->streamEvent('status', ['message' => 'Reading your question…']);
                 $streamGen = $this->consumeStreamTurn(
                     $streamProvider->streamChat($requestBase),
                     $usageTotal,
                     $modelUsed,
                 );
                 foreach ($streamGen as $event) {
+                    if (! $userPersisted) {
+                        try {
+                            $this->persistMessage($conversation, $user, $organization, 'user', $message);
+                        } catch (\Throwable) {
+                            /* non-fatal — client history still works */
+                        }
+                        $userPersisted = true;
+                    }
                     yield $event;
                 }
                 $turn = $streamGen->getReturn();
             } else {
-                yield $this->streamEvent('status', ['message' => 'Reading your question…']);
                 $turn = $provider->chat($requestBase);
+                try {
+                    $this->persistMessage($conversation, $user, $organization, 'user', $message);
+                } catch (\Throwable) {
+                    /* non-fatal */
+                }
+                $userPersisted = true;
                 $this->accumulateUsage($usageTotal, $turn['usage'] ?? []);
                 $modelUsed = (string) ($turn['model'] ?? $modelUsed);
                 if (trim((string) ($turn['text'] ?? '')) !== '') {
@@ -335,6 +355,14 @@ class AiToolChatService
                     if (trim((string) ($turn['text'] ?? '')) !== '') {
                         yield $this->streamEvent('delta', ['content' => (string) $turn['text']]);
                     }
+                }
+            }
+
+            if (! $userPersisted) {
+                try {
+                    $this->persistMessage($conversation, $user, $organization, 'user', $message);
+                } catch (\Throwable) {
+                    /* non-fatal */
                 }
             }
 
@@ -450,6 +478,8 @@ class AiToolChatService
                     'usage' => $event['usage'] ?? [],
                     'model' => $event['model'] ?? null,
                     'finish_reason' => $event['finish_reason'] ?? null,
+                    // Required for Gemini tool rounds (thoughtSignature on model parts).
+                    'model_content' => $event['model_content'] ?? null,
                 ];
             }
         }
@@ -884,8 +914,13 @@ class AiToolChatService
         $modelUsed = (string) ($runtime['model'] ?? '');
         $toolDeclarations = $this->tools->declarations($organization);
         $maxOutputTokens = (int) config('ai.tool_chat.max_output_tokens', 8192);
+        $fastMode = filter_var(config('ai.fast_mode', true), FILTER_VALIDATE_BOOLEAN);
+        if ($fastMode) {
+            $fastMaxOut = max(512, (int) config('ai.fast_mode_max_output_tokens', 3072));
+            $maxOutputTokens = min($maxOutputTokens, $fastMaxOut);
+        }
         $maxLoops = max(1, (int) config('ai.max_tool_rounds', 3));
-        if (filter_var(config('ai.fast_mode', true), FILTER_VALIDATE_BOOLEAN)) {
+        if ($fastMode) {
             $fastCap = max(1, (int) config('ai.fast_mode_max_tool_rounds', 2));
             $maxLoops = min($maxLoops, $fastCap);
         }
@@ -1078,10 +1113,11 @@ class AiToolChatService
         $docs = $this->contextBuilder->documentationContext($user, $organization, $message, $workspaceId);
         $docsJson = json_encode($docs, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         $fastMode = filter_var(config('ai.fast_mode', true), FILTER_VALIDATE_BOOLEAN);
-        $docsCap = $fastMode ? 9000 : 14000;
+        // Smaller docs → fewer input tokens → faster first token (esp. Gemini free tier).
+        $docsCap = $fastMode ? 6000 : 14000;
         if ($docsJson === false || strlen($docsJson) > $docsCap) {
-            $docs['platform_knowledge'] = array_slice($docs['platform_knowledge'] ?? [], 0, $fastMode ? 10 : 8);
-            $docs['navigation'] = array_slice($docs['navigation'] ?? [], 0, $fastMode ? 30 : 40);
+            $docs['platform_knowledge'] = array_slice($docs['platform_knowledge'] ?? [], 0, $fastMode ? 6 : 8);
+            $docs['navigation'] = array_slice($docs['navigation'] ?? [], 0, $fastMode ? 20 : 40);
             $docsJson = json_encode($docs, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?: '{}';
         }
 
@@ -1351,7 +1387,11 @@ PROMPT;
      */
     protected function buildHistory(AiConversation $conversation, array $clientHistory): array
     {
-        $limit = max(4, (int) config('ai.conversation_history_limit', 12));
+        $limit = max(4, (int) config('ai.conversation_history_limit', 8));
+        if (filter_var(config('ai.fast_mode', true), FILTER_VALIDATE_BOOLEAN)) {
+            $fastLimit = max(4, (int) config('ai.fast_mode_history_limit', 6));
+            $limit = min($limit, $fastLimit);
+        }
 
         if (Schema::hasTable('ai_conversation_messages') && $conversation->exists) {
             $rows = AiConversationMessage::query()

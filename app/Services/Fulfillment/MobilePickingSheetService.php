@@ -110,33 +110,28 @@ class MobilePickingSheetService
             throw new InvalidArgumentException('Invalid picking date.');
         }
 
-        $allSaleIds = [];
-        $allOrders = [];
+        // One sales query for all routes (was N× sheetDetail round-trips).
+        $sales = $this->loadingSheets->salesForRoutesOnDate($user, $routeIds, $listDate);
+        $routeNameMap = \App\Models\RouteModel::query()
+            ->whereIn('id', $routeIds)
+            ->pluck('route_name', 'id');
         $routeNames = [];
-        $orderCount = 0;
-
         foreach ($routeIds as $routeId) {
-            $loadingDetail = $this->loadingSheets->sheetDetail($user, $routeId, $listDate);
-            $loadingList = $loadingDetail['loading_list'] ?? [];
-            $orders = $loadingDetail['orders'] ?? [];
-
-            $routeName = trim((string) ($loadingList['route']['route_name'] ?? ''));
-            if ($routeName === '') {
-                $routeName = 'Route #'.$routeId;
-            }
-            $routeNames[] = $routeName;
-
-            foreach ($orders as $order) {
-                $saleId = (int) ($order['id'] ?? 0);
-                if ($saleId > 0) {
-                    $allSaleIds[] = $saleId;
-                }
-                $allOrders[] = $order;
-            }
-            $orderCount += (int) ($loadingList['order_count'] ?? count($orders));
+            $name = trim((string) ($routeNameMap[$routeId] ?? ''));
+            $routeNames[] = $name !== '' ? $name : 'Route #'.$routeId;
         }
 
-        $allSaleIds = array_values(array_unique($allSaleIds));
+        $allOrders = $sales->map(fn ($sale) => [
+            'id' => $sale->id,
+            'order_num' => $sale->order_num,
+            'status' => $sale->status,
+            'order_total' => (float) $sale->order_total,
+            'customer_name' => $sale->customer?->customer_name,
+            'delivery_date' => $sale->delivery_date,
+            'organization_id' => $sale->organization_id,
+        ])->values()->all();
+        $allSaleIds = $sales->pluck('id')->map(fn ($id) => (int) $id)->values()->all();
+        $orderCount = count($allSaleIds);
         $lines = $this->aggregateSalesPickingLines($allSaleIds);
         $orderTotalValue = round(
             collect($allOrders)->sum(fn ($order) => (float) ($order['order_total'] ?? 0)),

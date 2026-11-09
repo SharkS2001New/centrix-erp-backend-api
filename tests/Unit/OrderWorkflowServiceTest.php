@@ -150,6 +150,8 @@ class OrderWorkflowServiceTest extends TestCase
     public function test_should_have_stock_reserved_when_at_or_past_reserve_status(): void
     {
         $org = new \App\Models\Organization([
+            // Isolate from free-plan package gating so distribution/trip_load timing applies.
+            'company_code' => (string) config('erp.platform_company_code', 'PLATFORM'),
             'module_settings' => [
                 'sales' => [
                     'order_workflow' => [
@@ -438,11 +440,14 @@ class OrderWorkflowServiceTest extends TestCase
     public function test_mobile_order_capability_flags_include_print_and_collect(): void
     {
         $org = new \App\Models\Organization([
+            'company_code' => (string) config('erp.platform_company_code', 'PLATFORM'),
             'module_settings' => [
                 'sales' => [
                     'edit_order_statuses' => ['booked'],
                     'print_invoice_statuses' => ['paid'],
                     'collect_payment_statuses' => ['unpaid'],
+                    // Post-order collection only when mobile checkout requires payment.
+                    'mobile_checkout_mode' => 'payment',
                 ],
             ],
         ]);
@@ -452,6 +457,8 @@ class OrderWorkflowServiceTest extends TestCase
             'status' => 'unpaid',
             'channel' => 'mobile',
             'organization_id' => 1,
+            'order_total' => 250,
+            'amount_paid' => 0,
             'created_at' => now(),
         ]);
         $sale->setRelation('organization', $org);
@@ -469,6 +476,7 @@ class OrderWorkflowServiceTest extends TestCase
         $this->assertTrue($flags['can_collect_payment']);
 
         $sale->status = 'paid';
+        $sale->amount_paid = 250;
         $flagsPaid = app(\App\Services\Sales\MobileSalesService::class)
             ->orderCapabilityFlags($sale, $user, $gate);
         $this->assertTrue($flagsPaid['can_print_invoice']);

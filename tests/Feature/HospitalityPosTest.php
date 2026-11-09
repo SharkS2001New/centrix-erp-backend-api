@@ -3,11 +3,15 @@
 namespace Tests\Feature;
 
 use App\Http\Middleware\EnsureOrganizationLicenseActive;
+use App\Models\Category;
 use App\Models\Organization;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\SaleItem;
+use App\Models\SubCategory;
 use App\Models\User;
+use App\Services\Cache\OrganizationCache;
+use App\Services\Hospitality\HospitalityPosCatalogService;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
@@ -33,17 +37,53 @@ class HospitalityPosTest extends TestCase
         Sanctum::actingAs($this->user);
     }
 
+    /** Dedicated Drinks-menu SKU for Bar POS (demo catalogues may be food-only). */
+    protected function barSellableProduct(?string $notCode = null): Product
+    {
+        $suffix = $notCode ? 'B' : 'A';
+        $code = 'BARTEST'.$suffix;
+        $existing = Product::query()
+            ->where('organization_id', $this->org->id)
+            ->where('product_code', $code)
+            ->first();
+        if ($existing) {
+            return $existing;
+        }
+
+        $template = Product::query()
+            ->where('organization_id', $this->org->id)
+            ->orderBy('product_code')
+            ->firstOrFail();
+
+        $drinksCat = Category::query()->firstOrCreate(
+            ['organization_id' => $this->org->id, 'category_name' => 'Drinks'],
+        );
+        $drinksSub = SubCategory::query()->firstOrCreate(
+            [
+                'organization_id' => $this->org->id,
+                'category_id' => $drinksCat->id,
+                'subcategory_name' => 'Bar',
+            ],
+        );
+
+        $product = $template->replicate(['id', 'product_code', 'image_path', 'deleted_at', 'deleted_by']);
+        $product->exists = false;
+        $product->product_code = $code;
+        $product->product_name = 'Bar Test Drink '.$suffix;
+        $product->unit_price = 150;
+        $product->subcategory_id = $drinksSub->id;
+        $product->sell_on_bar = true;
+        $product->sell_on_hotel = true;
+        $product->sell_on_retail = false;
+        $product->save();
+
+        return $product->fresh();
+    }
+
     public function test_catalog_ranks_most_sold_products_first(): void
     {
-        $low = Product::query()
-            ->where('organization_id', $this->org->id)
-            ->orderBy('product_code')
-            ->firstOrFail();
-        $high = Product::query()
-            ->where('organization_id', $this->org->id)
-            ->where('product_code', '!=', $low->product_code)
-            ->orderBy('product_code')
-            ->firstOrFail();
+        $low = $this->barSellableProduct();
+        $high = $this->barSellableProduct($low->product_code);
 
         $template = Sale::query()->where('organization_id', $this->org->id)->first();
         if (! $template) {
@@ -55,6 +95,9 @@ class HospitalityPosTest extends TestCase
             'mpesa_transaction_code',
             'payment_reference',
             'pos_ticket_scope', // generated column — must not be written
+            'is_legacy_import', // generated column — must not be written
+            'loading_date', // generated column — must not be written
+            'effective_sale_date',
         ]);
         $sale->order_num = 991001 + random_int(1, 9000);
         $sale->status = 'completed';
@@ -64,6 +107,7 @@ class HospitalityPosTest extends TestCase
         $sale->archived = 0;
         $sale->completed_at = now();
         $sale->channel = 'pos';
+        unset($sale->loading_date, $sale->is_legacy_import, $sale->pos_ticket_scope, $sale->effective_sale_date);
         $sale->save();
         $saleId = (int) $sale->id;
 
@@ -87,6 +131,11 @@ class HospitalityPosTest extends TestCase
             'product_vat' => 0,
             'amount' => (float) $low->unit_price,
         ]);
+
+        OrganizationCache::forget(
+            (int) $this->org->id,
+            sprintf('hotel_pos.sold_qty:d%d', HospitalityPosCatalogService::POPULAR_DAYS_DEFAULT),
+        );
 
         $items = $this->getJson('/api/v1/hospitality/pos/catalog?per_page=50')
             ->assertOk()
@@ -123,10 +172,7 @@ class HospitalityPosTest extends TestCase
 
     public function test_settle_supports_split_cash_and_mpesa(): void
     {
-        $product = Product::query()
-            ->where('organization_id', $this->org->id)
-            ->orderBy('product_code')
-            ->firstOrFail();
+        $product = $this->barSellableProduct();
 
         $opened = $this->postJson('/api/v1/hospitality/pos/checks', [
             'product_code' => $product->product_code,
@@ -161,10 +207,7 @@ class HospitalityPosTest extends TestCase
 
     public function test_offline_sync_cash_check_is_idempotent(): void
     {
-        $product = Product::query()
-            ->where('organization_id', $this->org->id)
-            ->orderBy('product_code')
-            ->firstOrFail();
+        $product = $this->barSellableProduct();
 
         $reserved = $this->postJson('/api/v1/hospitality/pos/check-numbers/reserve', ['count' => 3])
             ->assertOk()
@@ -207,10 +250,7 @@ class HospitalityPosTest extends TestCase
 
     public function test_offline_sync_settles_existing_source_check(): void
     {
-        $product = Product::query()
-            ->where('organization_id', $this->org->id)
-            ->orderBy('product_code')
-            ->firstOrFail();
+        $product = $this->barSellableProduct();
 
         $opened = $this->postJson('/api/v1/hospitality/pos/checks', [
             'product_code' => $product->product_code,
@@ -254,10 +294,7 @@ class HospitalityPosTest extends TestCase
 
     public function test_open_check_tap_add_hold_and_settle_cash(): void
     {
-        $product = Product::query()
-            ->where('organization_id', $this->org->id)
-            ->orderBy('product_code')
-            ->firstOrFail();
+        $product = $this->barSellableProduct();
 
         $opened = $this->postJson('/api/v1/hospitality/pos/checks', [
             'product_code' => $product->product_code,
@@ -301,10 +338,7 @@ class HospitalityPosTest extends TestCase
 
     public function test_save_creates_unpaid_and_partial_payment_is_allowed(): void
     {
-        $product = Product::query()
-            ->where('organization_id', $this->org->id)
-            ->orderBy('product_code')
-            ->firstOrFail();
+        $product = $this->barSellableProduct();
 
         $opened = $this->postJson('/api/v1/hospitality/pos/checks', [
             'product_code' => $product->product_code,
@@ -369,10 +403,7 @@ class HospitalityPosTest extends TestCase
         $settings['hospitality'] = $hospitality;
         $this->org->forceFill(['module_settings' => $settings])->save();
 
-        $product = Product::query()
-            ->where('organization_id', $this->org->id)
-            ->orderBy('product_code')
-            ->firstOrFail();
+        $product = $this->barSellableProduct();
 
         $opened = $this->postJson('/api/v1/hospitality/pos/checks', [
             'product_code' => $product->product_code,
@@ -402,10 +433,7 @@ class HospitalityPosTest extends TestCase
 
     public function test_settle_accepts_equity_like_retail_pos(): void
     {
-        $product = Product::query()
-            ->where('organization_id', $this->org->id)
-            ->orderBy('product_code')
-            ->firstOrFail();
+        $product = $this->barSellableProduct();
 
         $opened = $this->postJson('/api/v1/hospitality/pos/checks', [
             'product_code' => $product->product_code,

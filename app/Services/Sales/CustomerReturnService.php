@@ -595,9 +595,11 @@ class CustomerReturnService
     {
         $sale->loadMissing(['items.product.unit']);
         $returned = $this->approvedReturnQuantities((int) $sale->id);
+        // Hoist once — was N+1 (one pendingReturnQuantities query per sale line).
+        $pending = $this->pendingReturnQuantities((int) $sale->id);
         $legacy = $mode === 'legacy';
 
-        return $sale->items->map(function ($item) use ($returned, $sale, $legacy) {
+        return $sale->items->map(function ($item) use ($returned, $pending, $legacy) {
             $storedQty = (float) ($item->quantity ?? 0);
             $currentQty = $this->saleItemQuantityAsBase($item, $storedQty);
             $alreadyReturned = $this->returnedQtyForLine($returned, (int) $item->id, (string) $item->product_code);
@@ -615,7 +617,6 @@ class CustomerReturnService
                 (float) ($item->selling_price ?? 0),
                 $item->display_unit_price !== null ? (float) $item->display_unit_price : null,
             );
-            $pending = $this->pendingReturnQuantities((int) $sale->id);
             $pendingQty = $this->returnedQtyForLine($pending, (int) $item->id, (string) $item->product_code);
             $maxReturnQty = max(0, round($currentQty - $pendingQty, 4));
             $returnQty = $legacy ? $maxReturnQty : 0;
