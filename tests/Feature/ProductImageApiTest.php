@@ -71,7 +71,13 @@ class ProductImageApiTest extends TestCase
         $this->assertTrue((bool) ($row['has_image'] ?? false));
         $this->assertNotEmpty($row['image_url'] ?? null);
         $this->assertNotEmpty($row['image_version'] ?? null);
-        $this->assertStringContainsString('/image/file', (string) $row['image_url']);
+        // Public disk / R2 URL for <img>; authenticated /image/file remains as fallback stream.
+        $this->assertTrue(
+            str_contains((string) $row['image_url'], '/storage/')
+                || str_contains((string) $row['image_url'], '/image/file')
+                || (bool) filter_var($row['image_url'], FILTER_VALIDATE_URL),
+            'Expected a public storage/R2 or /image/file URL, got: '.$row['image_url'],
+        );
         $this->assertStringContainsString('v='.$row['image_version'], (string) $row['image_url']);
     }
 
@@ -146,7 +152,8 @@ class ProductImageApiTest extends TestCase
         $fresh = $product->fresh();
         $this->assertNotSame($remote, $fresh->image_path);
         $this->assertTrue(StoredPublicFile::exists($fresh->image_path));
-        $this->assertStringContainsString('/image/file', (string) $fresh->image_url);
+        $this->assertNotSame($remote, $fresh->image_url);
+        $this->assertStringContainsString('v='.$fresh->image_version, (string) $fresh->image_url);
     }
 
     public function test_hotel_remote_image_url_is_not_mutated_with_cache_buster(): void

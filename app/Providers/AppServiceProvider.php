@@ -55,12 +55,36 @@ class AppServiceProvider extends ServiceProvider
         $this->reportFailedQueueJobs();
         $this->applyPlatformPublicMediaStorage();
 
-        if (
-            $this->app->environment('production')
-            && ! config('database.allow_destructive_commands', false)
-        ) {
-            DB::prohibitDestructiveCommands();
+        $this->protectDestructiveDatabaseCommands();
+    }
+
+    /**
+     * Block migrate:fresh / db:wipe / migrate:refresh against anything that is not
+     * an explicit test database — including local "real" DBs like centrix_erp.
+     * Production/staging never allow unless DB_ALLOW_DESTRUCTIVE_COMMANDS=true
+     * (which must stay false in production).
+     */
+    protected function protectDestructiveDatabaseCommands(): void
+    {
+        if (config('database.allow_destructive_commands', false)) {
+            return;
         }
+
+        $connection = (string) config('database.default', 'mysql');
+        $database = (string) config("database.connections.{$connection}.database", '');
+        $isDedicatedTestDatabase = $database !== ''
+            && (
+                str_ends_with($database, '_test')
+                || $database === ':memory:'
+                || str_contains($database, 'testing')
+            );
+
+        // PHPUnit may run migrate:fresh only against a dedicated *_test DB.
+        if ($this->app->environment('testing') && $isDedicatedTestDatabase) {
+            return;
+        }
+
+        DB::prohibitDestructiveCommands();
     }
 
     protected function auditModelChanges(): void

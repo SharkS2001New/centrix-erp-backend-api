@@ -81,7 +81,12 @@ class HospitalityDemoDataSeedTest extends TestCase
                 Storage::disk('public')->exists($product->image_path),
                 "Missing stored demo photo bytes for {$product->product_code}",
             );
-            $this->assertStringContainsString('/image/file', (string) $product->image_url);
+            $this->assertTrue(
+                str_contains((string) $product->image_url, '/storage/')
+                    || str_contains((string) $product->image_url, '/image/file')
+                    || (bool) filter_var($product->image_url, FILTER_VALIDATE_URL),
+                "Expected public storage/R2 URL for {$product->product_code}",
+            );
             $this->assertStringContainsString('v='.$product->image_version, (string) $product->image_url);
         }
 
@@ -123,7 +128,11 @@ class HospitalityDemoDataSeedTest extends TestCase
             ->firstOrFail();
         $this->assertFalse((bool) filter_var($product->image_path, FILTER_VALIDATE_URL));
         $this->assertTrue(Storage::disk('public')->exists($product->image_path));
-        $this->assertStringContainsString('/image/file', (string) $product->image_url);
+        $this->assertTrue(
+            str_contains((string) $product->image_url, '/storage/')
+                || str_contains((string) $product->image_url, '/image/file')
+                || (bool) filter_var($product->image_url, FILTER_VALIDATE_URL),
+        );
         $this->assertStringContainsString('v='.$product->image_version, (string) $product->image_url);
     }
 

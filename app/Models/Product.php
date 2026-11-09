@@ -8,6 +8,7 @@ use App\Models\Uom;
 use App\Models\Vat;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\Storage;
 
 class Product extends Model
 {
@@ -81,14 +82,34 @@ class Product extends Model
                 return $this->image_path;
             }
 
-            $base = rtrim((string) config('app.url'), '/');
-            $code = rawurlencode((string) $this->product_code);
-            $url = $base.'/api/v1/products/'.$code.'/image/file';
-            if (is_string($version) && $version !== '') {
-                $url .= '?v='.$version;
+            // Prefer public disk URL (local /storage or R2 CDN) so tills can use <img>
+            // without authenticated /image/file fan-out on every tile.
+            $path = ltrim(str_replace('\\', '/', (string) $this->image_path), '/');
+            try {
+                $url = Storage::disk('public')->url($path);
+            } catch (\Throwable) {
+                $url = null;
             }
 
-            return $url;
+            if (is_string($url) && $url !== '') {
+                if (! filter_var($url, FILTER_VALIDATE_URL) && str_starts_with($url, '/')) {
+                    $url = rtrim((string) config('app.url'), '/').$url;
+                }
+                if (is_string($version) && $version !== '' && ! str_contains($url, 'v=')) {
+                    $url .= (str_contains($url, '?') ? '&' : '?').'v='.rawurlencode($version);
+                }
+
+                return $url;
+            }
+
+            $base = rtrim((string) config('app.url'), '/');
+            $code = rawurlencode((string) $this->product_code);
+            $fallback = $base.'/api/v1/products/'.$code.'/image/file';
+            if (is_string($version) && $version !== '') {
+                $fallback .= '?v='.$version;
+            }
+
+            return $fallback;
         });
     }
 
