@@ -234,12 +234,15 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::middleware(['erp.module:inventory', 'erp.permission:inventory.damages.create|inventory.manage'])
         ->post('damages/request', [DamageController::class, 'requestStore']);
 
+    Route::middleware(['erp.module:inventory', 'erp.permission:inventory.receipts.create|inventory.manage'])->prefix('inventory')->group(function () {
+        Route::post('receive', [LpoReceiveController::class, 'store']);
+    });
+
     Route::middleware(['erp.module:inventory', 'erp.permission:inventory.manage'])->prefix('inventory')->group(function () {
         Route::post('transfer', [StockTransferController::class, 'store']);
         Route::post('transfer/request', [StockTransferController::class, 'requestTransfer']);
         Route::get('branch-transfers', [BranchStockTransferController::class, 'index']);
         Route::post('branch-transfer', [BranchStockTransferController::class, 'store']);
-        Route::post('receive', [LpoReceiveController::class, 'store']);
         Route::post('returns', [ReturnOperationsController::class, 'store']);
     });
 

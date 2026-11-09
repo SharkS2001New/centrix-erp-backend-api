@@ -14,6 +14,30 @@ class StockReceiveRequest extends FormRequest
         return true;
     }
 
+    protected function prepareForValidation(): void
+    {
+        $branchId = $this->input('branch_id');
+        if ($branchId === null || $branchId === '' || (int) $branchId <= 0) {
+            $branchId = $this->user()?->branch_id;
+        }
+
+        $stockLocation = $this->input('stock_location');
+        if ($stockLocation === null || $stockLocation === '') {
+            $stockLocation = $this->input('location');
+        }
+
+        $invoiceNumber = $this->input('invoice_number');
+        if ($invoiceNumber === null || $invoiceNumber === '') {
+            $invoiceNumber = $this->input('invoice_reference');
+        }
+
+        $this->merge(array_filter([
+            'branch_id' => $branchId,
+            'stock_location' => is_string($stockLocation) ? strtolower(trim($stockLocation)) : $stockLocation,
+            'invoice_number' => $invoiceNumber,
+        ], static fn ($value) => $value !== null && $value !== ''));
+    }
+
     public function rules(): array
     {
         $rules = [

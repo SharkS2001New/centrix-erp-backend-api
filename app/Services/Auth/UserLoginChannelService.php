@@ -344,6 +344,10 @@ class UserLoginChannelService
             return true;
         }
 
+        if ($this->isMobileAllowedSalesReportPath($path)) {
+            return true;
+        }
+
         $prefixes = [
             'mobile/',
             'sales/carts',
@@ -360,10 +364,14 @@ class UserLoginChannelService
             'payment-methods',
             'loyalty-cards',
             'inventory/availability',
+            // AS shop purchases / stock reconciliation.
+            'inventory/receive',
+            'inventory/adjust',
             'current-stock',
             'routes',
             'uoms',
             'vats',
+            'suppliers',
             'reference/',
             'retail-package-settings',
             'payments/',
@@ -377,6 +385,21 @@ class UserLoginChannelService
         ];
 
         return $this->pathMatchesAny($path, $prefixes);
+    }
+
+    /**
+     * Narrow sales analytics for AS / sales mobile — not the full manager reports suite.
+     */
+    protected function isMobileAllowedSalesReportPath(string $path): bool
+    {
+        return in_array($path, [
+            'reports/sales-by-supplier',
+            'reports/sales-by-product',
+            'reports/sales-by-user',
+            'reports/sales-by-customer',
+            'reports/category-sales',
+            'reports/daily-sales',
+        ], true);
     }
 
     protected function isManagerAllowedPath(string $path): bool

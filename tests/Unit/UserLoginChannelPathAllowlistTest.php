@@ -27,4 +27,15 @@ class UserLoginChannelPathAllowlistTest extends TestCase
         $this->assertTrue($service->tokenCanAccessPath('mobile', 'api/v1/reference/uoms'));
         $this->assertTrue($service->tokenCanAccessPath('mobile', 'api/v1/reference/vats'));
     }
+
+    public function test_mobile_channel_allows_as_shop_stock_receive_and_adjust(): void
+    {
+        $service = app(UserLoginChannelService::class);
+
+        $this->assertTrue($service->tokenCanAccessPath('mobile', 'api/v1/inventory/receive'));
+        $this->assertTrue($service->tokenCanAccessPath('mobile', 'api/v1/inventory/adjust'));
+        $this->assertTrue($service->tokenCanAccessPath('mobile', 'api/v1/suppliers'));
+        $this->assertFalse($service->tokenCanAccessPath('mobile', 'api/v1/inventory/transfer'));
+        $this->assertFalse($service->tokenCanAccessPath('mobile', 'api/v1/users'));
+    }
 }
