@@ -4,6 +4,11 @@ Branch: `main` · Working tree: clean · Generated from `git log` on 2026-11-07.
 
 Window covered: **2026-10-28 → 2026-11-07** (last ~40 commits).
 
+> **Incident 2026-11-09**: production login broke for ~5h20m after the
+> `master → main` reconcile merge. See
+> [`operations/RCA_2026-11-09_LOGIN_500.md`](operations/RCA_2026-11-09_LOGIN_500.md)
+> for the full root-cause analysis and follow-ups.
+
 ---
 
 ## Session summary — 2026-11-07 DB performance work
