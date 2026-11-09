@@ -67,7 +67,9 @@ class UserMobileOrderScopeService
 
     public function canUseAllChannels(User $user): bool
     {
-        return false;
+        // Route-locked field reps stay on mobile-channel orders only.
+        // Shop / AS users (no assigned route) may list their own POS + mobile sales.
+        return $this->assignedRouteIds($user) === [];
     }
 
     /** @return list<string> */

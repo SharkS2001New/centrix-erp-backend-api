@@ -377,8 +377,14 @@ class MobileSalesService
             $page = $query->simplePaginate($perPage);
             $listSummary = [];
         } else {
-            $agg = (clone $summaryQuery)->cloneWithout(['columns', 'orders'])
-                ->selectRaw('COUNT(*) as order_count, COALESCE(SUM(sales.order_total), 0) as gross_total')
+            // Eloquent cloneWithout(['columns']) does not clear the base query select list;
+            // selectRaw() would APPEND and trip MySQL ONLY_FULL_GROUP_BY. Replace columns.
+            $agg = (clone $summaryQuery)
+                ->select([
+                    DB::raw('COUNT(*) as order_count'),
+                    DB::raw('COALESCE(SUM(sales.order_total), 0) as gross_total'),
+                ])
+                ->reorder()
                 ->first();
             $orderCount = (int) ($agg->order_count ?? 0);
             $grossTotal = round((float) ($agg->gross_total ?? 0), 2);
@@ -1049,10 +1055,15 @@ class MobileSalesService
 
         CentrixSalesScope::excludeLegacyMaterialized($query, 'sales');
 
-        if (! $allChannels) {
-            $query->where('channel', 'mobile');
+        if ($allChannels) {
+            // Own cashier sales across POS + mobile (AS shop / multi-channel). Keep org/branch.
+            $this->access->scopeOrganization($query, $user, 'sales.organization_id');
+            $this->access->scopeBranchIfLimited($query, $user, 'sales.branch_id');
+
+            return $query;
         }
 
+        $query->where('channel', 'mobile');
         $this->mobileScope->applySaleScope($query, $user);
 
         return $query;
