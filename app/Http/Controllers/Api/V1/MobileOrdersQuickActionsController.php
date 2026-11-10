@@ -367,14 +367,22 @@ class MobileOrdersQuickActionsController extends Controller
         $cashierId = (int) ($filters['cashier_id'] ?? 0);
         $routeId = (int) ($filters['route_id'] ?? 0);
 
-        // Join instead of whereHas — avoids correlated EXISTS per candidate return row.
-        // Qualify customer_returns.* columns in callers: sales also has organization_id /
-        // branch_id / status / created_at and MySQL rejects ambiguous where clauses.
-        $query->join('sales as mobile_sale', 'mobile_sale.id', '=', 'customer_returns.sale_id')
-            ->where('mobile_sale.channel', 'mobile')
-            ->when($cashierId > 0, fn ($q) => $q->where('mobile_sale.cashier_id', $cashierId))
-            ->when($routeId > 0, fn ($q) => $q->where('mobile_sale.route_id', $routeId))
-            ->select('customer_returns.*');
+        // EXISTS (not JOIN): keeps the outer query on customer_returns alone so
+        // organization_id / branch_id / status filters cannot collide with sales.*.
+        $query->whereExists(function ($sub) use ($cashierId, $routeId) {
+            $sub->selectRaw('1')
+                ->from('sales as mobile_sale')
+                ->whereColumn('mobile_sale.id', 'customer_returns.sale_id')
+                ->whereColumn('mobile_sale.organization_id', 'customer_returns.organization_id')
+                ->where('mobile_sale.channel', 'mobile')
+                ->whereNull('mobile_sale.deleted_at');
+            if ($cashierId > 0) {
+                $sub->where('mobile_sale.cashier_id', $cashierId);
+            }
+            if ($routeId > 0) {
+                $sub->where('mobile_sale.route_id', $routeId);
+            }
+        });
     }
 
     protected function customerReturnsHasReturnKind(): bool
