@@ -70,4 +70,18 @@ class DeadlockSafeTest extends TestCase
         $this->assertSame(0, DB::transactionLevel());
         $this->assertFalse(DB::connection()->getPdo()->inTransaction());
     }
+
+    public function test_missing_transaction_error_is_detected(): void
+    {
+        $this->assertTrue(
+            DeadlockSafe::isMissingTransactionError(
+                new \PDOException('There is no active transaction'),
+            ),
+        );
+        $this->assertFalse(
+            DeadlockSafe::isRetryableLockFailure(
+                new \PDOException('There is no active transaction'),
+            ),
+        );
+    }
 }

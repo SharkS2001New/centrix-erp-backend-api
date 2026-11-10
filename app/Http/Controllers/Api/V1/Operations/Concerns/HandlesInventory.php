@@ -132,7 +132,7 @@ trait HandlesInventory
             return $run();
         }
 
-        return DB::transaction($run, 5);
+        return $this->runInventoryDeadlockSafe($run);
     }
 
     protected function syncProductStockTotals(string $productCode, int $branchId): void
@@ -354,7 +354,7 @@ trait HandlesInventory
             return $run();
         }
 
-        return DB::transaction($run, 5);
+        return $this->runInventoryDeadlockSafe($run);
     }
 
     /** Ignore stale line ids (deleted cart line) — keep cart-level reservation instead of FK 500. */

@@ -430,7 +430,8 @@ class CartOperationsController extends Controller
         // Retry on MySQL deadlock while releasing/re-reserving many SKUs at once.
         // Lock the cart row first so concurrent POS line adds / checkout wait instead of
         // racing cart_lines INSERT vs stock_reservations (MySQL 1213).
-        $cart = DB::transaction(function () use ($cart, $data, $user, $gate, $heldOrderNum, $supersededSaleId, $lines) {
+        // DeadlockSafe also guards PDO/Laravel txn desync ("There is no active transaction").
+        $cart = DeadlockSafe::transaction(function () use ($cart, $data, $user, $gate, $heldOrderNum, $supersededSaleId, $lines) {
             $locked = TemporaryCart::query()->whereKey($cart->id)->lockForUpdate()->first();
             if (! $locked) {
                 throw new InvalidArgumentException(
@@ -2074,7 +2075,7 @@ class CartOperationsController extends Controller
             if (DB::transactionLevel() > 0) {
                 $replaceReservation();
             } else {
-                DB::transaction($replaceReservation, 5);
+                DeadlockSafe::transaction($replaceReservation, 5);
             }
             $this->refreshCartReservationExpiries($cartId, $expiresAt);
         }

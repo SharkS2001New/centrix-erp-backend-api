@@ -33,19 +33,20 @@ class MobileOrdersQuickActionsController extends Controller
 
         $query = CustomerReturn::query()
             ->with(['lines.product', 'sale', 'customer', 'returnedByUser'])
-            ->where('organization_id', $user->organization_id)
-            ->where('status', 'pending');
+            ->where('customer_returns.organization_id', $user->organization_id)
+            ->where('customer_returns.status', 'pending');
         $this->constrainToMobileSale($query, $filters);
 
         if ($this->customerReturnsHasReturnKind()) {
             $query->where(function ($inner) {
-                $inner->where('return_kind', 'standard')->orWhereNull('return_kind');
+                $inner->where('customer_returns.return_kind', 'standard')
+                    ->orWhereNull('customer_returns.return_kind');
             });
         }
 
-        $this->access->scopeBranchIfLimited($query, $user);
+        $this->access->scopeBranchIfLimited($query, $user, 'customer_returns.branch_id');
 
-        $rows = $query->orderByDesc('id')->limit(75)->get()
+        $rows = $query->orderByDesc('customer_returns.id')->limit(75)->get()
             ->map(fn (CustomerReturn $return) => $this->returns->withActionFlags($return, $user));
 
         return response()->json(['data' => $rows]);
@@ -62,20 +63,23 @@ class MobileOrdersQuickActionsController extends Controller
 
         $query = CustomerReturn::query()
             ->with(['lines.product', 'sale', 'customer', 'returnedByUser', 'approvedByUser'])
-            ->where('organization_id', $user->organization_id)
-            ->where('status', 'approved');
+            ->where('customer_returns.organization_id', $user->organization_id)
+            ->where('customer_returns.status', 'approved');
         $this->constrainToMobileSale($query, $filters);
 
         if ($this->customerReturnsHasReturnKind()) {
             $query->where(function ($inner) {
-                $inner->where('return_kind', 'standard')->orWhereNull('return_kind');
+                $inner->where('customer_returns.return_kind', 'standard')
+                    ->orWhereNull('customer_returns.return_kind');
             });
         }
 
         $from = $filters['from_date'];
         $to = $filters['to_date'];
         if ($from || $to) {
-            $dateCol = $this->customerReturnsHasApprovedAt() ? 'approved_at' : 'created_at';
+            $dateCol = $this->customerReturnsHasApprovedAt()
+                ? 'customer_returns.approved_at'
+                : 'customer_returns.created_at';
             if ($from) {
                 $query->where($dateCol, '>=', $from.' 00:00:00');
             }
@@ -84,9 +88,9 @@ class MobileOrdersQuickActionsController extends Controller
             }
         }
 
-        $this->access->scopeBranchIfLimited($query, $user);
+        $this->access->scopeBranchIfLimited($query, $user, 'customer_returns.branch_id');
 
-        $rows = $query->orderByDesc('id')->limit(75)->get()
+        $rows = $query->orderByDesc('customer_returns.id')->limit(75)->get()
             ->map(fn (CustomerReturn $return) => $this->returns->withActionFlags($return, $user));
 
         return response()->json(['data' => $rows]);
@@ -113,12 +117,12 @@ class MobileOrdersQuickActionsController extends Controller
 
         foreach ($data['return_ids'] as $returnId) {
             $query = CustomerReturn::query()
-                ->where('id', (int) $returnId)
-                ->where('organization_id', $user->organization_id)
-                ->where('status', 'pending');
+                ->where('customer_returns.id', (int) $returnId)
+                ->where('customer_returns.organization_id', $user->organization_id)
+                ->where('customer_returns.status', 'pending');
             $this->constrainToMobileSale($query, $filters);
 
-            $this->access->scopeBranchIfLimited($query, $user);
+            $this->access->scopeBranchIfLimited($query, $user, 'customer_returns.branch_id');
             $return = $query->first();
 
             if (! $return) {
@@ -171,12 +175,12 @@ class MobileOrdersQuickActionsController extends Controller
 
         foreach ($data['return_ids'] as $returnId) {
             $query = CustomerReturn::query()
-                ->where('id', (int) $returnId)
-                ->where('organization_id', $user->organization_id)
-                ->where('status', 'pending');
+                ->where('customer_returns.id', (int) $returnId)
+                ->where('customer_returns.organization_id', $user->organization_id)
+                ->where('customer_returns.status', 'pending');
             $this->constrainToMobileSale($query, $filters);
 
-            $this->access->scopeBranchIfLimited($query, $user);
+            $this->access->scopeBranchIfLimited($query, $user, 'customer_returns.branch_id');
             $return = $query->first();
 
             if (! $return) {
@@ -364,6 +368,8 @@ class MobileOrdersQuickActionsController extends Controller
         $routeId = (int) ($filters['route_id'] ?? 0);
 
         // Join instead of whereHas — avoids correlated EXISTS per candidate return row.
+        // Qualify customer_returns.* columns in callers: sales also has organization_id /
+        // branch_id / status / created_at and MySQL rejects ambiguous where clauses.
         $query->join('sales as mobile_sale', 'mobile_sale.id', '=', 'customer_returns.sale_id')
             ->where('mobile_sale.channel', 'mobile')
             ->when($cashierId > 0, fn ($q) => $q->where('mobile_sale.cashier_id', $cashierId))

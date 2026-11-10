@@ -86,7 +86,17 @@ final class DeadlockSafe
                 return;
             }
 
-            $connection->commit();
+            try {
+                $connection->commit();
+            } catch (Throwable $e) {
+                if (self::isMissingTransactionError($e)) {
+                    // Callback already finished; PDO has nothing left to commit.
+                    self::resetTransactionLevel($connection);
+
+                    return;
+                }
+                throw $e;
+            }
         }
     }
 
@@ -105,17 +115,41 @@ final class DeadlockSafe
 
     protected static function resetTransactionLevel(mixed $connection): void
     {
+        // Prefer forcing Laravel's counter to 0 when PDO is already idle — repeated
+        // rollBack() can keep throwing "There is no active transaction".
+        $pdo = $connection->getPdo();
+        if ($pdo instanceof PDO && ! $pdo->inTransaction()) {
+            while ($connection->transactionLevel() > 0) {
+                try {
+                    // ManagesTransactions::rollBack() no-ops / decrements; still may throw.
+                    $connection->rollBack();
+                } catch (Throwable) {
+                    break;
+                }
+            }
+            // Last resort: reflectively clear if still desynced.
+            if ($connection->transactionLevel() > 0 && property_exists($connection, 'transactions')) {
+                $connection->transactions = 0;
+            }
+
+            return;
+        }
+
         while ($connection->transactionLevel() > 0) {
             try {
                 $connection->rollBack();
             } catch (Throwable) {
-                // Force-clear when PDO is already idle.
-                if (method_exists($connection, 'setPdo')) {
-                    $connection->setPdo($connection->getPdo());
+                if (property_exists($connection, 'transactions')) {
+                    $connection->transactions = 0;
                 }
                 break;
             }
         }
+    }
+
+    public static function isMissingTransactionError(Throwable $e): bool
+    {
+        return str_contains($e->getMessage(), 'There is no active transaction');
     }
 
     public static function isRetryableLockFailure(Throwable $e): bool
@@ -123,6 +157,8 @@ final class DeadlockSafe
         $message = $e->getMessage();
         $sqlState = method_exists($e, 'getCode') ? (string) $e->getCode() : '';
 
+        // Do NOT retry missing-transaction: the callback may already have been
+        // partially committed (implicit commit / reconnect). Retry would duplicate lines.
         return $sqlState === '40001'
             || str_contains($message, '1213')
             || str_contains($message, '1205')
