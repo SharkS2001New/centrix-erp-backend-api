@@ -221,6 +221,43 @@ class UserLoginChannelTest extends TestCase
         ])->assertOk();
     }
 
+    public function test_centrix_as_mobile_login_blocked_without_permission(): void
+    {
+        $org = Organization::where('company_code', 'DEMO')->firstOrFail();
+        $org->forceFill([
+            'deployment_profile' => 'hotel_bar',
+            'enabled_modules' => config('erp.profiles.hotel_bar.modules'),
+        ])->save();
+        app(\App\Services\Platform\OrganizationLicenseService::class)
+            ->forgetResolvedLicense((int) $org->id);
+
+        \App\Services\Erp\PermissionMatrixService::ensure();
+
+        $role = \App\Models\Role::create([
+            'organization_id' => $org->id,
+            'role_name' => 'No AS Mobile '.uniqid(),
+            'scope' => 'branch',
+            'is_active' => true,
+        ]);
+
+        $user = $this->makeUser([
+            'role_id' => $role->id,
+            'login_channels' => ['manager'],
+            'is_admin' => false,
+        ]);
+
+        $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'DEMO',
+            'username' => $user->username,
+            'password' => 'password',
+            'client_id' => 'AS_MOBILE_DENIED',
+            'login_channel' => 'mobile',
+            'force_logout' => true,
+        ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['login_channel']);
+    }
+
     public function test_mobile_session_cannot_access_admin_users_api(): void
     {
         $user = $this->makeUser(['login_channels' => ['mobile']]);

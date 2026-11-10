@@ -88,19 +88,28 @@ class UserLoginChannelService
             }
         }
 
-        // Hotel & Bar / AS shop: staff often have backoffice (or POS) channels only, while the
-        // org enables the mobile login channel for outlet ops. Module/permission checks still run.
+        // CentrixAsMobile (Roles → Centrix AS Mobile): same pattern as Manager —
+        // centrix_as_mobile.app.access allows login even when login_channels omit "mobile".
         if ($channel === self::MOBILE
-            && array_intersect($allowed, [self::BACKOFFICE, self::POS]) !== []
             && $this->organizationAllowsMobileLogin($user)
+            && $this->userHasCentrixAsMobileAccess($user)
         ) {
             return;
         }
 
-        // Roles matrix: Centrix AS Mobile app.access (not Field Mobile / sales.create).
+        // Field sales / driver grants also unlock the shared mobile login channel.
         if ($channel === self::MOBILE
             && $this->organizationAllowsMobileLogin($user)
-            && $this->userHasCentrixAsMobileAccess($user)
+            && $this->userHasFieldMobileAccess($user)
+        ) {
+            return;
+        }
+
+        // Hotel & Bar staff often have backoffice (or POS) channels only; permission
+        // checks in assertLoginChannelPermission still enforce Centrix AS Mobile / sales.
+        if ($channel === self::MOBILE
+            && array_intersect($allowed, [self::BACKOFFICE, self::POS]) !== []
+            && $this->organizationAllowsMobileLogin($user)
         ) {
             return;
         }
@@ -117,6 +126,9 @@ class UserLoginChannelService
         ]);
     }
 
+    /**
+     * Roles matrix app "Centrix AS Mobile" — allow/block AS shop login (not Field Mobile).
+     */
     protected function userHasCentrixAsMobileAccess(User $user): bool
     {
         if ((bool) $user->is_admin) {
@@ -130,9 +142,30 @@ class UserLoginChannelService
                 ? app(ErpContext::class)->gateForOrganization($organization)
                 : null;
 
-            return $permissions->hasPermission($user, 'centrix_as_mobile.app.access', $gate)
-                || $permissions->hasPermission($user, 'hotel_bar_pos.terminal.view', $gate)
-                || $permissions->hasPermission($user, 'hotel_bar_pos.checks.create', $gate);
+            return $permissions->hasPermission($user, 'centrix_as_mobile.app.access', $gate);
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    /** Field sales / driver apps share login_channel=mobile. */
+    protected function userHasFieldMobileAccess(User $user): bool
+    {
+        if ((bool) $user->is_admin) {
+            return true;
+        }
+
+        try {
+            $permissions = app(UserPermissionService::class);
+            $organization = $user->organization ?? Organization::query()->find($user->organization_id);
+            $gate = $organization
+                ? app(ErpContext::class)->gateForOrganization($organization)
+                : null;
+
+            return $permissions->hasPermission($user, 'sales.create', $gate)
+                || $permissions->hasPermission($user, 'mobile_sales.orders.create', $gate)
+                || $permissions->hasPermission($user, 'mobile.access', $gate)
+                || $permissions->hasPermission($user, 'driver.mobile', $gate);
         } catch (\Throwable) {
             return false;
         }
@@ -327,7 +360,7 @@ class UserLoginChannelService
         return match ($channel) {
             self::BACKOFFICE => 'CentrixERP',
             self::POS => 'POS',
-            self::MOBILE => 'Centrix AS Mobile',
+            self::MOBILE => 'CentrixAsMobile',
             self::MANAGER => 'Centrix Manager',
             default => $channel,
         };

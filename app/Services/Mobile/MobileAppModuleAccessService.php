@@ -23,20 +23,19 @@ class MobileAppModuleAccessService
         $driverAttendanceOrgEnabled = $gate->driverAttendanceEnabled();
         $fieldAttendanceOrgEnabled = $this->fieldAttendance->isEnabled($gate);
 
-        // Centrix AS Mobile app.access, Hotel POS, or field sales grants (not Field Mobile alone).
+        // CentrixAsMobile allow/block: centrix_as_mobile.app.access (Roles → Centrix AS Mobile).
+        // Field sales app still uses sales.create / mobile_sales.* (not Hotel POS alone).
         $salesUserAllowed = $isAdmin
             || $this->permissions->hasPermission($user, 'centrix_as_mobile.app.access', $gate)
             || $this->permissions->hasPermission($user, 'sales.create', $gate)
-            || $this->permissions->hasPermission($user, 'mobile_sales.orders.create', $gate)
-            || $this->permissions->hasPermission($user, 'hotel_bar_pos.checks.create', $gate)
-            || $this->permissions->hasPermission($user, 'hotel_bar_pos.terminal.view', $gate);
+            || $this->permissions->hasPermission($user, 'mobile_sales.orders.create', $gate);
         $driverUserAllowed = $isAdmin || $this->permissions->hasPermission($user, 'driver.mobile', $gate);
 
         $sales = $this->modulePayload(
             orgEnabled: $salesOrgEnabled,
             userAllowed: $salesUserAllowed,
             orgDisabledMessage: 'Mobile sales is not enabled for your organization. Contact your platform administrator.',
-            userDisabledMessage: 'Your account is not authorized for mobile sales.',
+            userDisabledMessage: 'Grant Centrix AS Mobile in Roles & permissions to sign in via CentrixAsMobile.',
         );
 
         $driver = $this->modulePayload(

@@ -39,7 +39,7 @@ return [
         ],
         'centrix_as_mobile' => [
             'label' => 'Centrix AS Mobile',
-            'description' => 'Centrix ERP AS mobile shop app (outlet POS, purchases, stock, customers). Not the field sales / driver app.',
+            'description' => 'Allow or block sign-in to CentrixAsMobile (outlet shop app). Not Field Mobile sales/driver, and not Centrix Manager.',
             'standalone' => true,
             'registry_modules' => ['centrix_as_mobile'],
         ],

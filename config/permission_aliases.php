@@ -451,8 +451,9 @@ return [
         'mobile_sales.stock.view',
         'mobile_sales.routes.view',
     ],
+    // Having Centrix AS Mobile also unlocks the shop feature codes used by the AS app.
+    // Do not alias back to mobile.access — Field Mobile capability must not grant AS login.
     'centrix_as_mobile.app.access' => [
-        'mobile.access',
         'mobile_sales.dashboard.view',
         'mobile_sales.orders.view',
         'mobile_sales.orders.create',
