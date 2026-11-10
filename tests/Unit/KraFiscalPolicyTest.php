@@ -90,9 +90,15 @@ class KraFiscalPolicyTest extends TestCase
         ];
 
         $this->assertTrue(KraFiscalPolicy::shouldFiscalizeSale($finance, 1000, null, 'pos'));
+        $this->assertTrue(KraFiscalPolicy::shouldFiscalizeSale($finance, 1000, null, 'external_pos'));
         $this->assertTrue(KraFiscalPolicy::shouldFiscalizeSale($finance, 1000, null, 'backend'));
+        $this->assertTrue(KraFiscalPolicy::shouldFiscalizeSale($finance, 1000, null, 'backoffice'));
         $this->assertTrue(KraFiscalPolicy::shouldFiscalizeSale($finance, 1000, null, 'hotel_pos'));
+        $this->assertTrue(KraFiscalPolicy::shouldFiscalizeSale($finance, 1000, null, 'hotel'));
         $this->assertFalse(KraFiscalPolicy::shouldFiscalizeSale($finance, 1000, null, 'mobile'));
+        $this->assertFalse(KraFiscalPolicy::shouldFiscalizeSale($finance, 1000, null, 'centrix_as_mobile'));
+        // Client cannot force fiscalization for a channel outside the org scope.
+        $this->assertFalse(KraFiscalPolicy::shouldFiscalizeSale($finance, 1000, true, 'mobile'));
     }
 
     public function test_both_scope_fiscalizes_all_channels(): void
@@ -105,6 +111,8 @@ class KraFiscalPolicyTest extends TestCase
         $this->assertTrue(KraFiscalPolicy::shouldFiscalizeSale($finance, 1000, null, 'mobile'));
         $this->assertTrue(KraFiscalPolicy::shouldFiscalizeSale($finance, 1000, null, 'pos'));
         $this->assertTrue(KraFiscalPolicy::shouldFiscalizeSale($finance, 1000, null, 'backend'));
+        $this->assertTrue(KraFiscalPolicy::shouldFiscalizeSale($finance, 1000, null, 'hotel_pos'));
+        $this->assertTrue(KraFiscalPolicy::shouldFiscalizeSale($finance, 1000, null, 'external_pos'));
     }
 
     public function test_apply_sales_scope_keeps_legacy_boolean_in_sync(): void

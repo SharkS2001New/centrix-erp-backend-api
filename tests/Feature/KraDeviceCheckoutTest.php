@@ -308,6 +308,242 @@ class KraDeviceCheckoutTest extends TestCase
         ]);
     }
 
+    public function test_mobile_only_scope_fiscalizes_mobile_orders_and_skips_pos(): void
+    {
+        $this->fakeKraDeviceHttp([
+            'success' => true,
+            'message' => 'OK',
+            'invoice_number' => 'CU-MOBILE-SCOPE',
+            'Receipt Signature' => 'SIG-MOB-SCOPE',
+            'signature_link' => 'https://example.test/qr-mobile-scope',
+            'serial_number' => 'DEJA02220240050',
+            'timestamp' => '2026-06-11T12:00:00',
+        ]);
+
+        $org = Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['finance'] = \App\Services\Kra\KraFiscalPolicy::applySalesScope(
+            $settings['finance'] ?? [],
+            \App\Services\Kra\KraFiscalPolicy::SCOPE_MOBILE,
+        );
+        $org->update(['module_settings' => $settings]);
+
+        $product = Product::with('vat')->firstOrFail();
+        if (! $product->vat_id) {
+            $product->update(['vat_id' => Vat::first()->id]);
+        }
+
+        $template = Sale::query()
+            ->where('organization_id', $this->user->organization_id)
+            ->where('channel', 'mobile')
+            ->whereNotNull('route_id')
+            ->whereNotNull('customer_num')
+            ->first();
+        $this->assertNotNull($template, 'Demo org needs a mobile sale with route + customer');
+
+        $mobileCartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'mobile',
+            'branch_id' => $this->user->branch_id,
+            'route_id' => (int) $template->route_id,
+        ])->assertCreated()->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$mobileCartId}/lines", [
+            'product_code' => $product->product_code,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        // Field sales does not send submit_kra — org Mobile-only scope must still fiscalize.
+        $mobileSale = $this->postJson("/api/v1/sales/carts/{$mobileCartId}/checkout", [
+            'status' => 'completed',
+            'customer_num' => (int) $template->customer_num,
+            'save_only' => true,
+            'pay_now' => 0,
+        ])->assertCreated()->json();
+
+        $this->assertSame(
+            'mobile',
+            Sale::query()->findOrFail($mobileSale['id'])->channel,
+        );
+        $this->assertDatabaseHas('kra_responses', [
+            'sale_id' => $mobileSale['id'],
+            'status' => 'success',
+        ]);
+
+        $posCartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->assertCreated()->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$posCartId}/lines", [
+            'product_code' => $product->product_code,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        $posSale = $this->postJson("/api/v1/sales/carts/{$posCartId}/checkout", [
+            'status' => 'completed',
+            'submit_kra' => true,
+        ])->assertCreated()->json();
+
+        $this->assertDatabaseMissing('kra_responses', [
+            'sale_id' => $posSale['id'],
+        ]);
+    }
+
+    public function test_erp_only_scope_fiscalizes_pos_and_skips_mobile(): void
+    {
+        $this->fakeKraDeviceHttp([
+            'success' => true,
+            'message' => 'OK',
+            'invoice_number' => 'CU-ERP-SCOPE',
+            'Receipt Signature' => 'SIG-ERP-SCOPE',
+            'signature_link' => 'https://example.test/qr-erp-scope',
+            'serial_number' => 'DEJA02220240050',
+            'timestamp' => '2026-06-11T12:00:00',
+        ]);
+
+        $org = Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['finance'] = \App\Services\Kra\KraFiscalPolicy::applySalesScope(
+            $settings['finance'] ?? [],
+            \App\Services\Kra\KraFiscalPolicy::SCOPE_ERP,
+        );
+        $org->update(['module_settings' => $settings]);
+
+        $product = Product::with('vat')->firstOrFail();
+        if (! $product->vat_id) {
+            $product->update(['vat_id' => Vat::first()->id]);
+        }
+
+        $posCartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->assertCreated()->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$posCartId}/lines", [
+            'product_code' => $product->product_code,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        $posSale = $this->postJson("/api/v1/sales/carts/{$posCartId}/checkout", [
+            'status' => 'completed',
+            'submit_kra' => true,
+        ])->assertCreated()->json();
+
+        $this->assertSame('pos', Sale::query()->findOrFail($posSale['id'])->channel);
+        $this->assertDatabaseHas('kra_responses', [
+            'sale_id' => $posSale['id'],
+            'status' => 'success',
+        ]);
+
+        $template = Sale::query()
+            ->where('organization_id', $this->user->organization_id)
+            ->where('channel', 'mobile')
+            ->whereNotNull('route_id')
+            ->whereNotNull('customer_num')
+            ->first();
+        $this->assertNotNull($template, 'Demo org needs a mobile sale with route + customer');
+
+        $mobileCartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'mobile',
+            'branch_id' => $this->user->branch_id,
+            'route_id' => (int) $template->route_id,
+        ])->assertCreated()->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$mobileCartId}/lines", [
+            'product_code' => $product->product_code,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        $mobileSale = $this->postJson("/api/v1/sales/carts/{$mobileCartId}/checkout", [
+            'status' => 'completed',
+            'customer_num' => (int) $template->customer_num,
+            'save_only' => true,
+            'pay_now' => 0,
+            'submit_kra' => true,
+        ])->assertCreated()->json();
+
+        $this->assertDatabaseMissing('kra_responses', [
+            'sale_id' => $mobileSale['id'],
+        ]);
+    }
+
+    public function test_both_scope_fiscalizes_mobile_and_pos(): void
+    {
+        $this->fakeKraDeviceHttp([
+            'success' => true,
+            'message' => 'OK',
+            'invoice_number' => 'CU-BOTH-SCOPE',
+            'Receipt Signature' => 'SIG-BOTH-SCOPE',
+            'signature_link' => 'https://example.test/qr-both-scope',
+            'serial_number' => 'DEJA02220240050',
+            'timestamp' => '2026-06-11T12:00:00',
+        ]);
+
+        $org = Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['finance'] = \App\Services\Kra\KraFiscalPolicy::applySalesScope(
+            $settings['finance'] ?? [],
+            \App\Services\Kra\KraFiscalPolicy::SCOPE_BOTH,
+        );
+        $org->update(['module_settings' => $settings]);
+
+        $product = Product::with('vat')->firstOrFail();
+        if (! $product->vat_id) {
+            $product->update(['vat_id' => Vat::first()->id]);
+        }
+
+        $posCartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->assertCreated()->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$posCartId}/lines", [
+            'product_code' => $product->product_code,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        $posSale = $this->postJson("/api/v1/sales/carts/{$posCartId}/checkout", [
+            'status' => 'completed',
+            'submit_kra' => true,
+        ])->assertCreated()->json();
+
+        $this->assertDatabaseHas('kra_responses', [
+            'sale_id' => $posSale['id'],
+            'status' => 'success',
+        ]);
+
+        $template = Sale::query()
+            ->where('organization_id', $this->user->organization_id)
+            ->where('channel', 'mobile')
+            ->whereNotNull('route_id')
+            ->whereNotNull('customer_num')
+            ->first();
+        $this->assertNotNull($template, 'Demo org needs a mobile sale with route + customer');
+
+        $mobileCartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'mobile',
+            'branch_id' => $this->user->branch_id,
+            'route_id' => (int) $template->route_id,
+        ])->assertCreated()->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$mobileCartId}/lines", [
+            'product_code' => $product->product_code,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        $mobileSale = $this->postJson("/api/v1/sales/carts/{$mobileCartId}/checkout", [
+            'status' => 'completed',
+            'customer_num' => (int) $template->customer_num,
+            'save_only' => true,
+            'pay_now' => 0,
+        ])->assertCreated()->json();
+
+        $this->assertDatabaseHas('kra_responses', [
+            'sale_id' => $mobileSale['id'],
+            'status' => 'success',
+        ]);
+    }
+
     public function test_checkout_skips_kra_when_fiscalization_turned_off(): void
     {
         $org = Organization::findOrFail($this->user->organization_id);
