@@ -839,8 +839,9 @@ return [
                 'update_flag' => 0,
             ],
             'default_submit_kra' => true,
-            /** off | mobile | erp | both — which sales channels fiscalize through the KRA device. */
-            'kra_sales_scope' => 'both',
+            // kra_sales_scope is omitted from defaults on purpose: when unset, KraFiscalPolicy
+            // falls back to default_submit_kra (legacy orgs that only store the boolean).
+            // Saving Finance settings always writes an explicit off|mobile|erp|both value.
             'kra_bypass_above_amount' => null,
             /** @deprecated Trader invoice numbers are generated uniquely per submission (not from order_num). */
             'kra_trader_invoice_start' => null,

@@ -59,6 +59,17 @@ class KraFiscalPolicyTest extends TestCase
         );
     }
 
+    public function test_explicit_scope_off_beats_legacy_boolean_true(): void
+    {
+        $this->assertSame(
+            KraFiscalPolicy::SCOPE_OFF,
+            KraFiscalPolicy::salesScope([
+                'default_submit_kra' => true,
+                'kra_sales_scope' => 'off',
+            ]),
+        );
+    }
+
     public function test_mobile_scope_only_fiscalizes_mobile_channel(): void
     {
         $finance = [

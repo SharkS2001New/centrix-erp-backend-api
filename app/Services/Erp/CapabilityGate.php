@@ -344,8 +344,9 @@ class CapabilityGate
     }
 
     /**
-     * AS mobile catalogue / product image UI.
-     * Explicit org setting wins; otherwise Hotel & Bar enables images by default.
+     * Product photos only (AS mobile + backoffice). Not customer/shop images.
+     * Explicit org setting wins; otherwise Hotel & Bar enables product images by default.
+     * Retail / wholesale stay off until Platform Admin enables them for that org.
      */
     public function asMobileShowImages(): bool
     {
@@ -358,6 +359,16 @@ class CapabilityGate
         }
 
         return IndustryRegistry::isHospitality($this->organization?->deployment_profile);
+    }
+
+    /** True when the org may upload / serve product photos (show and/or require). */
+    public function productImagesEnabled(): bool
+    {
+        if ($this->asMobileShowImages()) {
+            return true;
+        }
+
+        return (bool) ($this->moduleSettings('sales')['require_product_images'] ?? false);
     }
 
     /** Centrix Manager app for approvals, reports, and mobile administration. */

@@ -166,17 +166,26 @@ class ModuleScopedPermissionsTest extends TestCase
             ['role_id' => $role->id, 'permission_id' => $salesPerm->id],
         ]);
 
-        // UI/API only expose permissions for enabled modules.
-        $this->getJson("/api/v1/roles/{$role->id}/permissions")
-            ->assertOk()
-            ->assertJsonPath('permission_ids', [$salesPerm->id]);
+        $bothIds = collect([(int) $accountingPerm->id, (int) $salesPerm->id])->sort()->values()->all();
+
+        // Payload returns raw grants (matrix UI filters visibility). Disabled-module
+        // ids stay in the list so a later save can preserve them.
+        $getIds = collect(
+            $this->getJson("/api/v1/roles/{$role->id}/permissions")
+                ->assertOk()
+                ->json('permission_ids'),
+        )->map(fn ($id) => (int) $id)->sort()->values()->all();
+        $this->assertSame($bothIds, $getIds);
 
         // Saving the visible set must not wipe hidden (disabled-module) assignments.
-        $this->putJson("/api/v1/roles/{$role->id}/permissions", [
-            'permission_ids' => [$salesPerm->id],
-        ])
-            ->assertOk()
-            ->assertJsonPath('permission_ids', [$salesPerm->id]);
+        $putIds = collect(
+            $this->putJson("/api/v1/roles/{$role->id}/permissions", [
+                'permission_ids' => [$salesPerm->id],
+            ])
+                ->assertOk()
+                ->json('permission_ids'),
+        )->map(fn ($id) => (int) $id)->sort()->values()->all();
+        $this->assertSame($bothIds, $putIds);
 
         $storedIds = DB::table('role_permissions')
             ->where('role_id', $role->id)
@@ -186,17 +195,18 @@ class ModuleScopedPermissionsTest extends TestCase
             ->values()
             ->all();
 
-        $this->assertSame(
-            collect([$accountingPerm->id, $salesPerm->id])->map(fn ($id) => (int) $id)->sort()->values()->all(),
-            $storedIds,
-        );
+        $this->assertSame($bothIds, $storedIds);
 
-        // Client cannot newly assign disabled-module permissions either.
-        $this->putJson("/api/v1/roles/{$role->id}/permissions", [
-            'permission_ids' => [$salesPerm->id, $accountingPerm->id],
-        ])
-            ->assertOk()
-            ->assertJsonPath('permission_ids', [$salesPerm->id]);
+        // Client cannot newly assign disabled-module permissions either — request is
+        // filtered, but existing hidden grants remain stored and returned.
+        $putAgain = collect(
+            $this->putJson("/api/v1/roles/{$role->id}/permissions", [
+                'permission_ids' => [$salesPerm->id, $accountingPerm->id],
+            ])
+                ->assertOk()
+                ->json('permission_ids'),
+        )->map(fn ($id) => (int) $id)->sort()->values()->all();
+        $this->assertSame($bothIds, $putAgain);
 
         $this->assertTrue(
             DB::table('role_permissions')
@@ -238,11 +248,16 @@ class ModuleScopedPermissionsTest extends TestCase
             ['role_id' => $role->id, 'permission_id' => $salesPerm->id],
         ]);
 
-        $this->putJson("/api/v1/roles/{$role->id}/permissions", [
-            'permission_ids' => [],
-        ])
-            ->assertOk()
-            ->assertJsonPath('permission_ids', []);
+        $responseIds = collect(
+            $this->putJson("/api/v1/roles/{$role->id}/permissions", [
+                'permission_ids' => [],
+            ])
+                ->assertOk()
+                ->json('permission_ids'),
+        )->map(fn ($id) => (int) $id)->all();
+
+        // Visible grants cleared; disabled-module grant is preserved in the payload.
+        $this->assertSame([(int) $accountingPerm->id], $responseIds);
 
         $this->assertSame(
             [(int) $accountingPerm->id],

@@ -13,7 +13,6 @@ use App\Services\Inventory\BranchStockService;
 use App\Services\Inventory\OpeningStockService;
 use App\Services\Inventory\SaleStockLocationResolver;
 use App\Services\Erp\ErpContext;
-use App\Services\Erp\IndustryRegistry;
 use App\Services\Sales\MobileProductListSettings;
 use App\Support\OrganizationPublicStorage;
 use App\Support\RemoteProductImageImporter;
@@ -70,7 +69,7 @@ class ProductController extends BaseResourceController
             'catalog_scope' => $this->catalogScope->catalogScopeForProduct($product),
         ]);
 
-        if ($this->isHospitalityRequest($request)) {
+        if ($this->productImagesEnabledForRequest($request)) {
             $data['has_image'] = filled($product->image_path);
         } else {
             unset($data['image_path'], $data['image_url'], $data['image_version'], $data['has_image']);
@@ -95,25 +94,26 @@ class ProductController extends BaseResourceController
         return $data;
     }
 
-    protected function isHospitalityRequest(?Request $request): bool
+    protected function productImagesEnabledForRequest(?Request $request): bool
     {
         $user = $request?->user();
         if (! $user) {
             return false;
         }
 
-        $profile = $user->relationLoaded('organization')
-            ? $user->organization?->deployment_profile
-            : $user->organization()->value('deployment_profile');
-
-        return IndustryRegistry::isHospitality(is_string($profile) ? $profile : null);
+        return $this->erp->gateForUser($user)->productImagesEnabled();
     }
 
-    protected function assertHospitalityProductImages(Request $request): void
+    protected function assertProductImagesEnabled(Request $request): void
     {
-        if (! $this->isHospitalityRequest($request)) {
-            abort(Response::HTTP_UNPROCESSABLE_ENTITY, 'Product photos are only available on hotel menu items.');
+        if ($this->productImagesEnabledForRequest($request)) {
+            return;
         }
+
+        abort(
+            Response::HTTP_UNPROCESSABLE_ENTITY,
+            'Product photos are not enabled for this organization. Ask a Platform Admin to turn on Show product images.',
+        );
     }
 
     protected function requireProductImages(?Request $request = null): bool
@@ -399,7 +399,7 @@ class ProductController extends BaseResourceController
                 'products.deleted_at',
             ]
             : ['products.*'];
-        if ($useLeanSelect && $this->isHospitalityRequest($request)) {
+        if ($useLeanSelect && $this->productImagesEnabledForRequest($request)) {
             $select[] = 'products.image_path';
         }
 
@@ -946,7 +946,7 @@ class ProductController extends BaseResourceController
     /** GET /products/{product}/image/file — authenticated product image bytes */
     public function imageFile(Request $request, string $product)
     {
-        $this->assertHospitalityProductImages($request);
+        $this->assertProductImagesEnabled($request);
         $model = $this->findScopedModel($request, $product);
 
         $headers = [];
@@ -1076,7 +1076,7 @@ class ProductController extends BaseResourceController
     /** POST /products/{product}/image — multipart product photo */
     public function uploadImage(Request $request, string $product)
     {
-        $this->assertHospitalityProductImages($request);
+        $this->assertProductImagesEnabled($request);
         $model = $this->findScopedModel($request, $product);
 
         $request->validate([
@@ -1104,7 +1104,7 @@ class ProductController extends BaseResourceController
     /** POST /products/{product}/image/from-url — download a public image and store it */
     public function importImageFromUrl(Request $request, string $product)
     {
-        $this->assertHospitalityProductImages($request);
+        $this->assertProductImagesEnabled($request);
         $model = $this->findScopedModel($request, $product);
 
         $data = $request->validate([
@@ -1131,7 +1131,7 @@ class ProductController extends BaseResourceController
     /** DELETE /products/{product}/image */
     public function deleteImage(Request $request, string $product)
     {
-        $this->assertHospitalityProductImages($request);
+        $this->assertProductImagesEnabled($request);
         $this->assertProductImageNotRequired($request);
         $model = $this->findScopedModel($request, $product);
 

@@ -41,6 +41,7 @@ class KraDeviceCheckoutTest extends TestCase
             'kra_serial_number' => 'DEJA02220240050',
             'kra_pin_number' => 'P052177271G',
             'default_submit_kra' => true,
+            'kra_sales_scope' => 'both',
         ]);
         $org->update(['module_settings' => $settings]);
 
@@ -311,7 +312,10 @@ class KraDeviceCheckoutTest extends TestCase
     {
         $org = Organization::findOrFail($this->user->organization_id);
         $settings = $org->module_settings ?? [];
-        $settings['finance']['default_submit_kra'] = false;
+        $settings['finance'] = \App\Services\Kra\KraFiscalPolicy::applySalesScope(
+            $settings['finance'] ?? [],
+            \App\Services\Kra\KraFiscalPolicy::SCOPE_OFF,
+        );
         $org->update(['module_settings' => $settings]);
 
         $productCode = Product::first()->product_code;

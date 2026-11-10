@@ -45,7 +45,7 @@ class ProductImageApiTest extends TestCase
         $this->assertArrayNotHasKey('has_image', $row);
     }
 
-    public function test_retail_cannot_upload_or_download_product_photos(): void
+    public function test_retail_cannot_upload_or_download_product_photos_when_disabled(): void
     {
         $product = $this->productWithStoredPhoto();
 
@@ -55,6 +55,24 @@ class ProductImageApiTest extends TestCase
 
         $this->get('/api/v1/products/'.$product->product_code.'/image/file')
             ->assertStatus(422);
+    }
+
+    public function test_retail_can_use_product_photos_when_platform_enables_images(): void
+    {
+        $this->enableProductImages();
+        $product = $this->productWithStoredPhoto();
+
+        $res = $this->getJson('/api/v1/products?fields=lean&per_page=50&status=active')
+            ->assertOk()
+            ->json();
+
+        $row = collect($res['data'] ?? [])->firstWhere('product_code', $product->product_code);
+        $this->assertNotNull($row, 'Lean product list should include the photographed item.');
+        $this->assertTrue((bool) ($row['has_image'] ?? false));
+        $this->assertNotEmpty($row['image_url'] ?? null);
+
+        $this->get('/api/v1/products/'.$product->product_code.'/image/file')
+            ->assertOk();
     }
 
     public function test_hotel_lean_product_list_includes_image_url_when_photo_exists(): void
@@ -204,10 +222,23 @@ class ProductImageApiTest extends TestCase
         $this->user->unsetRelation('organization');
     }
 
+    protected function enableProductImages(): void
+    {
+        $settings = is_array($this->org->module_settings) ? $this->org->module_settings : [];
+        $sales = is_array($settings['sales'] ?? null) ? $settings['sales'] : [];
+        $sales['as_mobile_show_images'] = true;
+        $settings['sales'] = $sales;
+        $this->org->forceFill(['module_settings' => $settings])->save();
+        $this->user->unsetRelation('organization');
+        app(\App\Services\Platform\OrganizationLicenseService::class)
+            ->forgetResolvedLicense((int) $this->org->id);
+    }
+
     protected function enableRequireProductImages(): void
     {
         $settings = is_array($this->org->module_settings) ? $this->org->module_settings : [];
         $sales = is_array($settings['sales'] ?? null) ? $settings['sales'] : [];
+        $sales['as_mobile_show_images'] = true;
         $sales['require_product_images'] = true;
         $settings['sales'] = $sales;
         $this->org->forceFill(['module_settings' => $settings])->save();

@@ -2,7 +2,9 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Models\PaymentMethod;
+use App\Services\Erp\ErpContext;
 use App\Services\Organization\OrganizationReferenceDataService;
+use App\Services\Sales\OrgPaymentMethodFilter;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
@@ -37,6 +39,7 @@ class PaymentMethodController extends BaseResourceController
     public function index(Request $request)
     {
         $user = $request->user();
+        $orgId = 0;
         if ($user) {
             $orgId = (int) ($this->access()->organizationId($user, $request) ?? 0);
             if ($orgId > 0) {
@@ -44,7 +47,37 @@ class PaymentMethodController extends BaseResourceController
             }
         }
 
+        // Centrix AS Mobile / checkout: only methods enabled under
+        // Settings → Sales → Recording payments (not the full catalog).
+        if ($request->boolean('recording_payments') && $orgId > 0) {
+            return $this->indexRecordingPayments($request, $orgId);
+        }
+
         return parent::index($request);
+    }
+
+    protected function indexRecordingPayments(Request $request, int $orgId)
+    {
+        $gate = app(ErpContext::class)->gateForRequest($request);
+        $sales = $gate->moduleSettings('sales');
+
+        $methods = PaymentMethod::query()
+            ->where('organization_id', $orgId)
+            ->where(function ($query) {
+                $query->where('is_active', true)->orWhere('is_active', 1);
+            })
+            ->orderBy('method_name')
+            ->get();
+
+        $filtered = OrgPaymentMethodFilter::filter($methods, $sales, [
+            'include_credit' => $request->boolean('include_credit', true),
+            'mpesa_platform' => $gate->mpesaStkPlatformEnabled(),
+            'equity_platform' => $gate->equityBankPlatformEnabled(),
+        ]);
+
+        return response()->json([
+            'data' => $filtered->values()->all(),
+        ]);
     }
 
     public function update(Request $request, string $id)

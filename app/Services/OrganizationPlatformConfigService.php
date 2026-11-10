@@ -667,7 +667,7 @@ class OrganizationPlatformConfigService
         $defaults = [
             'show_checkout_on_create_order' => true,
             'enable_mobile_orders' => ! in_array($deploymentProfile, ['small_shop', 'supermarket'], true),
-            // Hotel & Bar menu/outlet photos on by default; other industries stay off until Platform enables.
+            // Product photos only. Hotel & Bar on by default; retail/wholesale off until Platform enables.
             'as_mobile_show_images' => $deploymentProfile === 'hotel_bar',
             'require_product_images' => false,
             'as_mobile_post_login_screen' => 'module_home',
