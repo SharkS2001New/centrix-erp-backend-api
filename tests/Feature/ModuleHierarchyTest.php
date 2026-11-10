@@ -177,7 +177,7 @@ class ModuleHierarchyTest extends TestCase
 
         $provisioning = app(\App\Services\OrganizationProvisioningService::class);
         $this->assertEqualsCanonicalizing(
-            ['backoffice', 'mobile', 'manager'],
+            ['backoffice', 'mobile', 'centrix_as_mobile', 'manager'],
             $provisioning->loginChannelsFromEnabledModules($modules),
         );
         $this->assertSame(['mobile', 'backend'], $provisioning->salesChannelsFromEnabledModules($modules));

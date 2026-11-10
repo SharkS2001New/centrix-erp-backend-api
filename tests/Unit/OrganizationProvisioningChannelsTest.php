@@ -26,7 +26,7 @@ class OrganizationProvisioningChannelsTest extends TestCase
 
         $this->assertSame(['mobile', 'backend'], $this->service->salesChannelsFromEnabledModules($modules));
         $this->assertEqualsCanonicalizing(
-            ['backoffice', 'mobile', 'manager'],
+            ['backoffice', 'mobile', 'centrix_as_mobile', 'manager'],
             $this->service->loginChannelsFromEnabledModules($modules),
         );
     }
@@ -40,7 +40,10 @@ class OrganizationProvisioningChannelsTest extends TestCase
         ];
 
         $this->assertSame(['pos', 'mobile', 'backend'], $this->service->salesChannelsFromEnabledModules($modules));
-        $this->assertSame(['backoffice', 'pos', 'mobile', 'manager'], $this->service->loginChannelsFromEnabledModules($modules));
+        $this->assertSame(
+            ['backoffice', 'pos', 'mobile', 'centrix_as_mobile', 'manager'],
+            $this->service->loginChannelsFromEnabledModules($modules),
+        );
     }
 
     public function test_mobile_orders_disabled_hides_mobile_channel(): void
@@ -52,8 +55,9 @@ class OrganizationProvisioningChannelsTest extends TestCase
         ];
 
         $this->assertSame(['backend'], $this->service->salesChannelsFromEnabledModules($modules, mobileOrdersEnabled: false));
+        // Field Mobile is gated by enable_mobile_orders; Centrix AS Mobile stays available for shop apps.
         $this->assertSame(
-            ['backoffice', 'manager'],
+            ['backoffice', 'centrix_as_mobile', 'manager'],
             $this->service->loginChannelsFromEnabledModules($modules, ['enable_mobile_orders' => false]),
         );
     }
@@ -92,7 +96,7 @@ class OrganizationProvisioningChannelsTest extends TestCase
         ];
 
         $this->assertSame(
-            ['backoffice'],
+            ['backoffice', 'centrix_as_mobile'],
             $this->service->loginChannelsFromEnabledModules($modules, ['enable_manager_app' => false]),
         );
     }
@@ -108,7 +112,7 @@ class OrganizationProvisioningChannelsTest extends TestCase
         ];
 
         $this->assertEqualsCanonicalizing(
-            ['backoffice', 'mobile', 'manager'],
+            ['backoffice', 'mobile', 'centrix_as_mobile', 'manager'],
             $this->service->loginChannelsFromEnabledModules($modules),
         );
     }
