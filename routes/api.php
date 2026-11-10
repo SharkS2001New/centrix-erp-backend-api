@@ -1375,15 +1375,35 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:payments.manage|accounting.manage');
         });
 
-        Route::middleware(['erp.module:accounting'])->group(function () {
+        // Expenses are used by Accounting and by Hotel/Bar / AS shop (till + outlet costs)
+        // even when the full Accounting application is off.
+        Route::middleware([
+            'erp.module:accounting,hospitality.backend,hospitality.bar_pos,sales.backend,sales.mobile',
+        ])->group(function () {
             Route::apiResource('expense-groups', ExpenseGroupController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:accounting.view'])
-                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:accounting.manage']);
+                ->middlewareFor([
+                    'index',
+                    'show',
+                ], [
+                    'erp.permission:accounting.view|reports.view|hospitality.reports.view|hospitality.dashboard.view|pos.end_of_day.view|pos.till_management.view|sales.create|centrix_as_mobile.app.access',
+                ])
+                ->middlewareFor(['store', 'update', 'destroy'], [
+                    'erp.permission:accounting.manage|hospitality.settings.edit|pos.till_management.create|pos.till_management.edit|sales.create|centrix_as_mobile.app.access',
+                ]);
             Route::get('expenses/summary', [ExpenseController::class, 'summary'])
-                ->middleware(['erp.permission:accounting.view']);
+                ->middleware([
+                    'erp.permission:accounting.view|reports.view|hospitality.reports.view|hospitality.dashboard.view|pos.end_of_day.view|pos.till_management.view|sales.create|centrix_as_mobile.app.access',
+                ]);
             Route::apiResource('expenses', ExpenseController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:accounting.view'])
-                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:accounting.manage']);
+                ->middlewareFor([
+                    'index',
+                    'show',
+                ], [
+                    'erp.permission:accounting.view|reports.view|hospitality.reports.view|hospitality.dashboard.view|pos.end_of_day.view|pos.till_management.view|sales.create|centrix_as_mobile.app.access',
+                ])
+                ->middlewareFor(['store', 'update', 'destroy'], [
+                    'erp.permission:accounting.manage|hospitality.settings.edit|pos.till_management.create|pos.till_management.edit|sales.create|centrix_as_mobile.app.access',
+                ]);
         });
 
         Route::middleware(['erp.module:investors'])->prefix('investors')->group(function () {

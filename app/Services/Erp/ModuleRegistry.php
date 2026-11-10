@@ -108,7 +108,8 @@ class ModuleRegistry
     {
         $backofficeFinance = config('erp_module_tree.backoffice_finance_reports', []);
         if (in_array($slug, $backofficeFinance, true)) {
-            return ['sales.reports', 'accounting.reports'];
+            // Hotel & Bar / AS shop often run expenses without the Accounting app.
+            return ['sales.reports', 'accounting.reports', 'hospitality.reports'];
         }
 
         $primary = self::reportModuleForSlug($slug);
@@ -119,6 +120,10 @@ class ModuleRegistry
         // Hotel & Bar AS mobile enables hospitality.reports without sales.reports.
         if ($primary === 'sales.reports') {
             return ['sales.reports', 'hospitality.reports'];
+        }
+
+        if ($primary === 'accounting.reports') {
+            return ['accounting.reports', 'sales.reports', 'hospitality.reports'];
         }
 
         return [$primary];

@@ -63,7 +63,10 @@ class MobileSalesController extends Controller
         );
     }
 
-    /** GET /mobile/expenses — the signed-in rep's route expenses. */
+    /**
+     * GET /mobile/expenses — field-rep route expenses when that card is enabled;
+     * otherwise shop/hotel ledger expenses (CentrixAsMobile Expenses Report fallback).
+     */
     public function indexExpenses(Request $request)
     {
         $data = $request->validate([
@@ -71,9 +74,17 @@ class MobileSalesController extends Controller
             'to_date' => 'nullable|date',
         ]);
 
+        $user = $request->user();
+        $org = $user?->organization;
+        if ($org && ! $this->routeExpenses->isEnabledForOrganization($org)) {
+            // AS / Hotel & Bar apps hit this path first; return ledger rows instead of 422
+            // so the Expenses Report does not die before falling back to GET /expenses.
+            return app(\App\Http\Controllers\Api\V1\ExpenseController::class)->index($request);
+        }
+
         return response()->json([
             'data' => $this->routeExpenses->listForRep(
-                $request->user(),
+                $user,
                 $data['from_date'] ?? null,
                 $data['to_date'] ?? null,
             ),

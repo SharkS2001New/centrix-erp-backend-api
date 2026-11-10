@@ -96,8 +96,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::middleware(['erp.module:sales.mobile', 'erp.mobile_sales', 'erp.permission:sales.create'])->prefix('mobile')->group(function () {
         Route::get('dashboard', [MobileSalesController::class, 'dashboard']);
         Route::get('reconciliation', [MobileSalesController::class, 'reconciliation']);
-        Route::get('expenses', [MobileSalesController::class, 'indexExpenses']);
-        Route::post('expenses', [MobileSalesController::class, 'storeExpense']);
         Route::get('routes', [MobileSalesController::class, 'indexRoutes']);
         Route::get('orders', [MobileSalesController::class, 'index']);
         Route::get('orders/{saleId}', [MobileSalesController::class, 'show']);
@@ -116,6 +114,16 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('attendance/sign-out', [MobileAttendanceController::class, 'signOut']);
         Route::post('device-tokens', [MobileSalesController::class, 'registerDeviceToken']);
         Route::delete('device-tokens', [MobileSalesController::class, 'unregisterDeviceToken']);
+    });
+
+    // Route / AS shop expenses — Hotel & Bar may lack sales.mobile but still need expense lists.
+    Route::middleware([
+        'erp.module:sales.mobile,hospitality.bar_pos,hospitality.backend,sales.backend',
+        'erp.permission:sales.create|centrix_as_mobile.app.access|hotel_bar_pos.terminal.view|hospitality.dashboard.view|reports.view',
+    ])->prefix('mobile')->group(function () {
+        Route::get('expenses', [MobileSalesController::class, 'indexExpenses']);
+        Route::post('expenses', [MobileSalesController::class, 'storeExpense'])
+            ->middleware('erp.permission:sales.create|centrix_as_mobile.app.access|pos.till_management.create|pos.till_management.edit');
     });
 
     Route::middleware(['erp.module:sales.mobile', 'erp.module:distribution', 'erp.mobile_driver', 'erp.permission:driver.mobile'])->prefix('mobile/driver')->group(function () {
@@ -562,9 +570,12 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('top-debtors', [ReportController::class, 'topDebtors']);
             Route::get('invoice-payments', [ReportController::class, 'invoicePayments']);
             Route::get('credit-outstanding', [ReportController::class, 'creditOutstanding']);
-            Route::get('expenses', [ReportController::class, 'expenses']);
             Route::get('payments-breakdown', [ReportController::class, 'paymentsBreakdown']);
         });
+
+        // Hotel & Bar / AS shop expenses report — do not require the Accounting app.
+        Route::get('expenses', [ReportController::class, 'expenses'])
+            ->middleware('erp.permission:reports.view|accounting.view|hospitality.reports.view|hospitality.dashboard.view|pos.end_of_day.view|pos.till_management.view|centrix_as_mobile.app.access|sales.create');
 
         Route::get('customers/{customerNum}/statement', [ReportController::class, 'customerStatement'])
             ->middleware('erp.permission:reports.view|customers.view');

@@ -18,6 +18,9 @@ class AddCartLineRequest extends FormRequest
             'quantity' => 'required|numeric|min:0.001',
             'unit_price' => 'nullable|numeric|min:0',
             'display_unit_price' => 'nullable|numeric|min:0',
+            // POS / Centrix AS Mobile send the priced till line total. Without this,
+            // validated() strips amount and checkout rejects full tenders as underpaid.
+            'amount' => 'nullable|numeric|min:0',
             'uom' => 'nullable|string|max:45',
             'on_wholesale_retail' => 'nullable|boolean',
             'product_vat' => 'nullable|numeric|min:0',

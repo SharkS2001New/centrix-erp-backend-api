@@ -1581,4 +1581,47 @@ class SalesCartCheckoutStockTest extends TestCase
             'method_code' => 'CASH',
         ]);
     }
+
+    public function test_centrix_as_mobile_style_checkout_accepts_client_line_amount_and_full_tender(): void
+    {
+        $product = Product::where('product_code', $this->productCode)->firstOrFail();
+        $catalog = max(50.0, (float) ($product->selling_price ?? $product->unit_price ?? 50));
+        // Simulate AS till markup / package pricing above bare catalog unit×qty.
+        $tillLineAmount = round($catalog + 35, 2);
+        $unitPerBase = $tillLineAmount;
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'order_source' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->assertCreated()->json('id');
+
+        $lineCart = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 1,
+            'unit_price' => $unitPerBase,
+            'display_unit_price' => $unitPerBase,
+            'amount' => $tillLineAmount,
+            'on_wholesale_retail' => 0,
+        ])->assertCreated()->json();
+
+        $storedAmount = round((float) ($lineCart['lines'][0]['amount'] ?? 0), 2);
+        $this->assertEqualsWithDelta($tillLineAmount, $storedAmount, 0.05);
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'completed',
+            'payment_method_code' => 'CASH',
+            'pay_now' => $storedAmount,
+            'amount_tendered' => $storedAmount,
+            'till_amount_due' => $storedAmount,
+            'is_credit_sale' => false,
+            'payment_splits' => [
+                ['method_code' => 'CASH', 'amount' => $storedAmount],
+            ],
+        ])->assertCreated()->json();
+
+        $this->assertContains($sale['status'] ?? '', ['completed', 'paid', 'processed']);
+        $this->assertEqualsWithDelta($storedAmount, (float) ($sale['order_total'] ?? 0), 0.05);
+        $this->assertEqualsWithDelta($storedAmount, (float) ($sale['amount_paid'] ?? 0), 0.05);
+    }
 }
