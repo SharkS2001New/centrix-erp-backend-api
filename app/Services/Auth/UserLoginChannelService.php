@@ -360,7 +360,7 @@ class UserLoginChannelService
         return match ($channel) {
             self::BACKOFFICE => 'CentrixERP',
             self::POS => 'POS',
-            self::MOBILE => 'Field Mobile',
+            self::MOBILE => 'CentrixFieldSales',
             self::CENTRIX_AS_MOBILE => 'CentrixAsMobile',
             self::MANAGER => 'Centrix Manager',
             default => $channel,

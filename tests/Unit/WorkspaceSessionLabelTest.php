@@ -22,6 +22,15 @@ class WorkspaceSessionLabelTest extends TestCase
         );
     }
 
+    public function test_mobile_channel_uses_centrix_field_sales_label(): void
+    {
+        $this->assertSame('CentrixFieldSales', WorkspaceSessionLabel::for(null, 'mobile'));
+        $this->assertSame(
+            'CentrixFieldSales',
+            WorkspaceSessionLabel::for('backoffice', 'mobile'),
+        );
+    }
+
     public function test_asmobile_client_id_forces_centrix_as_mobile_label(): void
     {
         $this->assertSame(

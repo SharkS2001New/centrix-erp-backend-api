@@ -4,10 +4,14 @@ namespace App\Services\Platform;
 
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use RuntimeException;
 
 /**
  * Compress blog images the same way Pitch Predictions admin does:
  * resize to max width, JPEG encode, extract pasted data-URI images to disk.
+ *
+ * Always write via Storage::disk('public') so Cloudflare R2 (when enabled as the
+ * public disk) receives the object — never write only to local storage_path().
  */
 class MarketingBlogImageCompressor
 {
@@ -30,12 +34,7 @@ class MarketingBlogImageCompressor
 
         $image = $this->resizeIfNeeded($image, self::MAX_WIDTH);
         $relativePath = self::DIRECTORY.'/'.uniqid('blog_', true).'.jpg';
-        $fullPath = storage_path('app/public/'.$relativePath);
-        if (! is_dir(dirname($fullPath))) {
-            mkdir(dirname($fullPath), 0755, true);
-        }
-        imagejpeg($image, $fullPath, self::JPEG_QUALITY);
-        imagedestroy($image);
+        $this->putJpegOnPublicDisk($image, $relativePath);
 
         return $relativePath;
     }
@@ -121,14 +120,37 @@ class MarketingBlogImageCompressor
         }
         $image = $this->resizeIfNeeded($image, self::MAX_WIDTH);
         $relativePath = self::DIRECTORY.'/'.uniqid('blog_', true).'.jpg';
-        $fullPath = storage_path('app/public/'.$relativePath);
-        if (! is_dir(dirname($fullPath))) {
-            mkdir(dirname($fullPath), 0755, true);
-        }
-        imagejpeg($image, $fullPath, self::JPEG_QUALITY);
-        imagedestroy($image);
+        $this->putJpegOnPublicDisk($image, $relativePath);
 
         return $this->publicUrl($relativePath);
+    }
+
+    /**
+     * Encode a GD image to JPEG and put it on the configured public disk (local or R2).
+     *
+     * @param  \GdImage|resource  $image
+     */
+    protected function putJpegOnPublicDisk($image, string $relativePath): void
+    {
+        $tmp = tempnam(sys_get_temp_dir(), 'blog-img-');
+        if ($tmp === false) {
+            imagedestroy($image);
+            throw new RuntimeException('Unable to create a temporary blog image file.');
+        }
+
+        try {
+            if (! imagejpeg($image, $tmp, self::JPEG_QUALITY)) {
+                throw new RuntimeException('Unable to encode the blog image as JPEG.');
+            }
+            $bytes = file_get_contents($tmp);
+            if ($bytes === false || $bytes === '') {
+                throw new RuntimeException('Unable to read the encoded blog image.');
+            }
+            Storage::disk('public')->put($relativePath, $bytes);
+        } finally {
+            imagedestroy($image);
+            @unlink($tmp);
+        }
     }
 
     protected function findDataUriDelimiter(string $html, int $pos): ?string

@@ -52,7 +52,14 @@ class PlatformMarketingBlogTest extends TestCase
         ]);
         $upload->assertCreated();
         $url = $upload->json('url');
+        $path = $upload->json('path');
         $this->assertNotEmpty($url);
+        $this->assertNotEmpty($path);
+        // Must land on the public disk (local or R2), not only storage_path('app/public').
+        $this->assertTrue(
+            Storage::disk('public')->exists($path),
+            'Uploaded blog image missing from public disk at '.$path,
+        );
 
         $create = $this->postJson('/api/v1/admin/marketing-blogs', [
             'title' => 'Debtors guide',

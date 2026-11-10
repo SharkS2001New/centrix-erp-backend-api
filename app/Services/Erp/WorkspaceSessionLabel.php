@@ -27,7 +27,7 @@ class WorkspaceSessionLabel
             return 'CentrixAsMobile';
         }
         if ($loginChannel === UserLoginChannelService::MOBILE) {
-            return 'Mobile';
+            return 'CentrixFieldSales';
         }
         if ($loginChannel === UserLoginChannelService::MANAGER) {
             return 'Centrix Manager';
