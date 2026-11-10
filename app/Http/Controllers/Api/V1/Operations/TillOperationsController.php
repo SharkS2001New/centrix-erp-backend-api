@@ -17,6 +17,7 @@ use App\Services\Erp\TillSessionAuthorization;
 use App\Services\Erp\TillVarianceJournal;
 use App\Services\Organization\OrganizationReferenceDataService;
 use App\Services\Pos\TillReportMetrics;
+use App\Services\Sales\OrgPaymentMethodFilter;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -361,28 +362,36 @@ class TillOperationsController extends Controller
             ->orderBy('group_name')
             ->get();
 
-        $paymentMethods = PaymentMethod::query()
+        $gate = app(ErpContext::class)->gateForRequest($request);
+        $methods = PaymentMethod::query()
             ->where('organization_id', $orgId)
             ->where(function ($query) {
                 $query->where('is_active', true)
                     ->orWhere('is_active', 1)
                     ->orWhereNull('is_active');
             })
-            ->whereRaw("UPPER(TRIM(method_code)) NOT IN ('CREDIT', 'CHEQUE', 'CHECK')")
-            ->whereRaw("UPPER(TRIM(method_code)) NOT LIKE '%CREDIT%'")
-            ->orderByRaw(
-                "CASE UPPER(TRIM(method_code))
-                    WHEN 'CASH' THEN 0
-                    WHEN 'MPESA' THEN 1
-                    WHEN 'M-PESA' THEN 1
-                    WHEN 'EQUITY' THEN 2
-                    WHEN 'KCB' THEN 3
-                    ELSE 50
-                 END",
-            )
             ->orderBy('method_name')
-            ->get(['id', 'method_name', 'method_code', 'is_active'])
+            ->get(['id', 'method_name', 'method_code', 'is_active']);
+
+        // Same Recording payments flags as Centrix AS Mobile POS / collect payment.
+        $paymentMethods = OrgPaymentMethodFilter::filter(
+            $methods,
+            $gate->moduleSettings('sales'),
+            [
+                'include_credit' => false,
+                'mpesa_platform' => $gate->mpesaStkPlatformEnabled(),
+                'equity_platform' => $gate->equityBankPlatformEnabled(),
+            ],
+        )
+            ->reject(function (PaymentMethod $method) {
+                $code = strtoupper(trim((string) $method->method_code));
+
+                // Expense tenders never use credit/cheque even when Recording payments allows cheque.
+                return in_array($code, ['CREDIT', 'CHEQUE', 'CHECK'], true)
+                    || str_contains($code, 'CREDIT');
+            })
             ->values()
+            ->map(fn (PaymentMethod $method) => $method->only(['id', 'method_name', 'method_code', 'is_active']))
             ->all();
 
         $cashId = $this->resolveCashPaymentMethodId($orgId);

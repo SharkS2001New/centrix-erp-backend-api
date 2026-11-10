@@ -257,6 +257,33 @@ class ReferencePickerController extends Controller
     {
         $orgId = $this->organizationId($request);
 
+        // Centrix AS Mobile fallback when /payment-methods is forbidden — same
+        // Recording payments filter as PaymentMethodController.
+        if ($request->boolean('recording_payments') && $orgId > 0) {
+            $gate = app(\App\Services\Erp\ErpContext::class)->gateForRequest($request);
+            $methods = PaymentMethod::query()
+                ->where('organization_id', $orgId)
+                ->where(function ($query) {
+                    $query->where('is_active', true)->orWhere('is_active', 1);
+                })
+                ->orderBy('method_name')
+                ->get(['id', 'method_name', 'method_code', 'is_active', 'organization_id']);
+
+            $filtered = \App\Services\Sales\OrgPaymentMethodFilter::filter(
+                $methods,
+                $gate->moduleSettings('sales'),
+                [
+                    'include_credit' => $request->boolean('include_credit', false),
+                    'mpesa_platform' => $gate->mpesaStkPlatformEnabled(),
+                    'equity_platform' => $gate->equityBankPlatformEnabled(),
+                ],
+            );
+
+            return response()->json([
+                'data' => $filtered->values()->all(),
+            ]);
+        }
+
         $query = PaymentMethod::query()
             ->where('organization_id', $orgId)
             ->orderBy('method_name');
