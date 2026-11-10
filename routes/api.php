@@ -1352,11 +1352,11 @@ Route::prefix('v1')->group(function () {
 
         // After specific sales/* routes above so names like mobile-loading-sheets are not
         // captured by sales/{sale}. Allow sales.pos so external POS can list held parks.
-        Route::middleware(['erp.module:sales.backend,sales.pos'])->group(function () {
+        Route::middleware(['erp.module:sales.backend,sales.pos,hospitality.bar_pos'])->group(function () {
             Route::apiResource('sales', SaleController::class)
                 ->middlewareFor(
                     ['index', 'show'],
-                    ['erp.permission:sales.view|pos.checkout.create|pos.terminal.view|pos.till_management.create'],
+                    ['erp.permission:sales.view|pos.checkout.create|pos.terminal.view|pos.till_management.create|centrix_as_mobile.app.access|hotel_bar_pos.terminal.view|hotel_bar_pos.checks.view'],
                 )
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:sales.view|sales.manage']);
         });

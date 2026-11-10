@@ -65,4 +65,21 @@ class UserLoginChannelPathAllowlistTest extends TestCase
         $this->assertFalse($service->tokenCanAccessPath('mobile', 'api/v1/hospitality/rooms'));
         $this->assertFalse($service->tokenCanAccessPath('mobile', 'api/v1/hospitality/front-desk/board'));
     }
+
+    public function test_centrix_as_mobile_has_full_erp_path_access_like_backoffice(): void
+    {
+        $service = app(UserLoginChannelService::class);
+
+        $this->assertTrue($service->tokenCanAccessPath('centrix_as_mobile', 'api/v1/reports/eod-report'));
+        $this->assertTrue($service->tokenCanAccessPath('centrix_as_mobile', 'api/v1/reports/profit-loss'));
+        $this->assertTrue($service->tokenCanAccessPath('centrix_as_mobile', 'api/v1/users'));
+        $this->assertTrue($service->tokenCanAccessPath('centrix_as_mobile', 'api/v1/accounting/accounts'));
+        $this->assertTrue($service->tokenCanAccessPath('centrix_as_mobile', 'api/v1/hospitality/rooms'));
+        $this->assertTrue($service->tokenCanAccessPath('centrix_as_mobile', 'api/v1/inventory/transfer'));
+        $this->assertTrue($service->tokenCanAccessPath('backoffice', 'api/v1/reports/eod-report'));
+
+        // Field Mobile remains restricted.
+        $this->assertFalse($service->tokenCanAccessPath('mobile', 'api/v1/reports/eod-report'));
+        $this->assertFalse($service->tokenCanAccessPath('mobile', 'api/v1/users'));
+    }
 }

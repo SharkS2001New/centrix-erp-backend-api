@@ -139,7 +139,8 @@ class MobileAppModuleAccessTest extends TestCase
         $this->assertFalse($home['folio_pay']['accessible']);
         $this->assertSame('hospitality', $response->json('mobile_app.industry'));
 
-        // Path middleware should also deny disabled home modules for CentrixAsMobile tokens.
+        // CentrixAsMobile is full phone ERP — login channel no longer hides modules via allowlist.
+        // Org module/permission middleware still applies (customers_suppliers for suppliers).
         $issued = $admin->createToken('AS_HOME_MODULES', ['*']);
         $issued->accessToken->forceFill([
             'organization_id' => $admin->organization_id,
@@ -147,12 +148,13 @@ class MobileAppModuleAccessTest extends TestCase
         ])->save();
 
         $this->withToken($issued->plainTextToken)
-            ->getJson('/api/v1/suppliers?per_page=1')
-            ->assertStatus(403)
-            ->assertJsonPath('code', 'login_channel_forbidden');
-
-        $this->withToken($issued->plainTextToken)
             ->getJson('/api/v1/products?per_page=1')
+            ->assertOk();
+
+        // vendors home_module may be off in capabilities, but AS can still hit the API when
+        // customers_suppliers (or equivalent) is enabled for the org.
+        $this->withToken($issued->plainTextToken)
+            ->getJson('/api/v1/suppliers?per_page=1')
             ->assertOk();
     }
 }

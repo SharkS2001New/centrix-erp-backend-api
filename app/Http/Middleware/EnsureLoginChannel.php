@@ -28,10 +28,13 @@ class EnsureLoginChannel
 
         $loginChannel = (string) ($accessToken->login_channel ?? UserLoginChannelService::BACKOFFICE);
 
-        if (
-            $loginChannel === UserLoginChannelService::MOBILE
-            || $loginChannel === UserLoginChannelService::CENTRIX_AS_MOBILE
-        ) {
+        // CentrixAsMobile is the phone ERP client — same API surface as web CentrixERP.
+        // Module + permission middleware still apply; only Field Mobile uses the narrow allowlist.
+        if ($loginChannel === UserLoginChannelService::CENTRIX_AS_MOBILE) {
+            return $next($request);
+        }
+
+        if ($loginChannel === UserLoginChannelService::MOBILE) {
             /** @var User|null $user */
             $user = $accessToken->tokenable;
             if (! $user instanceof User || ! $this->channels->mobileTokenCanAccessPath($user, $request->path())) {

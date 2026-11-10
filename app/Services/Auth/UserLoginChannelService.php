@@ -231,7 +231,9 @@ class UserLoginChannelService
         $tokenChannel = $this->normalizeChannel($tokenChannel);
         $path = $this->normalizeApiPath($path);
 
-        if ($tokenChannel === self::BACKOFFICE) {
+        // Web ERP + CentrixAsMobile (phone ERP): full API surface.
+        // erp.module / erp.permission still gate features per org & role.
+        if ($tokenChannel === self::BACKOFFICE || $tokenChannel === self::CENTRIX_AS_MOBILE) {
             return true;
         }
 
@@ -243,9 +245,14 @@ class UserLoginChannelService
             return $this->isManagerAllowedPath($path);
         }
 
+        // Field Mobile (CentrixFieldSales) only.
         return $this->isMobileAllowedPath($path);
     }
 
+    /**
+     * Field Mobile path gate (login_channel=mobile).
+     * CentrixAsMobile does not use this — it is full ERP like backoffice.
+     */
     public function mobileTokenCanAccessPath(User $user, string $path): bool
     {
         $path = $this->normalizeApiPath($path);
@@ -271,13 +278,6 @@ class UserLoginChannelService
 
         if (str_starts_with($path, 'mobile/')) {
             return $salesOk;
-        }
-
-        // Platform Admin hotel / setup customization — hide disabled CentrixAsMobile tiles at the API too.
-        $homeOk = app(MobileAppModuleAccessService::class)
-            ->homeModuleAccessibleFromCapabilities($modules, $path);
-        if ($homeOk === false) {
-            return false;
         }
 
         $salesOnlyPrefixes = [
@@ -470,15 +470,14 @@ class UserLoginChannelService
             return true;
         }
 
+        // Field Mobile allowlist only. CentrixAsMobile uses full ERP access (see tokenCanAccessPath).
         $prefixes = [
             'mobile/',
-            // AS Orders + carts (SaleController apiResource uses bare `sales`).
             'sales',
             'sales/carts',
             'sales/customers',
             'sales/orders',
             'sales/loyalty-cards',
-            // AS / shop POS float sessions (declare opening float).
             'pos/',
             'tills',
             'till-float-sessions',
@@ -490,7 +489,6 @@ class UserLoginChannelService
             'payment-methods',
             'loyalty-cards',
             'inventory/availability',
-            // AS shop purchases / stock reconciliation.
             'inventory/receive',
             'inventory/adjust',
             'inventory/stock-take',
@@ -501,7 +499,6 @@ class UserLoginChannelService
             'routes',
             'uoms',
             'vats',
-            // AS shop supplier info, edits, summary ledger, and payments.
             'suppliers',
             'supplier-payments',
             'reference/',
@@ -511,10 +508,8 @@ class UserLoginChannelService
             'action-requests/',
             'system-issue-reports',
             'erp/settings',
-            // AS shop expenses (fallback when no open till session).
             'expenses',
             'expense-groups',
-            // Hotel & Bar POS + Past Checks + Folio Pay (not front-desk / rooms / settings).
             'hospitality/pos',
             'hospitality/floor-tables',
             'hospitality/outlets',
@@ -527,7 +522,7 @@ class UserLoginChannelService
     }
 
     /**
-     * Narrow sales / hospitality analytics for AS mobile — not the full manager reports suite.
+     * Field Mobile sales / hospitality analytics — not the full ERP reports suite.
      */
     protected function isMobileAllowedSalesReportPath(string $path): bool
     {

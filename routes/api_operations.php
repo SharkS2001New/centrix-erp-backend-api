@@ -92,13 +92,23 @@ Route::middleware('auth:sanctum')->group(function () {
         });
     });
 
-    // ---- Mobile field sales ----
-    Route::middleware(['erp.module:sales.mobile', 'erp.mobile_sales', 'erp.permission:sales.create'])->prefix('mobile')->group(function () {
-        Route::get('dashboard', [MobileSalesController::class, 'dashboard']);
+    // ---- CentrixAsMobile Past Sales / Orders / Daily Sales fallback ----
+    // Shop & Hotel orgs often lack Field Mobile (sales.mobile). Read-only order lists and
+    // reconciliation must still work with all_channels=1 (same pattern as /mobile/expenses).
+    Route::middleware([
+        'erp.module:sales.mobile,hospitality.bar_pos,hospitality.backend,sales.backend,sales.pos',
+        'erp.mobile_sales',
+        'erp.permission:sales.create|centrix_as_mobile.app.access|pos.checkout.create|pos.terminal.view|sales.view|hotel_bar_pos.terminal.view|hotel_bar_pos.checks.view|reports.view',
+    ])->prefix('mobile')->group(function () {
         Route::get('reconciliation', [MobileSalesController::class, 'reconciliation']);
-        Route::get('routes', [MobileSalesController::class, 'indexRoutes']);
         Route::get('orders', [MobileSalesController::class, 'index']);
         Route::get('orders/{saleId}', [MobileSalesController::class, 'show']);
+    });
+
+    // ---- Mobile field sales (route reps) ----
+    Route::middleware(['erp.module:sales.mobile', 'erp.mobile_sales', 'erp.permission:sales.create'])->prefix('mobile')->group(function () {
+        Route::get('dashboard', [MobileSalesController::class, 'dashboard']);
+        Route::get('routes', [MobileSalesController::class, 'indexRoutes']);
         Route::patch('orders/{saleId}/editable-lines', [MobileSalesController::class, 'updateEditableLines']);
         Route::post('orders/{saleId}/returns', [MobileSalesController::class, 'storeReturn']);
         Route::post('orders/{saleId}/payments', [MobileSalesController::class, 'storePayment']);
@@ -118,8 +128,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Route / AS shop expenses — Hotel & Bar may lack sales.mobile but still need expense lists.
     Route::middleware([
-        'erp.module:sales.mobile,hospitality.bar_pos,hospitality.backend,sales.backend',
-        'erp.permission:sales.create|centrix_as_mobile.app.access|hotel_bar_pos.terminal.view|hospitality.dashboard.view|reports.view',
+        'erp.module:sales.mobile,hospitality.bar_pos,hospitality.backend,sales.backend,sales.pos',
+        'erp.permission:sales.create|centrix_as_mobile.app.access|hotel_bar_pos.terminal.view|hospitality.dashboard.view|reports.view|pos.checkout.create|sales.view',
     ])->prefix('mobile')->group(function () {
         Route::get('expenses', [MobileSalesController::class, 'indexExpenses']);
         Route::post('expenses', [MobileSalesController::class, 'storeExpense'])
