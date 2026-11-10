@@ -185,7 +185,13 @@ class ReferencePickerTest extends TestCase
         $response = $this->getJson('/api/v1/reference/routes?per_page=50')
             ->assertOk();
 
-        $names = collect($response->json('data'))
+        $rows = collect($response->json('data'));
+        $this->assertNotEmpty($rows);
+        foreach ($rows as $row) {
+            $this->assertArrayHasKey('route_markup_price', $row);
+        }
+
+        $names = $rows
             ->map(fn (array $row) => (string) ($row['route_name'] ?? ''))
             ->filter()
             ->values()

@@ -248,7 +248,9 @@ class ReferencePickerController extends Controller
         return response()->json(
             $query->paginate(
                 $this->perPage($request, 50, 200),
-                ['id', 'route_name', 'direction', 'is_active', 'branch_id', 'organization_id'],
+                // route_markup_price is required by backoffice Create order / POS
+                // route-order pricing (fetchRoutesCached → routeMarkupPerUnit).
+                ['id', 'route_name', 'direction', 'route_markup_price', 'is_active', 'branch_id', 'organization_id'],
             ),
         );
     }
