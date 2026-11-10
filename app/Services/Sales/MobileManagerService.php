@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Cache\OrganizationCache;
 use App\Services\Erp\CapabilityGate;
+use App\Services\Erp\OrderWorkflowService;
 use App\Services\Inventory\StockValuationService;
 use App\Services\Notifications\InAppNotificationService;
 use App\Services\Inventory\StockCostCalculation;

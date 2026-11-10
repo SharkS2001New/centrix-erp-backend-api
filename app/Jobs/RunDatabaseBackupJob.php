@@ -2,17 +2,19 @@
 
 namespace App\Jobs;
 
+use App\Jobs\Concerns\RunsBackgroundTaskOnce;
 use App\Models\BackgroundTask;
 use App\Services\Background\BackgroundTaskService;
 use App\Services\Backup\DatabaseBackupService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
-use Illuminate\Support\Facades\Log;
 
 class RunDatabaseBackupJob implements ShouldQueue
 {
     use Queueable;
+    use RunsBackgroundTaskOnce;
 
+    /** Mysqldump + compress + optional R2 can take a long time on large tenants. */
     public int $timeout = 7200;
 
     public function __construct(
@@ -24,7 +26,7 @@ class RunDatabaseBackupJob implements ShouldQueue
         DatabaseBackupService $backups,
     ): void {
         $task = BackgroundTask::query()->find($this->taskId);
-        if ($task === null || ! $tasks->markRunning($task)) {
+        if ($this->shouldSkipBackgroundTask($task) || ! $tasks->markRunning($task)) {
             return;
         }
 
@@ -48,12 +50,9 @@ class RunDatabaseBackupJob implements ShouldQueue
                 'pruned' => $result['pruned'] ?? 0,
             ]);
         } catch (\Throwable $e) {
-            Log::warning('RunDatabaseBackupJob failed', [
-                'task_id' => $this->taskId,
-                'error' => $e->getMessage(),
-            ]);
-            $tasks->markFailed($task, $e->getMessage());
-            throw $e;
+            // Do not rethrow — retries would leave the background task stuck "running"
+            // and eventually surface only MaxAttemptsExceededException.
+            $this->failBackgroundTask($tasks, $task, $e, 'RunDatabaseBackupJob');
         }
     }
 }

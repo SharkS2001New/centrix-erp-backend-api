@@ -71,6 +71,19 @@ trait RunsBackgroundTaskOnce
             return 'This background job took longer than the worker allows. It was stopped safely — retry with a smaller batch, or ask an admin to raise the queue worker timeout for large catalogues/reports.';
         }
 
+        if (
+            $e instanceof \Illuminate\Queue\MaxAttemptsExceededException
+            || str_contains($e::class, 'MaxAttemptsExceeded')
+            || str_contains(strtolower($e->getMessage()), 'attempted too many times')
+        ) {
+            $previous = $e->getPrevious();
+            if ($previous !== null) {
+                return $this->formatBackgroundTaskErrorMessage($previous);
+            }
+
+            return 'This background job stopped after too many queue attempts. Check the original error in the logs, then retry the task.';
+        }
+
         $parts = [];
         $current = $e;
         $depth = 0;

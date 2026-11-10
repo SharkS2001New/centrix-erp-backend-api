@@ -583,6 +583,7 @@ class OrganizationProvisionController extends Controller
                     $token->active_workspace_id,
                     $token->login_channel,
                     $industry,
+                    is_string($token->name) ? $token->name : null,
                 ),
                 'device' => $token->name,
                 'last_used_at' => $token->last_used_at,

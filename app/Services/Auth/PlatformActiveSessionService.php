@@ -140,6 +140,7 @@ class PlatformActiveSessionService
                     $token->active_workspace_id,
                     $channel,
                     $industryByOrg->get($orgId),
+                    is_string($token->name) ? $token->name : null,
                 ),
                 'computer_id' => $token->name,
                 'last_active_at' => ($token->last_used_at ?? $token->updated_at)?->toIso8601String(),
@@ -164,8 +165,11 @@ class PlatformActiveSessionService
         $orgIdleMinutes = max(1, $orgIdleMinutes);
         $mobilePresenceCap = max(1, $mobilePresenceCap ?? (int) config('erp.mobile_presence_minutes', 120));
 
-        if ($channel === UserLoginChannelService::MOBILE
-            || $channel === UserLoginChannelService::MANAGER) {
+        if (
+            $channel === UserLoginChannelService::MOBILE
+            || $channel === UserLoginChannelService::CENTRIX_AS_MOBILE
+            || $channel === UserLoginChannelService::MANAGER
+        ) {
             return min($orgIdleMinutes, $mobilePresenceCap);
         }
 

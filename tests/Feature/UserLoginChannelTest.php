@@ -229,6 +229,58 @@ class UserLoginChannelTest extends TestCase
             ->assertJsonValidationErrors(['login_channel']);
     }
 
+    public function test_as_mobile_client_remaps_legacy_mobile_channel_to_centrix_as_mobile(): void
+    {
+        $org = Organization::where('company_code', 'DEMO')->firstOrFail();
+        $org->forceFill([
+            'deployment_profile' => 'hotel_bar',
+            'enabled_modules' => config('erp.profiles.hotel_bar.modules'),
+        ])->save();
+        app(\App\Services\Platform\OrganizationLicenseService::class)
+            ->forgetResolvedLicense((int) $org->id);
+
+        $user = $this->makeUser([
+            'login_channels' => ['centrix_as_mobile'],
+            'is_admin' => false,
+        ]);
+
+        $login = $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'DEMO',
+            'username' => $user->username,
+            'password' => 'password',
+            'client_id' => 'ASMOBILE_LEGACY_BUILD',
+            'login_channel' => 'mobile',
+            'force_logout' => true,
+        ])->assertOk();
+
+        $this->assertSame('centrix_as_mobile', $login->json('login_channel'));
+    }
+
+    public function test_legacy_field_mobile_channel_still_allows_centrix_as_mobile_login(): void
+    {
+        $org = Organization::where('company_code', 'DEMO')->firstOrFail();
+        $org->forceFill([
+            'deployment_profile' => 'hotel_bar',
+            'enabled_modules' => config('erp.profiles.hotel_bar.modules'),
+        ])->save();
+        app(\App\Services\Platform\OrganizationLicenseService::class)
+            ->forgetResolvedLicense((int) $org->id);
+
+        $user = $this->makeUser([
+            'login_channels' => ['mobile'],
+            'is_admin' => false,
+        ]);
+
+        $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'DEMO',
+            'username' => $user->username,
+            'password' => 'password',
+            'client_id' => 'ASMOBILE_LEGACY_USER',
+            'login_channel' => 'centrix_as_mobile',
+            'force_logout' => true,
+        ])->assertOk();
+    }
+
     public function test_mobile_session_cannot_access_admin_users_api(): void
     {
         $user = $this->makeUser(['login_channels' => ['mobile']]);

@@ -89,6 +89,12 @@ class UserLoginChannelService
             return;
         }
 
+        // Before the AS / Field Mobile split, the shop app used login_channel=mobile.
+        // Users who still only have Field Mobile ticked may sign in to CentrixAsMobile.
+        if ($channel === self::CENTRIX_AS_MOBILE && in_array(self::MOBILE, $allowed, true)) {
+            return;
+        }
+
         // Web users open External POS from the module switcher. Terminal permission
         // and the organisation module are checked when the session is switched.
         if ($channel === self::POS && in_array(self::BACKOFFICE, $allowed, true)) {
@@ -168,6 +174,24 @@ class UserLoginChannelService
             throw ValidationException::withMessages([
                 'login_channel' => ['Invalid login channel.'],
             ]);
+        }
+
+        return $channel;
+    }
+
+    /**
+     * Centrix AS Mobile app issues client_id values prefixed with ASMOBILE_.
+     * Older builds still posted login_channel=mobile — treat those as CentrixAsMobile.
+     */
+    public function resolveRequestedChannel(string $channel, ?string $clientId = null): string
+    {
+        $channel = $this->normalizeChannel($channel);
+        if (
+            $channel === self::MOBILE
+            && is_string($clientId)
+            && str_starts_with(strtoupper($clientId), 'ASMOBILE_')
+        ) {
+            return self::CENTRIX_AS_MOBILE;
         }
 
         return $channel;

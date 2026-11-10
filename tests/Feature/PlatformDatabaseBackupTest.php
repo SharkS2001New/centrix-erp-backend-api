@@ -2,7 +2,11 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\RunDatabaseBackupJob;
+use App\Models\BackgroundTask;
 use App\Models\User;
+use App\Services\Background\BackgroundTaskService;
+use App\Services\Backup\DatabaseBackupException;
 use App\Services\Backup\DatabaseBackupService;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
@@ -50,7 +54,8 @@ class PlatformDatabaseBackupTest extends TestCase
         $response = $this->get('/api/v1/admin/database-backups/pos_erp_2026-06-20.sql.gz/download');
 
         $response->assertOk();
-        $this->assertStringContainsString('dump-content', $response->getContent());
+        // Storage::download() returns a StreamedResponse; getContent() is empty.
+        $this->assertStringContainsString('dump-content', $response->streamedContent());
 
         Storage::disk('local')->deleteDirectory('backups/testing-platform');
     }
@@ -105,7 +110,7 @@ class PlatformDatabaseBackupTest extends TestCase
         $mock = Mockery::mock(DatabaseBackupService::class);
         $mock->shouldReceive('runBackupCycle')
             ->once()
-            ->andThrow(new \App\Services\Backup\DatabaseBackupException(
+            ->andThrow(new DatabaseBackupException(
                 'Could not reach the database server from the API pod.',
                 'mysqldump_failed',
             ));
@@ -116,5 +121,40 @@ class PlatformDatabaseBackupTest extends TestCase
             ->assertStatus(500)
             ->assertJsonPath('code', 'mysqldump_failed')
             ->assertJsonPath('detail', 'Could not reach the database server from the API pod.');
+    }
+
+    public function test_async_backup_job_marks_failed_without_retrying(): void
+    {
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+
+        $task = BackgroundTask::createPending(
+            'database_backup',
+            (int) $superAdmin->organization_id,
+            (int) $superAdmin->id,
+            ['send_email' => true, 'upload_r2' => true],
+        );
+
+        $mock = Mockery::mock(DatabaseBackupService::class);
+        $mock->shouldReceive('runBackupCycle')
+            ->once()
+            ->andThrow(new DatabaseBackupException(
+                'Could not reach the database server from the API pod.',
+                'mysqldump_failed',
+            ));
+        $this->app->instance(DatabaseBackupService::class, $mock);
+
+        $job = new RunDatabaseBackupJob($task->id);
+
+        $this->assertSame(1, $job->tries);
+
+        $job->handle(app(BackgroundTaskService::class), $mock);
+
+        $task->refresh();
+
+        $this->assertSame('failed', $task->status);
+        $this->assertStringContainsString(
+            'Could not reach the database server from the API pod.',
+            (string) $task->error_message,
+        );
     }
 }

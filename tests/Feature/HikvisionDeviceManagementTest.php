@@ -1465,4 +1465,27 @@ class HikvisionDeviceManagementTest extends TestCase
             'sync_status' => 'synced',
         ]);
     }
+
+    public function test_overview_treats_recent_last_communication_as_online(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $device = AttendanceClockDevice::create([
+            'organization_id' => $this->org->id,
+            'device_no' => 'OVW1',
+            'is_active' => true,
+            'provider' => 'hikvision',
+            'host' => '192.168.100.215',
+            'port' => 80,
+            'username' => 'admin',
+            'last_communication_at' => now()->subMinutes(5),
+        ]);
+
+        $fresh = AttendanceClockDevice::query()->findOrFail($device->id);
+        $this->assertInstanceOf(\Illuminate\Support\Carbon::class, $fresh->last_communication_at);
+
+        $res = $this->getJson("/api/v1/attendance-clock-devices/{$device->id}/hikvision/overview");
+        $res->assertOk();
+        $res->assertJsonPath('online', true);
+    }
 }

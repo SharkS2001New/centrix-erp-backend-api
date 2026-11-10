@@ -27,6 +27,11 @@ class AttendanceClockDevice extends Model
         'last_synced_at',
         'last_event_at',
         'last_sync_error',
+        'last_communication_at',
+        'agent_last_seen_at',
+        'capabilities_fetched_at',
+        'device_info_json',
+        'capabilities_json',
     ];
 
     protected $casts = [
@@ -35,6 +40,11 @@ class AttendanceClockDevice extends Model
         'port' => 'integer',
         'last_synced_at' => 'datetime',
         'last_event_at' => 'datetime',
+        'last_communication_at' => 'datetime',
+        'agent_last_seen_at' => 'datetime',
+        'capabilities_fetched_at' => 'datetime',
+        'device_info_json' => 'array',
+        'capabilities_json' => 'array',
     ];
 
     protected $hidden = [

@@ -334,7 +334,7 @@ class AuthSessionService
             ]);
         }
 
-        $loginChannel = $this->loginChannels->normalizeChannel($loginChannel);
+        $loginChannel = $this->loginChannels->resolveRequestedChannel($loginChannel, $clientId);
         $this->loginChannels->assertCanLogin($account->effectiveUser(), $loginChannel);
         $this->assertLoginChannelPermission($account->effectiveUser(), $loginChannel);
         $this->assertOrganizationAllowsLoginChannel($account->organization, $loginChannel);
@@ -420,7 +420,7 @@ class AuthSessionService
     ): array {
         $authUser = $account->authUser;
         $effective = $account->effectiveUser();
-        $loginChannel = $this->loginChannels->normalizeChannel($loginChannel);
+        $loginChannel = $this->loginChannels->resolveRequestedChannel($loginChannel, $clientId);
         $this->loginChannels->assertCanLogin($effective, $loginChannel);
         $this->assertLoginChannelPermission($effective, $loginChannel);
         $this->assertOrganizationAllowsLoginChannel($account->organization, $loginChannel);

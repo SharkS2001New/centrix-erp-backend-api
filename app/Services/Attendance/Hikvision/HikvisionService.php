@@ -400,14 +400,12 @@ class HikvisionService
             ->count();
         $centrixEmployees = Employee::query()->where('organization_id', $orgId)->where('is_active', true)->count();
         $agent = $this->agentBridge->agentStatus($device);
+        $lastComm = AppTimezone::normalize($device->last_communication_at);
 
         return [
             'device' => $device,
             'online' => $agent['online']
-                || (
-                    filled($device->last_communication_at)
-                    && $device->last_communication_at->gt(AppTimezone::now()->subMinutes(30))
-                ),
+                || ($lastComm !== null && $lastComm->gt(AppTimezone::now()->subMinutes(30))),
             'counts' => $counts,
             'agent' => $agent,
             'sync' => [

@@ -12,6 +12,24 @@ class WorkspaceSessionLabelTest extends TestCase
         $this->assertSame('Centrix Manager', WorkspaceSessionLabel::for(null, 'manager'));
     }
 
+    public function test_centrix_as_mobile_channel_uses_centrix_as_mobile_label(): void
+    {
+        $this->assertSame('CentrixAsMobile', WorkspaceSessionLabel::for(null, 'centrix_as_mobile'));
+        // Channel wins over a leftover web workspace id.
+        $this->assertSame(
+            'CentrixAsMobile',
+            WorkspaceSessionLabel::for('backoffice', 'centrix_as_mobile'),
+        );
+    }
+
+    public function test_asmobile_client_id_forces_centrix_as_mobile_label(): void
+    {
+        $this->assertSame(
+            'CentrixAsMobile',
+            WorkspaceSessionLabel::for('backoffice', 'backoffice', null, 'ASMOBILE_1794289422844'),
+        );
+    }
+
     public function test_unknown_login_channel_falls_back_to_backoffice_label(): void
     {
         $this->assertSame(
