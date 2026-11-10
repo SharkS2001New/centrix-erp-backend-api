@@ -130,7 +130,7 @@ class AuthController extends Controller
             'username' => 'required|string',
             'password' => 'required|string',
             'client_id' => 'required|string',
-            'login_channel' => 'sometimes|in:backoffice,pos,mobile,manager',
+            'login_channel' => 'sometimes|in:backoffice,pos,mobile,centrix_as_mobile,manager',
             'force_logout' => 'sometimes|boolean',
         ]);
 
@@ -169,7 +169,7 @@ class AuthController extends Controller
             'username' => 'required|string',
             'pin' => 'required|string|max:12',
             'client_id' => 'required|string',
-            'login_channel' => 'sometimes|in:backoffice,pos,mobile,manager',
+            'login_channel' => 'sometimes|in:backoffice,pos,mobile,centrix_as_mobile,manager',
             'force_logout' => 'sometimes|boolean',
         ]);
 
@@ -200,7 +200,7 @@ class AuthController extends Controller
         $data = $request->validate([
             'challenge_token' => 'required|string|max:128',
             'code' => 'required|string|max:12',
-            'login_channel' => 'sometimes|in:backoffice,pos,mobile,manager',
+            'login_channel' => 'sometimes|in:backoffice,pos,mobile,centrix_as_mobile,manager',
         ]);
 
         try {
@@ -334,7 +334,7 @@ class AuthController extends Controller
             'challenge_token' => 'required|string|max:128',
             'credential' => 'required|array',
             'client_id' => 'required|string',
-            'login_channel' => 'sometimes|in:backoffice,pos,mobile,manager',
+            'login_channel' => 'sometimes|in:backoffice,pos,mobile,centrix_as_mobile,manager',
             'force_logout' => 'sometimes|boolean',
         ]);
 
@@ -477,7 +477,7 @@ class AuthController extends Controller
     public function switchWorkspace(Request $request)
     {
         $data = $request->validate([
-            'login_channel' => 'required|in:backoffice,pos,mobile,manager',
+            'login_channel' => 'required|in:backoffice,pos,mobile,centrix_as_mobile,manager',
             'client_id' => 'required|string',
             'workspace_id' => ['nullable', 'string', 'max:32', Rule::in(array_keys(config('erp_workspaces', [])))],
         ]);
@@ -507,7 +507,7 @@ class AuthController extends Controller
         $data = $request->validate([
             'company_code' => 'required|string',
             'client_id' => 'required|string',
-            'login_channel' => 'sometimes|in:backoffice,pos,mobile,manager',
+            'login_channel' => 'sometimes|in:backoffice,pos,mobile,centrix_as_mobile,manager',
         ]);
 
         $result = $this->sessions->switchOrganization(

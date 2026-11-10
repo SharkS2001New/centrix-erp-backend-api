@@ -20,6 +20,10 @@ class OrderSourceResolver
         if ($loginChannel === UserLoginChannelService::POS) {
             return 'pos';
         }
+        // CentrixAsMobile is outlet/shop POS-style — not field sales routes.
+        if ($loginChannel === UserLoginChannelService::CENTRIX_AS_MOBILE) {
+            return 'pos';
+        }
         if ($loginChannel === UserLoginChannelService::MOBILE) {
             return 'mobile';
         }

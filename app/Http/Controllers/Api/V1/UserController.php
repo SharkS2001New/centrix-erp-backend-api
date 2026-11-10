@@ -46,7 +46,7 @@ class UserController extends BaseResourceController
         $rules['password'] = PasswordPolicy::validationRules($orgId ?: null, confirmed: false);
         $rules['access_scope'] = 'required|in:org,branch';
         $rules['login_channels'] = 'sometimes|array|min:1';
-        $rules['login_channels.*'] = 'in:backoffice,pos,mobile,manager';
+        $rules['login_channels.*'] = 'in:backoffice,pos,mobile,centrix_as_mobile,manager';
         $rules['assigned_route_id'] = app(RouteAccessService::class)->validationNullable($request->user(), $request);
         $rules['assigned_route_ids'] = 'sometimes|array';
         $rules['assigned_route_ids.*'] = app(RouteAccessService::class)->validationEach($request->user(), $request);
@@ -132,7 +132,7 @@ class UserController extends BaseResourceController
         $rules = array_fill_keys($this->fillableFields(), 'nullable');
         $rules['access_scope'] = 'sometimes|in:org,branch';
         $rules['login_channels'] = 'sometimes|array|min:1';
-        $rules['login_channels.*'] = 'in:backoffice,pos,mobile,manager';
+        $rules['login_channels.*'] = 'in:backoffice,pos,mobile,centrix_as_mobile,manager';
         $rules['assigned_route_id'] = app(RouteAccessService::class)->validationNullable($request->user(), $request);
         $rules['assigned_route_ids'] = 'sometimes|array';
         $rules['assigned_route_ids.*'] = app(RouteAccessService::class)->validationEach($request->user(), $request);

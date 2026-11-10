@@ -584,6 +584,11 @@ class AuthSessionService
             return;
         }
 
+        // CentrixAsMobile: Allowed login channels checkbox is the allow/block switch.
+        if ($loginChannel === UserLoginChannelService::CENTRIX_AS_MOBILE) {
+            return;
+        }
+
         if ($loginChannel === UserLoginChannelService::MANAGER) {
             app(UserManagerLoginValidator::class)->assertCanLoginViaManager($user);
 

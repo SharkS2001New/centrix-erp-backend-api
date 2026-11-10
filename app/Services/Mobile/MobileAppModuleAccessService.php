@@ -3,6 +3,7 @@
 namespace App\Services\Mobile;
 
 use App\Models\User;
+use App\Services\Auth\UserLoginChannelService;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Sales\MobileFieldAttendanceService;
@@ -18,14 +19,17 @@ class MobileAppModuleAccessService
     public function capabilitiesForUser(User $user, CapabilityGate $gate): array
     {
         $isAdmin = (bool) $user->is_admin;
-        $salesOrgEnabled = $gate->mobileSalesEnabled();
+        // CentrixAsMobile channel unlocks AS shop even when field sales.mobile module is off.
+        $asMobileChannel = $this->userHasCentrixAsMobileChannel($user);
+        $salesOrgEnabled = $gate->mobileSalesEnabled() || $asMobileChannel;
         $driverOrgEnabled = $gate->driverMobileEnabled();
         $driverAttendanceOrgEnabled = $gate->driverAttendanceEnabled();
         $fieldAttendanceOrgEnabled = $this->fieldAttendance->isEnabled($gate);
 
-        // CentrixAsMobile allow/block: centrix_as_mobile.app.access (Roles → Centrix AS Mobile).
-        // Field sales app still uses sales.create / mobile_sales.* (not Hotel POS alone).
+        // CentrixAsMobile login channel checkbox unlocks AS shop; Roles grant still works too.
+        // Field sales app still uses sales.create / mobile_sales.*.
         $salesUserAllowed = $isAdmin
+            || $asMobileChannel
             || $this->permissions->hasPermission($user, 'centrix_as_mobile.app.access', $gate)
             || $this->permissions->hasPermission($user, 'sales.create', $gate)
             || $this->permissions->hasPermission($user, 'mobile_sales.orders.create', $gate);
@@ -35,7 +39,7 @@ class MobileAppModuleAccessService
             orgEnabled: $salesOrgEnabled,
             userAllowed: $salesUserAllowed,
             orgDisabledMessage: 'Mobile sales is not enabled for your organization. Contact your platform administrator.',
-            userDisabledMessage: 'Grant Centrix AS Mobile in Roles & permissions to sign in via CentrixAsMobile.',
+            userDisabledMessage: 'Enable CentrixAsMobile on Allowed login channels (or grant Centrix AS Mobile on the role).',
         );
 
         $driver = $this->modulePayload(
@@ -63,6 +67,17 @@ class MobileAppModuleAccessService
                 'driver' => $driver,
             ],
         ];
+    }
+
+    protected function userHasCentrixAsMobileChannel(User $user): bool
+    {
+        try {
+            $channels = app(UserLoginChannelService::class)->channelsFor($user);
+
+            return in_array(UserLoginChannelService::CENTRIX_AS_MOBILE, $channels, true);
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
     public function assertSalesAccess(User $user, CapabilityGate $gate): void

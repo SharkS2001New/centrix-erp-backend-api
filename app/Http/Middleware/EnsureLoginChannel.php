@@ -28,7 +28,10 @@ class EnsureLoginChannel
 
         $loginChannel = (string) ($accessToken->login_channel ?? UserLoginChannelService::BACKOFFICE);
 
-        if ($loginChannel === UserLoginChannelService::MOBILE) {
+        if (
+            $loginChannel === UserLoginChannelService::MOBILE
+            || $loginChannel === UserLoginChannelService::CENTRIX_AS_MOBILE
+        ) {
             /** @var User|null $user */
             $user = $accessToken->tokenable;
             if (! $user instanceof User || ! $this->channels->mobileTokenCanAccessPath($user, $request->path())) {

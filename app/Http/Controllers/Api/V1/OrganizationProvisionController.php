@@ -620,7 +620,7 @@ class OrganizationProvisionController extends Controller
             'password' => 'required|string|min:6',
             'is_admin' => 'sometimes|boolean',
             'login_channels' => 'sometimes|array|min:1',
-            'login_channels.*' => 'in:backoffice,pos,mobile,manager',
+            'login_channels.*' => 'in:backoffice,pos,mobile,centrix_as_mobile,manager',
         ]);
 
         app(UsernameValidator::class)->assertUniqueInOrganization(

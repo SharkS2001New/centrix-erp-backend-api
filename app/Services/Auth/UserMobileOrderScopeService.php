@@ -53,7 +53,8 @@ class UserMobileOrderScopeService
     {
         $channels = app(UserLoginChannelService::class)->normalize($user->login_channels);
 
-        return in_array(UserLoginChannelService::MOBILE, $channels, true);
+        return in_array(UserLoginChannelService::MOBILE, $channels, true)
+            || in_array(UserLoginChannelService::CENTRIX_AS_MOBILE, $channels, true);
     }
 
     public function scope(User $user): string
@@ -451,7 +452,10 @@ class UserMobileOrderScopeService
             : null;
 
         $hasMobile = $channels
-            ? in_array(UserLoginChannelService::MOBILE, $channels, true)
+            ? (
+                in_array(UserLoginChannelService::MOBILE, $channels, true)
+                || in_array(UserLoginChannelService::CENTRIX_AS_MOBILE, $channels, true)
+            )
             : null;
 
         if ($hasMobile === false) {

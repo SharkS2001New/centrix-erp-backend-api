@@ -342,6 +342,16 @@ class OrganizationProvisioningService
         ) {
             $channels[] = 'mobile';
         }
+        // CentrixAsMobile AS shop app — alongside Field Mobile when shop/POS/hospitality is on.
+        if (
+            ($modules['sales.mobile'] ?? false)
+            || ($modules['sales.backend'] ?? false)
+            || ($modules['sales.pos'] ?? false)
+            || ($modules['hospitality.bar_pos'] ?? false)
+            || ($modules['hospitality.backend'] ?? false)
+        ) {
+            $channels[] = 'centrix_as_mobile';
+        }
 
         $salesManager =
             ($modules['sales.backend'] ?? false)

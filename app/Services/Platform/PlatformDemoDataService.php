@@ -295,7 +295,7 @@ class PlatformDemoDataService
             'is_admin' => true,
             'is_super_admin' => false,
             'access_scope' => 'org',
-            'login_channels' => ['backoffice', 'pos', 'mobile', 'manager'],
+            'login_channels' => ['backoffice', 'pos', 'mobile', 'centrix_as_mobile', 'manager'],
             'is_active' => true,
             'must_change_password' => false,
             'password_changed_at' => now(),

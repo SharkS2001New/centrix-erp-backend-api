@@ -177,7 +177,7 @@ class UserLoginChannelTest extends TestCase
             ->assertJsonValidationErrors(['login_channel']);
     }
 
-    public function test_centrix_as_mobile_permission_allows_login_without_mobile_channel(): void
+    public function test_centrix_as_mobile_channel_allows_as_app_login(): void
     {
         $org = Organization::where('company_code', 'DEMO')->firstOrFail();
         $org->forceFill([
@@ -187,27 +187,8 @@ class UserLoginChannelTest extends TestCase
         app(\App\Services\Platform\OrganizationLicenseService::class)
             ->forgetResolvedLicense((int) $org->id);
 
-        \App\Services\Erp\PermissionMatrixService::ensure();
-
-        $permission = \App\Models\Permission::query()
-            ->where('permission_code', 'centrix_as_mobile.app.access')
-            ->firstOrFail();
-
-        $role = \App\Models\Role::create([
-            'organization_id' => $org->id,
-            'role_name' => 'AS Mobile Only '.uniqid(),
-            'scope' => 'branch',
-            'is_active' => true,
-        ]);
-        \Illuminate\Support\Facades\DB::table('role_permissions')->insert([
-            'role_id' => $role->id,
-            'permission_id' => (int) $permission->id,
-        ]);
-
-        // No mobile/backoffice/pos channels — Roles app grant must unlock AS mobile login.
         $user = $this->makeUser([
-            'role_id' => $role->id,
-            'login_channels' => ['manager'],
+            'login_channels' => ['centrix_as_mobile'],
             'is_admin' => false,
         ]);
 
@@ -215,13 +196,13 @@ class UserLoginChannelTest extends TestCase
             'company_code' => 'DEMO',
             'username' => $user->username,
             'password' => 'password',
-            'client_id' => 'AS_MOBILE_PERM',
-            'login_channel' => 'mobile',
+            'client_id' => 'AS_MOBILE_CHANNEL',
+            'login_channel' => 'centrix_as_mobile',
             'force_logout' => true,
         ])->assertOk();
     }
 
-    public function test_centrix_as_mobile_login_blocked_without_permission(): void
+    public function test_centrix_as_mobile_login_blocked_without_channel(): void
     {
         $org = Organization::where('company_code', 'DEMO')->firstOrFail();
         $org->forceFill([
@@ -231,17 +212,7 @@ class UserLoginChannelTest extends TestCase
         app(\App\Services\Platform\OrganizationLicenseService::class)
             ->forgetResolvedLicense((int) $org->id);
 
-        \App\Services\Erp\PermissionMatrixService::ensure();
-
-        $role = \App\Models\Role::create([
-            'organization_id' => $org->id,
-            'role_name' => 'No AS Mobile '.uniqid(),
-            'scope' => 'branch',
-            'is_active' => true,
-        ]);
-
         $user = $this->makeUser([
-            'role_id' => $role->id,
             'login_channels' => ['manager'],
             'is_admin' => false,
         ]);
@@ -251,7 +222,7 @@ class UserLoginChannelTest extends TestCase
             'username' => $user->username,
             'password' => 'password',
             'client_id' => 'AS_MOBILE_DENIED',
-            'login_channel' => 'mobile',
+            'login_channel' => 'centrix_as_mobile',
             'force_logout' => true,
         ])
             ->assertStatus(422)

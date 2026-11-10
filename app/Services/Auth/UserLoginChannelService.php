@@ -17,6 +17,9 @@ class UserLoginChannelService
 
     public const MOBILE = 'mobile';
 
+    /** Centrix AS shop app (centrixerpasmobileapp) — distinct from Field Mobile. */
+    public const CENTRIX_AS_MOBILE = 'centrix_as_mobile';
+
     public const MANAGER = 'manager';
 
     /** @var list<string> */
@@ -24,8 +27,20 @@ class UserLoginChannelService
         self::BACKOFFICE,
         self::POS,
         self::MOBILE,
+        self::CENTRIX_AS_MOBILE,
         self::MANAGER,
     ];
+
+    /** @return list<string> */
+    public static function shopMobileChannels(): array
+    {
+        return [self::MOBILE, self::CENTRIX_AS_MOBILE];
+    }
+
+    public function isShopMobileChannel(string $channel): bool
+    {
+        return in_array($channel, self::shopMobileChannels(), true);
+    }
 
     /** @return list<string> */
     public function defaultChannels(): array
@@ -88,28 +103,10 @@ class UserLoginChannelService
             }
         }
 
-        // CentrixAsMobile (Roles → Centrix AS Mobile): same pattern as Manager —
-        // centrix_as_mobile.app.access allows login even when login_channels omit "mobile".
+        // Field sales / driver: permission can unlock login_channel=mobile without the checkbox.
         if ($channel === self::MOBILE
-            && $this->organizationAllowsMobileLogin($user)
-            && $this->userHasCentrixAsMobileAccess($user)
-        ) {
-            return;
-        }
-
-        // Field sales / driver grants also unlock the shared mobile login channel.
-        if ($channel === self::MOBILE
-            && $this->organizationAllowsMobileLogin($user)
+            && $this->organizationAllowsFieldMobileLogin($user)
             && $this->userHasFieldMobileAccess($user)
-        ) {
-            return;
-        }
-
-        // Hotel & Bar staff often have backoffice (or POS) channels only; permission
-        // checks in assertLoginChannelPermission still enforce Centrix AS Mobile / sales.
-        if ($channel === self::MOBILE
-            && array_intersect($allowed, [self::BACKOFFICE, self::POS]) !== []
-            && $this->organizationAllowsMobileLogin($user)
         ) {
             return;
         }
@@ -124,28 +121,6 @@ class UserLoginChannelService
                 sprintf('This account is not allowed to sign in via %s.', $this->label($channel)),
             ],
         ]);
-    }
-
-    /**
-     * Roles matrix app "Centrix AS Mobile" — allow/block AS shop login (not Field Mobile).
-     */
-    protected function userHasCentrixAsMobileAccess(User $user): bool
-    {
-        if ((bool) $user->is_admin) {
-            return true;
-        }
-
-        try {
-            $permissions = app(UserPermissionService::class);
-            $organization = $user->organization ?? Organization::query()->find($user->organization_id);
-            $gate = $organization
-                ? app(ErpContext::class)->gateForOrganization($organization)
-                : null;
-
-            return $permissions->hasPermission($user, 'centrix_as_mobile.app.access', $gate);
-        } catch (\Throwable) {
-            return false;
-        }
     }
 
     /** Field sales / driver apps share login_channel=mobile. */
@@ -171,7 +146,7 @@ class UserLoginChannelService
         }
     }
 
-    protected function organizationAllowsMobileLogin(User $user): bool
+    protected function organizationAllowsFieldMobileLogin(User $user): bool
     {
         $organization = $user->organization ?? Organization::query()->find($user->organization_id);
         if (! $organization) {
@@ -352,7 +327,8 @@ class UserLoginChannelService
     /** @param  list<string>  $channels */
     public function syncLegacyMobileFlag(array $channels): bool
     {
-        return in_array(self::MOBILE, $channels, true);
+        return in_array(self::MOBILE, $channels, true)
+            || in_array(self::CENTRIX_AS_MOBILE, $channels, true);
     }
 
     public function label(string $channel): string
@@ -360,7 +336,8 @@ class UserLoginChannelService
         return match ($channel) {
             self::BACKOFFICE => 'CentrixERP',
             self::POS => 'POS',
-            self::MOBILE => 'CentrixAsMobile',
+            self::MOBILE => 'Field Mobile',
+            self::CENTRIX_AS_MOBILE => 'CentrixAsMobile',
             self::MANAGER => 'Centrix Manager',
             default => $channel,
         };

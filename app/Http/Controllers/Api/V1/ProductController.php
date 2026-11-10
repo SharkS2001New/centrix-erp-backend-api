@@ -192,7 +192,7 @@ class ProductController extends BaseResourceController
         $loginChannel = $this->salesLoginChannel($request);
         $channel = match ($loginChannel) {
             'mobile' => 'mobile',
-            'pos' => 'pos',
+            'centrix_as_mobile', 'pos' => 'pos',
             default => 'backend',
         };
         $gate = $this->erp->gateForUser($request->user());
@@ -408,7 +408,8 @@ class ProductController extends BaseResourceController
         if (! $useLeanSelect) {
             $paginatorQuery->with('branch:id,branch_code,branch_name');
         }
-        $mobileList = $this->salesLoginChannel($request) === 'mobile';
+        $loginChannel = $this->salesLoginChannel($request);
+        $mobileList = in_array($loginChannel, ['mobile', 'centrix_as_mobile'], true);
         $paginator = $mobileList
             ? $paginatorQuery->simplePaginate($perPage)
             : $paginatorQuery->paginate($perPage);

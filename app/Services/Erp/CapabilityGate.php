@@ -269,6 +269,16 @@ class CapabilityGate
         if ($this->mobileSalesEnabled()) {
             $channels[] = \App\Services\Auth\UserLoginChannelService::MOBILE;
         }
+        // CentrixAsMobile (AS shop app) — available whenever web/POS/hospitality shop ops are on.
+        if (
+            $this->mobileSalesEnabled()
+            || $this->enabled('sales.backend')
+            || $this->enabled('sales.pos')
+            || $this->enabled('hospitality.bar_pos')
+            || $this->enabled('hospitality.backend')
+        ) {
+            $channels[] = \App\Services\Auth\UserLoginChannelService::CENTRIX_AS_MOBILE;
+        }
         if ($this->managerAppEnabled()) {
             $channels[] = \App\Services\Auth\UserLoginChannelService::MANAGER;
         }
@@ -283,6 +293,11 @@ class CapabilityGate
         return match ($channel) {
             'pos' => $this->enabled('sales.pos'),
             'mobile' => $this->mobileSalesEnabled(),
+            'centrix_as_mobile' => $this->mobileSalesEnabled()
+                || $this->enabled('sales.backend')
+                || $this->enabled('sales.pos')
+                || $this->enabled('hospitality.bar_pos')
+                || $this->enabled('hospitality.backend'),
             'backend' => $this->enabled('sales.backend'),
             // WhatsApp carts are a distinct channel but require backoffice sales + WhatsApp orders.
             'whatsapp' => $this->enabled('sales.backend') && $this->whatsappOrdersRuntimeEnabled(),
