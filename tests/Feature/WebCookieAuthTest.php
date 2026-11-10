@@ -70,6 +70,32 @@ class WebCookieAuthTest extends TestCase
         $this->assertNotEmpty($response->json('token'));
     }
 
+    public function test_centrix_as_mobile_login_keeps_bearer_token_in_body(): void
+    {
+        $user = User::query()->where('username', 'admin')->first();
+        $this->assertNotNull($user);
+        $user->forceFill([
+            'login_channels' => ['backoffice', 'mobile', 'centrix_as_mobile'],
+            'two_factor_enabled' => false,
+            'two_factor_method' => null,
+            'two_factor_confirmed_at' => null,
+        ])->save();
+
+        $response = $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'DEMO',
+            'username' => $user->username,
+            'password' => 'password',
+            'client_id' => 'ASMOBILE_COOKIE_TEST',
+            'login_channel' => 'centrix_as_mobile',
+            'force_logout' => true,
+        ]);
+
+        $response->assertOk()
+            ->assertJsonStructure(['token', 'user', 'organization']);
+
+        $this->assertNotEmpty($response->json('token'));
+    }
+
     public function test_manager_login_keeps_bearer_token_in_body(): void
     {
         $user = User::query()->where('username', 'superadmin')->first();

@@ -192,14 +192,18 @@ class UserLoginChannelTest extends TestCase
             'is_admin' => false,
         ]);
 
-        $this->postJson('/api/v1/auth/login', [
+        $login = $this->postJson('/api/v1/auth/login', [
             'company_code' => 'DEMO',
             'username' => $user->username,
             'password' => 'password',
             'client_id' => 'AS_MOBILE_CHANNEL',
             'login_channel' => 'centrix_as_mobile',
             'force_logout' => true,
-        ])->assertOk();
+        ])
+            ->assertOk()
+            ->assertJsonStructure(['token', 'user', 'organization']);
+
+        $this->assertNotEmpty($login->json('token'));
     }
 
     public function test_centrix_as_mobile_login_blocked_without_channel(): void
@@ -212,6 +216,7 @@ class UserLoginChannelTest extends TestCase
         app(\App\Services\Platform\OrganizationLicenseService::class)
             ->forgetResolvedLicense((int) $org->id);
 
+        // Manager-only, non-admin, no web channels — must not use CentrixAsMobile.
         $user = $this->makeUser([
             'login_channels' => ['manager'],
             'is_admin' => false,
@@ -227,6 +232,31 @@ class UserLoginChannelTest extends TestCase
         ])
             ->assertStatus(422)
             ->assertJsonValidationErrors(['login_channel']);
+    }
+
+    public function test_hotel_backoffice_user_can_login_via_centrix_as_mobile(): void
+    {
+        $org = Organization::where('company_code', 'DEMO')->firstOrFail();
+        $org->forceFill([
+            'deployment_profile' => 'hotel_bar',
+            'enabled_modules' => config('erp.profiles.hotel_bar.modules'),
+        ])->save();
+        app(\App\Services\Platform\OrganizationLicenseService::class)
+            ->forgetResolvedLicense((int) $org->id);
+
+        $user = $this->makeUser([
+            'login_channels' => ['backoffice'],
+            'is_admin' => false,
+        ]);
+
+        $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'DEMO',
+            'username' => $user->username,
+            'password' => 'password',
+            'client_id' => 'HOTEL_AS_BRIDGE',
+            'login_channel' => 'centrix_as_mobile',
+            'force_logout' => true,
+        ])->assertOk();
     }
 
     public function test_as_mobile_client_remaps_legacy_mobile_channel_to_centrix_as_mobile(): void

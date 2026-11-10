@@ -36,7 +36,11 @@ class ApiTokenCookie
     {
         return in_array(
             strtolower(trim($channel)),
-            [UserLoginChannelService::MOBILE, UserLoginChannelService::MANAGER],
+            [
+                UserLoginChannelService::MOBILE,
+                UserLoginChannelService::CENTRIX_AS_MOBILE,
+                UserLoginChannelService::MANAGER,
+            ],
             true,
         );
     }

@@ -11,6 +11,7 @@ class ApiTokenCookieTest extends TestCase
     public function test_mobile_and_manager_channels_use_bearer_token_in_body(): void
     {
         $this->assertTrue(ApiTokenCookie::channelUsesBearerTokenInBody('mobile'));
+        $this->assertTrue(ApiTokenCookie::channelUsesBearerTokenInBody('centrix_as_mobile'));
         $this->assertTrue(ApiTokenCookie::channelUsesBearerTokenInBody('manager'));
         $this->assertFalse(ApiTokenCookie::channelUsesBearerTokenInBody('backoffice'));
         $this->assertFalse(ApiTokenCookie::channelUsesBearerTokenInBody('pos'));
@@ -20,7 +21,7 @@ class ApiTokenCookieTest extends TestCase
     {
         config(['security.api_token_cookie.enabled' => true]);
 
-        foreach (['mobile', 'manager'] as $channel) {
+        foreach (['mobile', 'centrix_as_mobile', 'manager'] as $channel) {
             $request = Request::create('/api/v1/auth/login', 'POST', [
                 'login_channel' => $channel,
             ]);
@@ -54,5 +55,6 @@ class ApiTokenCookieTest extends TestCase
         $this->assertTrue(ApiTokenCookie::usesCookieAuth($request));
         $this->assertFalse(ApiTokenCookie::usesCookieAuth($request, 'manager'));
         $this->assertFalse(ApiTokenCookie::usesCookieAuth($request, 'mobile'));
+        $this->assertFalse(ApiTokenCookie::usesCookieAuth($request, 'centrix_as_mobile'));
     }
 }

@@ -115,18 +115,20 @@ trait RespondsWithAuthSession
      */
     protected function resolveAuthLoginChannel(Request $request, array $result): ?string
     {
+        $knownChannels = ['backoffice', 'pos', 'mobile', 'centrix_as_mobile', 'manager'];
+
         $fromBody = strtolower(trim((string) $request->input('login_channel', '')));
-        if (in_array($fromBody, ['backoffice', 'pos', 'mobile', 'manager'], true)) {
+        if (in_array($fromBody, $knownChannels, true)) {
             return $fromBody;
         }
 
         $fromHeader = strtolower(trim((string) $request->header('X-Login-Channel', '')));
-        if (in_array($fromHeader, ['backoffice', 'pos', 'mobile', 'manager'], true)) {
+        if (in_array($fromHeader, $knownChannels, true)) {
             return $fromHeader;
         }
 
         $fromResult = strtolower(trim((string) ($result['login_channel'] ?? '')));
-        if (in_array($fromResult, ['backoffice', 'pos', 'mobile', 'manager'], true)) {
+        if (in_array($fromResult, $knownChannels, true)) {
             return $fromResult;
         }
 

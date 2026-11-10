@@ -95,6 +95,19 @@ class UserLoginChannelService
             return;
         }
 
+        // Hotel & Bar / shop staff: CentrixAsMobile when org allows it and the user is an
+        // org admin or already has web (backoffice) access — same day-to-day users as the AS app.
+        // Explicit CentrixAsMobile on login_channels still wins for AS-only accounts.
+        if ($channel === self::CENTRIX_AS_MOBILE
+            && $this->organizationAllowsCentrixAsMobileLogin($user)
+            && (
+                (bool) $user->is_admin
+                || array_intersect($allowed, [self::BACKOFFICE, self::POS]) !== []
+            )
+        ) {
+            return;
+        }
+
         // Web users open External POS from the module switcher. Terminal permission
         // and the organisation module are checked when the session is switched.
         if ($channel === self::POS && in_array(self::BACKOFFICE, $allowed, true)) {
@@ -161,6 +174,22 @@ class UserLoginChannelService
 
         try {
             return app(ErpContext::class)->gateForOrganization($organization)->mobileSalesEnabled();
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    protected function organizationAllowsCentrixAsMobileLogin(User $user): bool
+    {
+        $organization = $user->organization ?? Organization::query()->find($user->organization_id);
+        if (! $organization) {
+            return false;
+        }
+
+        try {
+            $gate = app(ErpContext::class)->gateForOrganization($organization);
+
+            return in_array(self::CENTRIX_AS_MOBILE, $gate->allowedLoginChannels(), true);
         } catch (\Throwable) {
             return false;
         }
