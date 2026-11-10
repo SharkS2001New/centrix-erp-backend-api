@@ -58,13 +58,9 @@ class ErpCapabilitiesController extends Controller
             );
         }
 
-        // Heal Administrator industry + HR page grants at most once per registry version.
-        // Warm logins skip the insertOrIgnore sweep; new deploys (mtime) re-run heal.
-        $heal = \App\Services\Erp\PermissionMatrixService::healLoginGrantsCached();
-        if (($heal['industry'] ?? 0) > 0 || ($heal['hr'] ?? 0) > 0) {
-            OrganizationCache::invalidateCapabilities($orgId);
-        }
-
+        // Warm hits skip PermissionMatrixService entirely. Registry mtime is part of
+        // capabilitiesUserKey, so deploys miss once and buildCapabilitiesPayload →
+        // ensureCached() heals Administrator / HR grants without a per-request sweep.
         $payload = OrganizationCache::remember(
             $orgId,
             OrganizationCache::capabilitiesUserKey($orgId, (int) $user->id),

@@ -145,9 +145,9 @@ class ErpCapabilitiesTest extends TestCase
         ]);
 
         Sanctum::actingAs($target);
-        $this->getJson('/api/v1/erp/capabilities')
-            ->assertOk()
-            ->assertJsonPath('permissions.sales.orders.create', false);
+        $before = $this->getJson('/api/v1/erp/capabilities')->assertOk();
+        // Ungranted codes are omitted from the map (not stored as false).
+        $this->assertTrue(! ($before->json('permissions.sales.orders.create') ?? false));
 
         $versionBefore = OrganizationCache::capabilitiesVersion($orgId);
 
@@ -160,8 +160,8 @@ class ErpCapabilitiesTest extends TestCase
         $this->assertGreaterThan($versionBefore, OrganizationCache::capabilitiesVersion($orgId));
 
         Sanctum::actingAs($target);
-        $this->getJson('/api/v1/erp/capabilities')
-            ->assertOk()
-            ->assertJsonPath('permissions.sales.orders.create', true);
+        $after = $this->getJson('/api/v1/erp/capabilities')->assertOk();
+        // Flat permission codes contain dots — do not use assertJsonPath (nested walk).
+        $this->assertTrue((bool) ($after->json('permissions')['sales.orders.create'] ?? false));
     }
 }

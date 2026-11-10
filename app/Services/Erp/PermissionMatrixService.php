@@ -81,9 +81,9 @@ class PermissionMatrixService
     }
 
     /**
-     * Cheap login/capabilities heal: Administrator industry grants + HR time pages.
-     * Runs the insertOrIgnore sweep once per registry version; warm hits return zeros
-     * so callers do not keep invalidating org capabilities caches.
+     * Administrator industry grants + HR time pages, once per registry version.
+     * Prefer ensureCached() on cold capabilities rebuilds — ErpCapabilitiesController
+     * no longer calls this on the warm /erp/capabilities path (remote insert storms).
      *
      * @return array{industry: int, hr: int}
      */
@@ -170,26 +170,83 @@ class PermissionMatrixService
 
         $roleIds = Role::query()
             ->whereIn('role_name', ['Administrator', 'Admin'])
-            ->pluck('id');
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
 
-        if ($roleIds->isEmpty()) {
+        if ($roleIds === []) {
             return 0;
         }
 
-        $inserted = 0;
+        // One SELECT for existing pairs, then chunked insertOrIgnore — avoids hundreds
+        // of remote MySQL round-trips (was ~14s on a 390-code × N-role heal).
+        $existing = [];
+        foreach (
+            DB::table('role_permissions')
+                ->whereIn('role_id', $roleIds)
+                ->whereIn('permission_id', $permissionIds)
+                ->get(['role_id', 'permission_id']) as $row
+        ) {
+            $existing[(int) $row->role_id.':'.(int) $row->permission_id] = true;
+        }
+
+        $rows = [];
         foreach ($roleIds as $roleId) {
             foreach ($permissionIds as $permissionId) {
-                $ok = DB::table('role_permissions')->insertOrIgnore([
-                    'role_id' => $roleId,
-                    'permission_id' => $permissionId,
-                ]);
-                if ($ok) {
-                    $inserted++;
+                $key = $roleId.':'.$permissionId;
+                if (! isset($existing[$key])) {
+                    $rows[] = [
+                        'role_id' => $roleId,
+                        'permission_id' => $permissionId,
+                    ];
                 }
             }
         }
 
-        return $inserted;
+        foreach (array_chunk($rows, 500) as $chunk) {
+            DB::table('role_permissions')->insertOrIgnore($chunk);
+        }
+
+        if ($rows !== []) {
+            self::forgetRolePermissionCaches($roleIds);
+        }
+
+        return count($rows);
+    }
+
+    /**
+     * Drop cached role → permission id lists after role_permissions writes so the
+     * same request (and other workers) do not keep serving a pre-heal map.
+     *
+     * @param  list<int>  $roleIds
+     */
+    protected static function forgetRolePermissionCaches(array $roleIds): void
+    {
+        foreach ($roleIds as $roleId) {
+            Cache::forget('role_permission_ids:'.$roleId);
+        }
+
+        try {
+            $request = request();
+            foreach (array_keys($request->attributes->all()) as $key) {
+                $key = (string) $key;
+                if (
+                    str_starts_with($key, 'user_permission_service.role_permission_ids.')
+                    || str_starts_with($key, 'user_permission_service.role_assigned_permission_ids.')
+                    || str_starts_with($key, 'user_permission_service.effective_permission_ids.')
+                ) {
+                    $request->attributes->remove($key);
+                }
+            }
+        } catch (\Throwable) {
+            // CLI / no request bound.
+        }
+
+        try {
+            app(PermissionCatalog::class)->flush();
+        } catch (\Throwable) {
+            // Catalog may be unbound in early boot / unit contexts.
+        }
     }
 
     public static function ensureRegistryPermissions(): void
@@ -459,11 +516,13 @@ class PermissionMatrixService
     {
         // Do not call ensure() here — this helper is invoked from ensure().
         // Callers outside ensure() should run PermissionMatrixService::ensure() first.
-        $codes = array_flip(IndustryRegistry::permissionCodesForAllIndustries());
+        $codes = IndustryRegistry::permissionCodesForAllIndustries();
+        if ($codes === []) {
+            return [];
+        }
 
         return Permission::query()
-            ->get()
-            ->filter(fn (Permission $permission) => isset($codes[(string) $permission->permission_code]))
+            ->whereIn('permission_code', $codes)
             ->pluck('id')
             ->map(fn ($id) => (int) $id)
             ->values()
@@ -1116,7 +1175,8 @@ class PermissionMatrixService
             ->whereIn('permission_code', array_values(array_unique($codes)))
             ->pluck('id', 'permission_code');
 
-        $inserted = 0;
+        $rows = [];
+        $seen = [];
 
         foreach ($map as $trigger => $adds) {
             $triggerId = $permissions[$trigger] ?? null;
@@ -1135,17 +1195,48 @@ class PermissionMatrixService
                         continue;
                     }
 
-                    $ok = DB::table('role_permissions')->insertOrIgnore([
-                        'role_id' => $roleId,
-                        'permission_id' => $permissionId,
-                    ]);
-                    if ($ok) {
-                        $inserted++;
+                    $key = ((int) $roleId).':'.((int) $permissionId);
+                    if (isset($seen[$key])) {
+                        continue;
                     }
+                    $seen[$key] = true;
+                    $rows[] = [
+                        'role_id' => (int) $roleId,
+                        'permission_id' => (int) $permissionId,
+                    ];
                 }
             }
         }
 
-        return $inserted;
+        if ($rows === []) {
+            return 0;
+        }
+
+        $roleIds = array_values(array_unique(array_column($rows, 'role_id')));
+        $permissionIds = array_values(array_unique(array_column($rows, 'permission_id')));
+        $existing = [];
+        foreach (
+            DB::table('role_permissions')
+                ->whereIn('role_id', $roleIds)
+                ->whereIn('permission_id', $permissionIds)
+                ->get(['role_id', 'permission_id']) as $row
+        ) {
+            $existing[(int) $row->role_id.':'.(int) $row->permission_id] = true;
+        }
+
+        $missing = array_values(array_filter(
+            $rows,
+            static fn (array $row) => ! isset($existing[$row['role_id'].':'.$row['permission_id']]),
+        ));
+
+        foreach (array_chunk($missing, 500) as $chunk) {
+            DB::table('role_permissions')->insertOrIgnore($chunk);
+        }
+
+        if ($missing !== []) {
+            self::forgetRolePermissionCaches($roleIds);
+        }
+
+        return count($missing);
     }
 }

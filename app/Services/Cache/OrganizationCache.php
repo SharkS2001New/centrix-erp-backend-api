@@ -24,11 +24,14 @@ class OrganizationCache
         return max(1, (int) Cache::get(self::tag($organizationId).self::CAPABILITIES_VERSION_SUFFIX, 1));
     }
 
-    /** Per-user capabilities payload key (scoped to org + generation version). */
+    /** Per-user capabilities payload key (scoped to org + generation + registry version). */
     public static function capabilitiesUserKey(int $organizationId, int $userId): string
     {
-        // m3: rebuild maps after HR time-attendance page grants (absents, missed punches, …).
-        return 'capabilities:m3:v'.self::capabilitiesVersion($organizationId).':user:'.$userId;
+        // m4: include permission-registry mtime so deploys miss once and ensureCached()
+        // runs on the cold rebuild — no per-request healLoginGrantsCached sweep.
+        $registry = \App\Services\Erp\PermissionMatrixService::registryCacheVersion();
+
+        return 'capabilities:m4:r'.$registry.':v'.self::capabilitiesVersion($organizationId).':user:'.$userId;
     }
 
     /**
