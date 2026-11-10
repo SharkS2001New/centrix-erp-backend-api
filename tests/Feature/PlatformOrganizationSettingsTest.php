@@ -198,6 +198,61 @@ class PlatformOrganizationSettingsTest extends TestCase
         $this->assertSame(7, $org->module_settings['inventory']['cart_reservation_ttl_minutes']);
     }
 
+    public function test_super_admin_can_persist_as_mobile_sales_platform_toggles(): void
+    {
+        config(['erp.allow_org_provisioning' => true]);
+
+        Sanctum::actingAs(User::where('username', 'superadmin')->firstOrFail());
+
+        $create = $this->postJson('/api/v1/admin/organizations/provision', [
+            'company_code' => 'ASMOBIMG',
+            'org_name' => 'AS Mobile Images Org',
+            'org_email' => 'asmobimg@org.com',
+            'primary_tel' => '0711000088',
+            'org_address' => 'Nairobi',
+            'deployment_profile' => 'wholesale_retail',
+            'enabled_modules' => ['sales' => true, 'sales.backend' => true, 'sales.mobile' => true],
+            'admin_username' => 'asmobimg_admin',
+            'admin_email' => 'asmobimg@org.com',
+            'admin_password' => 'password123',
+            'admin_full_name' => 'AS Mobile Admin',
+        ])->assertCreated();
+
+        $orgId = (int) $create->json('organization.id');
+
+        $this->patchJson("/api/v1/admin/organizations/{$orgId}", [
+            'sales_platform' => [
+                'enable_mobile_orders' => true,
+                'as_mobile_show_images' => true,
+                'require_product_images' => true,
+                'as_mobile_post_login_screen' => 'operations_dashboard',
+            ],
+        ])->assertOk()
+            ->assertJsonPath('sales_platform.enable_mobile_orders', true)
+            ->assertJsonPath('sales_platform.as_mobile_show_images', true)
+            ->assertJsonPath('sales_platform.require_product_images', true)
+            ->assertJsonPath('sales_platform.as_mobile_post_login_screen', 'operations_dashboard');
+
+        $org = Organization::query()->findOrFail($orgId);
+        $this->assertTrue((bool) ($org->module_settings['sales']['as_mobile_show_images'] ?? false));
+        $this->assertTrue((bool) ($org->module_settings['sales']['require_product_images'] ?? false));
+        $this->assertSame(
+            'operations_dashboard',
+            $org->module_settings['sales']['as_mobile_post_login_screen'] ?? null,
+        );
+
+        $this->patchJson("/api/v1/admin/organizations/{$orgId}", [
+            'sales_platform' => [
+                'as_mobile_show_images' => false,
+                'require_product_images' => false,
+                'as_mobile_post_login_screen' => 'module_home',
+            ],
+        ])->assertOk()
+            ->assertJsonPath('sales_platform.as_mobile_show_images', false)
+            ->assertJsonPath('sales_platform.require_product_images', false)
+            ->assertJsonPath('sales_platform.as_mobile_post_login_screen', 'module_home');
+    }
+
     public function test_switching_setup_type_with_apply_defaults_resets_applications_and_operational_defaults(): void
     {
         config(['erp.allow_org_provisioning' => true]);

@@ -21,7 +21,7 @@ class SpaIndustryTest extends TestCase
             app(SetupProfileMenuService::class)->applicationIdsForIndustry('spa'),
         );
         $this->assertSame(
-            ['SPA / Salon / Kinyozi'],
+            ['SPA / Salon / Kinyozi', 'Barbershop'],
             app(SetupProfileMenuService::class)->businessTypesForProfile('spa_kinyozi'),
         );
     }
