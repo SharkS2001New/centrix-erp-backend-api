@@ -1499,6 +1499,7 @@ class CheckoutController extends Controller
                     $finance,
                     (float) $sale->order_total,
                     $explicitSubmit,
+                    (string) ($sale->channel ?? $cart->channel ?? ''),
                 );
 
             $kraResponse = null;
@@ -1518,6 +1519,10 @@ class CheckoutController extends Controller
                 $eligibleForKra
                 && KraFiscalPolicy::isDeviceConfigured($finance)
                 && KraFiscalPolicy::isFiscalizationActive($finance)
+                && KraFiscalPolicy::channelAllowsFiscalization(
+                    $finance,
+                    (string) ($sale->channel ?? $cart->channel ?? ''),
+                )
                 && KraFiscalPolicy::isBypassed($finance, (float) $sale->order_total)
             ) {
                 // Intentional policy skip — still visible under Unfiscalized sales with reason.

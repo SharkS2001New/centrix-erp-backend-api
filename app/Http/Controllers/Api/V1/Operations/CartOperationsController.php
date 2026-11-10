@@ -490,13 +490,28 @@ class CartOperationsController extends Controller
 
         // Serialize against checkout / line edits. Retry MySQL 1213 deadlocks (stock
         // reservations vs cart_lines lock order under concurrent POS traffic).
-        DB::transaction(function () use ($resolvedId, $user, $preserveEdit) {
+        // DeadlockSafe also guards PDO/Laravel txn desync ("There is no active transaction").
+        $reinstateSaleId = null;
+        DeadlockSafe::transaction(function () use ($resolvedId, $user, $preserveEdit, &$reinstateSaleId) {
             $locked = TemporaryCart::query()->whereKey($resolvedId)->lockForUpdate()->first();
             if (! $locked) {
                 return;
             }
-            $this->clearCart($locked, $user, preserveEditMarkers: $preserveEdit);
-        }, 5);
+            $reinstateSaleId = $this->clearCart(
+                $locked,
+                $user,
+                preserveEditMarkers: $preserveEdit,
+                deferReinstate: true,
+            );
+        });
+
+        // Reinstate outside the clear lock so journal/order-number work cannot desync
+        // the cart-clear transaction (nested DB::transaction + long side effects).
+        if ($reinstateSaleId && $user) {
+            DeadlockSafe::transaction(function () use ($reinstateSaleId, $user) {
+                $this->reinstateSupersededSale($reinstateSaleId, $user);
+            });
+        }
 
         return response()->json(['ok' => true]);
     }
@@ -2103,11 +2118,15 @@ class CartOperationsController extends Controller
         $cart->increment('update_no');
     }
 
+    /**
+     * @return int|null Superseded sale id that still needs reinstate when $deferReinstate is true.
+     */
     protected function clearCart(
         TemporaryCart $cart,
         ?User $user = null,
         bool $preserveEditMarkers = false,
-    ): void {
+        bool $deferReinstate = false,
+    ): ?int {
         $user ??= request()->user();
         $supersededSaleId = (int) ($cart->superseded_sale_id ?? 0);
         $heldOrderNum = $cart->held_order_num;
@@ -2134,7 +2153,7 @@ class CartOperationsController extends Controller
             $this->clearCartPaymentOptions($cart);
             $cart->increment('update_no');
 
-            return;
+            return null;
         }
 
         $cart->update([
@@ -2148,8 +2167,13 @@ class CartOperationsController extends Controller
 
         // Abandoning an in-progress POS edit must restore the receipt so ← can open it again.
         if ($supersededSaleId > 0 && $user) {
+            if ($deferReinstate) {
+                return $supersededSaleId;
+            }
             $this->reinstateSupersededSale($supersededSaleId, $user);
         }
+
+        return null;
     }
 
     /**

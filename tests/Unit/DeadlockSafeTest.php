@@ -4,6 +4,7 @@ namespace Tests\Unit;
 
 use App\Support\DeadlockSafe;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class DeadlockSafeTest extends TestCase
@@ -49,5 +50,24 @@ class DeadlockSafeTest extends TestCase
 
         $this->assertSame('ok', $result);
         $this->assertSame(3, $attempts);
+    }
+
+    public function test_transaction_survives_pdo_laravel_desync_on_commit(): void
+    {
+        $result = DeadlockSafe::transaction(function () {
+            // Simulate MySQL ending the transaction while Laravel's counter stays open
+            // (implicit commit / session drop) — the failure mode behind
+            // DELETE /sales/carts/{id}/lines → "There is no active transaction".
+            $pdo = DB::connection()->getPdo();
+            if ($pdo->inTransaction()) {
+                $pdo->commit();
+            }
+
+            return 'cleared';
+        });
+
+        $this->assertSame('cleared', $result);
+        $this->assertSame(0, DB::transactionLevel());
+        $this->assertFalse(DB::connection()->getPdo()->inTransaction());
     }
 }

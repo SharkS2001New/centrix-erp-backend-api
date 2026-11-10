@@ -37,6 +37,7 @@ class KraOperationsController extends Controller
         $status = [
             'enabled' => $configured,
             'fiscalization_active' => KraFiscalPolicy::isFiscalizationActive($finance),
+            'kra_sales_scope' => KraFiscalPolicy::salesScope($finance),
             'bypass_above_amount' => KraFiscalPolicy::bypassAboveAmount($finance),
             'device_ip' => trim((string) ($finance['kra_device_ip'] ?? '')),
             'device_hardware_ip' => trim((string) ($finance['kra_device_hardware_ip'] ?? '')),
@@ -54,6 +55,10 @@ class KraOperationsController extends Controller
 
         if (! KraFiscalPolicy::isFiscalizationActive($finance)) {
             $status['message'] = 'Device is configured but sales fiscalization is turned off in Finance settings.';
+        } elseif (($scope = KraFiscalPolicy::salesScope($finance)) === KraFiscalPolicy::SCOPE_MOBILE) {
+            $status['message'] = 'KRA fiscalization is limited to mobile sales.';
+        } elseif ($scope === KraFiscalPolicy::SCOPE_ERP) {
+            $status['message'] = 'KRA fiscalization is limited to ERP sales (POS and backoffice).';
         }
 
         try {

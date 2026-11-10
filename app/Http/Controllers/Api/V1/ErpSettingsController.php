@@ -835,6 +835,7 @@ class ErpSettingsController extends Controller
             'kra_device_test_mode' => 'sometimes|boolean',
             'kra_plu_register_path' => 'sometimes|nullable|string|max:250',
             'default_submit_kra' => 'sometimes|boolean',
+            'kra_sales_scope' => 'sometimes|in:off,mobile,erp,both',
             'kra_bypass_above_amount' => 'sometimes|nullable|numeric|min:0',
             'mpesa' => 'sometimes|array',
             'mpesa.env' => 'sometimes|in:sandbox,live',
@@ -969,6 +970,19 @@ class ErpSettingsController extends Controller
             }
         }
 
+        // Prefer explicit scope; keep legacy default_submit_kra boolean in sync.
+        if (array_key_exists('kra_sales_scope', $nextFinance)) {
+            $nextFinance = \App\Services\Kra\KraFiscalPolicy::applySalesScope(
+                $nextFinance,
+                (string) $nextFinance['kra_sales_scope'],
+            );
+        } elseif (array_key_exists('default_submit_kra', $nextFinance)) {
+            $nextFinance = \App\Services\Kra\KraFiscalPolicy::applySalesScope(
+                $nextFinance,
+                ((bool) $nextFinance['default_submit_kra']) ? 'both' : 'off',
+            );
+        }
+
         $moduleSettings = $org->module_settings ?? [];
         $moduleSettings['finance'] = $nextFinance;
         $org->update(['module_settings' => $moduleSettings]);
@@ -1027,6 +1041,9 @@ class ErpSettingsController extends Controller
         if (! array_key_exists('default_submit_kra', $finance) && array_key_exists('default_submit_kra', $sales)) {
             $finance['default_submit_kra'] = (bool) $sales['default_submit_kra'];
         }
+
+        $finance['kra_sales_scope'] = \App\Services\Kra\KraFiscalPolicy::salesScope($finance);
+        $finance['default_submit_kra'] = $finance['kra_sales_scope'] !== 'off';
 
         return $finance;
     }
@@ -1510,7 +1527,7 @@ class ErpSettingsController extends Controller
             foreach ([
                 'enable_kra_device', 'enable_kra_agent', 'kra_device_ip', 'kra_direct_device_ip',
                 'kra_agent_comstore_url', 'kra_comstore_api_key', 'kra_device_hardware_ip', 'kra_serial_number', 'kra_pin_number',
-                'kra_device_test_mode', 'kra_plu_register_path', 'default_submit_kra', 'kra_bypass_above_amount',
+                'kra_device_test_mode', 'kra_plu_register_path', 'default_submit_kra', 'kra_sales_scope', 'kra_bypass_above_amount',
             ] as $key) {
                 unset($finance[$key]);
             }

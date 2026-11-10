@@ -550,13 +550,89 @@ class PermissionMatrixService
         return $groups;
     }
 
+    /**
+     * Roles / Users matrix payload (applications + groups + flat permissions).
+     * Builds the tree once — callers previously recomputed groups 2–3× per request.
+     *
+     * @return array{
+     *   permissions: list<array<string, mixed>>,
+     *   applications: list<array<string, mixed>>,
+     *   groups: list<array<string, mixed>>,
+     *   modules: array<string, string>,
+     *   actions: list<string>,
+     *   industry: string
+     * }
+     */
+    public static function uiMatrixPayload(
+        CapabilityGate $gate,
+        bool $includeAdminWhenDisabled,
+        string $industry,
+    ): array {
+        self::ensureCached();
+
+        $groups = self::groupedForUi($gate, $includeAdminWhenDisabled, $industry);
+        $applications = self::applicationsGroupedForUi(
+            $gate,
+            $includeAdminWhenDisabled,
+            $industry,
+            $groups,
+        );
+
+        return [
+            // Derive the flat list from the tree — avoids a second full `permissions` table scan
+            // + PHP filter that dominated Roles page TTFB on warm DBs.
+            'permissions' => self::flattenPermissionsFromGroups($groups),
+            'applications' => $applications,
+            'groups' => $groups,
+            'modules' => self::modules(),
+            'actions' => self::actions(),
+            'industry' => $industry,
+        ];
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $groups
+     * @return list<array<string, mixed>>
+     */
+    public static function flattenPermissionsFromGroups(array $groups): array
+    {
+        $byId = [];
+        foreach ($groups as $group) {
+            foreach ($group['features'] ?? [] as $feature) {
+                foreach ($feature['permissions'] ?? [] as $permission) {
+                    $id = (int) ($permission['id'] ?? 0);
+                    if ($id <= 0 || isset($byId[$id])) {
+                        continue;
+                    }
+                    $byId[$id] = [
+                        'id' => $id,
+                        'permission_code' => (string) ($permission['permission_code'] ?? ''),
+                        'permission_name' => (string) ($permission['permission_name'] ?? ''),
+                        'module' => (string) ($group['module'] ?? ''),
+                        'action' => (string) ($permission['action'] ?? ''),
+                    ];
+                }
+            }
+        }
+
+        $rows = array_values($byId);
+        usort($rows, static function (array $a, array $b): int {
+            return [$a['module'], $a['permission_name']] <=> [$b['module'], $b['permission_name']];
+        });
+
+        return $rows;
+    }
+
     /** @return list<array<string, mixed>> */
     public static function applicationsGroupedForUi(
         ?CapabilityGate $gate = null,
         bool $includeAdminWhenDisabled = false,
         ?string $industry = null,
+        ?array $precomputedGroups = null,
     ): array {
-        $groupsByModule = collect(self::groupedForUi($gate, $includeAdminWhenDisabled, $industry))->keyBy('module');
+        $groupsByModule = collect(
+            $precomputedGroups ?? self::groupedForUi($gate, $includeAdminWhenDisabled, $industry),
+        )->keyBy('module');
         $applications = [];
         $industryAppIds = $industry !== null && $industry !== ''
             ? array_flip(IndustryRegistry::permissionApplicationIdsForIndustry($industry))

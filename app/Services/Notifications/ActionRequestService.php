@@ -327,7 +327,7 @@ class ActionRequestService
             return;
         }
 
-        DB::transaction(function () use ($request, $actor, $comment) {
+        $run = function () use ($request, $actor, $comment): void {
             $request->update([
                 'status' => 'cancelled',
                 'resolved_by' => $actor->id,
@@ -343,8 +343,27 @@ class ActionRequestService
             ]);
 
             $this->notifications->resolveForActionRequest($request);
-            $this->notifyRequesterOfOutcome($request->fresh(), 'cancelled', $actor, $comment);
-        });
+
+            // Push/email must not run inside an open cart/checkout transaction —
+            // slow HTTP can drop the MySQL session and leave Laravel's txn counter
+            // desynced ("There is no active transaction" on commit).
+            $notify = function () use ($request, $actor, $comment): void {
+                $this->notifyRequesterOfOutcome($request->fresh(), 'cancelled', $actor, $comment);
+            };
+            if (DB::transactionLevel() > 0) {
+                DB::afterCommit($notify);
+            } else {
+                $notify();
+            }
+        };
+
+        if (DB::transactionLevel() > 0) {
+            $run();
+
+            return;
+        }
+
+        DB::transaction($run);
     }
 
     public function handlerFor(ActionRequest $request): ?ActionRequestHandler

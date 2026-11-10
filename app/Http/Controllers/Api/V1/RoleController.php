@@ -2,12 +2,12 @@
 
 namespace App\Http\Controllers\Api\V1;
 
-use App\Models\Permission;
 use App\Models\Role;
 use App\Models\User;
 use App\Services\Auth\RoleTemplateService;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Cache\CapabilitiesCacheInvalidator;
+use App\Services\Cache\OrganizationCache;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\IndustryRegistry;
@@ -140,43 +140,35 @@ class RoleController extends BaseResourceController
 
     public function permissionMatrix(Request $request)
     {
-        // Was ensure() — ran the full 15-step heal cascade on every request
-        // (hundreds of firstOrCreate / insertOrIgnore calls). ensureCached()
-        // wraps it with a 7-day cache keyed by registry version, so warm
-        // requests return in O(1) and the cold boot after a deploy still
-        // runs the full sweep exactly once.
-        PermissionMatrixService::ensureCached();
-
         $gate = app(ErpContext::class)->gateForRequest($request);
         $includeAdmin = $this->includeAdminPermissionsWhenActing($request);
         $profile = (string) ($gate->organization()?->deployment_profile ?? 'wholesale_retail');
         $industry = IndustryRegistry::industryForProfile($profile);
-        $allowedIds = collect(PermissionMatrixService::industryEnabledPermissionIds(
-            $industry,
+        $orgId = (int) ($gate->organization()?->id ?? 0);
+
+        $build = static fn (): array => PermissionMatrixService::uiMatrixPayload(
             $gate,
             $includeAdmin,
-        ))->flip();
+            $industry,
+        );
 
-        $applications = PermissionMatrixService::applicationsGroupedForUi($gate, $includeAdmin, $industry);
-        $groups = PermissionMatrixService::groupedForUi($gate, $includeAdmin, $industry);
+        // Cache per org + capabilities generation so module/section edits invalidate
+        // via CapabilitiesCacheInvalidator → OrganizationCache::invalidateCapabilities.
+        if ($orgId > 0) {
+            $cacheKey = sprintf(
+                'roles_perm_matrix:v2:%s:%s:%d:%d',
+                PermissionMatrixService::registryCacheVersion(),
+                $industry,
+                $includeAdmin ? 1 : 0,
+                OrganizationCache::capabilitiesVersion($orgId),
+            );
 
-        return response()->json([
-            // Keep SQL ORDER BY so `utf8mb4_0900_ai_ci` (accent- and case-insensitive)
-            // collation is used — PHP's sortBy is binary and would reorder names with
-            // accented / mixed-case characters. The catalog is loaded for other fields
-            // in the same response so there is no savings in moving this to PHP.
-            'permissions' => Permission::query()
-                ->orderBy('module')
-                ->orderBy('permission_name')
-                ->get()
-                ->filter(fn (Permission $permission) => $allowedIds->has((int) $permission->id))
-                ->values(),
-            'applications' => $applications,
-            'groups' => $groups,
-            'modules' => PermissionMatrixService::modules(),
-            'actions' => PermissionMatrixService::actions(),
-            'industry' => $industry,
-        ]);
+            return response()->json(
+                OrganizationCache::remember($orgId, $cacheKey, 600, $build),
+            );
+        }
+
+        return response()->json($build());
     }
 
     /** Platform acting-as runs when Administration is off — still show admin.* in the matrix. */
@@ -236,25 +228,17 @@ class RoleController extends BaseResourceController
         bool $includeAdminWhenDisabled = false,
         ?string $industry = null,
     ): array {
+        // Return raw grants. Filtering through industryEnabledPermissionIds rebuilt the
+        // full applications tree on every role click (~Roles page lag). The matrix UI only
+        // renders visible cells; syncPermissions still strips / preserves out-of-matrix ids.
+        unset($gate, $includeAdminWhenDisabled, $industry);
+
         $permissionIds = DB::table('role_permissions')
             ->where('role_id', $role->id)
             ->pluck('permission_id')
             ->map(fn ($v) => (int) $v)
             ->values()
             ->all();
-
-        if ($gate !== null) {
-            $industry ??= $this->industryForRequest($gate);
-            $allowed = array_flip(PermissionMatrixService::industryEnabledPermissionIds(
-                $industry,
-                $gate,
-                $includeAdminWhenDisabled,
-            ));
-            $permissionIds = array_values(array_filter(
-                $permissionIds,
-                fn (int $id) => isset($allowed[$id]),
-            ));
-        }
 
         return [
             'role_id' => (int) $role->id,
