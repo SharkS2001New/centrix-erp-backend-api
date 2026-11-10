@@ -3,9 +3,12 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\GenerateMarketingPortfolioJob;
 use App\Models\PlatformMarketingPortfolio;
+use App\Services\Background\BackgroundTaskService;
 use App\Services\Platform\PlatformMarketingPortfolioService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 
@@ -13,6 +16,7 @@ class PlatformMarketingPortfolioController extends Controller
 {
     public function __construct(
         protected PlatformMarketingPortfolioService $portfolios,
+        protected BackgroundTaskService $tasks,
     ) {}
 
     public function meta()
@@ -97,6 +101,8 @@ class PlatformMarketingPortfolioController extends Controller
         $data = $request->validate([
             'instruction' => 'nullable|string|max:4000',
             'save_brief_first' => 'sometimes|boolean',
+            // Default async — full AI portfolio copy often takes 20–60s and trips proxies if inline.
+            'async' => 'sometimes|boolean',
         ]);
 
         if (! empty($data['save_brief_first'])) {
@@ -104,7 +110,28 @@ class PlatformMarketingPortfolioController extends Controller
             $platform_marketing_portfolio = $this->portfolios->update($platform_marketing_portfolio, $brief);
         }
 
+        $preferAsync = array_key_exists('async', $data) ? (bool) $data['async'] : true;
+        if ($preferAsync && Schema::hasTable('background_tasks')) {
+            try {
+                $task = $this->tasks->create('marketing_portfolio_generate', $request->user(), [
+                    'portfolio_id' => $platform_marketing_portfolio->id,
+                    'mode' => 'full',
+                    'instruction' => $data['instruction'] ?? null,
+                ]);
+                $this->tasks->dispatch(GenerateMarketingPortfolioJob::class, $task);
+
+                return response()->json([
+                    'message' => 'Portfolio generation queued.',
+                    'task_id' => $task->id,
+                    'queued' => true,
+                ], 202);
+            } catch (\Throwable $e) {
+                report($e);
+            }
+        }
+
         try {
+            @set_time_limit(180);
             $portfolio = $this->portfolios->generate(
                 $platform_marketing_portfolio,
                 $data['instruction'] ?? null,
@@ -124,9 +151,32 @@ class PlatformMarketingPortfolioController extends Controller
         $data = $request->validate([
             'section_key' => ['required', 'string', Rule::in(config('marketing_portfolio.section_keys', []))],
             'instruction' => 'nullable|string|max:2000',
+            'async' => 'sometimes|boolean',
         ]);
 
+        $preferAsync = array_key_exists('async', $data) ? (bool) $data['async'] : true;
+        if ($preferAsync && Schema::hasTable('background_tasks')) {
+            try {
+                $task = $this->tasks->create('marketing_portfolio_generate', $request->user(), [
+                    'portfolio_id' => $platform_marketing_portfolio->id,
+                    'mode' => 'section',
+                    'section_key' => $data['section_key'],
+                    'instruction' => $data['instruction'] ?? null,
+                ]);
+                $this->tasks->dispatch(GenerateMarketingPortfolioJob::class, $task);
+
+                return response()->json([
+                    'message' => 'Section regenerate queued.',
+                    'task_id' => $task->id,
+                    'queued' => true,
+                ], 202);
+            } catch (\Throwable $e) {
+                report($e);
+            }
+        }
+
         try {
+            @set_time_limit(120);
             $portfolio = $this->portfolios->regenerateSection(
                 $platform_marketing_portfolio,
                 $data['section_key'],

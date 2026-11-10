@@ -247,4 +247,34 @@ class PlatformMarketingPortfolioTest extends TestCase
             strtolower(implode(' ', array_column($sections, 'body'))),
         );
     }
+
+    public function test_generate_queues_background_task_by_default(): void
+    {
+        \Illuminate\Support\Facades\Queue::fake();
+        Sanctum::actingAs($this->superAdmin);
+
+        $create = $this->postJson('/api/v1/admin/platform-marketing-portfolios', [
+            'prospect_name' => 'Speed Test Shop',
+            'vertical' => 'small_shop',
+        ])->assertCreated();
+
+        $id = (int) $create->json('data.id');
+
+        $this->postJson("/api/v1/admin/platform-marketing-portfolios/{$id}/generate", [
+            'instruction' => 'Keep it short for Nairobi retail SMEs.',
+        ])
+            ->assertStatus(202)
+            ->assertJsonPath('queued', true)
+            ->assertJsonStructure(['task_id', 'message']);
+
+        \Illuminate\Support\Facades\Queue::assertPushed(\App\Jobs\GenerateMarketingPortfolioJob::class);
+
+        // Explicit sync still available for tests / fallbacks.
+        $this->postJson("/api/v1/admin/platform-marketing-portfolios/{$id}/generate", [
+            'async' => false,
+            'instruction' => 'Sync path brief.',
+        ])->assertOk()
+            ->assertJsonPath('message', 'Portfolio generated.')
+            ->assertJsonStructure(['data' => ['id', 'sections']]);
+    }
 }

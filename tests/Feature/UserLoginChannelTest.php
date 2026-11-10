@@ -249,7 +249,7 @@ class UserLoginChannelTest extends TestCase
             'is_admin' => false,
         ]);
 
-        $this->postJson('/api/v1/auth/login', [
+        $login = $this->postJson('/api/v1/auth/login', [
             'company_code' => 'DEMO',
             'username' => $user->username,
             'password' => 'password',
@@ -257,6 +257,31 @@ class UserLoginChannelTest extends TestCase
             'login_channel' => 'centrix_as_mobile',
             'force_logout' => true,
         ])->assertOk();
+
+        $token = $login->json('token');
+        $this->assertNotEmpty($token);
+        $this->assertSame('centrix_as_mobile', $login->json('login_channel'));
+
+        // Soft-allow login must not 403 every CentrixAsMobile page afterward.
+        $this->withToken($token)
+            ->getJson('/api/v1/products?per_page=5')
+            ->assertOk();
+
+        $this->withToken($token)
+            ->getJson('/api/v1/suppliers?per_page=5')
+            ->assertOk();
+
+        $this->withToken($token)
+            ->getJson('/api/v1/hospitality/pos/catalog')
+            ->assertSuccessful();
+
+        $this->withToken($token)
+            ->getJson('/api/v1/hospitality/checks')
+            ->assertSuccessful();
+
+        $this->withToken($token)
+            ->getJson('/api/v1/stock-take-sessions')
+            ->assertSuccessful();
     }
 
     public function test_as_mobile_client_remaps_legacy_mobile_channel_to_centrix_as_mobile(): void

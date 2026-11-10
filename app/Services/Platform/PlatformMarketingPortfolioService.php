@@ -2,6 +2,7 @@
 
 namespace App\Services\Platform;
 
+use App\Exceptions\Ai\AiProviderException;
 use App\Models\PlatformMarketingPortfolio;
 use App\Models\User;
 use App\Services\Ai\AiProviderFactory;
@@ -533,6 +534,7 @@ Rules:
 - If extra_instruction is set, treat it as the primary creative brief (even when other fields are empty). Shape the whole portfolio around that instruction.
 - Address the prospect by name when a real name is given; otherwise say "your business" / the vertical label.
 - Be specific to their vertical and pain points (or the instruction).
+- Keep each body to 2–4 short sentences (or one tight paragraph). Prefer 3–5 bullets max where bullets are used.
 - image_key must be one of: hero_retail, hero_supermarket, hero_hotel, hero_spa, hero_distribution, ill_pos, ill_stock, ill_finance, ill_hr, ill_manager, ill_hotel, ill_spa.
 - No markdown fences. JSON only.
 PROMPT;
@@ -580,13 +582,19 @@ PROMPT;
         $system = 'You are Centrix marketing copywriter. Return valid JSON only.';
 
         try {
+            // Cap output — 7 concise sections finish faster than an oversized token budget.
+            $maxOut = max(
+                1800,
+                min(2800, (int) config('marketing_portfolio.max_output_tokens', 2400)),
+            );
+
             $turn = $this->providers->make($runtime)->chat([
                 'system' => $system,
                 'messages' => [
                     ['role' => 'user', 'content' => $userPrompt],
                 ],
-                'temperature' => 0.45,
-                'max_output_tokens' => max(3500, (int) config('ai.defaults.max_output_tokens', 2048)),
+                'temperature' => 0.4,
+                'max_output_tokens' => $maxOut,
             ]);
 
             return trim((string) ($turn['text'] ?? ''));

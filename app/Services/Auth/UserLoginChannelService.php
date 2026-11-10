@@ -273,6 +273,13 @@ class UserLoginChannelService
             return $salesOk;
         }
 
+        // Platform Admin hotel / setup customization — hide disabled CentrixAsMobile tiles at the API too.
+        $homeOk = app(MobileAppModuleAccessService::class)
+            ->homeModuleAccessibleFromCapabilities($modules, $path);
+        if ($homeOk === false) {
+            return false;
+        }
+
         $salesOnlyPrefixes = [
             'sales/carts',
             'sales/customers',
@@ -465,6 +472,8 @@ class UserLoginChannelService
 
         $prefixes = [
             'mobile/',
+            // AS Orders + carts (SaleController apiResource uses bare `sales`).
+            'sales',
             'sales/carts',
             'sales/customers',
             'sales/orders',
@@ -476,13 +485,18 @@ class UserLoginChannelService
             'branches',
             'customers',
             'products',
+            'categories',
+            'sub-categories',
             'payment-methods',
             'loyalty-cards',
             'inventory/availability',
             // AS shop purchases / stock reconciliation.
             'inventory/receive',
             'inventory/adjust',
+            'inventory/stock-take',
             'stock-receipts',
+            'stock-take-sessions',
+            'stock-take-lines',
             'current-stock',
             'routes',
             'uoms',
@@ -500,20 +514,27 @@ class UserLoginChannelService
             // AS shop expenses (fallback when no open till session).
             'expenses',
             'expense-groups',
-            // Hotel & Bar POS (checks, catalog, tables, room charge folios).
+            // Hotel & Bar POS + Past Checks + Folio Pay (not front-desk / rooms / settings).
             'hospitality/pos',
             'hospitality/floor-tables',
-            'hospitality/folios/open',
+            'hospitality/outlets',
+            'hospitality/checks',
+            'hospitality/folios',
+            'hospitality/reports',
         ];
 
         return $this->pathMatchesAny($path, $prefixes);
     }
 
     /**
-     * Narrow sales analytics for AS / sales mobile — not the full manager reports suite.
+     * Narrow sales / hospitality analytics for AS mobile — not the full manager reports suite.
      */
     protected function isMobileAllowedSalesReportPath(string $path): bool
     {
+        if (str_starts_with($path, 'reports/hospitality-')) {
+            return true;
+        }
+
         return in_array($path, [
             'reports/sales-by-supplier',
             'reports/sales-by-product',
