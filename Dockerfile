@@ -135,7 +135,6 @@ RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-av
 # stderr + JSON so cluster log scrapers can ship Laravel logs to Loki/Grafana.
 ENV LOG_CHANNEL=stderr
 ENV LOG_LEVEL=info
-ENV LOG_STDERR_FORMATTER=Monolog\Formatter\JsonFormatter
 ENV REDIS_CLIENT=phpredis
 ENV CACHE_STORE=redis
 ENV SESSION_DRIVER=redis
