@@ -708,8 +708,9 @@ class CreditNoteService
             || ! $this->kraResponseIsCreditNoteDocument($attemptRow))) {
             throw new InvalidArgumentException('KRA credit attempt does not belong to this sale.');
         }
+        // Idempotent: network drop after device success often retries here.
         if ($attemptRow?->status === 'success') {
-            throw new InvalidArgumentException('This KRA credit note has already succeeded.');
+            return $attemptRow;
         }
 
         $relevantInvoice = $source
@@ -720,10 +721,9 @@ class CreditNoteService
             throw new InvalidArgumentException('Original sale has no KRA invoice number to credit.');
         }
 
-        if ($this->saleAlreadyHasSuccessfulFiscalCredit($sale, $relevantInvoice)) {
-            throw new InvalidArgumentException(
-                'This sale already has a successful KRA credit note for that invoice.',
-            );
+        $existingCredit = $this->findSuccessfulFiscalCredit($sale, $relevantInvoice);
+        if ($existingCredit) {
+            return $existingCredit;
         }
 
         $reasonCode = KraRefundReasonMapper::normalizeCode($refundReasonCode)
@@ -851,9 +851,42 @@ class CreditNoteService
         return '';
     }
 
-    protected function saleAlreadyHasSuccessfulFiscalCredit(Sale $sale, string $relevantInvoice): bool
+    /**
+     * Sale IDs that already have a successful KRA credit note (any source).
+     * Used by KRA receipts list to hide "Credit This Sale".
+     *
+     * @param  list<int|string>  $saleIds
+     * @return list<int>
+     */
+    public function saleIdsWithSuccessfulFiscalCredit(array $saleIds): array
     {
-        return $this->findSuccessfulFiscalCredit($sale, $relevantInvoice) !== null;
+        $ids = array_values(array_unique(array_filter(array_map(
+            static fn ($id) => (int) $id,
+            $saleIds,
+        ), static fn (int $id) => $id > 0)));
+
+        if ($ids === []) {
+            return [];
+        }
+
+        $rows = KraResponse::query()
+            ->whereIn('sale_id', $ids)
+            ->where('status', 'success')
+            ->orderByDesc('id')
+            ->get(['id', 'sale_id', 'response_payload', 'request_payload']);
+
+        $credited = [];
+        foreach ($rows as $row) {
+            $saleId = (int) $row->sale_id;
+            if (isset($credited[$saleId])) {
+                continue;
+            }
+            if ($this->kraResponseIsCreditNoteDocument($row)) {
+                $credited[$saleId] = true;
+            }
+        }
+
+        return array_map('intval', array_keys($credited));
     }
 
     protected function findSuccessfulFiscalCredit(?Sale $sale, string $relevantInvoice): ?KraResponse

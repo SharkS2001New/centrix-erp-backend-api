@@ -692,6 +692,7 @@ class OrganizationPlatformConfigService
             ],
             'require_pos_till_float' => false,
             'enable_pos_cash_rounding' => false,
+            'pos_touch_search_keypad' => true,
             'receipt_show_all_payment_methods' => true,
             'external_pos_layout' => 'modern',
             'backoffice_product_search_mode' => 'indexeddb',
@@ -826,6 +827,7 @@ class OrganizationPlatformConfigService
             ),
             'require_pos_till_float' => (bool) ($sales['require_pos_till_float'] ?? false),
             'enable_pos_cash_rounding' => PosCashRoundingSettings::enabled($sales, $customSales),
+            'pos_touch_search_keypad' => ($sales['pos_touch_search_keypad'] ?? true) !== false,
             'receipt_show_all_payment_methods' => (bool) ($sales['receipt_show_all_payment_methods'] ?? true),
             'require_backoffice_till_float' => (bool) ($sales['require_backoffice_till_float'] ?? false),
             'external_pos_layout' => in_array(($sales['external_pos_layout'] ?? 'modern'), ['modern', 'classic'], true)

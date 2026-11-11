@@ -424,9 +424,54 @@ class CustomerReturnService
      */
     public function approvePosEditVoid(Sale $sale, User $user, CapabilityGate $gate): void
     {
+        $this->approveFiscalVoidWithoutRestock(
+            $sale,
+            $user,
+            $gate,
+            returnKind: 'pos_edit',
+            reason: 'POS order edit void',
+            notes: 'Automatic fiscal void before POS order edit.',
+            attemptKraInline: true,
+        );
+    }
+
+    /**
+     * Fiscal void when a KRA-fiscalized order is cancelled: Centrix return + KRA credit note.
+     * Stock was already restored by SaleCancellationService — do not restock again.
+     */
+    public function approveOrderCancelVoid(Sale $sale, User $user, CapabilityGate $gate): void
+    {
+        if (! $this->saleHasSuccessfulKraSaleDocument($sale)) {
+            return;
+        }
+
+        $this->approveFiscalVoidWithoutRestock(
+            $sale,
+            $user,
+            $gate,
+            returnKind: 'order_cancel',
+            reason: 'Order cancelled',
+            notes: 'Automatic fiscal credit after order cancellation.',
+            attemptKraInline: false,
+        );
+    }
+
+    /**
+     * Create an approved fiscal-only return + credit note (no inventory movement).
+     */
+    protected function approveFiscalVoidWithoutRestock(
+        Sale $sale,
+        User $user,
+        CapabilityGate $gate,
+        string $returnKind,
+        string $reason,
+        string $notes,
+        bool $attemptKraInline,
+    ): void {
+        $fiscalKinds = ['pos_edit', 'order_cancel'];
         if (CustomerReturn::query()
             ->where('sale_id', $sale->id)
-            ->where('return_kind', 'pos_edit')
+            ->whereIn('return_kind', $fiscalKinds)
             ->where('status', 'approved')
             ->exists()) {
             return;
@@ -466,14 +511,27 @@ class CustomerReturnService
         }
 
         $total = round(array_sum(array_column($linePayloads, 'amount')), 2);
+        $creditNoteId = null;
 
-        DB::transaction(function () use ($user, $sale, $linePayloads, $total, $finance) {
+        DB::transaction(function () use (
+            $user,
+            $sale,
+            $linePayloads,
+            $total,
+            $finance,
+            $returnKind,
+            $reason,
+            $notes,
+            $fiscalKinds,
+            $attemptKraInline,
+            &$creditNoteId,
+        ) {
             // Serialize concurrent background void + checkout safety-net void.
             Sale::query()->whereKey($sale->id)->lockForUpdate()->first();
 
             if (CustomerReturn::query()
                 ->where('sale_id', $sale->id)
-                ->where('return_kind', 'pos_edit')
+                ->whereIn('return_kind', $fiscalKinds)
                 ->where('status', 'approved')
                 ->exists()) {
                 return;
@@ -489,24 +547,49 @@ class CustomerReturnService
                 'customer_num' => $sale->customer_num,
                 'return_date' => now()->toDateString(),
                 'refund_method' => $sale->payment_method_code ?: 'CASH',
-                'reason' => 'POS order edit void',
-                'notes' => 'Automatic fiscal void before POS order edit.',
+                'reason' => $reason,
+                'notes' => $notes,
                 'status' => 'approved',
                 'total_amount' => $total,
                 'stock_location' => $this->inferDefaultReturnStockLocation((int) $sale->id, $user, $linePayloads),
                 'returned_by' => $user->id,
                 'approved_by' => $user->id,
                 'approved_at' => now(),
-                'return_kind' => 'pos_edit',
+                'return_kind' => $returnKind,
             ]);
 
             $this->syncLines($return, $linePayloads);
             $return = $return->fresh(['lines', 'sale', 'customer']);
             $creditNote = $this->creditNoteService->createForReturn($return, $user, $finance, deferKra: true);
-            // Already running afterResponse for POS edit — attempt KRA here (no second hop).
             if ((string) ($creditNote->kra_status ?? '') === 'pending') {
-                $this->creditNoteService->attemptKraForCreditNote($creditNote);
+                if ($attemptKraInline) {
+                    // Already running afterResponse for POS edit — attempt KRA here (no second hop).
+                    $this->creditNoteService->attemptKraForCreditNote($creditNote);
+                } else {
+                    $creditNoteId = (int) $creditNote->id;
+                }
             }
+        });
+
+        if ($creditNoteId) {
+            \App\Jobs\FinalizeReturnKraCreditJob::dispatch($creditNoteId)->afterResponse();
+        }
+    }
+
+    /** True when the sale has a successful KRA sale document (not a credit note). */
+    public function saleHasSuccessfulKraSaleDocument(Sale $sale): bool
+    {
+        $rows = \App\Models\KraResponse::query()
+            ->where('sale_id', $sale->id)
+            ->where('status', 'success')
+            ->orderByDesc('id')
+            ->limit(8)
+            ->get(['id', 'response_payload']);
+
+        return $rows->contains(function (\App\Models\KraResponse $kra): bool {
+            $docType = strtolower(trim((string) (($kra->response_payload ?? [])['document_type'] ?? '')));
+
+            return $docType !== 'credit_note';
         });
     }
 
@@ -1055,7 +1138,7 @@ class CustomerReturnService
             // Fiscal / credit-only kinds do not restock and must not reduce returnable qty.
             ->where(function ($q) {
                 $q->whereNull('customer_returns.return_kind')
-                    ->orWhereNotIn('customer_returns.return_kind', ['pos_edit', 'credit_note']);
+                    ->orWhereNotIn('customer_returns.return_kind', ['pos_edit', 'order_cancel', 'credit_note']);
             });
 
         if ($excludeReturnId) {
@@ -1328,7 +1411,7 @@ class CustomerReturnService
             // POS edit KRA voids and credit notes do not restock — exclude from qty caps.
             ->where(function ($q) {
                 $q->whereNull('customer_returns.return_kind')
-                    ->orWhereNotIn('customer_returns.return_kind', ['pos_edit', 'credit_note']);
+                    ->orWhereNotIn('customer_returns.return_kind', ['pos_edit', 'order_cancel', 'credit_note']);
             });
 
         if ($excludeReturnId) {

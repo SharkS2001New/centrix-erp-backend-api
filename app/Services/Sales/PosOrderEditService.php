@@ -3,7 +3,6 @@
 namespace App\Services\Sales;
 
 use App\Models\CustomerReturn;
-use App\Models\KraResponse;
 use App\Models\Sale;
 use App\Models\User;
 use App\Services\Auth\UserPermissionService;
@@ -181,10 +180,10 @@ class PosOrderEditService
             return false;
         }
 
-        // Already voided for a prior restore attempt — skip KRA/device round-trip.
+        // Already voided for a prior restore / cancel — skip KRA/device round-trip.
         if (CustomerReturn::query()
             ->where('sale_id', $sale->id)
-            ->where('return_kind', 'pos_edit')
+            ->whereIn('return_kind', ['pos_edit', 'order_cancel'])
             ->where('status', 'approved')
             ->exists()) {
             return false;
@@ -195,18 +194,6 @@ class PosOrderEditService
 
     public function saleHasSuccessfulKraResponse(Sale $sale): bool
     {
-        // Recent successes only — avoid loading every historical kra_responses row.
-        $rows = KraResponse::query()
-            ->where('sale_id', $sale->id)
-            ->where('status', 'success')
-            ->orderByDesc('id')
-            ->limit(8)
-            ->get(['id', 'response_payload']);
-
-        return $rows->contains(function (KraResponse $kra): bool {
-            $docType = strtolower(trim((string) (($kra->response_payload ?? [])['document_type'] ?? '')));
-
-            return $docType !== 'credit_note';
-        });
+        return app(CustomerReturnService::class)->saleHasSuccessfulKraSaleDocument($sale);
     }
 }

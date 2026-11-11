@@ -779,6 +779,8 @@ class KraOperationsController extends Controller
 
         $finance = $this->erp->gateForRequest($request)->moduleSettings('finance');
 
+        $credits = app(CreditNoteService::class);
+
         $pendingCredit = KraResponse::query()
             ->where('sale_id', $sale->id)
             ->whereIn('status', ['pending', 'failed'])
@@ -788,8 +790,10 @@ class KraOperationsController extends Controller
             ->orderByDesc('id')
             ->first();
 
+        $existingSuccessIds = array_flip($credits->saleIdsWithSuccessfulFiscalCredit([(int) $sale->id]));
+
         try {
-            $credited = app(CreditNoteService::class)->fiscalCreditSaleOnly(
+            $credited = $credits->fiscalCreditSaleOnly(
                 $sale,
                 $request->user(),
                 $finance,
@@ -818,9 +822,14 @@ class KraOperationsController extends Controller
             ], 202);
         }
 
+        $alreadyCredited = isset($existingSuccessIds[(int) $sale->id]);
+
         return response()->json([
-            'message' => 'KRA credit note submitted successfully. Centrix sale was not changed.',
+            'message' => $alreadyCredited
+                ? 'This sale already has a successful KRA credit note. Centrix sale was not changed.'
+                : 'KRA credit note submitted successfully. Centrix sale was not changed.',
+            'already_credited' => $alreadyCredited,
             'kra_response' => $credited,
-        ], 201);
+        ], $alreadyCredited ? 200 : 201);
     }
 }

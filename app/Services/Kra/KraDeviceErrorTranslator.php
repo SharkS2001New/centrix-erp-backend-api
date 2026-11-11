@@ -82,7 +82,7 @@ final class KraDeviceErrorTranslator
         $haystack = trim($translated['technical_message'].' '.$translated['message']);
 
         return $haystack !== '' && (bool) preg_match(
-            '/did not respond|not respond in time|Could not reach|Comstore is not|Comstore not reachable|has not checked in|has never checked in|timed out|Connection refused|cURL error|aborted without|not online|not available|unavailable|Start Comstore|fiscal unavailable|Device offline/i',
+            '/did not respond|not respond in time|Could not reach|Comstore is not|Comstore not reachable|has not checked in|has never checked in|timed out|Connection refused|cURL error|aborted without|operation was cancel+ed|not online|not available|unavailable|Start Comstore|fiscal unavailable|Device offline/i',
             $haystack,
         );
     }

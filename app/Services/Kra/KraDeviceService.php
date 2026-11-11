@@ -905,6 +905,16 @@ class KraDeviceService
         $productCode = trim((string) ($item['product_code'] ?? ''));
         $saleQty = self::formatWorkflowSaleQty($quantity);
         $wireQuantity = (float) $saleQty;
+        $salePrice = self::formatWorkflowSalePrice($amount, $wireQuantity);
+        $exactProduct = ((float) $salePrice) * $wireQuantity;
+
+        // Comstore Code 322: SalePrice × SaleQty must equal SaleAmount. When no unit
+        // price reconciles (common on credit notes with fractional return qty), collapse
+        // to qty 1 so price = amount exactly.
+        if (abs($exactProduct - $amount) >= 0.01) {
+            $saleQty = '1';
+            $salePrice = number_format($amount, 2, '.', '');
+        }
 
         return [
             'item_Name' => self::sanitizeComstorePluName($itemName !== '' ? $itemName : 'Product'),
@@ -912,7 +922,7 @@ class KraDeviceService
             // Centrix matching against device SKU / "NO FIND PLU DATA for item …".
             'Barcode' => '',
             'product_code' => $productCode,
-            'SalePrice' => self::formatWorkflowSalePrice($amount, $wireQuantity),
+            'SalePrice' => $salePrice,
             'SaleQty' => $saleQty,
             'SaleAmount' => number_format($amount, 2, '.', ''),
             'ItemDisCount(%)' => '0',

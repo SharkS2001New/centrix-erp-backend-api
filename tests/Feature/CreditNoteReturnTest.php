@@ -485,6 +485,85 @@ class CreditNoteReturnTest extends TestCase
         $this->assertSame((int) $sale->id, (int) Sale::query()->findOrFail($sale->id)->id);
     }
 
+    public function test_fiscal_only_credit_retry_is_idempotent_when_already_succeeded(): void
+    {
+        $org = Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['finance'] = array_merge($settings['finance'] ?? [], [
+            'enable_kra_device' => true,
+            'kra_device_ip' => 'http://192.168.1.50:8010',
+            'kra_serial_number' => 'DEJA02220240050',
+            'kra_pin_number' => 'P052177271G',
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        Http::fake([
+            '192.168.1.50:8010/*' => Http::response([
+                'success' => false,
+                'message' => 'Device should not be called when sale already credited',
+            ], 200),
+        ]);
+
+        $product = Product::firstOrFail();
+        $sale = Sale::query()->firstOrFail();
+        $sale->update(['status' => 'completed', 'order_total' => 200, 'amount_paid' => 200, 'payment_status' => 'paid']);
+        SaleItem::query()->updateOrInsert(
+            ['sale_id' => $sale->id, 'product_code' => $product->product_code],
+            [
+                'line_no' => 1,
+                'quantity' => 2,
+                'selling_price' => 100,
+                'amount' => 200,
+                'product_vat' => 0,
+                'discount_given' => 0,
+            ],
+        );
+
+        $source = KraResponse::query()->create([
+            'sale_id' => $sale->id,
+            'organization_id' => (int) $sale->organization_id,
+            'order_no' => $sale->order_num ?? 90001,
+            'invoice_number' => 'CU-ORIG-IDEMP',
+            'status' => 'success',
+            'response_payload' => [
+                'document_type' => 'sale',
+                'cu_inv_no' => '00005679',
+                'invoice_number' => 'CU-ORIG-IDEMP',
+            ],
+        ]);
+
+        $existingCredit = KraResponse::query()->create([
+            'sale_id' => $sale->id,
+            'organization_id' => (int) $sale->organization_id,
+            'order_no' => $sale->order_num ?? 90001,
+            'invoice_number' => 'CU-CREDIT-IDEMP',
+            'status' => 'success',
+            'response_payload' => [
+                'document_type' => 'credit_note',
+                'source' => 'kra_invoice_credit',
+                'relevant_invoice_number' => '5679',
+                'source_kra_response_id' => $source->id,
+                'cu_inv_no' => '00009999',
+                'invoice_number' => 'CU-CREDIT-IDEMP',
+            ],
+        ]);
+
+        $this->postJson("/api/v1/kra-responses/{$source->id}/credit", [
+            'refund_reason_code' => '06',
+        ])
+            ->assertOk()
+            ->assertJsonPath('already_credited', true)
+            ->assertJsonPath('kra_response.id', $existingCredit->id);
+
+        $this->assertSame(1, KraResponse::query()
+            ->where('sale_id', $sale->id)
+            ->where('response_payload->source', 'kra_invoice_credit')
+            ->where('status', 'success')
+            ->count());
+
+        Http::assertNothingSent();
+    }
+
     public function test_approve_return_soft_approves_when_kra_unavailable_and_queues_credit(): void
     {
         $org = Organization::findOrFail($this->user->organization_id);

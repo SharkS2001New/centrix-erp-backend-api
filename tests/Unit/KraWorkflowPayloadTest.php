@@ -115,6 +115,20 @@ class KraWorkflowPayloadTest extends TestCase
         $this->assertEqualsWithDelta(1592.5, (float) $line['SalePrice'] * 12.5, 0.0001);
     }
 
+    public function test_workflow_plu_line_collapses_to_qty_one_when_price_off_by_a_cent(): void
+    {
+        // Force a 1-cent gap so Comstore Code 322 would fire without collapsing.
+        $line = KraDeviceService::buildWorkflowPluLine([
+            'product_name' => 'Odd pack',
+            'product_code' => 'ODD',
+            'quantity' => 3,
+            'amount' => 10.00,
+        ]);
+        // 10/3 has no exact 2/4dp unit price; product lands ~9.9999 or we collapse to qty 1.
+        $product = round(((float) $line['SalePrice']) * ((float) $line['SaleQty']), 2);
+        $this->assertEqualsWithDelta((float) $line['SaleAmount'], $product, 0.01);
+    }
+
     public function test_workflow_adds_tender_shortfall_to_cash_without_changing_other_tenders(): void
     {
         $sign = $this->buildWorkflowPayloadWithTenders([

@@ -16,6 +16,7 @@ use App\Services\Erp\OrderWorkflowService;
 use App\Services\Audit\AuditLogger;
 use App\Services\Notifications\ActionRequestService;
 use App\Support\DeadlockSafe;
+use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 
 class SaleCancellationService
@@ -87,7 +88,26 @@ class SaleCancellationService
             );
         });
 
-        return $sale->fresh();
+        $fresh = $sale->fresh();
+        $this->queueKraCreditForCancelledSale($fresh, $user, $gate);
+
+        return $fresh;
+    }
+
+    /**
+     * When the cancelled sale was fiscalized on KRA, create a Centrix return + credit note
+     * so Comstore gets a matching credit (stock already restored above).
+     */
+    protected function queueKraCreditForCancelledSale(Sale $sale, User $user, CapabilityGate $gate): void
+    {
+        try {
+            app(CustomerReturnService::class)->approveOrderCancelVoid($sale, $user, $gate);
+        } catch (\Throwable $e) {
+            Log::warning('Failed to queue KRA credit after order cancel', [
+                'sale_id' => $sale->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     public function cancellationApprovalEnabled(CapabilityGate $gate): bool

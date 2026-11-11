@@ -609,7 +609,7 @@ return [
             'mobile_sheets_default_days' => 5,
             'require_pos_till_float' => false,
             'enable_pos_cash_rounding' => false,
-            'pos_touch_search_keypad' => false,
+            'pos_touch_search_keypad' => true,
             'external_pos_layout' => 'modern',
             'backoffice_product_search_mode' => 'indexeddb',
             'backoffice_order_edit_layout' => 'modern',

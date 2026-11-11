@@ -275,4 +275,35 @@ class OrganizationPlatformConfigServiceTest extends TestCase
         $this->assertFalse($config['pos_combine_identical_lines']);
         $this->assertFalse($config['receipt_show_all_payment_methods']);
     }
+
+    public function test_sales_platform_config_exposes_pos_touch_search_keypad_default_on(): void
+    {
+        $service = app(OrganizationPlatformConfigService::class);
+
+        $this->assertTrue($service->defaultSalesPlatformConfig()['pos_touch_search_keypad']);
+        $this->assertContains('pos_touch_search_keypad', $service->platformControlledSalesKeys());
+
+        $defaultOrg = new Organization([
+            'enabled_modules' => ['sales.pos' => true],
+            'module_settings' => [
+                'sales' => config('erp.module_settings_defaults.sales'),
+            ],
+        ]);
+        $this->assertTrue(
+            $service->salesPlatformConfigForOrganization($defaultOrg)['pos_touch_search_keypad'],
+        );
+
+        $offOrg = new Organization([
+            'enabled_modules' => ['sales.pos' => true],
+            'module_settings' => [
+                'sales' => array_merge(
+                    config('erp.module_settings_defaults.sales'),
+                    ['pos_touch_search_keypad' => false],
+                ),
+            ],
+        ]);
+        $this->assertFalse(
+            $service->salesPlatformConfigForOrganization($offOrg)['pos_touch_search_keypad'],
+        );
+    }
 }

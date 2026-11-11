@@ -10,6 +10,7 @@ use App\Models\LpoMst;
 use App\Models\Organization;
 use App\Models\Uom;
 use App\Models\User;
+use App\Services\Sales\CreditNoteService;
 use App\Services\Accounting\CustomerInvoiceService;
 use App\Services\Auth\UserAccessService;
 use App\Services\Cache\OrganizationCache;
@@ -2760,7 +2761,7 @@ class ReportController extends Controller
             'organization_id',
         ];
 
-        return response()->json($this->reportFromView(
+        $payload = $this->reportFromView(
             'v_kra_receipts_replay',
             $this->filters($request),
             [
@@ -2788,7 +2789,45 @@ class ReportController extends Controller
                 // Prefer timestamp range so (organization_id, created_at) can be used.
                 'prefer_timestamp_date_column' => 'receipt_at',
             ],
-        ));
+        );
+
+        return response()->json($this->annotateKraReceiptsAlreadyCredited($payload));
+    }
+
+    /**
+     * Flag original invoice rows whose sale already has a successful KRA credit note.
+     *
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    protected function annotateKraReceiptsAlreadyCredited(array $payload): array
+    {
+        $data = $payload['data'] ?? null;
+        if (! is_array($data) || $data === []) {
+            return $payload;
+        }
+
+        $saleIds = [];
+        foreach ($data as $row) {
+            $saleId = (int) (is_array($row)
+                ? ($row['sale_id'] ?? 0)
+                : (is_object($row) ? ($row->sale_id ?? 0) : 0));
+            if ($saleId > 0) {
+                $saleIds[] = $saleId;
+            }
+        }
+
+        $credited = array_flip(app(CreditNoteService::class)->saleIdsWithSuccessfulFiscalCredit($saleIds));
+
+        $payload['data'] = array_map(static function ($row) use ($credited) {
+            $arr = is_array($row) ? $row : (array) $row;
+            $saleId = (int) ($arr['sale_id'] ?? 0);
+            $arr['already_credited'] = $saleId > 0 && isset($credited[$saleId]);
+
+            return $arr;
+        }, $data);
+
+        return $payload;
     }
 
     public function kraComplianceSummary(Request $request)
