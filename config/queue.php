@@ -83,6 +83,8 @@ return [
         'driver' => env('QUEUE_FAILED_DRIVER', 'database-uuids'),
         'database' => env('DB_CONNECTION', 'sqlite'),
         'table' => 'failed_jobs',
+        // ERP Speed "Clear failed" only targets rows older than this (matches nightly prune).
+        'clear_after_days' => max(1, (int) env('QUEUE_FAILED_CLEAR_AFTER_DAYS', 30)),
     ],
 
 ];

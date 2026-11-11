@@ -120,8 +120,11 @@ class PlatformSpeedTest extends TestCase
         $this->getJson('/api/v1/admin/platform-speed/failed-jobs')
             ->assertOk()
             ->assertJsonPath('total', 1)
+            ->assertJsonPath('old_count', 0)
+            ->assertJsonPath('clear_after_days', 30)
             ->assertJsonPath('data.0.display_name', 'App\\Jobs\\ExampleJob')
-            ->assertJsonPath('data.0.exception', "RuntimeException: Test queue failure\n#0 /app/Jobs/ExampleJob.php(20): run()");
+            ->assertJsonPath('data.0.exception', "RuntimeException: Test queue failure\n#0 /app/Jobs/ExampleJob.php(20): run()")
+            ->assertJsonPath('data.0.is_old', false);
     }
 
     public function test_non_super_admin_cannot_read_failed_queue_job_exceptions(): void
@@ -129,5 +132,62 @@ class PlatformSpeedTest extends TestCase
         Sanctum::actingAs(User::where('username', 'admin')->firstOrFail());
 
         $this->getJson('/api/v1/admin/platform-speed/failed-jobs')->assertForbidden();
+    }
+
+    public function test_super_admin_can_clear_failed_queue_jobs(): void
+    {
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        DB::table('failed_jobs')->insert([
+            [
+                'uuid' => 'speed-test-failed-job-clear-1',
+                'connection' => 'redis',
+                'queue' => 'default',
+                'payload' => json_encode([
+                    'displayName' => 'App\\Jobs\\ExampleJob',
+                    'data' => ['commandName' => 'App\\Jobs\\ExampleJob'],
+                ]),
+                'exception' => 'RuntimeException: clear me',
+                'failed_at' => now()->subDays(40),
+            ],
+            [
+                'uuid' => 'speed-test-failed-job-clear-2',
+                'connection' => 'redis',
+                'queue' => 'default',
+                'payload' => json_encode([
+                    'displayName' => 'App\\Jobs\\RecentJob',
+                    'data' => ['commandName' => 'App\\Jobs\\RecentJob'],
+                ]),
+                'exception' => 'RuntimeException: keep me when pruning old',
+                'failed_at' => now(),
+            ],
+        ]);
+
+        $this->getJson('/api/v1/admin/platform-speed/failed-jobs')
+            ->assertOk()
+            ->assertJsonPath('total', 2)
+            ->assertJsonPath('old_count', 1);
+
+        // UI "Clear failed" sends all=true so same-day failures can be wiped after a fix.
+        $this->deleteJson('/api/v1/admin/platform-speed/failed-jobs', [
+            'confirm' => true,
+            'all' => true,
+        ])
+            ->assertOk()
+            ->assertJsonPath('deleted', 2)
+            ->assertJsonPath('all', true);
+
+        $this->assertDatabaseMissing('failed_jobs', ['uuid' => 'speed-test-failed-job-clear-1']);
+        $this->assertDatabaseMissing('failed_jobs', ['uuid' => 'speed-test-failed-job-clear-2']);
+    }
+
+    public function test_non_super_admin_cannot_clear_failed_queue_jobs(): void
+    {
+        Sanctum::actingAs(User::where('username', 'admin')->firstOrFail());
+
+        $this->deleteJson('/api/v1/admin/platform-speed/failed-jobs', [
+            'confirm' => true,
+        ])->assertForbidden();
     }
 }

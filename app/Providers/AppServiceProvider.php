@@ -20,6 +20,7 @@ use Illuminate\Http\Request;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
@@ -127,6 +128,36 @@ class AppServiceProvider extends ServiceProvider
     {
         Queue::failing(function (JobFailed $event) {
             $exception = $event->exception;
+            $jobName = method_exists($event->job, 'resolveName')
+                ? $event->job->resolveName()
+                : class_basename($event->job::class);
+            $queue = method_exists($event->job, 'getQueue')
+                ? (string) $event->job->getQueue()
+                : '';
+            $connection = (string) ($event->connectionName ?? '');
+            $uuid = method_exists($event->job, 'uuid')
+                ? (string) ($event->job->uuid() ?? '')
+                : '';
+
+            // Always write structured Laravel logs so Grafana / Loki can alert
+            // even when System Issues skips benign cases.
+            try {
+                Log::error('queue.job.failed', [
+                    'event' => 'queue.job.failed',
+                    'job' => $jobName,
+                    'queue' => $queue !== '' ? $queue : null,
+                    'connection' => $connection !== '' ? $connection : null,
+                    'job_uuid' => $uuid !== '' ? $uuid : null,
+                    'exception_class' => $exception::class,
+                    'exception_message' => mb_substr($exception->getMessage(), 0, 4000),
+                    'attempts' => method_exists($event->job, 'attempts')
+                        ? (int) $event->job->attempts()
+                        : null,
+                ]);
+            } catch (\Throwable) {
+                // Never break the queue worker from logging.
+            }
+
             if ($exception instanceof ValidationException) {
                 return;
             }
@@ -143,9 +174,6 @@ class AppServiceProvider extends ServiceProvider
             }
 
             try {
-                $jobName = method_exists($event->job, 'resolveName')
-                    ? $event->job->resolveName()
-                    : class_basename($event->job::class);
                 $reporter = app(SystemIssueReporter::class);
                 $reporter->reportMessage(
                     'Queue job failed: '.$jobName,
@@ -153,6 +181,9 @@ class AppServiceProvider extends ServiceProvider
                     context: [
                         'source' => 'queue',
                         'job' => $jobName,
+                        'queue' => $queue !== '' ? $queue : null,
+                        'connection' => $connection !== '' ? $connection : null,
+                        'job_uuid' => $uuid !== '' ? $uuid : null,
                         'exception_class' => $exception::class,
                         'exception_message' => mb_substr($exception->getMessage(), 0, 4000),
                     ],

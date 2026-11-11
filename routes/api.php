@@ -523,6 +523,8 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::get('admin/platform-speed/failed-jobs', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'failedJobs'])
             ->middleware(['erp.super_admin']);
+        Route::delete('admin/platform-speed/failed-jobs', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'clearFailedJobs'])
+            ->middleware(['erp.super_admin']);
         Route::get('admin/platform-speed/frontend', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'frontend'])
             ->middleware(['erp.super_admin']);
         Route::get('admin/platform-speed/synthetic', [\App\Http\Controllers\Api\V1\PlatformSpeedController::class, 'synthetic'])

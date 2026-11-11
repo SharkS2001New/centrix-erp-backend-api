@@ -8,7 +8,9 @@ use App\Services\Ai\AiSettingsResolver;
 use App\Services\Platform\PlatformSpeedService;
 use App\Services\Platform\Speed\PlatformSpeedSyntheticRunner;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -241,12 +243,17 @@ class PlatformSpeedController extends Controller
         }
 
         $page = max(1, (int) $request->query('page', 1));
+        $clearAfterDays = $this->failedJobsClearAfterDays();
+        $oldCutoff = now()->subDays($clearAfterDays);
+        $oldCount = (int) DB::table('failed_jobs')->where('failed_at', '<', $oldCutoff)->count();
+
         $jobs = DB::table('failed_jobs')
             ->orderByDesc('failed_at')
             ->paginate(25, ['id', 'uuid', 'connection', 'queue', 'payload', 'exception', 'failed_at'], 'page', $page);
-        $items = $jobs->getCollection()->map(function ($job) {
+        $items = $jobs->getCollection()->map(function ($job) use ($oldCutoff) {
             $payload = json_decode((string) $job->payload, true);
             $payload = is_array($payload) ? $payload : [];
+            $failedAt = $job->failed_at;
 
             return [
                 'id' => (int) $job->id,
@@ -256,7 +263,8 @@ class PlatformSpeedController extends Controller
                 'display_name' => (string) ($payload['displayName'] ?? ''),
                 'job_name' => (string) ($payload['data']['commandName'] ?? ''),
                 'exception' => (string) ($job->exception ?? ''),
-                'failed_at' => $job->failed_at,
+                'failed_at' => $failedAt,
+                'is_old' => $failedAt !== null && Carbon::parse($failedAt)->lt($oldCutoff),
             ];
         });
 
@@ -266,7 +274,67 @@ class PlatformSpeedController extends Controller
             'last_page' => $jobs->lastPage(),
             'per_page' => $jobs->perPage(),
             'total' => $jobs->total(),
+            'old_count' => $oldCount,
+            'clear_after_days' => $clearAfterDays,
         ]);
+    }
+
+    /**
+     * DELETE /api/v1/admin/platform-speed/failed-jobs
+     * Clear failed queue rows so ops can verify a fix (all, or only older_than_days).
+     */
+    public function clearFailedJobs(Request $request)
+    {
+        if (! Schema::hasTable('failed_jobs')) {
+            return response()->json([
+                'message' => 'The failed_jobs table is not available on this queue connection.',
+            ], 503);
+        }
+
+        $data = $request->validate([
+            'all' => 'sometimes|boolean',
+            'older_than_days' => 'nullable|integer|min:1|max:3650',
+            'confirm' => 'required|accepted',
+        ]);
+
+        $clearAll = filter_var($data['all'] ?? false, FILTER_VALIDATE_BOOLEAN);
+        $olderThanDays = isset($data['older_than_days'])
+            ? max(1, (int) $data['older_than_days'])
+            : null;
+
+        $query = DB::table('failed_jobs');
+        if (! $clearAll) {
+            $olderThanDays ??= $this->failedJobsClearAfterDays();
+            $query->where('failed_at', '<', now()->subDays($olderThanDays));
+        } else {
+            $olderThanDays = null;
+        }
+
+        $deleted = (int) $query->delete();
+
+        Log::info('queue.failed_jobs.cleared', [
+            'event' => 'queue.failed_jobs.cleared',
+            'deleted' => $deleted,
+            'all' => $clearAll,
+            'older_than_days' => $olderThanDays,
+            'actor_user_id' => $request->user()?->id,
+        ]);
+
+        return response()->json([
+            'deleted' => $deleted,
+            'all' => $clearAll,
+            'older_than_days' => $olderThanDays,
+            'message' => $deleted === 0
+                ? 'No failed jobs matched.'
+                : ($clearAll
+                    ? "Cleared {$deleted} failed job(s)."
+                    : "Cleared {$deleted} failed job(s) older than {$olderThanDays} day(s)."),
+        ]);
+    }
+
+    protected function failedJobsClearAfterDays(): int
+    {
+        return max(1, (int) config('queue.failed.clear_after_days', 30));
     }
 
     public function frontend(PlatformSpeedService $speed)

@@ -90,6 +90,13 @@ Schedule::command('erp:prune-system-issue-reports')
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/prune-system-issue-reports.log'));
 
+// Hygiene only — keeps recent failures for the Queues UI / Grafana triage.
+// Operators clear the live backlog with ERP Speed → Queues → Clear failed.
+Schedule::command('queue:prune-failed --hours=720')
+    ->dailyAt('03:35')
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/prune-failed-jobs.log'));
+
 Schedule::command('erp:prune-platform-mail')
     ->dailyAt('03:25')
     ->withoutOverlapping()
