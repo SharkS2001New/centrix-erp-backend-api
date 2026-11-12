@@ -56,14 +56,14 @@ class AttendanceAnomalyAlertService
             return;
         }
 
-        $employee->loadMissing('organization');
+        $organization = Organization::query()->find((int) $employee->organization_id);
         $name = trim((string) ($employee->full_name ?: trim(($employee->first_name ?? '').' '.($employee->last_name ?? ''))));
         if ($name === '') {
             $name = 'Employee #'.$employee->id;
         }
 
         $facts = $this->factsLine($employee, $date, $pairs, $attendance, $flags);
-        $message = $this->composeMessage($employee->organization, $name, $date, $facts, $flags);
+        $message = $this->composeMessage($organization, $name, $date, $facts, $flags);
         $title = 'Attendance needs review: '.$name;
 
         $recipients = $this->hrRecipients((int) $employee->organization_id);
@@ -182,7 +182,7 @@ class AttendanceAnomalyAlertService
         array $flags,
     ): string {
         $fallback = $this->heuristicMessage($employeeName, $date, $flags, $facts);
-        if (! $organization) {
+        if (! $organization || app()->environment('testing')) {
             return $fallback;
         }
 

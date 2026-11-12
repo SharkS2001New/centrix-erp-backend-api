@@ -106,7 +106,10 @@ class AttendanceDayPunchPresenter
             $empty['clock_out'] !== null
             && $this->clockHmIsBefore($empty['clock_out'], $empty['clock_in'])
         ) {
+            // Do not re-classify an inverted device out as lunch_out / clock_out.
             $empty['clock_out'] = null;
+
+            return $empty;
         }
         if ($empty['clock_out'] !== null) {
             return $empty;
