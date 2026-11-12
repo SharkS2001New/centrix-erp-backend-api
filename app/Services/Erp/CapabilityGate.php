@@ -1009,6 +1009,7 @@ class CapabilityGate
                 : MobileProductListSettings::MODE_IN_STOCK_ONLY,
             'as_mobile_show_images' => $this->asMobileShowImages(),
             'require_product_images' => (bool) ($this->moduleSettings('sales')['require_product_images'] ?? false),
+            'as_mobile_ask_quantity_on_add' => (bool) ($this->moduleSettings('sales')['as_mobile_ask_quantity_on_add'] ?? false),
             'as_mobile_post_login_screen' => in_array(
                 (string) ($this->moduleSettings('sales')['as_mobile_post_login_screen'] ?? 'module_home'),
                 ['module_home', 'operations_dashboard'],

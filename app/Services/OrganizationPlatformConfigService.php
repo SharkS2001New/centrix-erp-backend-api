@@ -670,6 +670,7 @@ class OrganizationPlatformConfigService
             // Product photos only. Hotel & Bar on by default; retail/wholesale off until Platform enables.
             'as_mobile_show_images' => $deploymentProfile === 'hotel_bar',
             'require_product_images' => false,
+            'as_mobile_ask_quantity_on_add' => false,
             'as_mobile_post_login_screen' => 'module_home',
             'mobile_enable_field_attendance' => false,
             'mobile_enable_driver_app' => in_array($deploymentProfile, ['distribution', 'wholesale_retail'], true),
@@ -798,6 +799,7 @@ class OrganizationPlatformConfigService
                 ? (bool) $customSales['as_mobile_show_images']
                 : $gate->asMobileShowImages(),
             'require_product_images' => (bool) ($sales['require_product_images'] ?? false),
+            'as_mobile_ask_quantity_on_add' => (bool) ($sales['as_mobile_ask_quantity_on_add'] ?? false),
             'as_mobile_post_login_screen' => in_array(
                 (string) ($sales['as_mobile_post_login_screen'] ?? 'module_home'),
                 ['module_home', 'operations_dashboard'],

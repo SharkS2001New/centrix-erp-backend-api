@@ -35,7 +35,8 @@ class CheckoutRequest extends FormRequest
             'sales_workspace' => 'nullable|in:pos,backoffice',
             'payment_method_code' => 'nullable|string|max:45',
             'is_credit_sale' => 'nullable|boolean',
-            'payment_splits' => 'nullable|array|min:1',
+            // Empty / omitted is valid for unpaid credit / save-only checkouts.
+            'payment_splits' => 'nullable|array',
             'payment_splits.*.method_code' => 'required|string|max:45',
             'payment_splits.*.amount' => 'required|numeric|min:0.01',
             'payment_splits.*.reference_number' => 'nullable|string|max:120',

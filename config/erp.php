@@ -280,6 +280,7 @@ return [
             'enable_mobile_orders_expenses_card',
             'as_mobile_show_images',
             'require_product_images',
+            'as_mobile_ask_quantity_on_add',
             'as_mobile_post_login_screen',
             'stock_deduct_on',
             'require_pos_till_float',
@@ -598,6 +599,8 @@ return [
             'as_mobile_show_images' => false,
             // When true, product create/update must include a photo (AS mobile + API delete blocked).
             'require_product_images' => false,
+            // When true, AS mobile POS/Orders Add opens a quantity popup; off (default) adds qty 1 directly.
+            'as_mobile_ask_quantity_on_add' => false,
             'as_mobile_post_login_screen' => 'module_home',
             'mobile_enable_checkout_location_verification' => false,
             'mobile_allow_offline_orders' => false,

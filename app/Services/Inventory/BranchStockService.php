@@ -322,8 +322,12 @@ class BranchStockService
     /**
      * @param  Builder<Product>  $query
      */
-    public function applyStockStatusFilter(Builder $query, string $stockStatus, ?int $branchId): void
-    {
+    public function applyStockStatusFilter(
+        Builder $query,
+        string $stockStatus,
+        ?int $branchId,
+        ?string $location = null,
+    ): void {
         if ($stockStatus === '') {
             return;
         }
@@ -333,10 +337,24 @@ class BranchStockService
             $this->joinBranchStock($query, $branchId, $alias);
         }
 
-        $total = $this->branchStockTotalSql($branchId, $alias);
+        $location = strtolower(trim((string) $location));
+        if ($location === 'shop') {
+            $total = $branchId
+                ? "COALESCE({$alias}.shop_quantity, 0)"
+                : 'COALESCE(products.stock_in_shop, 0)';
+        } elseif ($location === 'store') {
+            $total = $branchId
+                ? "COALESCE({$alias}.store_quantity, 0)"
+                : 'COALESCE(products.stock_in_store, 0)';
+        } else {
+            $total = $this->branchStockTotalSql($branchId, $alias);
+        }
 
         if ($stockStatus === 'out_of_stock') {
             $query->whereRaw("({$total}) <= 0");
+        } elseif (in_array($stockStatus, ['has_stock', 'available'], true)) {
+            // Any positive qty (includes low stock).
+            $query->whereRaw("({$total}) > 0");
         } elseif ($stockStatus === 'low_stock') {
             $query->whereRaw("({$total}) > 0")
                 ->where('products.reorder_point', '>', 0)

@@ -237,7 +237,7 @@ class ReportController extends Controller
             ],
             'filters' => [
                 'branch_id', 'product_code', 'channel', 'cashier_id', 'customer_num',
-                'supplier_id', 'route_name', 'sale_date', 'sale_day', 'period',
+                'supplier_id', 'supplier_name', 'route_name', 'sale_date', 'sale_day', 'period',
                 'from_date', 'to_date', 'date_column', 'per_page', 'aging_bucket',
                 'status', 'payment_status', 'lpo_no', 'organization_id', 'expense_group_id',
                 'department_id', 'employment_status', 'employment_type', 'is_active',
@@ -741,7 +741,7 @@ class ReportController extends Controller
         return response()->json($this->reportFromViewOverall(
             'v_sales_by_supplier',
             $filters,
-            ['sale_date', 'branch_id', 'supplier_id', 'channel', 'product_code'],
+            ['sale_date', 'branch_id', 'supplier_id', 'supplier_name', 'channel', 'product_code'],
             [
                 'organization_id', 'branch_id', 'supplier_id', 'supplier_name', 'supplier_code',
                 'product_code', 'product_name', 'channel',
@@ -3073,7 +3073,7 @@ class ReportController extends Controller
     {
         $filters = $request->only([
             'branch_id', 'product_code', 'channel', 'cashier_id', 'customer_num',
-            'supplier_id', 'route_name', 'sale_date', 'sale_day', 'period',
+            'supplier_id', 'supplier_name', 'route_name', 'sale_date', 'sale_day', 'period',
             'from_date', 'to_date', 'date_column', 'per_page', 'aging_bucket',
             'status', 'document_type', 'payment_status', 'lpo_no', 'organization_id', 'expense_group_id',
             'recorded_by',

@@ -817,6 +817,7 @@ class OrganizationProvisionController extends Controller
             'sales_platform.enable_mobile_orders_expenses_card' => 'sometimes|boolean',
             'sales_platform.as_mobile_show_images' => 'sometimes|boolean',
             'sales_platform.require_product_images' => 'sometimes|boolean',
+            'sales_platform.as_mobile_ask_quantity_on_add' => 'sometimes|boolean',
             'sales_platform.as_mobile_post_login_screen' => 'sometimes|in:module_home,operations_dashboard',
             'sales_platform.mobile_enable_field_attendance' => 'sometimes|boolean',
             'sales_platform.mobile_enable_driver_app' => 'sometimes|boolean',

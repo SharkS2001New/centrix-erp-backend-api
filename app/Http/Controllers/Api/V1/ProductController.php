@@ -290,7 +290,9 @@ class ProductController extends BaseResourceController
         $branchIdForFilter = $this->branchStock->resolveBranchIdOptional($user, $request);
 
         if ($stockStatus = (string) $request->input('stock_status', '')) {
-            $this->branchStock->applyStockStatusFilter($query, $stockStatus, $branchIdForFilter);
+            $stockLocation = strtolower(trim((string) $request->input('stock_location', '')));
+            $location = in_array($stockLocation, ['shop', 'store'], true) ? $stockLocation : null;
+            $this->branchStock->applyStockStatusFilter($query, $stockStatus, $branchIdForFilter, $location);
         } elseif ($this->shouldFilterMobileInStock($request) && $user) {
             $gate = $this->erp->gateForUser($user);
             $this->branchStock->applyConsumerAvailableStockFilter(
