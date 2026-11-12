@@ -165,10 +165,21 @@ class CheckoutController extends Controller
                 }
             } else {
                 $timing['kra_mode'] = 'sync';
-                $persistedKra = app(CheckoutKraSubmissionService::class)
-                    ->submitForSale($sale, $gate, $buyerPin);
-                if ($persistedKra) {
-                    $sale->setRelation('kraResponse', $persistedKra);
+                try {
+                    $persistedKra = app(CheckoutKraSubmissionService::class)
+                        ->submitForSale($sale, $gate, $buyerPin);
+                    if ($persistedKra) {
+                        $sale->setRelation('kraResponse', $persistedKra);
+                    }
+                } catch (\Throwable $e) {
+                    // Sale is already committed — never 500 the till after a lock wait /
+                    // Comstore success that failed only on kra_responses INSERT.
+                    report($e);
+                    Log::warning('KRA persist/submit failed after sale commit — sale kept', [
+                        'sale_id' => (int) $sale->id,
+                        'cart_id' => (int) $cartId,
+                        'error' => $e->getMessage(),
+                    ]);
                 }
             }
             $timing['kra_ms'] = (int) round((microtime(true) - $kraStarted) * 1000);
@@ -412,7 +423,7 @@ class CheckoutController extends Controller
 
         $salesSettings = $gate->moduleSettings('sales');
 
-        return DB::transaction(function () use ($cart, $user, $gate, $input, $salesSettings, $canHydrateOfflineLines, $offlineLines) {
+        return \App\Support\DeadlockSafe::transaction(function () use ($cart, $user, $gate, $input, $salesSettings, $canHydrateOfflineLines, $offlineLines) {
             $txTiming = [
                 'stock_path' => 'none',
                 'items_ms' => 0,

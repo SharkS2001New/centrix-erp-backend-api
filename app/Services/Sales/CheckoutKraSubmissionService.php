@@ -9,6 +9,7 @@ use App\Services\Kra\KraDeviceErrorTranslator;
 use App\Services\Kra\KraDeviceService;
 use App\Services\Kra\KraFiscalPolicy;
 use App\Services\Sales\OrderNumberAllocator;
+use App\Support\DeadlockSafe;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\Log;
 
@@ -260,6 +261,10 @@ class CheckoutKraSubmissionService
      * One kra_responses row per sale (and per org invoice #). Retries must update the
      * failed row — inserting again hits uq_org_kra_invoice_number after a CU success.
      *
+     * Concurrent POS checkouts + unique (organization_id, invoice_number) can hit
+     * MySQL 1205 lock wait on INSERT — retry instead of failing the whole checkout
+     * after Comstore already signed the receipt.
+     *
      * @param  array<string, mixed>  $attributes
      */
     protected function persistResponse(Sale $sale, array $attributes): KraResponse
@@ -267,23 +272,26 @@ class CheckoutKraSubmissionService
         $attributes['sale_id'] = (int) $sale->id;
         $attributes['organization_id'] = (int) $sale->organization_id;
 
-        $existing = KraResponse::query()
-            ->where('sale_id', $sale->id)
-            ->orderByDesc('id')
-            ->first();
+        return DeadlockSafe::transaction(function () use ($sale, $attributes): KraResponse {
+            $existing = KraResponse::query()
+                ->where('sale_id', $sale->id)
+                ->orderByDesc('id')
+                ->lockForUpdate()
+                ->first();
 
-        if ($existing) {
-            $existing->fill($attributes);
-            $existing->save();
+            if ($existing) {
+                $existing->fill($attributes);
+                $existing->save();
 
-            return $existing;
-        }
+                return $existing;
+            }
 
-        try {
-            return KraResponse::create($attributes);
-        } catch (UniqueConstraintViolationException $e) {
-            return $this->resolveInvoiceConflict($sale, $attributes, $e);
-        }
+            try {
+                return KraResponse::create($attributes);
+            } catch (UniqueConstraintViolationException $e) {
+                return $this->resolveInvoiceConflict($sale, $attributes, $e);
+            }
+        }, 6);
     }
 
     /**

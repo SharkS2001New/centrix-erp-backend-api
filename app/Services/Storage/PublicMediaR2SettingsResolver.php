@@ -101,13 +101,21 @@ class PublicMediaR2SettingsResolver
         $masked = self::maskForClient($effective);
         $backup = BackupR2SettingsResolver::resolve();
 
+        $configured = self::isConfigured($effective);
+        $ready = (bool) $effective['enabled'] && $configured;
+        $publicUrl = trim((string) ($effective['public_url'] ?? ''));
+
         return [
             'scope' => 'platform',
             'settings' => $masked,
             'effective' => [
                 'enabled' => (bool) $effective['enabled'],
-                'configured' => self::isConfigured($effective),
-                'ready' => (bool) $effective['enabled'] && self::isConfigured($effective),
+                'configured' => $configured,
+                'ready' => $ready,
+                'public_url_set' => $publicUrl !== '',
+                // Direct <img src> for ERP/mobile/POS tiles needs a public/custom domain;
+                // without it apps still read via authenticated /image/file.
+                'browser_direct_ready' => $ready && $publicUrl !== '',
                 'use_backup_credentials' => (bool) $effective['use_backup_credentials'],
                 'bucket' => $masked['bucket'],
                 'endpoint' => $masked['endpoint'],
@@ -125,6 +133,7 @@ class PublicMediaR2SettingsResolver
                 'use_backup' => 'Reuse the same R2 API token as Database backups; you can still set a different media bucket.',
                 'path_layout' => 'Files are stored as orgs/{COMPANY_CODE}/products/… so tenants stay separated.',
                 'env_fallback' => 'Until you save here, empty fields can fall back to PUBLIC_R2_* / BACKUP_R2_* environment variables.',
+                'public_url' => 'Set an r2.dev or custom domain URL and enable Public Access on the media bucket so ERP, mobile, and POS can load image_url directly. Without it, clients use authenticated /image/file.',
             ],
         ];
     }

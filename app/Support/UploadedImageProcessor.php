@@ -2,6 +2,7 @@
 
 namespace App\Support;
 
+use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -122,7 +123,8 @@ class UploadedImageProcessor
             $ext = 'jpg';
             $filename = Str::uuid()->toString().'.'.$ext;
             $path = $directory.'/'.$filename;
-            $disk->put($path, file_get_contents($file->getRealPath()) ?: $bytes);
+            $payload = file_get_contents($file->getRealPath()) ?: $bytes;
+            $this->putPublicOrFail($disk, $path, $payload);
 
             return [
                 'path' => $path,
@@ -132,7 +134,7 @@ class UploadedImageProcessor
             ];
         }
 
-        $disk->put($path, $bytes);
+        $this->putPublicOrFail($disk, $path, $bytes);
 
         return [
             'path' => $path,
@@ -140,6 +142,21 @@ class UploadedImageProcessor
             'size' => strlen($bytes),
             'file_name' => preg_replace('/\.\w+$/', '.jpg', $file->getClientOriginalName()) ?: $filename,
         ];
+    }
+
+    /**
+     * public disk uses throw=false for R2 — verify the object landed so ERP/mobile
+     * do not keep an image_path that Storage::exists() cannot read.
+     */
+    protected function putPublicOrFail(Filesystem $disk, string $path, string $bytes): void
+    {
+        $ok = $disk->put($path, $bytes);
+        if ($ok === false || ! $disk->exists($path)) {
+            throw new RuntimeException(
+                'Could not store the image on public media storage (local or Cloudflare R2). '
+                .'Check Platform → Cloudflare R2 media settings (enabled, bucket, credentials, public URL).',
+            );
+        }
     }
 
     protected function targetMaxBytes(): int
