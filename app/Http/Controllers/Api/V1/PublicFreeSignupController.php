@@ -8,7 +8,7 @@ use App\Services\Platform\PublicFreeSignupService;
 use Illuminate\Http\Request;
 
 /**
- * Instant free-package signup from the Centrix marketing site (Nextcloud-style).
+ * Instant trial signup from the Centrix marketing site.
  */
 class PublicFreeSignupController extends Controller
 {
@@ -21,9 +21,18 @@ class PublicFreeSignupController extends Controller
             ], 503);
         }
 
+        $discount = app(\App\Services\Platform\PlatformPaybillLicenceService::class)->durationDiscount();
+
         return response()->json([
             'enabled' => true,
             'free_plan_name' => $freePlan->name(),
+            'trial_days' => $signups->trialDays(),
+            'duration_discount' => [
+                'percent' => (float) ($discount['percent'] ?? 0),
+                'min_months' => (int) ($discount['min_months'] ?? 3),
+            ],
+            'trial_support' => $signups->trialSupport(),
+            'pricing_note' => 'Your Instant trial is free. After the trial, pricing is recalculated from your setup type and the number of users you need — monthly, or yearly with the platform discount.',
             'industries' => $signups->industryOptions(),
             'setup_types' => $signups->setupTypeOptions(),
             'business_types' => $signups->businessTypeOptions(),
@@ -49,7 +58,7 @@ class PublicFreeSignupController extends Controller
         $result = $signups->signup($data);
 
         return response()->json([
-            'message' => 'Your free Centrix workspace is ready. Sign in with the company code and username below.',
+            'message' => 'Your CentrixERP Instant trial is ready. Sign in with the company code and username below.',
             'company_code' => $result['company_code'],
             'username' => $result['username'],
             'org_name' => $result['organization']->org_name,
@@ -58,6 +67,10 @@ class PublicFreeSignupController extends Controller
             'setup_type' => $result['setup_type'],
             'setup_type_label' => $result['setup_type_label'],
             'free_plan_name' => $result['free_plan_name'],
+            'trial_days' => $result['trial_days'],
+            'trial_ends_at' => $result['trial_ends_at'],
+            'trial_plan' => $result['trial_plan'],
+            'trial_support' => $signups->trialSupport(),
             'login_url' => $result['login_url'],
         ], 201);
     }

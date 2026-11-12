@@ -15,7 +15,9 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 /**
- * Public marketing-site signup onto Package 1 (free plan). No paid subscription is created.
+ * Public marketing-site Instant trial signup.
+ * Provisions the organisation, then starts a timed trial of the matching self-serve package.
+ * When the trial ends the ERP payment screen is required before full access continues.
  */
 class PublicFreeSignupService
 {
@@ -33,11 +35,46 @@ class PublicFreeSignupService
         protected OrganizationProvisioningService $provisioning,
         protected FreePlanAccess $freePlan,
         protected SetupProfileMenuService $setupProfiles,
+        protected OrganizationLicenseService $licenses,
     ) {}
 
     public function enabled(): bool
     {
         return (bool) config('erp.allow_public_free_signup', true);
+    }
+
+    public function trialDays(?PlatformPlan $plan = null): int
+    {
+        $fromPlan = $plan !== null
+            && Schema::hasColumn('platform_plans', 'trial_days')
+            && $plan->trial_days !== null
+            ? (int) $plan->trial_days
+            : 0;
+        if ($fromPlan > 0) {
+            return $fromPlan;
+        }
+
+        return max(1, (int) config('erp.public_signup_trial_days', 7));
+    }
+
+    /** @return array{phone: string, phone_href: string, whatsapp: string, whatsapp_url: string} */
+    public function trialSupport(): array
+    {
+        $cfg = is_array(config('erp.trial_support')) ? config('erp.trial_support') : [];
+        $phone = trim((string) ($cfg['phone'] ?? '+254 748 956 677'));
+        $phoneHref = trim((string) ($cfg['phone_href'] ?? ''));
+        if ($phoneHref === '' && $phone !== '') {
+            $phoneHref = 'tel:'.preg_replace('/[^\d+]/', '', $phone);
+        }
+        $whatsapp = preg_replace('/\D+/', '', (string) ($cfg['whatsapp'] ?? '254748956677')) ?: '254748956677';
+        $message = trim((string) ($cfg['whatsapp_message'] ?? 'Hello, I need help with my CentrixERP free trial.'));
+
+        return [
+            'phone' => $phone,
+            'phone_href' => $phoneHref,
+            'whatsapp' => $whatsapp,
+            'whatsapp_url' => 'https://wa.me/'.$whatsapp.'?text='.rawurlencode($message),
+        ];
     }
 
     /**
@@ -222,6 +259,17 @@ class PublicFreeSignupService
             'admin_full_name' => $adminName,
         ]);
 
+        $trialPlan = $selectedPlan ?? $this->resolveTrialPlan($industry, $profile);
+        $trialDays = $this->trialDays($trialPlan);
+        $subscription = $this->licenses->createOrUpdateForOrganization($result['organization'], [
+            'plan_id' => $trialPlan?->id,
+            'status' => 'trialing',
+            'is_trial' => true,
+            'trial_days' => $trialDays,
+            'seat_count' => max(1, (int) ($trialPlan?->seat_limit ?? 1)),
+            'apply_plan_modules' => false,
+        ]);
+
         $loginUrl = rtrim((string) config('erp.frontend_url'), '/').'/login?'.http_build_query([
             'company_code' => $companyCode,
             'username' => $username,
@@ -229,7 +277,7 @@ class PublicFreeSignupService
         ]);
 
         return [
-            'organization' => $result['organization'],
+            'organization' => $result['organization']->fresh(),
             'manager' => $result['manager'],
             'company_code' => $companyCode,
             'username' => $username,
@@ -238,8 +286,60 @@ class PublicFreeSignupService
             'setup_type' => $profile,
             'setup_type_label' => $setupTypeOption['label'],
             'free_plan_name' => $this->freePlan->name(),
+            'trial_days' => $trialDays,
+            'trial_ends_at' => optional($subscription->trial_ends_at)->toIso8601String(),
+            'trial_plan' => $trialPlan ? [
+                'id' => (int) $trialPlan->id,
+                'name' => (string) $trialPlan->name,
+                'monthly_price' => $trialPlan->monthly_price !== null ? round((float) $trialPlan->monthly_price, 2) : null,
+                'yearly_price' => $trialPlan->yearly_price !== null ? round((float) $trialPlan->yearly_price, 2) : null,
+                'currency' => (string) ($trialPlan->currency ?: 'KES'),
+                'seat_limit' => max(1, (int) ($trialPlan->seat_limit ?? 1)),
+            ] : null,
             'login_url' => $loginUrl,
         ];
+    }
+
+    /**
+     * Pick the cheapest active self-serve package that allows this setup type for Instant trial.
+     */
+    public function resolveTrialPlan(string $industry, string $setupType): ?PlatformPlan
+    {
+        if (! Schema::hasTable('platform_plans')) {
+            return null;
+        }
+
+        $query = PlatformPlan::query()->where('is_active', true);
+        if (Schema::hasColumn('platform_plans', 'self_serve')) {
+            $query->where('self_serve', true);
+        }
+        $query->where(function ($inner) {
+            $inner->where('monthly_price', '>', 0)->orWhere('yearly_price', '>', 0);
+        });
+        if (Schema::hasColumn('platform_plans', 'industry')) {
+            $query->where(function ($inner) use ($industry) {
+                $inner->where('industry', $industry);
+                if ($industry === 'commerce') {
+                    $inner->orWhereNull('industry')->orWhere('industry', '');
+                }
+            });
+        }
+
+        $candidates = $query->orderBy('monthly_price')->orderBy('id')->get();
+        foreach ($candidates as $plan) {
+            $trialProfiles = is_array($plan->trial_profile_keys) ? $plan->trial_profile_keys : [];
+            $setupProfiles = is_array($plan->setup_profile_keys) ? $plan->setup_profile_keys : [];
+            if ($trialProfiles !== [] && ! in_array($setupType, $trialProfiles, true)) {
+                continue;
+            }
+            if ($setupProfiles !== [] && ! in_array($setupType, $setupProfiles, true)) {
+                continue;
+            }
+
+            return $plan;
+        }
+
+        return $candidates->first();
     }
 
     /** @return list<array{id: string, label: string, description: string}> */

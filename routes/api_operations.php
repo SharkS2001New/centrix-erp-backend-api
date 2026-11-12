@@ -588,7 +588,7 @@ Route::middleware('auth:sanctum')->group(function () {
             ->middleware('erp.permission:reports.view|accounting.view|hospitality.reports.view|hospitality.dashboard.view|pos.end_of_day.view|pos.till_management.view|centrix_as_mobile.app.access|sales.create');
 
         Route::get('customers/{customerNum}/statement', [ReportController::class, 'customerStatement'])
-            ->middleware('erp.permission:reports.view|customers.view');
+            ->middleware('erp.permission:reports.view|customers.view|centrix_as_mobile.app.access');
     });
 
     // ---- Hotel & Bar POS (hospitality checks — not retail carts) ----

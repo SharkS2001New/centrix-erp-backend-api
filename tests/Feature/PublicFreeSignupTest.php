@@ -15,7 +15,7 @@ class PublicFreeSignupTest extends TestCase
 {
     use RefreshesErpDatabase;
 
-    public function test_public_free_signup_creates_package_one_organisation(): void
+    public function test_public_free_signup_creates_timed_trial_organisation(): void
     {
         config(['erp.allow_public_free_signup' => true]);
 
@@ -65,12 +65,18 @@ class PublicFreeSignupTest extends TestCase
         $this->assertSame(['paid', 'completed'], $org->module_settings['sales']['customer_return_statuses']);
         $response->assertJsonPath('setup_type_label', 'Small shop (backoffice sales only)');
         $this->assertSame('self_registered', $org->registration_source);
-        $this->assertSame(0, PlatformSubscription::query()->where('organization_id', $org->id)->count());
+        $subscription = PlatformSubscription::query()->where('organization_id', $org->id)->first();
+        $this->assertNotNull($subscription);
+        $this->assertTrue((bool) $subscription->is_trial);
+        $this->assertSame('trialing', $subscription->status);
+        $this->assertNotNull($subscription->trial_ends_at);
+        $this->assertTrue($subscription->trial_ends_at->greaterThan(now()->addDays(5)));
+        $response->assertJsonPath('trial_days', (int) config('erp.public_signup_trial_days', 7));
 
         $licenses = app(OrganizationLicenseService::class);
         $license = $licenses->resolveForOrganization($org);
-        $this->assertTrue($licenses->usesPackageOne($license));
-        $this->assertSame('free', $licenses->accessMode($license));
+        $this->assertFalse($licenses->usesPackageOne($license));
+        $this->assertSame('trial', $licenses->accessMode($license));
     }
 
     public function test_public_free_signup_options_list_industries(): void
@@ -85,6 +91,10 @@ class PublicFreeSignupTest extends TestCase
                 'setup_types',
                 'business_types',
                 'free_plan_name',
+                'trial_days',
+                'duration_discount',
+                'trial_support',
+                'pricing_note',
                 'login_url',
             ])
             ->assertJsonFragment([

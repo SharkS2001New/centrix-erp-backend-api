@@ -97,6 +97,13 @@ class OrganizationLicenseService
         $license['plans'] = $licencePayments->monthlyPlanChoices($org, $durationDiscount);
         $license['duration_discount'] = $durationDiscount;
 
+        $isTrial = ($license['access'] ?? null) === 'trial'
+            || ! empty($license['is_trial'])
+            || strtolower((string) ($license['status'] ?? '')) === 'trialing';
+        if ($isTrial || ($org->registration_source ?? null) === 'self_registered') {
+            $license['trial_support'] = app(PublicFreeSignupService::class)->trialSupport();
+        }
+
         return $license;
     }
 
@@ -228,12 +235,18 @@ class OrganizationLicenseService
      */
     protected function finishLicense(Organization $org, array $license): array
     {
+        $license['registration_source'] = $org->registration_source ? (string) $org->registration_source : null;
         $license = $this->stampAccess($license);
+        $license['payment_only'] = $this->requiresPaymentOnly($license, $org);
         $free = app(FreePlanAccess::class);
         $license['free_plan'] = $free->publicGrant($org);
 
-        // After a trial or paid period ends, the organisation is on Package 1 until they pay again.
-        if ($this->usesPackageOne($license)) {
+        // After a trial or paid period ends, the organisation is on Package 1 until they pay again —
+        // except Instant trial self-registered orgs, which stay on the payment screen only.
+        if ($license['payment_only']) {
+            $license['modules'] = [];
+            $license['current_package'] = $license['plan_name'] ?? null;
+        } elseif ($this->usesPackageOne($license)) {
             $grant = $free->grantFor($free->industryFor($org), $free->stored()[$free->industryFor($org)] ?? []);
             $license['modules'] = array_values($grant['workspace_keys'] ?? []);
             $license['current_package'] = $free->name();
@@ -385,7 +398,31 @@ class OrganizationLicenseService
     /** Package 1 when there is no paid or trial package, or after that package ended. */
     public function usesPackageOne(?array $license): bool
     {
+        if ($this->requiresPaymentOnly($license)) {
+            return false;
+        }
+
         return in_array($this->accessMode($license), ['free', 'expired'], true);
+    }
+
+    /**
+     * Instant trial (self-registered) orgs must pay after the trial ends —
+     * no Package 1 soft landing.
+     */
+    public function requiresPaymentOnly(?array $license, ?Organization $org = null): bool
+    {
+        if ($this->accessMode($license) !== 'expired') {
+            return false;
+        }
+
+        if (array_key_exists('payment_only', $license ?? []) && is_bool($license['payment_only'])) {
+            return $license['payment_only'];
+        }
+
+        $source = $org?->registration_source
+            ?? ($license['registration_source'] ?? null);
+
+        return $source === 'self_registered';
     }
 
     /**
@@ -410,8 +447,8 @@ class OrganizationLicenseService
         return $this->accessMode($license) !== 'token';
     }
 
-    /** Routes a free or expired organisation may still call. Shop M-Pesa stays separate. */
-    public function allowsLimitedRoute(string $path): bool
+    /** Routes Instant trial orgs may call after expiry — payment / session only. */
+    public function allowsPaymentOnlyRoute(string $path): bool
     {
         $path = ltrim($path, '/');
         if (str_starts_with($path, 'api/v1/')) {
@@ -430,6 +467,31 @@ class OrganizationLicenseService
             'erp/organization/subscription',
             'erp/organization/licence',
             'erp/organization/billing',
+            'onboarding-guide/video',
+            'notifications',
+        ] as $prefix) {
+            if ($path === $prefix || str_starts_with($path, $prefix.'/')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** Routes a free or expired organisation may still call. Shop M-Pesa stays separate. */
+    public function allowsLimitedRoute(string $path): bool
+    {
+        if ($this->allowsPaymentOnlyRoute($path)) {
+            return true;
+        }
+
+        $path = ltrim($path, '/');
+        if (str_starts_with($path, 'api/v1/')) {
+            $path = substr($path, strlen('api/v1/'));
+        }
+        $path = trim($path, '/');
+
+        foreach ([
             'products',
             'categories',
             'sub-categories',
@@ -437,7 +499,6 @@ class OrganizationLicenseService
             'customers',
             'suppliers',
             'branches',
-            'notifications',
         ] as $prefix) {
             if ($path === $prefix || str_starts_with($path, $prefix.'/')) {
                 return true;
@@ -605,9 +666,14 @@ class OrganizationLicenseService
             $attrs,
         )->load($with);
 
-        if ($plan) {
+        // Instant trial keeps the setup-type applications already provisioned; the plan
+        // only defines commercial terms and the post-trial payment package.
+        $applyPlanModules = ($payload['apply_plan_modules'] ?? true) !== false;
+        if ($plan && $applyPlanModules) {
             app(PlatformPaybillLicenceService::class)->applyPlanToOrganization($org, $plan);
         }
+
+        $this->forgetResolvedLicense((int) $org->id);
 
         return $subscription;
     }

@@ -52,17 +52,24 @@ class EnsureOrganizationLicenseActive
             ], 403));
         }
 
-        $onPackageOne = $this->licenses->usesPackageOne($license);
+        $paymentOnly = $this->licenses->requiresPaymentOnly($license, $org);
+        $onPackageOne = ! $paymentOnly && $this->licenses->usesPackageOne($license);
 
-        $allowed = $onPackageOne
-            ? app(FreePlanAccess::class)->allowsRoute($org, $path)
-            : $this->licenses->allowsLimitedRoute($path);
-        if (($onPackageOne || $this->licenses->needsPayment($license)) && ! $allowed) {
+        $allowed = $paymentOnly
+            ? $this->licenses->allowsPaymentOnlyRoute($path)
+            : ($onPackageOne
+                ? app(FreePlanAccess::class)->allowsRoute($org, $path)
+                : $this->licenses->allowsLimitedRoute($path));
+        if (($paymentOnly || $onPackageOne || $this->licenses->needsPayment($license)) && ! $allowed) {
             $planName = trim((string) ($license['plan_name'] ?? ''));
             $freeName = trim((string) (($license['current_package'] ?? null) ?: ($license['free_plan']['name'] ?? null) ?: app(FreePlanAccess::class)->name()));
-            $expiredMessage = $planName !== ''
-                ? "Your trial or paid period for {$planName} has ended. This organisation is now on {$freeName}, the free plan. Pay on the Centrix Paybill to open that package again."
-                : "Your trial or paid period has ended. This organisation is now on {$freeName}, the free plan. Pay on the Centrix Paybill to open a bigger plan again.";
+            $expiredMessage = $paymentOnly
+                ? ($planName !== ''
+                    ? "Your Instant trial of {$planName} has ended. Choose a monthly or yearly plan to continue using CentrixERP."
+                    : 'Your Instant trial has ended. Choose a monthly or yearly plan to continue using CentrixERP.')
+                : ($planName !== ''
+                    ? "Your trial or paid period for {$planName} has ended. This organisation is now on {$freeName}, the free plan. Pay on the Centrix Paybill to open that package again."
+                    : "Your trial or paid period has ended. This organisation is now on {$freeName}, the free plan. Pay on the Centrix Paybill to open a bigger plan again.");
             throw new HttpResponseException(response()->json([
                 'message' => ($license['status'] ?? '') === 'scheduled'
                     ? 'This Centrix licence opens at '.($license['starts_at'] ?? 'the scheduled time').'.'

@@ -47,6 +47,26 @@ return [
     /** Frontend base URL for password-reset links (no trailing slash). */
     'frontend_url' => rtrim(env('FRONTEND_URL', 'http://localhost:3000'), '/'),
 
+    /** Marketing-site Instant trial (public free signup). */
+    'allow_public_free_signup' => filter_var(env('ALLOW_PUBLIC_FREE_SIGNUP', true), FILTER_VALIDATE_BOOL),
+
+    /** Days of full package access after Instant trial signup before payment is required. */
+    'public_signup_trial_days' => max(1, (int) env('PUBLIC_SIGNUP_TRIAL_DAYS', 7)),
+
+    /**
+     * Support channels shown to Instant trial organisations inside the ERP.
+     * Override with env so marketing and product stay aligned.
+     */
+    'trial_support' => [
+        'phone' => env('TRIAL_SUPPORT_PHONE', '+254 748 956 677'),
+        'phone_href' => env('TRIAL_SUPPORT_PHONE_HREF', 'tel:+254748956677'),
+        'whatsapp' => env('TRIAL_SUPPORT_WHATSAPP', '254748956677'),
+        'whatsapp_message' => env(
+            'TRIAL_SUPPORT_WHATSAPP_MESSAGE',
+            "Hello, I need help with my CentrixERP free trial.",
+        ),
+    ],
+
     'profiles' => [
         'platform' => [
             'label' => 'Platform operator',
