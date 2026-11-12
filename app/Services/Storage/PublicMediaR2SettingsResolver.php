@@ -180,6 +180,7 @@ class PublicMediaR2SettingsResolver
         }
 
         // R2 rejects object ACLs — never set visibility/ACL on this disk.
+        // throw=true so failed uploads do not return success while nothing lands in R2.
         config([
             'filesystems.disks.public' => [
                 'driver' => 's3',
@@ -190,7 +191,7 @@ class PublicMediaR2SettingsResolver
                 'url' => $cfg['public_url'] !== '' ? $cfg['public_url'] : null,
                 'endpoint' => $cfg['endpoint'],
                 'use_path_style_endpoint' => (bool) $cfg['use_path_style_endpoint'],
-                'throw' => false,
+                'throw' => true,
             ],
         ]);
 

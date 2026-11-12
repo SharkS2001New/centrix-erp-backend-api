@@ -54,7 +54,7 @@ class PlatformPublicMediaStorageController extends Controller
             return response()->json([
                 'ok' => false,
                 'message' => 'Cloudflare R2 media connection test failed.',
-                'detail' => $e->getMessage(),
+                'detail' => self::friendlyR2Error($e),
             ], 422);
         } finally {
             PublicMediaR2SettingsResolver::applyToRuntime();
@@ -94,11 +94,33 @@ class PlatformPublicMediaStorageController extends Controller
             return response()->json([
                 'ok' => false,
                 'message' => 'Cloudflare R2 media upload test failed.',
-                'detail' => $e->getMessage(),
+                'detail' => self::friendlyR2Error($e),
             ], 422);
         } finally {
             PublicMediaR2SettingsResolver::applyToRuntime();
         }
+    }
+
+    protected static function friendlyR2Error(\Throwable $e): string
+    {
+        $raw = trim($e->getMessage());
+        $lower = strtolower($raw);
+        if (str_contains($lower, 'signaturedoesnotmatch') || str_contains($lower, 'signature we calculated')) {
+            return 'R2 rejected the Access Key ID / Secret Access Key (SignatureDoesNotMatch). '
+                .'In Cloudflare → R2 → Manage R2 API Tokens, create a new token with Object Read & Write '
+                .'for bucket centrixerp, then paste Access Key ID + Secret Access Key into Platform settings '
+                .'(untick “use backup credentials” if the backup token is wrong, or fix backup R2 credentials). '
+                .'Do not use the global Cloudflare API key — only an R2 S3 API token. '
+                .'Endpoint must be https://<ACCOUNT_ID>.r2.cloudflarestorage.com (no bucket path).';
+        }
+        if (str_contains($lower, 'invalidaccesskeyid') || str_contains($lower, 'access key')) {
+            return 'R2 Access Key ID is invalid. Create a new R2 API token and paste both key and secret again.';
+        }
+        if (str_contains($lower, 'nosuchbucket')) {
+            return 'Bucket name does not exist on this R2 account. Use exactly: centrixerp';
+        }
+
+        return $raw !== '' ? $raw : 'Unknown R2 error.';
     }
 
     /** @return array<string, mixed> */

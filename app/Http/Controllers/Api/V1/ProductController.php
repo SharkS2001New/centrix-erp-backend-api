@@ -1087,14 +1087,39 @@ class ProductController extends BaseResourceController
             Storage::disk('public')->delete($model->image_path);
         }
 
-        $stored = UploadedImageProcessor::forPhoto()->storePublicImage(
-            $request->file('image'),
-            OrganizationPublicStorage::path(
-                $model->organization_id ?? $request->user()?->organization_id,
-                'products',
-                (string) $model->product_code,
-            ),
+        // Ensure Platform → R2 media settings are applied on this worker before put.
+        \App\Services\Storage\PublicMediaR2SettingsResolver::applyToRuntime();
+
+        $directory = OrganizationPublicStorage::path(
+            $model->organization_id ?? $request->user()?->organization_id,
+            'products',
+            (string) $model->product_code,
         );
+
+        try {
+            $stored = UploadedImageProcessor::forPhoto()->storePublicImage(
+                $request->file('image'),
+                $directory,
+            );
+        } catch (\Throwable $e) {
+            report($e);
+            throw ValidationException::withMessages([
+                'image' => [
+                    'Could not store the product image on media storage. '
+                    .'If Cloudflare R2 is enabled, confirm Platform → Cloudflare R2 media '
+                    .'(Test connection / Test upload). Detail: '.$e->getMessage(),
+                ],
+            ]);
+        }
+
+        if (! StoredPublicFile::exists($stored['path'])) {
+            throw ValidationException::withMessages([
+                'image' => [
+                    'Image upload reported success but the file is not readable on media storage. '
+                    .'Enable Platform media R2 (or check local storage/app/public) and retry.',
+                ],
+            ]);
+        }
 
         $model->update(['image_path' => $stored['path']]);
 
