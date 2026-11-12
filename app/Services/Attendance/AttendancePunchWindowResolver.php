@@ -39,10 +39,6 @@ class AttendancePunchWindowResolver
             return self::ACTION_IGNORE;
         }
 
-        if (! $this->hasPunchToday($employee, $at) && $open === null) {
-            return self::ACTION_IN;
-        }
-
         if ($open) {
             if ($this->inWindow($minutes, $windows['evening_clock_out_from'], $windows['evening_clock_out_to'])) {
                 return self::ACTION_OUT;
@@ -61,6 +57,9 @@ class AttendancePunchWindowResolver
             return self::ACTION_OUT;
         }
 
+        // First/return IN must land in a named window. Do NOT treat "first punch of the day"
+        // as morning clock-in — a 13:00 scan belongs to lunch return (half day), and a 19:55
+        // scan must not invent a morning arrival.
         if ($this->inWindow($minutes, $windows['lunch_clock_in_from'], $windows['lunch_clock_in_to'])) {
             return self::ACTION_IN;
         }
@@ -324,23 +323,6 @@ class AttendancePunchWindowResolver
         }
 
         return $hours;
-    }
-
-    protected function hasPunchToday(Employee $employee, Carbon $at): bool
-    {
-        $start = AppTimezone::parseDateStart($at->toDateString());
-        $end = AppTimezone::parseDateEnd($at->toDateString());
-
-        return EmployeeClockSession::query()
-            ->where('employee_id', $employee->id)
-            ->where(function ($q) use ($start, $end) {
-                $q->whereBetween('clock_in_at', [$start, $end])
-                    ->orWhere(function ($inner) use ($start, $end) {
-                        $inner->whereNotNull('clock_out_at')
-                            ->whereBetween('clock_out_at', [$start, $end]);
-                    });
-            })
-            ->exists();
     }
 
     protected function rangesOverlap(int $aFrom, int $aTo, int $bFrom, int $bTo): bool

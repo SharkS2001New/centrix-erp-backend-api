@@ -56,10 +56,31 @@ class AttendanceDayPunchPresenter
         $second = $sorted->get(1);
         $last = $sorted->last();
 
+        // Afternoon-only arrival (missed morning window, first scan in lunch-in window):
+        // show as Lunch in, not Clock in — so HR sees a half-day return, not a 19:55 "clock in".
+        if ($this->isAfternoonOnlyArrival($first, $windows)) {
+            $empty['lunch_in'] = $this->clockHm($first->clock_in_at);
+            $empty['clock_out'] = $this->resolveFinalClockOut($sorted);
+            if (
+                $empty['clock_out'] !== null
+                && $this->clockHmIsBefore($empty['clock_out'], $empty['lunch_in'])
+            ) {
+                $empty['clock_out'] = null;
+            }
+
+            return $empty;
+        }
+
         $empty['clock_in'] = $this->clockHm($first->clock_in_at);
 
         if (! $lunchRequired) {
             $empty['clock_out'] = $this->resolveFinalClockOut($sorted);
+            if (
+                $empty['clock_out'] !== null
+                && $this->clockHmIsBefore($empty['clock_out'], $empty['clock_in'])
+            ) {
+                $empty['clock_out'] = null;
+            }
 
             return $empty;
         }
@@ -70,11 +91,23 @@ class AttendanceDayPunchPresenter
             $empty['lunch_out'] = $this->clockHm($first->clock_out_at);
             $empty['lunch_in'] = $this->clockHm($second->clock_in_at);
             $empty['clock_out'] = $this->clockHm($last->clock_out_at);
+            if (
+                $empty['clock_out'] !== null
+                && $this->clockHmIsBefore($empty['clock_out'], $empty['lunch_in'] ?? $empty['clock_in'])
+            ) {
+                $empty['clock_out'] = null;
+            }
 
             return $empty;
         }
 
         $empty['clock_out'] = $this->resolveFinalClockOut($sorted);
+        if (
+            $empty['clock_out'] !== null
+            && $this->clockHmIsBefore($empty['clock_out'], $empty['clock_in'])
+        ) {
+            $empty['clock_out'] = null;
+        }
         if ($empty['clock_out'] !== null) {
             return $empty;
         }
@@ -175,6 +208,53 @@ class AttendanceDayPunchPresenter
         $to = trim((string) ($windows['lunch_clock_out_to'] ?? ''));
 
         return $from !== '' && $to !== '';
+    }
+
+    /**
+     * Missed morning window; first (and only meaningful) arrival sits in lunch-in window.
+     *
+     * @param  array<string, mixed>  $windows
+     */
+    protected function isAfternoonOnlyArrival(EmployeeClockSession $first, array $windows): bool
+    {
+        if (! $first->clock_in_at || ! $this->lunchRequired($windows)) {
+            return false;
+        }
+
+        $at = AppTimezone::normalize($first->clock_in_at);
+        if (! $at) {
+            return false;
+        }
+
+        $minutes = ($at->hour * 60) + $at->minute;
+        $lunchFrom = $this->toMinutes($windows['lunch_clock_in_from'] ?? null);
+        $lunchTo = $this->toMinutes($windows['lunch_clock_in_to'] ?? null);
+        if ($lunchFrom === null || $lunchTo === null || ! $this->inRange($minutes, $lunchFrom, $lunchTo)) {
+            return false;
+        }
+
+        $morningFrom = $this->toMinutes($windows['morning_clock_in_from'] ?? null);
+        $morningTo = $this->toMinutes($windows['morning_clock_in_to'] ?? null);
+        if ($morningFrom !== null && $morningTo !== null && $this->inRange($minutes, $morningFrom, $morningTo)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    protected function clockHmIsBefore(?string $left, ?string $right): bool
+    {
+        if ($left === null || $right === null) {
+            return false;
+        }
+
+        $leftMin = $this->toMinutes($left);
+        $rightMin = $this->toMinutes($right);
+        if ($leftMin === null || $rightMin === null) {
+            return false;
+        }
+
+        return $leftMin < $rightMin;
     }
 
     /**

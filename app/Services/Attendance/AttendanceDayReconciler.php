@@ -120,13 +120,15 @@ class AttendanceDayReconciler
                 $firstIn = $prev;
             }
         }
-        $lateAt = app(AttendancePunchWindowResolver::class)->lateThreshold($employee, $date, $shiftStart);
+        $resolver = app(AttendancePunchWindowResolver::class);
+        $afternoonOnly = $this->isAfternoonOnlyArrival($employee, $firstIn, $resolver);
+        $lateAt = $resolver->lateThreshold($employee, $date, $shiftStart);
         $lateMinutes = 0;
-        if ($firstIn->gt($lateAt)) {
+        if (! $afternoonOnly && $firstIn->gt($lateAt)) {
             $lateMinutes = (int) max(0, (int) floor(($firstIn->getTimestamp() - $lateAt->getTimestamp()) / 60));
         }
 
-        $status = $lateMinutes > 0 ? 'late' : 'present';
+        $status = $afternoonOnly ? 'half_day' : ($lateMinutes > 0 ? 'late' : 'present');
         $expectedHours = $this->expectedPaidHours($employee, $date);
 
         $attendance = EmployeeAttendance::query()->updateOrCreate(
@@ -152,7 +154,9 @@ class AttendanceDayReconciler
                 'overtime_minutes' => $existing?->overtime_minutes ?? 0,
                 'notes' => $source === 'hr_applied'
                     ? 'Applied by HR from terminal punch'
-                    : ($existing?->notes ?: 'On shift — awaiting clock-out'),
+                    : ($existing?->notes ?: ($afternoonOnly
+                        ? 'Afternoon arrival (missed morning window) — awaiting clock-out'
+                        : 'On shift — awaiting clock-out')),
             ],
         );
 
@@ -427,9 +431,11 @@ class AttendanceDayReconciler
         $firstIn = $pairs[0]['in']->copy()->timezone(AppTimezone::name());
         $lastOut = $pairs[array_key_last($pairs)]['out']->copy()->timezone(AppTimezone::name());
 
-        $lateAt = app(AttendancePunchWindowResolver::class)->lateThreshold($employee, $date, $shiftStart);
+        $resolver = app(AttendancePunchWindowResolver::class);
+        $afternoonOnly = $this->isAfternoonOnlyArrival($employee, $firstIn, $resolver);
+        $lateAt = $resolver->lateThreshold($employee, $date, $shiftStart);
         $lateMinutes = 0;
-        if ($firstIn->gt($lateAt)) {
+        if (! $afternoonOnly && $firstIn->gt($lateAt)) {
             $lateMinutes = (int) max(0, (int) floor(($firstIn->getTimestamp() - $lateAt->getTimestamp()) / 60));
         }
 
@@ -437,6 +443,10 @@ class AttendanceDayReconciler
         $lunchStatus = '-';
         if (! $lunchRequired) {
             $lunchStatus = '-';
+        } elseif ($afternoonOnly) {
+            // Missed morning: treat as half-day return after lunch, not a skipped full lunch.
+            $lunchStatus = 'taken';
+            $actualLunchMinutes = $configuredLunch > 0 ? $configuredLunch : null;
         } elseif ($lunchTakenOverride === false) {
             $lunchStatus = 'skipped';
         } elseif ($lunchTakenOverride === true || count($pairs) >= 2) {
@@ -528,7 +538,6 @@ class AttendanceDayReconciler
         }
 
         $overtimeMinutes = (int) floor($overtimeSeconds / 60);
-        $resolver = app(AttendancePunchWindowResolver::class);
         $halfDayFromLunchOut = $lunchTakenOverride === null
             && $lunchRequired
             && count($pairs) === 1
@@ -541,7 +550,7 @@ class AttendanceDayReconciler
 
         $status = $forcedStatus;
         if ($status === null || $status === 'present' || $status === 'late') {
-            if ($halfDayFromLunchOut) {
+            if ($afternoonOnly || $halfDayFromLunchOut) {
                 $status = 'half_day';
             } elseif ($lateMinutes > 0 || $lunchLateMinutes > 0) {
                 $status = 'late';
@@ -610,7 +619,43 @@ class AttendanceDayReconciler
 
         $this->syncAutoOvertime($employee, $date, $overtimeMinutes);
 
+        try {
+            app(AttendanceAnomalyAlertService::class)->evaluateAfterReconcile(
+                $employee,
+                $date,
+                $pairs,
+                $attendance,
+            );
+        } catch (\Throwable $e) {
+            report($e);
+        }
+
         return $attendance;
+    }
+
+    /**
+     * First punch of the day landed in the lunch-return window (missed morning clock-in).
+     */
+    protected function isAfternoonOnlyArrival(
+        Employee $employee,
+        Carbon $firstIn,
+        AttendancePunchWindowResolver $resolver,
+    ): bool {
+        if (! $resolver->isInNamedWindow(
+            $employee,
+            $firstIn,
+            'lunch_clock_in_from',
+            'lunch_clock_in_to',
+        )) {
+            return false;
+        }
+
+        return ! $resolver->isInNamedWindow(
+            $employee,
+            $firstIn,
+            'morning_clock_in_from',
+            'morning_clock_in_to',
+        );
     }
 
     /**

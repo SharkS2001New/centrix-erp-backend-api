@@ -125,4 +125,26 @@ class KraDeviceErrorTranslatorTest extends TestCase
         $this->assertSame('034', $result['code']);
         $this->assertStringContainsString('product upload data is invalid', strtolower($result['message']));
     }
+
+    public function test_comstore_request_timeout_is_not_offline_message(): void
+    {
+        $raw = 'Comstore timed out after 22s';
+
+        $result = KraDeviceErrorTranslator::translate($raw);
+
+        $this->assertStringContainsString('did not finish in time', strtolower($result['message']));
+        $this->assertStringNotContainsString('could not reach', strtolower($result['message']));
+        $this->assertStringNotContainsString('comstore is not running', strtolower($result['message']));
+    }
+
+    public function test_manual_start_wrapped_timeout_maps_to_timeout_not_offline(): void
+    {
+        $raw = 'COMSTORE_MANUAL_START_REQUIRED: CentrixKraAgent is still running. Start Comstore with Windows '
+            .'(http://localhost:4000: Comstore timed out after 22s)';
+
+        $result = KraDeviceErrorTranslator::translate($raw);
+
+        $this->assertStringContainsString('did not finish in time', strtolower($result['message']));
+        $this->assertStringNotContainsString('comstore is not running', strtolower($result['message']));
+    }
 }

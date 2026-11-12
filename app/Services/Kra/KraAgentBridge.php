@@ -494,13 +494,26 @@ class KraAgentBridge
             ->whereIn('id', $ids)
             ->orderBy('created_at')
             ->get()
-            ->map(static fn (KraAgentCommand $c) => [
-                'id' => $c->id,
-                'method' => $c->method,
-                'path' => $c->path,
-                'body' => $c->body_json,
-                'accept' => $c->accept,
-            ])
+            ->map(static function (KraAgentCommand $c): array {
+                // expires_at = created_at + waitSeconds + 30 — recover wait so the agent
+                // can CancelAfter matching Centrix (credit notes ~55s, checkout ~28s).
+                $waitSeconds = self::COMMAND_WAIT_SECONDS;
+                if ($c->created_at && $c->expires_at) {
+                    $span = (int) $c->created_at->diffInSeconds($c->expires_at, false);
+                    if ($span > 30) {
+                        $waitSeconds = $span - 30;
+                    }
+                }
+
+                return [
+                    'id' => $c->id,
+                    'method' => $c->method,
+                    'path' => $c->path,
+                    'body' => $c->body_json,
+                    'accept' => $c->accept,
+                    'timeout_seconds' => max(10, min(55, $waitSeconds)),
+                ];
+            })
             ->all();
     }
 

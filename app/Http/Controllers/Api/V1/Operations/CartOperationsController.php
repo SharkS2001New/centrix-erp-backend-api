@@ -139,17 +139,28 @@ class CartOperationsController extends Controller
         $cart = $this->getOrCreateCart($request->user(), $request->validated());
         $cart->load('lines');
 
-        return $this->cartResponse($cart, $request->user(), 201, includeNextOrderNum: true);
+        // Peek order numbers only for External POS open-cart (ticket caption).
+        // Mobile / backoffice skip the sales ceiling scan on create.
+        return $this->cartResponse(
+            $cart,
+            $request->user(),
+            201,
+            includeNextOrderNum: $this->cartNeedsOrderNumPeek($cart),
+        );
     }
 
     public function show(int|string $cartId)
     {
         $user = request()->user();
+        $cart = $this->findOwnedCart($cartId, $user);
 
-        // Mobile warm-start and cart polls do not need next_order_num. Peeking
-        // scans sales order_num ceilings and was a common mobile timeout amplifier.
-        // Create / checkout paths still request the peek when needed.
-        return $this->cartResponse($this->findOwnedCart($cartId, $user), $user, includeNextOrderNum: false);
+        // Mobile warm-start / polls: no peek (sales ceiling scan was a timeout amplifier).
+        // POS refreshCart still needs next_pos_order_num for the ticket caption.
+        return $this->cartResponse(
+            $cart,
+            $user,
+            includeNextOrderNum: $this->cartNeedsOrderNumPeek($cart),
+        );
     }
 
     public function update(\Illuminate\Http\Request $request, int|string $cartId)
@@ -266,13 +277,11 @@ class CartOperationsController extends Controller
             ], 201);
         }
 
+        // POS / ERP still need the full cart body for client merge — but never
+        // re-peek order numbers on every line add (create/show already stamp them).
         $fresh = $this->freshOwnedCart($cart);
-        return $this->cartResponse(
-            $fresh,
-            $user,
-            201,
-            includeNextOrderNum: $this->cartNeedsOrderNumPeek($fresh),
-        );
+
+        return $this->cartResponse($fresh, $user, 201, includeNextOrderNum: false);
     }
 
     public function updateLine(UpdateCartLineRequest $request, int|string $cartId, string $lineRef)
@@ -1563,7 +1572,7 @@ class CartOperationsController extends Controller
                 $expiresAt,
             );
         }
-        if ($reserveOnCart && $expiresAt !== null) {
+        if ($reserveOnCart && $expiresAt !== null && $this->shouldRefreshCartReservationExpiries($cart)) {
             $this->refreshCartReservationExpiries((int) $cart->id, $expiresAt);
         }
     }
@@ -1761,7 +1770,7 @@ class CartOperationsController extends Controller
                 $expiresAt,
             );
         }
-        if ($reserveOnCart && $expiresAt !== null) {
+        if ($reserveOnCart && $expiresAt !== null && $this->shouldRefreshCartReservationExpiries($cart)) {
             $this->refreshCartReservationExpiries((int) $cart->id, $expiresAt);
         }
     }
@@ -1903,6 +1912,7 @@ class CartOperationsController extends Controller
 
         if (($settings['reserve_stock_on_cart'] ?? true) && ! $skipStockReserve) {
             $allowBelowStock = $this->organizationAllowsBelowStock($user->organization_id);
+            $expiresAt = $this->reservationExpiresAtForUser($user, $settings, (string) $cart->channel);
             $this->reserveStock(
                 (int) $cart->branch_id,
                 $product->product_code,
@@ -1912,12 +1922,13 @@ class CartOperationsController extends Controller
                 $cart->id,
                 $allowBelowStock,
                 $row->id,
-                $this->reservationExpiresAtForUser($user, $settings, (string) $cart->channel),
+                $expiresAt,
             );
-            $this->refreshCartReservationExpiries(
-                (int) $cart->id,
-                $this->reservationExpiresAtForUser($user, $settings, (string) $cart->channel),
-            );
+            // New hold already has expires_at. Only slide TTL for all holds on mobile
+            // long-running carts — POS/ERP skip the extra UPDATE on every add.
+            if ($this->shouldRefreshCartReservationExpiries($cart)) {
+                $this->refreshCartReservationExpiries((int) $cart->id, $expiresAt);
+            }
         }
 
         $cart->increment('update_no');
@@ -2077,7 +2088,9 @@ class CartOperationsController extends Controller
             } else {
                 DeadlockSafe::transaction($replaceReservation, 5);
             }
-            $this->refreshCartReservationExpiries($cartId, $expiresAt);
+            if ($this->shouldRefreshCartReservationExpiries($cart)) {
+                $this->refreshCartReservationExpiries($cartId, $expiresAt);
+            }
         }
 
         $grossForVat = max(0, $amount);
@@ -2541,6 +2554,15 @@ class CartOperationsController extends Controller
     protected function isMobileChannelCart(TemporaryCart $cart): bool
     {
         return strtolower(trim((string) ($cart->channel ?? ''))) === 'mobile';
+    }
+
+    /**
+     * Sliding reservation TTL is for mobile field carts that stay open for hours.
+     * POS / ERP holds already get expires_at on insert — refreshing every line is wasteful.
+     */
+    protected function shouldRefreshCartReservationExpiries(TemporaryCart $cart): bool
+    {
+        return $this->isMobileChannelCart($cart);
     }
 
     protected function cartNeedsOrderNumPeek(TemporaryCart $cart): bool

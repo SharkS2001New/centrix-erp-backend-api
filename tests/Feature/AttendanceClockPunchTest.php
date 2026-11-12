@@ -287,22 +287,68 @@ class AttendanceClockPunchTest extends TestCase
         ]);
     }
 
-    public function test_first_punch_of_the_day_is_always_clock_in(): void
+    public function test_first_punch_outside_morning_and_lunch_windows_is_missed(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        // 15:05 is after lunch-in window (ends 15:00) and before evening out — not a morning IN.
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-11T15:05:00+03:00',
+            'direction' => 'auto',
+        ])->assertOk()->assertJsonPath('action', 'missed');
+
+        $this->assertSame(0, EmployeeClockSession::query()->where('employee_id', $this->employee->id)->count());
+    }
+
+    public function test_afternoon_first_punch_in_lunch_window_is_half_day_return(): void
     {
         Sanctum::actingAs($this->admin);
 
         $this->postJson('/api/v1/attendance/clock-punch', [
             'employee_code' => 'EMP#HIK001',
             'device_no' => 'TERMINAL-01',
-            'punched_at' => '2026-08-11T15:05:00+03:00',
+            'punched_at' => '2026-08-11T13:05:00+03:00',
             'direction' => 'auto',
         ])->assertCreated()->assertJsonPath('action', 'in');
 
         $this->assertDatabaseHas('employee_attendance', [
             'employee_id' => $this->employee->id,
             'attendance_date' => '2026-08-11',
-            'check_in' => '15:05:00',
+            'check_in' => '13:05:00',
+            'status' => 'half_day',
+            'late_minutes' => 0,
         ]);
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-11T17:30:00+03:00',
+            'direction' => 'auto',
+        ])->assertOk()->assertJsonPath('action', 'out');
+
+        $this->assertDatabaseHas('employee_attendance', [
+            'employee_id' => $this->employee->id,
+            'attendance_date' => '2026-08-11',
+            'check_out' => '17:30:00',
+            'status' => 'half_day',
+            'late_minutes' => 0,
+        ]);
+    }
+
+    public function test_evening_first_punch_without_morning_is_missed_not_clock_in(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-11T19:55:00+03:00',
+            'direction' => 'auto',
+        ])->assertOk()->assertJsonPath('action', 'missed');
+
+        $this->assertSame(0, EmployeeClockSession::query()->where('employee_id', $this->employee->id)->count());
     }
 
     public function test_nairobi_offset_is_stored_as_nairobi_clock_time(): void

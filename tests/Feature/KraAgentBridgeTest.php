@@ -185,6 +185,8 @@ class KraAgentBridgeTest extends TestCase
 
         $res->assertJsonPath('commands.0.id', $commandId);
         $res->assertJsonPath('commands.0.path', '/api/health');
+        // expires_at was created_at + 2 minutes → wait ≈ 90s, clamped to agent max 55.
+        $res->assertJsonPath('commands.0.timeout_seconds', 55);
         // Should wake promptly when work is already queued (not sit for the full wait_ms).
         $this->assertLessThan(500, $elapsedMs, 'Pending long-poll should return immediately when a command is already queued');
     }

@@ -422,10 +422,11 @@ class CreditNoteService
                 ];
             };
 
-            // Soft path: fail fast when agent/Comstore known down — same as checkout.
+            // Soft-skip only when heartbeat already says Comstore/device is down — same as checkout.
+            // Do not soft-skip on ready===null; credit notes are slower than sales and still work
+            // when invoice sales are succeeding.
             $preflight = $service->agentFiscalPreflight();
-            if ($preflight['ready'] === false
-                || ($preflight['ready'] === null && ! $service->agentIsWarm())) {
+            if ($preflight['ready'] === false) {
                 $detail = KraDeviceErrorTranslator::userMessageForDocument(
                     $preflight['message'] ?? 'Centrix KRA Agent / Comstore is not available.',
                     'credit_note',
@@ -746,6 +747,8 @@ class CreditNoteService
         $buyerPin = trim((string) ($sale->customer?->kra_pin ?? ''));
         $buyerPin = $buyerPin !== '' ? $buyerPin : null;
 
+        // Credit notes are slower than invoice sales (device looks up the original CU).
+        // Use the full command wait so the agent does not cut Comstore at the checkout budget.
         $result = $service->sendCreditNote(
             $orderItems,
             (float) $sale->order_total,
@@ -754,6 +757,11 @@ class CreditNoteService
             $reasonCode,
             'CASH',
             $buyerPin,
+            [
+                'agent_wait_seconds' => \App\Services\Kra\KraAgentBridge::COMMAND_WAIT_SECONDS,
+                'http_timeout_seconds' => 50,
+                'http_connect_timeout_seconds' => 3,
+            ],
         );
 
         if (! ($result['success'] ?? false)) {

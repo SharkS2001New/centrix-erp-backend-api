@@ -90,12 +90,15 @@ return [
         '/Device not initialized/i' => 'The fiscal device is not initialized. Use Initialize device in Finance settings or configure it in Comstore desktop.',
         '/deviceConnection.*Disconnected/i' => 'Comstore API is reachable but the fiscal hardware is disconnected. Check power and network to the Smart VSCU device.',
         '/Could not reach KRA device|Could not reach the KRA device|URL in settings is correct/i' => 'Could not reach Comstore via Centrix KRA Agent. Confirm CentrixKraAgent is running and Comstore is started, then try again.',
+        // Credit notes often take longer than sales; agent timeouts must not look like "Comstore is down".
+        '/Comstore timed out after/i' => 'Comstore did not finish in time via Centrix KRA Agent (credit notes are slower than sales). Confirm Comstore and the fiscal device are online, then retry.',
+        '/COMSTORE_MANUAL_START[^\n]*timed out|timed out[^\n]*COMSTORE_MANUAL_START/i' => 'Comstore did not finish in time via Centrix KRA Agent (credit notes are slower than sales). Confirm Comstore and the fiscal device are online, then retry.',
         '/Start Comstore|Comstore is not|Comstore not reachable|COMSTORE_MANUAL_START/i' => 'Comstore is not running. Start Comstore, keep Centrix KRA Agent running, then try the sale again. The receipt was saved without a KRA QR.',
         '/did not respond in time|KRA did not respond|CentrixKraAgent did not respond/i' => 'Centrix KRA Agent / Comstore did not respond in time. Confirm the agent service is online and Comstore is started. The sale was saved without a KRA QR.',
-        '/cURL error|Connection refused|timed out|Connection timed out|Failed to connect|actively refused|no connection could be made/i' => 'Could not reach Comstore via Centrix KRA Agent. Start Comstore and confirm CentrixKraAgent is online, then try again.',
+        // Keep bare "timed out" out of this connectivity bucket — agent request timeouts are handled above.
+        '/cURL error|Connection refused|Connection timed out|Failed to connect|actively refused|no connection could be made/i' => 'Could not reach Comstore via Centrix KRA Agent. Start Comstore and confirm CentrixKraAgent is online, then try again.',
         '/519\s*error\s*code|error\s*code\s*[,:]?\s*519/i' => 'The KRA fiscal device is not communicating. Check Centrix KRA Agent, Comstore, and that the device is powered on and connected.',
         '/aborted without a reason|signal is aborted|operation was aborted|operation was cancel+ed/i' => 'Centrix KRA Agent reported Comstore or the fiscal device stopped responding (timeout/cancel). Start Comstore, check the device, then retry the credit note.',
-        '/Comstore timed out after/i' => 'Comstore did not finish in time via Centrix KRA Agent. Confirm Comstore is started and the fiscal device is online, then retry.',
         '/has not checked in|has never checked in/i' => 'Centrix KRA Agent is not online. On the PC with Comstore, start the CentrixKraAgent Windows service (status http://127.0.0.1:9261), then try again.',
         '/^Comstore HTTP 5\d{2}$/i' => 'Comstore had an internal error while fiscalizing this sale. On the shop PC, confirm Comstore is running, check Comstore logs for the detailed fault (often product, PIN, or device related), restart Comstore if needed, then retry from KRA invoices or Unfiscalized sales.',
         '/^Comstore HTTP 4\d{2}$/i' => 'Comstore rejected this fiscal request. Check the shop PIN, device serial, and that products are registered on the KRA device, then retry.',

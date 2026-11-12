@@ -96,11 +96,10 @@ trait HandlesCartAccess
 
         $channel = strtolower(trim((string) ($cart->channel ?? '')));
         $source = strtolower(trim((string) ($cart->order_source ?? '')));
-        $shouldPeekOrderNum = $includeNextOrderNum || $channel === 'pos' || $source === 'pos';
 
-        if ($shouldPeekOrderNum && $user && $user->organization_id) {
-            // POS needs a stable “New Order - S00xx” label after line adds.
-            // Mobile list/poll paths pass includeNextOrderNum=false — skip the sales ceiling scan.
+        // Callers must opt in. Forcing peeks for every POS cart made line-add
+        // (and other hot paths) scan sales ceilings / float sessions every time.
+        if ($includeNextOrderNum && $user && $user->organization_id) {
             $payload['next_order_num'] = app(OrderNumberAllocator::class)
                 ->peekNextForOrganization((int) $user->organization_id);
 
