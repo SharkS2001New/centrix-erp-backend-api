@@ -638,7 +638,7 @@ class MobileSalesService
         }
 
         $sale->load([
-            'items.product:product_code,product_name,unit_id,organization_id,sell_on_retail',
+            'items.product:product_code,product_name,unit_id,organization_id,sell_on_retail,image_path',
             'items.product.unit:id,conversion_factor,full_name,measure_name,small_packaging_label,middle_packaging_label,middle_factor,uses_small_packaging,uom_type',
             'cashier:id,username',
             'customer:customer_num,customer_name,organization_id',
@@ -735,6 +735,9 @@ class MobileSalesService
     /** @return list<array<string, mixed>> */
     public function mapOrderItems(Sale $sale): array
     {
+        // Ensure Product::image_url uses Platform R2 vs local public disk.
+        \App\Services\Storage\PublicMediaR2SettingsResolver::applyToRuntime();
+
         $returnMetaByItemId = [];
         try {
             $returnLines = app(CustomerReturnService::class)->linesFromSale($sale);
@@ -812,6 +815,8 @@ class MobileSalesService
                 'amount' => $displayAmount,
                         'sell_on_retail' => (int) $item->on_wholesale_retail,
                 'product_sell_on_retail' => (int) ($product?->sell_on_retail ?? 0),
+                // Public disk / R2 URL from Product::image_url (Platform media settings).
+                'image_url' => $product?->image_url,
                 'max_return_qty' => round($maxReturnQty, 4),
                 'already_returned' => round($alreadyReturned, 4),
                 'conversion_factor' => $conversionFactor,
@@ -1362,14 +1367,17 @@ class MobileSalesService
             ]);
         }
 
-        // Keep pending so managers approve via customer-returns workflow.
+        // Managers / org admins: create + approve in one step (no second approval hop).
+        // Cashiers without approve rights stay pending for the normal workflow.
+        $autoApprove = app(CustomerReturnApprovalService::class)->canApprove($user);
+
         return app(CustomerReturnService::class)->create($user, [
             'sale_id' => $sale->id,
             'customer_num' => $sale->customer_num,
             'branch_id' => $sale->branch_id,
             'reason' => $data['reason'] ?? null,
             'stock_location' => $data['stock_location'] ?? null,
-            'auto_approve' => false,
+            'auto_approve' => $autoApprove,
             'lines' => $lines,
         ]);
     }

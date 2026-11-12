@@ -951,6 +951,9 @@ class ProductController extends BaseResourceController
         $this->assertProductImagesEnabled($request);
         $model = $this->findScopedModel($request, $product);
 
+        // Honor Platform → Cloudflare R2 media vs local public disk for reads.
+        \App\Services\Storage\PublicMediaR2SettingsResolver::applyToRuntime();
+
         $headers = [];
         if ($request->boolean('download')) {
             $safe = preg_replace('/[^A-Za-z0-9._-]+/', '_', (string) $model->product_code) ?: 'product';
@@ -1085,12 +1088,12 @@ class ProductController extends BaseResourceController
             'image' => 'required|image|mimes:jpeg,jpg,png,webp|max:5120',
         ]);
 
+        // Ensure Platform → R2 media settings are applied before delete + put.
+        \App\Services\Storage\PublicMediaR2SettingsResolver::applyToRuntime();
+
         if ($model->image_path) {
             Storage::disk('public')->delete($model->image_path);
         }
-
-        // Ensure Platform → R2 media settings are applied on this worker before put.
-        \App\Services\Storage\PublicMediaR2SettingsResolver::applyToRuntime();
 
         $directory = OrganizationPublicStorage::path(
             $model->organization_id ?? $request->user()?->organization_id,
@@ -1138,6 +1141,9 @@ class ProductController extends BaseResourceController
             'url' => 'required|string|max:2000',
         ]);
 
+        // Honor Platform → Cloudflare R2 media vs local public disk for writes.
+        \App\Services\Storage\PublicMediaR2SettingsResolver::applyToRuntime();
+
         $directory = OrganizationPublicStorage::path(
             $model->organization_id ?? $request->user()?->organization_id,
             'products',
@@ -1161,6 +1167,9 @@ class ProductController extends BaseResourceController
         $this->assertProductImagesEnabled($request);
         $this->assertProductImageNotRequired($request);
         $model = $this->findScopedModel($request, $product);
+
+        // Honor Platform → Cloudflare R2 media vs local public disk.
+        \App\Services\Storage\PublicMediaR2SettingsResolver::applyToRuntime();
 
         if ($model->image_path) {
             Storage::disk('public')->delete($model->image_path);

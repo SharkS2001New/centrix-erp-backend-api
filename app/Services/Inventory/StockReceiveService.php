@@ -19,7 +19,9 @@ class StockReceiveService
     public function receive(array $data, User $user): StockReceipt
     {
         return DB::transaction(function () use ($data, $user) {
-            $location = $data['stock_location'] ?? 'store';
+            $location = in_array(($data['stock_location'] ?? ''), ['shop', 'store'], true)
+                ? $data['stock_location']
+                : 'shop';
             $qty = (float) $data['units_received'];
 
             $txn = null;

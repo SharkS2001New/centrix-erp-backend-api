@@ -19,16 +19,32 @@ class LpoReceiveController extends Controller
     public function store(StockReceiveRequest $request)
     {
         $data = $request->validated();
+        $user = $request->user();
+        $orgId = (int) ($user?->organization_id ?? 0);
+        $procurement = \App\Services\Purchasing\ProcurementSettingsResolver::forOrganizationId($orgId);
+
         if (empty($data['stock_location'])) {
-            $orgId = (int) ($request->user()?->organization_id ?? 0);
-            $procurement = \App\Services\Purchasing\ProcurementSettingsResolver::forOrganizationId($orgId);
-            $data['stock_location'] = $procurement['default_receive_location'] ?? 'store';
+            $data['stock_location'] = $procurement['default_receive_location'] ?? 'shop';
         }
 
-        $receipt = $this->receives->receive($data, $request->user());
+        // Shop-only / small_shop: POS sells from shop — never park receive qty in store.
+        $organization = $user?->organization_id
+            ? \App\Models\Organization::query()->find($user->organization_id)
+            : null;
+        if (
+            $organization
+            && (
+                ($organization->deployment_profile ?? '') === 'small_shop'
+                || \App\Services\Purchasing\ProcurementSettingsResolver::isShopOnlySales($organization)
+            )
+        ) {
+            $data['stock_location'] = 'shop';
+        }
 
-        $gate = $this->erp->gateForUser($request->user());
-        app(PurchaseReceiveJournalService::class)->postIfEnabled($receipt, $request->user(), $gate);
+        $receipt = $this->receives->receive($data, $user);
+
+        $gate = $this->erp->gateForUser($user);
+        app(PurchaseReceiveJournalService::class)->postIfEnabled($receipt, $user, $gate);
 
         return response()->json($receipt, 201);
     }

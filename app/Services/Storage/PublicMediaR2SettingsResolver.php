@@ -170,12 +170,46 @@ class PublicMediaR2SettingsResolver
     public static function applyToRuntime(): array
     {
         $cfg = self::resolve();
-        if (! ((bool) $cfg['enabled'] && self::isConfigured($cfg))) {
-            return $cfg;
-        }
 
         // PHPUnit seeds write product photos to the public disk — keep local there unless forced.
         if (app()->runningUnitTests() && ! filter_var(env('PUBLIC_MEDIA_R2_APPLY_IN_TESTS', false), FILTER_VALIDATE_BOOL)) {
+            config([
+                'filesystems.disks.public' => [
+                    'driver' => 'local',
+                    'root' => storage_path('app/public'),
+                    'url' => rtrim((string) config('app.url'), '/').'/storage',
+                    'visibility' => 'public',
+                    'throw' => false,
+                ],
+            ]);
+            Storage::forgetDisk('public');
+
+            return $cfg;
+        }
+
+        if (! ((bool) $cfg['enabled'] && self::isConfigured($cfg))) {
+            // Platform admin turned R2 off (or not ready) → server local public storage.
+            $org = self::platformOrganization();
+            $stored = is_array($org?->module_settings[self::MODULE_KEY] ?? null)
+                ? $org->module_settings[self::MODULE_KEY]
+                : null;
+            $explicitlyDisabled = is_array($stored)
+                && array_key_exists('enabled', $stored)
+                && ! (bool) $stored['enabled'];
+            $envDriver = strtolower((string) env('PUBLIC_STORAGE_DRIVER', 'local'));
+            if ($explicitlyDisabled || $envDriver === 'r2' || $envDriver === 'local' || $envDriver === '') {
+                config([
+                    'filesystems.disks.public' => [
+                        'driver' => 'local',
+                        'root' => storage_path('app/public'),
+                        'url' => rtrim((string) config('app.url'), '/').'/storage',
+                        'visibility' => 'public',
+                        'throw' => false,
+                    ],
+                ]);
+                Storage::forgetDisk('public');
+            }
+
             return $cfg;
         }
 

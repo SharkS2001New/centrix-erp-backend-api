@@ -168,7 +168,7 @@ class MobileSalesController extends Controller
         );
     }
 
-    /** POST /mobile/orders/{saleId}/returns — line or full-order return pending manager approval. */
+    /** POST /mobile/orders/{saleId}/returns — create return; auto-approves for managers/org admins. */
     public function storeReturn(Request $request, int $saleId)
     {
         $data = $request->validate([

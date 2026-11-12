@@ -449,7 +449,10 @@ class UserPermissionService
 
     public function canApproveCustomerReturns(User $user): bool
     {
-        return $this->hasAssignedCapability($user, 'sales.manage');
+        // Org admins and sales managers may approve (and therefore self-approve on create).
+        return (bool) $user->is_admin
+            || $this->hasAssignedCapability($user, 'sales.manage')
+            || $this->hasPermission($user, 'sales.manage');
     }
 
     public function canApproveInventoryOperations(User $user): bool

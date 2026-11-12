@@ -1534,6 +1534,31 @@ class MobileSalesApiTest extends TestCase
         ], $overrides));
     }
 
+    /** Cashier role with sales.create only — returns stay pending for manager approval. */
+    protected function makeMobileCashierWithoutApprove(array $overrides = []): User
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $role = \App\Models\Role::query()->create([
+            'role_name' => 'Mobile Cashier '.uniqid(),
+            'organization_id' => $admin->organization_id,
+            'scope' => 'org',
+            'is_active' => true,
+        ]);
+
+        $salesCreateId = DB::table('permissions')->where('permission_code', 'sales.create')->value('id');
+        if ($salesCreateId) {
+            DB::table('role_permissions')->updateOrInsert(
+                ['role_id' => $role->id, 'permission_id' => (int) $salesCreateId],
+                [],
+            );
+        }
+
+        return $this->makeMobileUser(array_merge([
+            'role_id' => $role->id,
+            'is_admin' => false,
+        ], $overrides));
+    }
+
     public function test_mobile_orders_list_includes_line_discount_in_total_discount(): void
     {
         $rep = $this->makeMobileUser(['username' => 'mobile_disc_'.uniqid()]);
@@ -1585,7 +1610,7 @@ class MobileSalesApiTest extends TestCase
 
     public function test_mobile_order_return_creates_pending_for_manager_approval(): void
     {
-        $rep = $this->makeMobileUser(['username' => 'mobile_ret_'.uniqid()]);
+        $rep = $this->makeMobileCashierWithoutApprove(['username' => 'mobile_ret_'.uniqid()]);
         $product = \App\Models\Product::firstOrFail();
         $template = Sale::query()->where('channel', 'mobile')->firstOrFail();
 
@@ -1637,9 +1662,67 @@ class MobileSalesApiTest extends TestCase
         ]);
     }
 
+    public function test_mobile_order_return_auto_approves_for_org_admin(): void
+    {
+        $admin = $this->makeMobileUser([
+            'username' => 'mobile_ret_admin_'.uniqid(),
+            'is_admin' => true,
+            'login_channels' => ['mobile', 'centrix_as_mobile'],
+        ]);
+        $product = \App\Models\Product::firstOrFail();
+        $template = Sale::query()->where('channel', 'mobile')->firstOrFail();
+
+        $sale = Sale::create([
+            'order_num' => 97051 + random_int(1, 4000),
+            'branch_id' => $template->branch_id,
+            'organization_id' => $template->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $admin->id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $template->route_id,
+            'status' => 'paid',
+            'total_vat' => 0,
+            'order_total' => 200,
+            'payment_status' => 'paid',
+            'amount_paid' => 200,
+            'stock_balanced' => 1,
+        ]);
+
+        \App\Models\SaleItem::create([
+            'sale_id' => $sale->id,
+            'product_code' => $product->product_code,
+            'line_no' => 1,
+            'item_code' => '1',
+            'quantity' => 2,
+            'uom' => $product->uom,
+            'selling_price' => 100,
+            'discount_given' => 0,
+            'product_vat' => 0,
+            'amount' => 200,
+            'on_wholesale_retail' => 0,
+        ]);
+
+        $token = $this->loginMobile($admin);
+
+        $this->withToken($token)
+            ->postJson("/api/v1/mobile/orders/{$sale->id}/returns", [
+                'reason' => 'Admin self-return',
+                'full_order' => true,
+            ])
+            ->assertCreated()
+            ->assertJsonPath('status', 'approved')
+            ->assertJsonPath('sale_id', $sale->id);
+
+        $this->assertDatabaseHas('customer_returns', [
+            'sale_id' => $sale->id,
+            'status' => 'approved',
+            'returned_by' => $admin->id,
+        ]);
+    }
+
     public function test_approved_return_updates_todays_order_list_and_dashboard_totals(): void
     {
-        $rep = $this->makeMobileUser(['username' => 'mobile_ret_tot_'.uniqid()]);
+        $rep = $this->makeMobileCashierWithoutApprove(['username' => 'mobile_ret_tot_'.uniqid()]);
         $product = \App\Models\Product::firstOrFail();
         $template = Sale::query()->where('channel', 'mobile')->firstOrFail();
         $today = now()->toDateString();
@@ -1704,10 +1787,9 @@ class MobileSalesApiTest extends TestCase
         );
 
         $admin = User::where('username', 'admin')->firstOrFail();
-        Sanctum::actingAs($admin);
-        $this->postJson('/api/v1/customer-returns/'.$created['id'].'/approve')
-            ->assertOk()
-            ->assertJsonPath('status', 'approved');
+        $return = \App\Models\CustomerReturn::query()->findOrFail($created['id']);
+        $approved = app(\App\Services\Sales\CustomerReturnService::class)->approve($return, $admin);
+        $this->assertSame('approved', $approved->status);
 
         $afterList = $this->withToken($token)
             ->getJson('/api/v1/mobile/orders?from_date='.$today.'&to_date='.$today)

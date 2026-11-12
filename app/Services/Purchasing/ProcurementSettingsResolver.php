@@ -22,12 +22,7 @@ class ProcurementSettingsResolver
 
         $settings = self::normalize(array_merge(self::defaults(), $stored));
 
-        // Small shops stock only in shop — never default receive into store.
-        if (($organization->deployment_profile ?? '') === 'small_shop') {
-            $settings['default_receive_location'] = 'shop';
-        }
-
-        return $settings;
+        return self::alignReceiveLocationWithSales($organization, $settings);
     }
 
     /** @return array<string, mixed> */
@@ -47,10 +42,77 @@ class ProcurementSettingsResolver
     /** @return array<string, mixed> */
     public static function forGate(CapabilityGate $gate): array
     {
-        return self::normalize(array_merge(
+        $settings = self::normalize(array_merge(
             self::defaults(),
             $gate->moduleSettings('procurement'),
         ));
+
+        $organization = $gate->organization();
+        if ($organization) {
+            return self::alignReceiveLocationWithSales($organization, $settings);
+        }
+
+        return $settings;
+    }
+
+    /**
+     * Keep receive location aligned with where the till sells from.
+     * Shop-only / small_shop orgs must receive into shop or POS shows zero stock.
+     *
+     * @param  array<string, mixed>  $settings
+     * @return array<string, mixed>
+     */
+    public static function alignReceiveLocationWithSales(Organization $organization, array $settings): array
+    {
+        if (($organization->deployment_profile ?? '') === 'small_shop') {
+            $settings['default_receive_location'] = 'shop';
+
+            return $settings;
+        }
+
+        $sales = is_array($organization->module_settings['sales'] ?? null)
+            ? $organization->module_settings['sales']
+            : [];
+
+        // Match config/erp.php sales defaults when keys are unset.
+        $allowShop = array_key_exists('allow_sell_from_shop', $sales)
+            ? (bool) $sales['allow_sell_from_shop']
+            : (bool) (config('erp.module_settings_defaults.sales.allow_sell_from_shop') ?? true);
+        $allowStore = array_key_exists('allow_sell_from_store', $sales)
+            ? (bool) $sales['allow_sell_from_store']
+            : (bool) (config('erp.module_settings_defaults.sales.allow_sell_from_store') ?? false);
+
+        if ($allowShop && ! $allowStore) {
+            $settings['default_receive_location'] = 'shop';
+        }
+
+        return $settings;
+    }
+
+    /** True when the org must receive into shop (POS cannot sell store-only stock). */
+    public static function mustReceiveIntoShop(Organization $organization): bool
+    {
+        $settings = self::forOrganization($organization);
+
+        return ($settings['default_receive_location'] ?? 'store') === 'shop'
+            && (($organization->deployment_profile ?? '') === 'small_shop'
+                || self::isShopOnlySales($organization));
+    }
+
+    public static function isShopOnlySales(Organization $organization): bool
+    {
+        $sales = is_array($organization->module_settings['sales'] ?? null)
+            ? $organization->module_settings['sales']
+            : [];
+
+        $allowShop = array_key_exists('allow_sell_from_shop', $sales)
+            ? (bool) $sales['allow_sell_from_shop']
+            : (bool) (config('erp.module_settings_defaults.sales.allow_sell_from_shop') ?? true);
+        $allowStore = array_key_exists('allow_sell_from_store', $sales)
+            ? (bool) $sales['allow_sell_from_store']
+            : (bool) (config('erp.module_settings_defaults.sales.allow_sell_from_store') ?? false);
+
+        return $allowShop && ! $allowStore;
     }
 
     /** @param  array<string, mixed>  $settings */

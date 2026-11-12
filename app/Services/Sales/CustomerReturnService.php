@@ -114,7 +114,10 @@ class CustomerReturnService
                 $return->refresh();
             }
 
-            if (! empty($data['auto_approve'])) {
+            if (
+                ! empty($data['auto_approve'])
+                && app(CustomerReturnApprovalService::class)->canApprove($user)
+            ) {
                 return $this->approve($return->fresh(['lines']), $user);
             }
 
@@ -179,7 +182,10 @@ class CustomerReturnService
 
             $this->syncLines($return, $lines);
 
-            if (! empty($data['auto_approve'])) {
+            if (
+                ! empty($data['auto_approve'])
+                && app(CustomerReturnApprovalService::class)->canApprove($user)
+            ) {
                 return $this->approve($return->fresh(['lines']), $user);
             }
 
