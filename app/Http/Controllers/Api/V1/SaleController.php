@@ -72,7 +72,11 @@ class SaleController extends BaseResourceController
             $query->with(['items.product.unit']);
         }
 
-        $query->with(['cashier:id,username,full_name', 'customer:customer_num,customer_name,route_id,organization_id']);
+        // Include phone/town/PIN — A4 invoice print uses sale.customer when passed from the list/detail.
+        $query->with([
+            'cashier:id,username,full_name',
+            'customer:customer_num,customer_name,phone_number,additional_phone,kra_pin,town,terms_of_payment,route_id,organization_id',
+        ]);
 
         foreach ((array) $request->input('filter', []) as $col => $val) {
             // status + payment_status use dedicated amount/workflow filters below —
@@ -768,7 +772,7 @@ class SaleController extends BaseResourceController
     {
         $sale = $this->baseQuery($request)->with([
             'items.product.unit',
-            'customer:customer_num,customer_name,organization_id',
+            'customer:customer_num,customer_name,phone_number,additional_phone,kra_pin,town,terms_of_payment,route_id,organization_id',
             'kraResponse',
             'cashier:id,username,full_name',
         ])->findOrFail($id);
