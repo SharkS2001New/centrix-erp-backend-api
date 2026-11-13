@@ -285,44 +285,44 @@ class CommerceDemoDataSeeder
             $stockRows = 0;
             $activeCount = 0;
             if ($codes !== []) {
-                foreach ($products as $product) {
-                    if (
-                        is_string($product->image_path)
-                        && $product->image_path !== ''
-                        && ! filter_var($product->image_path, FILTER_VALIDATE_URL)
-                    ) {
-                        Storage::disk('public')->delete($product->image_path);
-                    }
+            foreach ($products as $product) {
+                if (
+                    is_string($product->image_path)
+                    && $product->image_path !== ''
+                    && ! filter_var($product->image_path, FILTER_VALIDATE_URL)
+                ) {
+                    Storage::disk('public')->delete($product->image_path);
                 }
+            }
 
-                $branchIds = Branch::query()->where('organization_id', $org->id)->pluck('id');
-                $stockRows = CurrentStock::query()
+            $branchIds = Branch::query()->where('organization_id', $org->id)->pluck('id');
+            $stockRows = CurrentStock::query()
+                ->whereIn('product_code', $codes)
+                ->whereIn('branch_id', $branchIds)
+                ->delete();
+
+            if (Schema::hasTable('retail_package_settings')) {
+                DB::table('retail_package_settings')
                     ->whereIn('product_code', $codes)
-                    ->whereIn('branch_id', $branchIds)
                     ->delete();
+            }
+            if (Schema::hasTable('price_history')) {
+                DB::table('price_history')
+                    ->where('organization_id', $org->id)
+                    ->whereIn('product_code', $codes)
+                    ->delete();
+            }
 
-                if (Schema::hasTable('retail_package_settings')) {
-                    DB::table('retail_package_settings')
-                        ->whereIn('product_code', $codes)
-                        ->delete();
-                }
-                if (Schema::hasTable('price_history')) {
-                    DB::table('price_history')
-                        ->where('organization_id', $org->id)
-                        ->whereIn('product_code', $codes)
-                        ->delete();
-                }
-
-                $activeCount = $products->filter(fn (Product $product) => $product->deleted_at === null)->count();
+            $activeCount = $products->filter(fn (Product $product) => $product->deleted_at === null)->count();
                 // Clear supplier FK before deleting demo suppliers.
                 Product::withTrashed()
                     ->where('organization_id', $org->id)
                     ->whereIn('product_code', $codes)
                     ->update(['supplier_id' => null]);
-                Product::query()
-                    ->where('organization_id', $org->id)
-                    ->whereIn('product_code', $codes)
-                    ->delete();
+            Product::query()
+                ->where('organization_id', $org->id)
+                ->whereIn('product_code', $codes)
+                ->delete();
             }
 
             $suppliersRemoved = $this->removeDemoSuppliers($org);

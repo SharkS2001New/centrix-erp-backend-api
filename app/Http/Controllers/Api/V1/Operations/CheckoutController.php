@@ -146,23 +146,29 @@ class CheckoutController extends Controller
 
         // Fiscalize after the sale commits (not inside the DB transaction).
         // POS / backoffice wait sync so the first thermal receipt can include the eTIMS QR.
-        // Mobile confirmation does not print QR — defer Comstore RTT after the HTTP response
-        // so field sales are not blocked ~10s+ when the KRA agent is slow.
+        // Mobile: save the order first, then fiscalize after the HTTP response (same process)
+        // so confirm stays fast — without relying on a `kra` queue worker (that path broke
+        // when only `default` was worked).
         $persistedKra = null;
         if ($pendingKra) {
             $kraStarted = microtime(true);
             if ($channel === 'mobile') {
                 $timing['kra_mode'] = 'deferred';
-                // Real queue → push now so a worker fiscalizes while the HTTP reply flushes.
-                // Sync driver → afterResponse so the mobile confirm stays instant.
-                $kraJob = SubmitSaleKraAfterCheckoutJob::dispatch(
-                    (int) $sale->id,
-                    (int) $request->user()->id,
-                    $buyerPin,
-                );
-                if (config('queue.default') === 'sync') {
-                    $kraJob->afterResponse();
-                }
+                $saleId = (int) $sale->id;
+                $userId = (int) $request->user()->id;
+                $pin = $buyerPin;
+                dispatch(function () use ($saleId, $userId, $pin): void {
+                    try {
+                        (new SubmitSaleKraAfterCheckoutJob($saleId, $userId, $pin))
+                            ->handle(app(\App\Services\Erp\ErpContext::class));
+                    } catch (\Throwable $e) {
+                        Log::warning('Deferred KRA after mobile checkout failed', [
+                            'sale_id' => $saleId,
+                            'message' => $e->getMessage(),
+                        ]);
+                        report($e);
+                    }
+                })->afterResponse();
             } else {
                 $timing['kra_mode'] = 'sync';
                 try {
@@ -235,6 +241,8 @@ class CheckoutController extends Controller
                 'customer_num' => $sale->customer_num !== null ? (int) $sale->customer_num : null,
                 'customer_name_override' => $sale->customer_name_override,
                 'same_day_customer_append' => ! empty($fulfillmentMeta['same_day_customer_append']),
+                // Field mobile: order is saved now; KRA runs afterResponse (not in this payload).
+                'kra_pending' => $pendingKra,
             ], $kraSkipMeta), 201);
         }
 

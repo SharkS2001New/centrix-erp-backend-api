@@ -16,9 +16,10 @@ use Illuminate\Support\Facades\Log;
 /**
  * Fiscalize after mobile checkout without blocking the field-rep HTTP reply.
  *
- * With a real queue driver (redis/database/sqs), the job is pushed during
- * checkout so a worker can talk to Comstore in parallel with the response.
- * On the sync driver it is run via afterResponse() so the till still returns first.
+ * Flow: sale is saved → HTTP confirm returns → this runs afterResponse() in the
+ * same PHP process and submits to Comstore. Avoids the `kra` queue so mobile
+ * fiscalization still works when workers only poll `default`.
+ * Remains ShouldQueue for manual/ops re-dispatch onto a queue if needed.
  */
 class SubmitSaleKraAfterCheckoutJob implements ShouldQueue
 {
