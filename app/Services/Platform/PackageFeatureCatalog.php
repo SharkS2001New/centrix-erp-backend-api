@@ -42,7 +42,7 @@ class PackageFeatureCatalog
         }
 
         if ($industry === 'spa') {
-            $modules[] = $this->flagModule('spa', 'SPA & Kinyozi', 'Appointments, till, clients, and stock for this salon.', [
+            $modules[] = $this->flagModule('spa', 'SPA & Kinyozi', 'Appointments, till, clients, stock, administration, staff, and payroll for this salon.', [
                 'appointments' => 'Appointments',
                 'pos' => 'Till',
                 'clients' => 'Clients',

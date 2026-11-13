@@ -301,7 +301,7 @@ class SetupProfileMenuService
     {
         return match ($industry) {
             'hospitality' => ['hotel_bar_pos', 'hospitality_backoffice', 'accounting', 'hr', 'admin'],
-            'spa' => ['spa', 'admin'],
+            'spa' => ['spa'],
             'driving' => ['driving', 'admin'],
             default => ['pos', 'backoffice', 'distribution', 'accounting', 'hr', 'admin'],
         };

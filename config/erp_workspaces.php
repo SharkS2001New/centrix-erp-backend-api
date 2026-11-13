@@ -110,10 +110,12 @@ return [
     ],
     'spa' => [
         'label' => 'SPA & Kinyozi',
-        'description' => 'Appointments, treatments, barber chairs, walk-in sales, and salon stock.',
+        'description' => 'Salon operations, administration, staff, and payroll.',
         'icon' => 'spa',
         'home_path' => '/spa',
         'module_keys' => ['spa'],
+        'domain_modules' => ['spa', 'admin', 'hr_payroll'],
+        'permission_prefixes' => ['spa.', 'admin.', 'hr.'],
     ],
     'driving' => [
         'label' => 'Driving School',

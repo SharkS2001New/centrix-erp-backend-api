@@ -194,6 +194,36 @@ class WorkspaceResolverIndustryTest extends TestCase
         $this->assertSame('Administration', $byId['admin']['label']);
     }
 
+    public function test_spa_admin_and_payroll_permissions_stay_inside_the_spa_workspace(): void
+    {
+        $this->mockPermissionMap([
+            'admin.users.view' => true,
+            'hr.payroll.view' => true,
+        ]);
+
+        $org = $this->organization([
+            'deployment_profile' => 'spa_kinyozi',
+            'enabled_modules' => [
+                'spa' => true,
+                'admin' => true,
+                'hr_payroll' => true,
+            ],
+        ]);
+
+        $user = new User([
+            'is_admin' => false,
+            'is_super_admin' => false,
+            'login_channels' => ['backoffice'],
+        ]);
+
+        $ids = array_column(
+            app(WorkspaceResolver::class)->availableForUser($user, new CapabilityGate($org)),
+            'id',
+        );
+
+        $this->assertSame(['spa'], $ids);
+    }
+
     public function test_licensed_accounting_without_permission_is_hidden(): void
     {
         $this->mockPermissionMap([

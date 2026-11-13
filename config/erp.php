@@ -249,11 +249,10 @@ return [
             'label' => 'SPA & Kinyozi',
             'industry' => 'spa',
             'business_types' => ['SPA / Salon / Kinyozi', 'Barbershop'],
-            // Lean salon workspace — Accounting / HR are not part of this setup.
-            'application_ids' => ['spa', 'admin'],
+            // Spa, salon, and kinyozi share one workspace with administration and staff payroll.
+            'application_ids' => ['spa'],
             'modules' => array_merge($allModulesFalse, [
                 'spa' => true,
-                'admin' => true,
             ]),
             'default_channels' => ['backend'],
         ],

@@ -63,7 +63,7 @@ return [
         ],
         'spa' => [
             'label' => 'SPA & Kinyozi',
-            'description' => 'Salon and barbershop appointments, treatments, chairs, walk-in sales, clients, and stock. Does not use retail or hotel tills.',
+            'description' => 'One salon and barbershop workspace for appointments, clients, stock, administration, staff, and payroll. Does not use retail or hotel tills.',
             'icon' => 'spa',
         ],
         'driving' => [

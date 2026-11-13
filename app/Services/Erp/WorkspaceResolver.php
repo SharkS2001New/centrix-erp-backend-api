@@ -211,7 +211,18 @@ class WorkspaceResolver
         }
 
         if ($industry === 'spa') {
-            return ! in_array($workspaceId, ['pos', 'backoffice', 'distribution', 'hotel_bar_pos', 'hospitality_backoffice', 'driving'], true);
+            // Single Spa workspace — Admin APIs stay available; Admin is not a separate shell.
+            return ! in_array($workspaceId, [
+                'pos',
+                'backoffice',
+                'distribution',
+                'hotel_bar_pos',
+                'hospitality_backoffice',
+                'driving',
+                'admin',
+                'accounting',
+                'hr',
+            ], true);
         }
 
         if ($industry === 'driving') {

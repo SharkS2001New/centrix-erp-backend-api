@@ -147,13 +147,20 @@ class ApplicationProvisioner
             $modules = $this->applyDomainDisableRules($modules, $this->disablePatch('driving'));
         }
 
-        foreach (['distribution', 'accounting', 'hr', 'admin'] as $id) {
+        foreach (['distribution', 'accounting', 'hr'] as $id) {
             if ($applications[$id]) {
                 $modules = $this->mergeModulePatch($modules, $this->enablePatch($id));
             } else {
                 $modules = $this->mergeModulePatch($modules, $this->disablePatch($id));
                 $modules = $this->applyDomainDisableRules($modules, $this->disablePatch($id));
             }
+        }
+
+        if ($applications['admin']) {
+            $modules = $this->mergeModulePatch($modules, $this->enablePatch('admin'));
+        } else {
+            $modules = $this->mergeModulePatch($modules, $this->disablePatch('admin'));
+            $modules = $this->applyDomainDisableRules($modules, $this->disablePatch('admin'));
         }
 
         $modules = $this->syncSalesDomain($modules);

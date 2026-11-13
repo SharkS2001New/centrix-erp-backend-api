@@ -54,6 +54,10 @@ class CapabilityGate
             return true;
         }
 
+        if ($this->spaIncludesModule($moduleKey)) {
+            return true;
+        }
+
         if (str_ends_with($moduleKey, '.reports')) {
             return $this->reportModuleEnabled($moduleKey);
         }
@@ -68,6 +72,22 @@ class CapabilityGate
         }
 
         return true;
+    }
+
+    protected function spaIncludesModule(string $moduleKey): bool
+    {
+        if (! $this->organization) {
+            return false;
+        }
+
+        $profile = (string) ($this->organization->deployment_profile ?? 'wholesale_retail');
+        if (IndustryRegistry::industryForProfile($profile) !== 'spa' || ! $this->selfEnabled('spa')) {
+            return false;
+        }
+
+        return $moduleKey === 'admin'
+            || $moduleKey === 'hr_payroll'
+            || str_starts_with($moduleKey, 'hr_payroll.');
     }
 
     /**
