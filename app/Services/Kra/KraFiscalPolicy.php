@@ -10,8 +10,8 @@ namespace App\Services\Kra;
  *
  * Scope ({@see salesScope}):
  * - off — never fiscalize sales
- * - mobile — Centrix AS / field mobile only
- * - erp — POS + backoffice only
+ * - mobile — field mobile channel only (`mobile`)
+ * - erp — POS + backoffice + hotel till (Centrix AS Mobile uses cart channel=`pos`)
  * - both — all sales channels
  */
 class KraFiscalPolicy
