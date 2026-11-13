@@ -102,4 +102,37 @@ class CustomerReturnNumberAllocatorTest extends TestCase
         $this->assertSame('RET-0001', $allocator->formatReturnNo(1));
         $this->assertSame('RET-0042', $allocator->formatReturnNo(42));
     }
+
+    public function test_ceiling_uses_return_no_when_seq_lags(): void
+    {
+        $allocator = app(CustomerReturnNumberAllocator::class);
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $branchId = (int) $admin->branch_id;
+
+        $org = Organization::create([
+            'company_code' => 'RETLAG1',
+            'org_name' => 'Return Lag Org',
+            'org_email' => 'retlag1@test.com',
+            'primary_tel' => '0700111333',
+            'org_address' => 'Nairobi',
+            'deployment_profile' => 'wholesale_retail',
+        ]);
+
+        DB::transaction(function () use ($allocator, $org, $admin, $branchId) {
+            // Historical mismatch: high RET-nnnn with a lower return_seq.
+            CustomerReturn::create([
+                'return_no' => 'RET-1330',
+                'return_seq' => 10,
+                'organization_id' => $org->id,
+                'branch_id' => $branchId,
+                'return_date' => now()->toDateString(),
+                'status' => 'pending',
+                'total_amount' => 0,
+                'returned_by' => $admin->id,
+            ]);
+
+            $this->assertSame(1330, $allocator->ceilingForOrganization((int) $org->id));
+            $this->assertSame(1331, $allocator->nextForOrganization((int) $org->id));
+        });
+    }
 }

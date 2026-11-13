@@ -342,8 +342,7 @@ class PermissionMatrixService
             return $gate->mobileSalesEnabled();
         }
         if ($registryModule === 'centrix_as_mobile') {
-            // Centrix AS Mobile shop app — same org mobile channel as field sales.
-            return $gate->mobileSalesEnabled();
+            return $gate->centrixAsMobileEnabled();
         }
         if ($registryModule === 'mobile_driver') {
             return $gate->driverMobileEnabled();

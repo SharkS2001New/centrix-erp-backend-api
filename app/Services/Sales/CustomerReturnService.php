@@ -18,6 +18,7 @@ use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Fulfillment\TripAutoCloseService;
 use App\Services\Returns\ReturnProofService;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -73,6 +74,41 @@ class CustomerReturnService
         ];
     }
 
+    /**
+     * Insert a customer return with a freshly allocated RET-nnnn, retrying briefly if
+     * a concurrent request won the same org-scoped unique key (mobile double-tap / fiscal void).
+     *
+     * @param  array<string, mixed>  $attributes  Fields without return_no / return_seq
+     */
+    protected function createReturnWithAllocatedNumber(int $organizationId, array $attributes): CustomerReturn
+    {
+        $attempts = 0;
+        while (true) {
+            try {
+                $document = $this->allocateReturnDocument($organizationId);
+
+                return CustomerReturn::create([
+                    ...$document,
+                    ...$attributes,
+                ]);
+            } catch (UniqueConstraintViolationException $e) {
+                $attempts++;
+                if ($attempts >= 5 || ! $this->isCustomerReturnNumberCollision($e)) {
+                    throw $e;
+                }
+            }
+        }
+    }
+
+    protected function isCustomerReturnNumberCollision(UniqueConstraintViolationException $e): bool
+    {
+        $message = $e->getMessage();
+
+        return str_contains($message, 'uq_org_customer_return_no')
+            || str_contains($message, 'uq_org_customer_return_seq')
+            || str_contains($message, 'customer_returns_return_no_unique');
+    }
+
     /** @param  array<string, mixed>  $data */
     public function create(User $user, array $data, ?UploadedFile $proof = null): CustomerReturn
     {
@@ -84,10 +120,7 @@ class CustomerReturnService
             $lines = $this->normalizeLines($data['lines'] ?? [], $saleId);
             $total = round(array_sum(array_column($lines, 'amount')), 2);
 
-            $document = $this->allocateReturnDocument((int) $user->organization_id);
-
-            $return = CustomerReturn::create([
-                ...$document,
+            $return = $this->createReturnWithAllocatedNumber((int) $user->organization_id, [
                 'organization_id' => $user->organization_id,
                 'branch_id' => (int) ($data['branch_id'] ?? $user->branch_id),
                 'sale_id' => $saleId,
@@ -156,10 +189,7 @@ class CustomerReturnService
                 }
             }
 
-            $document = $this->allocateReturnDocument((int) $user->organization_id);
-
-            $return = CustomerReturn::create([
-                ...$document,
+            $return = $this->createReturnWithAllocatedNumber((int) $user->organization_id, [
                 'organization_id' => $user->organization_id,
                 'branch_id' => (int) ($data['branch_id'] ?? $user->branch_id ?? $sale?->branch_id),
                 'sale_id' => $saleId,
@@ -543,10 +573,7 @@ class CustomerReturnService
                 return;
             }
 
-            $document = $this->allocateReturnDocument((int) $user->organization_id);
-
-            $return = CustomerReturn::create([
-                ...$document,
+            $return = $this->createReturnWithAllocatedNumber((int) $user->organization_id, [
                 'organization_id' => $user->organization_id,
                 'branch_id' => $sale->branch_id ?? $user->branch_id,
                 'sale_id' => $sale->id,

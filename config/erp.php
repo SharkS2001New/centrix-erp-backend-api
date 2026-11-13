@@ -298,6 +298,7 @@ return [
             'enable_mobile_orders_returns_card',
             'enable_mobile_orders_payments_card',
             'enable_mobile_orders_expenses_card',
+            'enable_centrix_as_mobile',
             'as_mobile_show_images',
             'require_product_images',
             'as_mobile_ask_quantity_on_add',
@@ -615,6 +616,8 @@ return [
             'enable_mobile_orders_returns_card' => false,
             'enable_mobile_orders_payments_card' => false,
             'enable_mobile_orders_expenses_card' => false,
+            // Centrix AS Mobile (outlet shop app). Off only when Platform disables it for the org.
+            'enable_centrix_as_mobile' => true,
             // Off by default — Platform enables per org when catalogue photos are needed.
             'as_mobile_show_images' => false,
             // When true, product create/update must include a photo (AS mobile + API delete blocked).

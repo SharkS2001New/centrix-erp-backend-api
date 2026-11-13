@@ -667,6 +667,8 @@ class OrganizationPlatformConfigService
         $defaults = [
             'show_checkout_on_create_order' => true,
             'enable_mobile_orders' => ! in_array($deploymentProfile, ['small_shop', 'supermarket'], true),
+            // Centrix AS Mobile outlet app — on by default when the org has shop sales shells.
+            'enable_centrix_as_mobile' => true,
             // Product photos only. Hotel & Bar on by default; retail/wholesale off until Platform enables.
             'as_mobile_show_images' => $deploymentProfile === 'hotel_bar',
             'require_product_images' => false,
@@ -795,6 +797,7 @@ class OrganizationPlatformConfigService
             'enable_mobile_orders_returns_card' => (bool) ($sales['enable_mobile_orders_returns_card'] ?? false),
             'enable_mobile_orders_payments_card' => (bool) ($sales['enable_mobile_orders_payments_card'] ?? false),
             'enable_mobile_orders_expenses_card' => (bool) ($sales['enable_mobile_orders_expenses_card'] ?? false),
+            'enable_centrix_as_mobile' => (bool) ($sales['enable_centrix_as_mobile'] ?? true),
             'as_mobile_show_images' => array_key_exists('as_mobile_show_images', $customSales)
                 ? (bool) $customSales['as_mobile_show_images']
                 : $gate->asMobileShowImages(),

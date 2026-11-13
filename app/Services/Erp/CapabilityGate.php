@@ -269,14 +269,8 @@ class CapabilityGate
         if ($this->mobileSalesEnabled()) {
             $channels[] = \App\Services\Auth\UserLoginChannelService::MOBILE;
         }
-        // CentrixAsMobile (AS shop app) — available whenever web/POS/hospitality shop ops are on.
-        if (
-            $this->mobileSalesEnabled()
-            || $this->enabled('sales.backend')
-            || $this->enabled('sales.pos')
-            || $this->enabled('hospitality.bar_pos')
-            || $this->enabled('hospitality.backend')
-        ) {
+        // CentrixAsMobile (AS shop app) — Platform can disable per org/setup type.
+        if ($this->centrixAsMobileEnabled()) {
             $channels[] = \App\Services\Auth\UserLoginChannelService::CENTRIX_AS_MOBILE;
         }
         if ($this->managerAppEnabled()) {
@@ -293,11 +287,7 @@ class CapabilityGate
         return match ($channel) {
             'pos' => $this->enabled('sales.pos'),
             'mobile' => $this->mobileSalesEnabled(),
-            'centrix_as_mobile' => $this->mobileSalesEnabled()
-                || $this->enabled('sales.backend')
-                || $this->enabled('sales.pos')
-                || $this->enabled('hospitality.bar_pos')
-                || $this->enabled('hospitality.backend'),
+            'centrix_as_mobile' => $this->centrixAsMobileEnabled(),
             'backend' => $this->enabled('sales.backend'),
             // WhatsApp carts are a distinct channel but require backoffice sales + WhatsApp orders.
             'whatsapp' => $this->enabled('sales.backend') && $this->whatsappOrdersRuntimeEnabled(),
@@ -341,6 +331,24 @@ class CapabilityGate
         }
 
         return false;
+    }
+
+    /**
+     * Centrix AS Mobile (outlet shop app / login_channel=centrix_as_mobile).
+     * Platform/setup-type flag enable_centrix_as_mobile; still requires a shop sales shell.
+     */
+    public function centrixAsMobileEnabled(): bool
+    {
+        $sales = $this->moduleSettings('sales');
+        if (($sales['enable_centrix_as_mobile'] ?? true) === false) {
+            return false;
+        }
+
+        return $this->mobileSalesEnabled()
+            || $this->enabled('sales.backend')
+            || $this->enabled('sales.pos')
+            || $this->enabled('hospitality.bar_pos')
+            || $this->enabled('hospitality.backend');
     }
 
     /**

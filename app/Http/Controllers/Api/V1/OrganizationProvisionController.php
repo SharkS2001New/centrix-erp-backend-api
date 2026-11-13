@@ -815,6 +815,7 @@ class OrganizationProvisionController extends Controller
             'sales_platform.enable_mobile_orders_returns_card' => 'sometimes|boolean',
             'sales_platform.enable_mobile_orders_payments_card' => 'sometimes|boolean',
             'sales_platform.enable_mobile_orders_expenses_card' => 'sometimes|boolean',
+            'sales_platform.enable_centrix_as_mobile' => 'sometimes|boolean',
             'sales_platform.as_mobile_show_images' => 'sometimes|boolean',
             'sales_platform.require_product_images' => 'sometimes|boolean',
             'sales_platform.as_mobile_ask_quantity_on_add' => 'sometimes|boolean',
